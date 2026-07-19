@@ -1,0 +1,17 @@
+# AoC 2022 Day 8 — Grid demonstrator.
+#
+# Parses the tree-height grid into a Grid<Int> and counts the "tall" trees
+# (height >= 5). For the example grid that is 9.
+#
+# NOTE: the full Part 1 visibility solve (count trees visible from outside)
+# needs per-cell line-of-sight reductions over rows/columns, which require
+# expression-layer list operations deferred past v0.2 (same blocker as Day 5).
+# This program exercises grid construction + a cell predicate end-to-end.
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by ""
+Channeled Energy: Convert Each List to Integers
+Channeled Energy: Convert To Grid
+Maximum Technique: Count Cells
+    Using: (h) -> h >= 5
+Reveal: stdout

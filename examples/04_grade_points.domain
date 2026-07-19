@@ -1,0 +1,16 @@
+# Word + number lines: sum the squares of every sorcerer's grade.
+#
+# A `word` hole makes the template fall back to the regex path (int-only
+# templates compile to a hand-rolled scanner); field access and arithmetic
+# happen in the Map Each lambda.
+#
+#   domain examples/04_grade_points.domain
+#   Expected output: 552
+Cursed Energy: 04_grade_points.input
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{name:word} grade {g:int}"
+Cursed Technique: Map Each
+    Using: (r) -> r.g * r.g
+Maximum Technique: Sum
+Reveal: stdout

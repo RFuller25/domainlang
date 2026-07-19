@@ -1,0 +1,11 @@
+# AoC 2020 Day 1 Part 1 — find the two entries that sum to 2020, multiply them.
+# The All Pairs sum-to-2020 lambda is a request; with optimization on, the
+# compiler lowers it to an O(n) hash-set scan (see --explain).
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: All Pairs
+    Mode: First
+    Using: (a, b) -> a + b = 2020
+Maximum Technique: Product
+Reveal: stdout

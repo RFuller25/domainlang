@@ -1,0 +1,19 @@
+# Binary diagnostics (AoC 2021 Day 3) — the classic bit-counting puzzle:
+# gamma takes each column's majority bit, epsilon its complement; report
+# gamma * epsilon.
+#
+# Transpose turns columns into rows; each row's sum against the line count
+# (12 here) decides the majority; frombin reads the assembled bit string.
+#
+#   domain challenges/06_binary_diagnostics.domain
+Cursed Energy: 06_binary_diagnostics.input
+Shikigami: Digit Grid
+Cursed Technique: Transpose
+Cursed Technique: Apply
+    Using: (g) -> list(sum(row(g, 0)), sum(row(g, 1)), sum(row(g, 2)), sum(row(g, 3)), sum(row(g, 4)))
+Cursed Technique: Map Each
+    Using: (s) -> if 2 * s > 12 then "1" else "0"
+Maximum Technique: Join with ""
+Cursed Technique: Apply
+    Using: (s) -> frombin(s) * (31 - frombin(s))
+Reveal: stdout

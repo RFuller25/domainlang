@@ -1,0 +1,10 @@
+# AoC 2022 Day 4 Part 1 — count assignment pairs where one range fully
+# contains the other.
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{a:int}-{b:int},{c:int}-{d:int}"
+Maximum Technique: Count Matching
+    Using: (r) -> (r.a <= r.c and r.b >= r.d) or (r.c <= r.a and r.d >= r.b)
+Reveal: stdout

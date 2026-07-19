@@ -1,0 +1,27 @@
+# A two-section input handled with Channels.
+#
+# Section one is a roster, section two is a scores list. Each Channel
+# branches from the same upstream value (the section list), processes its
+# own section, and Combine recombines them: squad size × 1000 + total score.
+#
+#   domain examples/05_two_sections.domain
+#   Expected output: 4290
+Cursed Energy: 05_two_sections.input
+Cursed Technique: Split Text by "\n\n"
+
+Channel "squad":
+    Cursed Technique: Take Item 0
+    Cursed Technique: Split Text by "\n"
+    Maximum Technique: Count
+
+Channel "score":
+    Cursed Technique: Take Item 1
+    Cursed Technique: Split Text by "\n"
+    Channeled Energy: Convert List to Integers
+    Maximum Technique: Sum
+
+Maximum Technique: Combine
+    From: squad, score
+    Using: (squad, score) -> squad * 1000 + score
+
+Reveal: stdout

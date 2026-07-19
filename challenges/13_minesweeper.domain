@@ -1,0 +1,27 @@
+# Minesweeper board — given the mines, render the numbers: each cell shows
+# how many of its 8 neighbors are mines, mines show *.
+#
+# Same weighted-count trick as Game of Life: every mine adds 1 to each
+# neighbor and 9 to itself, so any score of 9 or more is a mine and the
+# rest are plain neighbor counts. The Sparse default 0 becomes "." so
+# untouched cells stay quiet.
+#
+#   domain challenges/13_minesweeper.domain
+Cursed Energy: 13_minesweeper.input
+Shikigami: Lines
+Cursed Technique: Match Pattern
+    Using: "{int},{int}"
+    Mode: Each
+Cursed Technique: Map Each
+    Using: (q) -> point(item(q, 0), item(q, 1))
+Cursed Technique: Map Each
+    Using: (p) -> list(padd(p, point(-1, -1)), padd(p, point(-1, 0)), padd(p, point(-1, 1)), padd(p, point(0, -1)), padd(p, point(0, 1)), padd(p, point(1, -1)), padd(p, point(1, 0)), padd(p, point(1, 1)), p, p, p, p, p, p, p, p, p)
+Cursed Technique: Flatten
+Maximum Technique: Count By
+    Using: (q) -> q
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+Cursed Technique: Map Cells
+    Using: (v) -> if v >= 9 then "*" else (if v = 0 then "." else totext(v))
+Channeled Energy: Convert To Grid
+Reveal: stdout

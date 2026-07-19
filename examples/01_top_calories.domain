@@ -1,0 +1,18 @@
+# Top-three group sums — the signature optimization.
+#
+# Groups of numbers separated by blank lines; sum each group, then take the
+# top 3 and sum those. The Quicksort is a *request*: run with --explain to
+# watch the optimizer fuse Quicksort + Select Top 3 into a quickselect that
+# never fully sorts.
+#
+#   domain examples/01_top_calories.domain
+#   domain run examples/01_top_calories.domain --explain
+#   Expected output: 32000
+Cursed Energy: 01_top_calories.input
+Cursed Technique: Split Text by "\n\n"
+Cursed Technique: Split Each by "\n"
+Channeled Energy: Convert Each List to Integers
+Maximum Technique: Sum Each Group
+Domain Expansion: Quicksort, Descending
+Maximum Technique: Select Top 3, Sum
+Reveal: stdout

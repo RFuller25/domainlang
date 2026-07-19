@@ -1,0 +1,354 @@
+package prims
+
+import (
+	"fmt"
+	"strings"
+
+	"domain/ast"
+	"domain/eval"
+	"domain/ir"
+	"domain/token"
+	"domain/typecheck"
+)
+
+// This file implements the Channel mechanism (M4): named sub-pipelines that
+// branch from the current value, and From:-consumers that recombine them. This
+// is the only place the otherwise-linear IR forms a small dataflow graph.
+
+// resolveChannel lowers a `Channel "name":` statement into a passthrough node
+// whose sub-pipeline runs on the current value and stores the result under the
+// channel name. The current value is unchanged, so sibling channels all branch
+// from the same upstream value.
+func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, error) {
+	name := stmt.ChannelName
+	if name == "" {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: "Channel requires a name"}
+	}
+	if _, exists := r.channels[name]; exists {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("channel %q is already defined", name)}
+	}
+	if cur == nil {
+		return nil, &ResolveError{Pos: stmt.Pos,
+			Msg: fmt.Sprintf("channel %q has no upstream value to branch from", name)}
+	}
+	if len(stmt.Block) == 0 {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("channel %q has an empty body", name)}
+	}
+
+	subNodes, subType, err := r.resolveSequence(stmt.Block, cur, false)
+	if err != nil {
+		return nil, err
+	}
+	r.channels[name] = subType
+
+	return &ir.Node{
+		Prim:    "Channel",
+		In:      cur,
+		Out:     cur, // passthrough
+		Display: fmt.Sprintf("Channel %q", name),
+		Meta:    map[string]any{"name": name, "nodes": subNodes},
+		Pos:     stmt.Pos,
+		Eval: func(ctx *ir.Context, in ir.Value) (ir.Value, error) {
+			v := in
+			var err error
+			for _, n := range subNodes {
+				if v, err = n.Eval(ctx, v); err != nil {
+					return nil, err
+				}
+			}
+			ctx.SetChannel(name, v)
+			return in, nil
+		},
+	}, nil
+}
+
+// resolveConsumer lowers a From:-consumer (Combine or Difference).
+func (r *resolver) resolveConsumer(stmt *ast.Statement, cur *ir.Type) (*ir.Node, error) {
+	args := ArgSet{stmt.Args}
+	froms, _ := args.Idents("From")
+	if len(froms) == 0 {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: "From: must name at least one channel"}
+	}
+	types := make([]*ir.Type, len(froms))
+	for i, name := range froms {
+		t, ok := r.channels[name]
+		if !ok {
+			return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("unknown channel %q in From:", name)}
+		}
+		types[i] = t
+	}
+
+	switch {
+	case hasWord(stmt.Op, "Combine"):
+		return buildCombine(args, froms, types, cur, stmt.Pos)
+	case hasWord(stmt.Op, "Difference"):
+		return buildDifference(froms, types, cur, stmt.Pos)
+	case hasWord(stmt.Op, "Fold"):
+		return buildFoldOver(args, froms, types, cur, stmt.Pos)
+	case hasWord(stmt.Op, "Zip"):
+		return buildZip(froms, types, cur, stmt.Pos)
+	default:
+		return nil, &ResolveError{Pos: stmt.Pos,
+			Msg: "From: is only supported by Combine, Difference, Fold, and Zip"}
+	}
+}
+
+// buildZip pairs two channel lists element-wise into List<(A, B)>, truncated
+// to the shorter list. The main pipeline's current value is ignored, like
+// Combine.
+func buildZip(froms []string, types []*ir.Type, cur *ir.Type, pos token.Position) (*ir.Node, error) {
+	if len(froms) != 2 {
+		return nil, &ResolveError{Pos: pos, Msg: "Zip needs exactly two channels (From: a, b)"}
+	}
+	for i, t := range types {
+		if t == nil || t.Kind != ir.KList {
+			return nil, &ResolveError{Pos: pos,
+				Msg: fmt.Sprintf("Zip channel %q must hold a List, got %s", froms[i], t)}
+		}
+	}
+	out := ir.List(ir.Tuple(types[0].Elem, types[1].Elem))
+	a, b := froms[0], froms[1]
+	return &ir.Node{
+		Prim:    "Zip",
+		In:      cur,
+		Out:     out,
+		Display: fmt.Sprintf("Zip From: %s, %s", a, b),
+		Meta:    map[string]any{"from": []string{a, b}},
+		Pos:     pos,
+		Eval: func(ctx *ir.Context, _ ir.Value) (ir.Value, error) {
+			av, ok := ctx.Channel(a)
+			if !ok {
+				return nil, runtimeErr("Zip", pos, "channel %q has no value", a)
+			}
+			bv, ok := ctx.Channel(b)
+			if !ok {
+				return nil, runtimeErr("Zip", pos, "channel %q has no value", b)
+			}
+			as, err := ir.AsList(av)
+			if err != nil {
+				return nil, runtimeErr("Zip", pos, "channel %q: %v", a, err)
+			}
+			bs, err := ir.AsList(bv)
+			if err != nil {
+				return nil, runtimeErr("Zip", pos, "channel %q: %v", b, err)
+			}
+			n := len(as)
+			if len(bs) < n {
+				n = len(bs)
+			}
+			zipped := make([]ir.Value, n)
+			for i := 0; i < n; i++ {
+				zipped[i] = []ir.Value{as[i], bs[i]}
+			}
+			return zipped, nil
+		},
+	}, nil
+}
+
+// buildFoldOver lowers `Fold` with a `From:` channel: fold over the channel's
+// list with the *current pipeline value* as the seed. This is how a state
+// value built upstream (e.g. crate stacks) threads through a list that lives
+// in a channel (e.g. parsed moves) — the missing piece of the full Day 5
+// simulation.
+func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, pos token.Position) (*ir.Node, error) {
+	if len(froms) != 1 {
+		return nil, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("Fold From: takes exactly one channel, got %d", len(froms))}
+	}
+	if cur == nil {
+		return nil, &ResolveError{Pos: pos, Msg: "Fold From: has no current value to seed with"}
+	}
+	over := types[0]
+	if over == nil || over.Kind != ir.KList {
+		return nil, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("Fold From: channel %q must hold a List, got %s", froms[0], over)}
+	}
+	lam, ok := args.Lambda("Using")
+	if !ok {
+		return nil, &ResolveError{Pos: pos, Msg: "Fold requires a Using: lambda"}
+	}
+	if len(lam.Params) != 2 {
+		return nil, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("Fold lambda must take 2 parameters (acc, item), got %d", len(lam.Params))}
+	}
+	bodyType, err := typecheck.LambdaType(lam, cur, over.Elem)
+	if err != nil {
+		return nil, &ResolveError{Pos: pos, Msg: "Fold: " + err.Error()}
+	}
+	if !bodyType.Equal(cur) {
+		return nil, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("Fold lambda must return the seed type %s, got %s", cur, bodyType)}
+	}
+	name := froms[0]
+	return &ir.Node{
+		Prim:    "FoldOver",
+		In:      cur,
+		Out:     cur,
+		Display: "Fold From: " + name,
+		Meta:    map[string]any{"from": []string{name}, "lambda": lam},
+		Pos:     pos,
+		Eval: func(ctx *ir.Context, in ir.Value) (ir.Value, error) {
+			cv, ok := ctx.Channel(name)
+			if !ok {
+				return nil, runtimeErr("FoldOver", pos, "channel %q has no value", name)
+			}
+			xs, err := ir.AsList(cv)
+			if err != nil {
+				return nil, runtimeErr("FoldOver", pos, "channel %q: %v", name, err)
+			}
+			acc := in
+			for i, x := range xs {
+				acc, err = eval.EvalLambdaTyped(lam, []*ir.Type{cur, over.Elem}, acc, x)
+				if err != nil {
+					return nil, runtimeErr("FoldOver", pos, "item %d: %v", i, err)
+				}
+			}
+			return acc, nil
+		},
+	}, nil
+}
+
+// buildCombine binds channel values to a Using: lambda's parameters (in From:
+// order) and emits the lambda's result.
+func buildCombine(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, pos token.Position) (*ir.Node, error) {
+	lam, ok := args.Lambda("Using")
+	if !ok {
+		return nil, &ResolveError{Pos: pos, Msg: "Combine requires a Using: lambda"}
+	}
+	if len(lam.Params) != len(froms) {
+		return nil, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("Combine lambda takes %d parameter(s) but From: names %d channel(s)",
+				len(lam.Params), len(froms))}
+	}
+	outType, err := typecheck.LambdaType(lam, types...)
+	if err != nil {
+		return nil, &ResolveError{Pos: pos, Msg: "Combine: " + err.Error()}
+	}
+	names := froms
+	return &ir.Node{
+		Prim:    "Combine",
+		In:      cur,
+		Out:     outType,
+		Display: "Combine From: " + strings.Join(froms, ", "),
+		Meta:    map[string]any{"from": names, "lambda": lam},
+		Pos:     pos,
+		Eval: func(ctx *ir.Context, _ ir.Value) (ir.Value, error) {
+			vals := make([]ir.Value, len(names))
+			for i, n := range names {
+				v, ok := ctx.Channel(n)
+				if !ok {
+					return nil, runtimeErr("Combine", pos, "channel %q was not computed", n)
+				}
+				vals[i] = v
+			}
+			r, err := eval.EvalLambdaTyped(lam, types, vals...)
+			if err != nil {
+				return nil, runtimeErr("Combine", pos, "%v", err)
+			}
+			return r, nil
+		},
+	}, nil
+}
+
+// buildDifference emits the set difference of two channels (a - b). This is the
+// home for the binary set op deferred from M2.
+func buildDifference(froms []string, types []*ir.Type, cur *ir.Type, pos token.Position) (*ir.Node, error) {
+	if len(froms) != 2 {
+		return nil, &ResolveError{Pos: pos, Msg: "Difference needs exactly two channels (From: a, b)"}
+	}
+	elemA, err := setOrListElem(types[0], pos)
+	if err != nil {
+		return nil, err
+	}
+	elemB, err := setOrListElem(types[1], pos)
+	if err != nil {
+		return nil, err
+	}
+	if !elemA.Equal(elemB) {
+		return nil, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("Difference needs matching element types, got %s and %s", elemA, elemB)}
+	}
+	if err := requireKeyable(elemA, "Difference", pos); err != nil {
+		return nil, err
+	}
+	a, b := froms[0], froms[1]
+	return &ir.Node{
+		Prim:    "Difference",
+		In:      cur,
+		Out:     ir.Set(elemA),
+		Display: fmt.Sprintf("Difference From: %s, %s", a, b),
+		Meta:    map[string]any{"from": []string{a, b}},
+		Pos:     pos,
+		Eval: func(ctx *ir.Context, _ ir.Value) (ir.Value, error) {
+			sa, err := channelAsSet(ctx, a, pos)
+			if err != nil {
+				return nil, err
+			}
+			sb, err := channelAsSet(ctx, b, pos)
+			if err != nil {
+				return nil, err
+			}
+			return ir.SetDifference(sa, sb), nil
+		},
+	}, nil
+}
+
+func setOrListElem(t *ir.Type, pos token.Position) (*ir.Type, error) {
+	if t != nil && (t.Kind == ir.KSet || t.Kind == ir.KList) {
+		return t.Elem, nil
+	}
+	return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("Difference channels must be Set or List, got %s", t)}
+}
+
+func channelAsSet(ctx *ir.Context, name string, pos token.Position) (*ir.SetValue, error) {
+	v, ok := ctx.Channel(name)
+	if !ok {
+		return nil, runtimeErr("Difference", pos, "channel %q was not computed", name)
+	}
+	switch x := v.(type) {
+	case *ir.SetValue:
+		return x, nil
+	case []ir.Value:
+		return ir.SetFromList(x), nil
+	default:
+		return nil, runtimeErr("Difference", pos, "channel %q is not a Set or List (%s)", name, ir.DescribeValue(v))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cursed Technique: Take Item N — List<T> -> T (used to pick input sections).
+// ---------------------------------------------------------------------------
+
+var takeItem = &Primitive{
+	ID:      "Take Item",
+	Keyword: "Cursed Technique",
+	Match:   func(op *ast.Operation) bool { return hasWord(op, "Take") && hasWord(op, "Item") },
+	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
+		elem, err := listElem(in, "Take Item", pos)
+		if err != nil {
+			return nil, err
+		}
+		if len(op.Ints) == 0 {
+			return nil, &ResolveError{Pos: pos, Msg: "Take Item requires an index, e.g. Take Item 0"}
+		}
+		idx := int(op.Ints[0])
+		return &ir.Node{
+			Prim:    "Take Item",
+			In:      in,
+			Out:     elem,
+			Display: fmt.Sprintf("Take Item %d", idx),
+			Meta:    map[string]any{"index": idx},
+			Pos:     pos,
+			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+				items, err := ir.AsList(v)
+				if err != nil {
+					return nil, runtimeErr("Take Item", pos, "%v", err)
+				}
+				if idx < 0 || idx >= len(items) {
+					return nil, runtimeErr("Take Item", pos, "index %d out of range (length %d)", idx, len(items))
+				}
+				return items[idx], nil
+			},
+		}, nil
+	},
+}

@@ -1,0 +1,16 @@
+# Shortest path through a maze, as a one-liner algorithm request.
+#
+# `Domain Expansion: BFS` floods step distances out from the start over the
+# cells the `Using:` predicate marks walkable ('-1' where unreachable); `at`
+# reads the distance at the exit corner.
+#
+#   domain examples/12_maze_bfs.domain
+#   Expected output: 16
+Cursed Energy: 12_maze_bfs.input
+Shikigami: Lines
+Channeled Energy: Convert To Grid
+Domain Expansion: BFS from 0 0
+    Using: (c) -> c = "."
+Cursed Technique: Apply
+    Using: (g) -> at(g, 4, 4)
+Reveal: stdout

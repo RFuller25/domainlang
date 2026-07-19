@@ -1,0 +1,10 @@
+# AoC 2022 Day 1 Part 2, using the prelude's `Top K Sum` shikigami. The
+# optimizer still fuses the inlined Quicksort + Top 3 into a quickselect.
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n\n"
+Cursed Technique: Split Each by "\n"
+Channeled Energy: Convert Each List to Integers
+Maximum Technique: Sum Each Group
+Shikigami: Top K Sum
+    k: 3
+Reveal: stdout

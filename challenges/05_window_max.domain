@@ -1,0 +1,14 @@
+# Sliding window maximum — the classic monotonic-deque exercise: the max of
+# every window of size 3.
+#
+# Written naively (materialize each window, take its max); run with
+# --explain to watch the optimizer fuse it into an O(n) streaming
+# WindowedReduce that never builds the window lists.
+#
+#   domain challenges/05_window_max.domain
+Cursed Energy: 05_window_max.input
+Shikigami: Ints
+Cursed Technique: Window 3
+Cursed Technique: Map Each
+    Using: (w) -> max(w)
+Reveal: stdout

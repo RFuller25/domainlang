@@ -1,0 +1,14 @@
+# Expression-layer builtins inside a lambda.
+#
+# For each group: first + last + (max - min) + the sum of the two leading
+# values. The result is a list, rendered like the interpreter renders lists.
+#
+#   domain examples/08_builtins.domain
+#   Expected output: [122, 1100]
+Cursed Energy: 08_builtins.input
+Cursed Technique: Split Text by "\n\n"
+Cursed Technique: Split Each by "\n"
+Channeled Energy: Convert Each List to Integers
+Cursed Technique: Map Each
+    Using: (g) -> first(g) + last(g) + max(g) - min(g) + sum(take(g, 2))
+Reveal: stdout

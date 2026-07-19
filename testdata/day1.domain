@@ -1,0 +1,9 @@
+# AoC 2022 Day 1 Part 2 — sum the calories carried by the top 3 elves.
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n\n"
+Cursed Technique: Split Each by "\n"
+Channeled Energy: Convert Each List to Integers
+Maximum Technique: Sum Each Group
+Domain Expansion: Quicksort, Descending
+Maximum Technique: Select Top 3, Sum
+Reveal: stdout

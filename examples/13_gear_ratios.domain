@@ -1,0 +1,16 @@
+# Whitespace fields + number theory builtins.
+#
+# `Split Fields` splits each line on runs of whitespace (no separator to
+# spell), and the lambda reduces each gear pair with lcm/gcd: teeth ratios
+# lcm(a,b)/gcd(a,b), summed.
+#
+#   domain examples/13_gear_ratios.domain
+#   Expected output: 22
+Cursed Energy: 13_gear_ratios.input
+Shikigami: Lines
+Cursed Technique: Split Fields
+Channeled Energy: Convert Each List to Integers
+Cursed Technique: Map Each
+    Using: (p) -> lcm(first(p), last(p)) / gcd(first(p), last(p))
+Maximum Technique: Sum
+Reveal: stdout

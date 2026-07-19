@@ -1,0 +1,16 @@
+# Collatz steps — count how many steps n takes to reach 1 under the famous
+# 3n+1 rule (halve when even, triple-and-add-one when odd).
+#
+# The While loop threads a [value, steps] pair; evenness is n/2*2 = n.
+#
+#   domain challenges/04_collatz.domain
+Cursed Energy: 04_collatz.input
+Cursed Technique: Apply
+    Using: (s) -> list(toint(s), 0)
+Simple Domain: While
+    Using: (st) -> first(st) > 1
+    Cursed Technique: Apply
+        Using: (st) -> list(if first(st) / 2 * 2 = first(st) then first(st) / 2 else 3 * first(st) + 1, last(st) + 1)
+Cursed Technique: Apply
+    Using: (st) -> last(st)
+Reveal: stdout

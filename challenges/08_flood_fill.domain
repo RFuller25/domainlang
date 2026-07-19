@@ -1,0 +1,15 @@
+# Flood fill (LeetCode 733) — the paint-bucket tool: how many cells does
+# the region connected to the top-left corner cover?
+#
+# Flood Fill marks the start's 4-connected region as a 0/1 mask;
+# Count Cells measures it.
+#
+#   domain challenges/08_flood_fill.domain
+Cursed Energy: 08_flood_fill.input
+Shikigami: Lines
+Channeled Energy: Convert To Grid
+Domain Expansion: Flood Fill from 0 0
+    Using: (c) -> c = "."
+Maximum Technique: Count Cells
+    Using: (m) -> m = 1
+Reveal: stdout

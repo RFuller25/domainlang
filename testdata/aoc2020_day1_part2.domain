@@ -1,0 +1,10 @@
+# AoC 2020 Day 1 Part 2 — find the three entries summing to 2020, multiply them.
+# The optimizer rewrites the O(n^3) Combinations 3 scan to an O(n^2) hash scan.
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Combinations 3
+    Mode: First
+    Using: (a, b, c) -> a + b + c = 2020
+Maximum Technique: Product
+Reveal: stdout

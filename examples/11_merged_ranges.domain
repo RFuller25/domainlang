@@ -1,0 +1,13 @@
+# Mine integers out of messy text, then coalesce the ranges they describe.
+#
+# `Extract Integers` pulls every integer off each line (two per line here, so
+# each row is a range), and `Merge Ranges` sorts and merges the overlapping or
+# adjacent ones.
+#
+#   domain examples/11_merged_ranges.domain
+#   Expected output: [[1, 8], [10, 12], [20, 20]]
+Cursed Energy: 11_merged_ranges.input
+Shikigami: Lines
+Cursed Technique: Extract Integers
+Maximum Technique: Merge Ranges
+Reveal: stdout

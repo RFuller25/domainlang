@@ -1,0 +1,16 @@
+# Count overlapping range pairs, parsed with Match Pattern.
+#
+# Each line holds two ranges, "a-b,c-d". The template's named typed holes
+# produce a Record per line ({a:Int, b:Int, c:Int, d:Int}); the predicate
+# counts pairs whose ranges overlap at all.
+#
+#   domain examples/03_overlapping_shifts.domain
+#   Expected output: 4
+Cursed Energy: 03_overlapping_shifts.input
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{a:int}-{b:int},{c:int}-{d:int}"
+Maximum Technique: Count Matching
+    Using: (r) -> r.a <= r.d and r.c <= r.b
+Reveal: stdout

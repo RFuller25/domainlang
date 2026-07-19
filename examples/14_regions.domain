@@ -1,0 +1,27 @@
+# Two grid analyses of one map, branched through Channels.
+#
+# One branch counts the 4-connected '#' regions (union-find under the hood);
+# the other finds every '#' cell as a (row, col) point and measures the
+# Manhattan distance between the first and last. Combine packs both numbers
+# into one answer: regions * 100 + span.
+#
+#   domain examples/14_regions.domain
+#   Expected output: 507
+Cursed Energy: 14_regions.input
+Shikigami: Lines
+Channeled Energy: Convert To Grid
+
+Channel "regions":
+    Domain Expansion: Connected Components
+        Using: (c) -> c = "#"
+
+Channel "span":
+    Cursed Technique: Find Cells
+        Using: (c) -> c = "#"
+    Cursed Technique: Apply
+        Using: (ps) -> manhattan(first(ps), last(ps))
+
+Maximum Technique: Combine
+    From: regions, span
+    Using: (r, s) -> r * 100 + s
+Reveal: stdout

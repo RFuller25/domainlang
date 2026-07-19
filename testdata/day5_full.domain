@@ -1,0 +1,54 @@
+# AoC 2022 Day 5 Part 1 — the full crate simulation ("CMZ").
+#
+# The drawing parses column-wise: Ragged Columns transposes the unpadded
+# lines, the crate letters of stack k live in column 4(k-1)+1, and the
+# Filter drops the blanks and the stack label. list() packs the three
+# stacks (top first); Fold From: moves threads them through every move —
+# set/item/take/drop/reverse/concat do the crate surgery — and the tops
+# join into the answer.
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n\n"
+
+Channel "s1":
+    Cursed Technique: Take Item 0
+    Cursed Technique: Split Text by "\n"
+    Cursed Technique: Ragged Columns
+    Cursed Technique: Take Item 1
+    Cursed Technique: Filter
+        Using: (ch) -> occurrences("0123456789 ", ch) = 0
+
+Channel "s2":
+    Cursed Technique: Take Item 0
+    Cursed Technique: Split Text by "\n"
+    Cursed Technique: Ragged Columns
+    Cursed Technique: Take Item 5
+    Cursed Technique: Filter
+        Using: (ch) -> occurrences("0123456789 ", ch) = 0
+
+Channel "s3":
+    Cursed Technique: Take Item 0
+    Cursed Technique: Split Text by "\n"
+    Cursed Technique: Ragged Columns
+    Cursed Technique: Take Item 9
+    Cursed Technique: Filter
+        Using: (ch) -> occurrences("0123456789 ", ch) = 0
+
+Channel "moves":
+    Cursed Technique: Take Item 1
+    Cursed Technique: Split Text by "\n"
+    Cursed Technique: Match Pattern
+        Using: "move {n:int} from {f:int} to {t:int}"
+
+Maximum Technique: Combine
+    From: s1, s2, s3
+    Using: (a, b, c) -> list(a, b, c)
+
+Maximum Technique: Fold
+    From: moves
+    Using: (st, m) -> set(set(st, m.t - 1, concat(reverse(take(item(st, m.f - 1), m.n)), item(st, m.t - 1))), m.f - 1, drop(item(st, m.f - 1), m.n))
+
+Cursed Technique: Map Each
+    Using: (s) -> first(s)
+
+Maximum Technique: Join
+Reveal: stdout

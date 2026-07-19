@@ -1,0 +1,124 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Domain",
+  "scopeName": "source.domain",
+  "fileTypes": ["domain"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#themed-statement" },
+    { "include": "#argument-key" },
+    { "include": "#string" },
+    { "include": "#lambda-arrow" },
+    { "include": "#builtin" },
+    { "include": "#mode-value" },
+    { "include": "#order-modifier" },
+    { "include": "#type-name" },
+    { "include": "#logical-operator" },
+    { "include": "#operator" },
+    { "include": "#number" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.domain",
+      "match": "#.*$"
+    },
+    "themed-statement": {
+      "comment": "A statement head: the themed keyword, its ':' , and the operation phrase up to end of line. The operation is highlighted in its own context so primitives, control-flow words, modifiers, and literals each get their own colour.",
+      "begin": "^\\s*(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal|Channel|Shikigami)\\b[ \\t]*(:)?",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.domain" },
+        "2": { "name": "punctuation.separator.key-value.domain" }
+      },
+      "end": "$",
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#string" },
+        { "include": "#lambda-arrow" },
+        { "include": "#control-flow" },
+        { "include": "#primitive" },
+        { "include": "#order-modifier" },
+        { "include": "#builtin" },
+        { "include": "#type-name" },
+        { "include": "#logical-operator" },
+        { "include": "#preposition" },
+        { "include": "#operator" },
+        { "include": "#number" }
+      ]
+    },
+    "primitive": {
+      "comment": "The Go-backed primitives. Multi-word phrases precede their single-word prefixes so the longest name wins (Oniguruma matches left-to-right, not longest-overall).",
+      "name": "support.function.primitive.domain",
+      "match": "\\b(Sum Each Group|Split Each|Split Fields|Extract Integers|Ragged Columns|Map Each|Map Cells|Find Cells|Match Pattern|Take Item|Select Top|Count Matching|Count Cells|Count By|Min By|Max By|Sort By|Group By|All Pairs|Merge Ranges|Flood Fill|Connected Components|Convert|Split|Window|Flatten|Enumerate|Filter|Unique|Transpose|Apply|Quicksort|Sort|Combinations|Permutations|Subsets|BFS|Dijkstra|Reverse|Product|Intersect|Union|Difference|Fold|Join|Sum|Count|Max|Min|Emit)\\b"
+    },
+    "control-flow": {
+      "comment": "Simple Domain loop drivers.",
+      "name": "keyword.control.loop.domain",
+      "match": "\\b(Iterate Until Fixed Point|Repeat|While)\\b"
+    },
+    "preposition": {
+      "comment": "Operation connector words: Split Text `by`, BFS `from`, Join `with`, Convert `to`.",
+      "name": "keyword.operator.word.domain",
+      "match": "\\b(by|from|to|with|into|of)\\b"
+    },
+    "argument-key": {
+      "comment": "Indented named arguments: Using:, Mode:, Seed:, From:, Default:, Mark: ...",
+      "match": "^\\s+([A-Za-z_][A-Za-z0-9_]*)(?=:)",
+      "captures": {
+        "1": { "name": "variable.parameter.domain" }
+      }
+    },
+    "string": {
+      "name": "string.quoted.double.domain",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.domain",
+          "match": "\\\\[nt\\\\\"]"
+        },
+        {
+          "comment": "Match Pattern typed holes: {a:int}, {word}, {name:text}",
+          "name": "constant.other.placeholder.domain",
+          "match": "\\{[^}]*\\}"
+        }
+      ]
+    },
+    "lambda-arrow": {
+      "name": "storage.type.function.arrow.domain",
+      "match": "->"
+    },
+    "builtin": {
+      "comment": "Expression-layer builtin functions (call position only).",
+      "name": "support.function.builtin.domain",
+      "match": "\\b(abs|at|band|bor|bxor|ceil|cells|col|cols|concat|contains|dirs4|drop|first|floor|frombin|gcd|get|has|inbounds|item|last|lcm|length|list|manhattan|maxcol|maxrow|max|mincol|minrow|min|modinv|modpow|name|neighbors4|neighbors8|occurrences|padd|pcol|point|prow|put|repeats|reverse|rotl|rotr|round|rows|row|set|shl|shr|sign|solve2x2|sparse|sqrt|sum|take|tofloat|toint|totext)(?=\\s*\\()"
+    },
+    "mode-value": {
+      "comment": "The variant selector after Mode: (One/Each/Filter/Count/First/Map).",
+      "match": "(?<=Mode:)\\s*(One|Each|Filter|Count|First|Map)\\b",
+      "captures": {
+        "1": { "name": "constant.language.mode.domain" }
+      }
+    },
+    "order-modifier": {
+      "name": "constant.language.order.domain",
+      "match": "\\b(Ascending|Descending)\\b"
+    },
+    "type-name": {
+      "comment": "Value-kind names: Shikigami parameter types and doc-style type mentions.",
+      "name": "storage.type.domain",
+      "match": "\\b(Int|Text|Float|Bool|List|Tuple|Record|Map|Set|Grid|Sparse)\\b"
+    },
+    "logical-operator": {
+      "name": "keyword.operator.logical.domain",
+      "match": "\\b(and|or|not|if|then|else)\\b"
+    },
+    "operator": {
+      "name": "keyword.operator.domain",
+      "match": "<=|>=|!=|[-+*/%=<>]"
+    },
+    "number": {
+      "name": "constant.numeric.integer.domain",
+      "match": "\\b\\d+\\b"
+    }
+  }
+}

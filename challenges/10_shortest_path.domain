@@ -1,0 +1,14 @@
+# Shortest weighted path (AoC 2021 Day 15) — cross the risk grid from the
+# top-left to the bottom-right corner along the cheapest route.
+#
+# Dijkstra floods entry costs from the start; at() reads the far corner.
+# Run with --explain: the optimizer fuses the pair into an early-exit
+# search that stops the moment the target settles.
+#
+#   domain challenges/10_shortest_path.domain
+Cursed Energy: 10_shortest_path.input
+Shikigami: Digit Grid
+Domain Expansion: Dijkstra from 0 0
+Cursed Technique: Apply
+    Using: (g) -> at(g, 9, 9)
+Reveal: stdout

@@ -1,0 +1,35 @@
+# AoC 2022 Day 5 — Channel multi-section demonstrator.
+#
+# The input has two structurally different sections (a crate drawing and a list
+# of moves) that must both stay live and then combine. This program splits them
+# into two Channels, processes each independently, and recombines with a From:
+# consumer.
+#
+# It computes: (total crates moved across all moves) + (number of drawing rows).
+# For the example input that is 7 + 4 = 11.
+#
+# NOTE: the full crate-rearrangement simulation (-> "CMZ") needs list/stack
+# manipulation primitives inside lambda bodies, which are deferred past v0.2.
+# This program exercises the Channel mechanism end-to-end on the real input.
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n\n"
+
+Channel "moves":
+    Cursed Technique: Take Item 1
+    Cursed Technique: Split Text by "\n"
+    Cursed Technique: Match Pattern
+        Using: "move {n:int} from {src:int} to {dst:int}"
+    Cursed Technique: Map Each
+        Using: (m) -> m.n
+    Maximum Technique: Sum
+
+Channel "rows":
+    Cursed Technique: Take Item 0
+    Cursed Technique: Split Text by "\n"
+    Maximum Technique: Count
+
+Maximum Technique: Combine
+    From: moves, rows
+    Using: (moves, rows) -> moves + rows
+
+Reveal: stdout

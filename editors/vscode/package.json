@@ -1,0 +1,82 @@
+{
+  "name": "domain-language",
+  "displayName": "Domain Language",
+  "description": "Language support for the Domain language (.domain) — syntax highlighting plus a language server (diagnostics, primitive-documentation hover, completion, go-to-Shikigami, quick fixes) for the JJK-themed Advent of Code pipeline language",
+  "version": "0.3.0",
+  "publisher": "domain-lang",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:domain"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "domain",
+        "aliases": [
+          "Domain",
+          "domain"
+        ],
+        "extensions": [
+          ".domain"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "domain",
+        "scopeName": "source.domain",
+        "path": "./syntaxes/domain.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "domain.restartServer",
+        "title": "Domain: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "Domain",
+      "properties": {
+        "domain.server.path": {
+          "type": "string",
+          "default": "domain",
+          "markdownDescription": "Path to the `domain` executable used for the language server (`domain lsp`). Leave as `domain` to use the one on your PATH."
+        },
+        "domain.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the JSON-RPC communication between VS Code and the Domain language server (shown in the 'Domain Language Server' output channel)."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[domain]": {
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4,
+        "editor.detectIndentation": false
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm install --omit=dev"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0"
+  }
+}

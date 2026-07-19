@@ -1,0 +1,21 @@
+# Transparent origami (AoC 2021 Day 13) — plot dots on an unbounded sheet,
+# fold it up along y=7 and left along x=5, and read the letter the dots
+# form.
+#
+# Input is x,y (column,row) pairs. Each fold is a per-point reflection, so
+# both compose in one Map Each; the Sparse grid keeps only the dots, and
+# densifying prints the picture.
+#
+#   domain challenges/12_origami.domain
+Cursed Energy: 12_origami.input
+Shikigami: Lines
+Cursed Technique: Match Pattern
+    Using: "{int},{int}"
+    Mode: Each
+Cursed Technique: Map Each
+    Using: (q) -> point(if item(q, 1) > 7 then 14 - item(q, 1) else item(q, 1), if item(q, 0) > 5 then 10 - item(q, 0) else item(q, 0))
+Channeled Energy: Convert To Sparse Grid
+    Default: "."
+    Mark: "#"
+Channeled Energy: Convert To Grid
+Reveal: stdout

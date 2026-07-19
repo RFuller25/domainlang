@@ -1,0 +1,13 @@
+# Two Sum — the most famous interview question there is: find the pair of
+# numbers that sums to 2020 (the Advent of Code 2020 Day 1 flavor).
+#
+# Named naively as an all-pairs scan; run with --explain to watch the
+# optimizer swap in the O(n) hash-set scan.
+#
+#   domain challenges/02_two_sum.domain
+Cursed Energy: 02_two_sum.input
+Shikigami: Ints
+Domain Expansion: All Pairs
+    Mode: First
+    Using: (a, b) -> a + b = 2020
+Reveal: stdout

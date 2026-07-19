@@ -1,0 +1,23 @@
+# Maximum subarray sum (Kadane's algorithm) — the classic dynamic
+# programming exercise: the largest sum of any contiguous run.
+#
+# The fold state is a two-element list [best, current]. The main pipeline
+# holds the seed (built from the first element); the Channel carries the
+# rest of the numbers for Fold From: to run over.
+#
+#   domain challenges/03_max_subarray.domain
+Cursed Energy: 03_max_subarray.input
+Shikigami: Ints
+
+Channel "rest":
+    Cursed Technique: Apply
+        Using: (xs) -> drop(xs, 1)
+
+Cursed Technique: Apply
+    Using: (xs) -> list(item(xs, 0), item(xs, 0))
+Maximum Technique: Fold
+    From: rest
+    Using: (acc, x) -> list(max(list(first(acc), max(list(x, last(acc) + x)))), max(list(x, last(acc) + x)))
+Cursed Technique: Apply
+    Using: (acc) -> first(acc)
+Reveal: stdout

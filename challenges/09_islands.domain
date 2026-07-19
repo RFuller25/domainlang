@@ -1,0 +1,11 @@
+# Number of islands (LeetCode 200) — count the 4-connected groups of land.
+#
+# Connected Components is the whole algorithm (union-find under the hood).
+#
+#   domain challenges/09_islands.domain
+Cursed Energy: 09_islands.input
+Shikigami: Lines
+Channeled Energy: Convert To Grid
+Domain Expansion: Connected Components
+    Using: (c) -> c = "#"
+Reveal: stdout

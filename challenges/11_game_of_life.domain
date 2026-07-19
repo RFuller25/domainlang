@@ -1,0 +1,38 @@
+# Conway's Game of Life — a glider on an infinite plane, run 4 generations.
+#
+# The board is a Sparse grid, so there are no edges to clip the glider. One
+# generation is the classic counting trick: every live cell contributes 1
+# to each of its 8 neighbors and 9 to itself, so after Count By a cell's
+# score is neighbors + 9*alive — and the next generation is exactly the
+# cells scoring 3 (birth), 11, or 12 (survival). After 4 generations a
+# glider is itself, translated one step diagonally — which the densified
+# bounding-box picture normalizes away, so the output equals the input.
+#
+#   domain challenges/11_game_of_life.domain
+Cursed Energy: 11_game_of_life.input
+Shikigami: Lines
+Cursed Technique: Match Pattern
+    Using: "{int},{int}"
+    Mode: Each
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+    Mark: 1
+Simple Domain: Repeat 4
+    Cursed Technique: Find Cells
+        Using: (v) -> v = 1
+    Cursed Technique: Map Each
+        Using: (p) -> list(padd(p, point(-1, -1)), padd(p, point(-1, 0)), padd(p, point(-1, 1)), padd(p, point(0, -1)), padd(p, point(0, 1)), padd(p, point(1, -1)), padd(p, point(1, 0)), padd(p, point(1, 1)), p, p, p, p, p, p, p, p, p)
+    Cursed Technique: Flatten
+    Maximum Technique: Count By
+        Using: (q) -> q
+    Channeled Energy: Convert To Sparse Grid
+        Default: 0
+    Cursed Technique: Find Cells
+        Using: (score) -> score = 3 or score = 11 or score = 12
+    Channeled Energy: Convert To Sparse Grid
+        Default: 0
+        Mark: 1
+Cursed Technique: Map Cells
+    Using: (v) -> if v = 1 then "#" else "."
+Channeled Energy: Convert To Grid
+Reveal: stdout

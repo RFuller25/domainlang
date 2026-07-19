@@ -1,0 +1,12 @@
+# Rotate image (LeetCode 48) — rotate a square matrix 90 degrees clockwise.
+#
+# The two-step identity: transpose, then reverse each row — the row
+# reversal written as a positional Map Cells reading mirrored columns.
+#
+#   domain challenges/07_rotate_image.domain
+Cursed Energy: 07_rotate_image.input
+Shikigami: Digit Grid
+Cursed Technique: Transpose
+Cursed Technique: Map Cells
+    Using: (g, r, c) -> at(g, r, cols(g) - 1 - c)
+Reveal: stdout

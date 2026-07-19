@@ -1,0 +1,12 @@
+# Count grid cells passing a predicate.
+#
+# `Digit Grid` is a prelude Shikigami (split lines → split chars → convert →
+# grid). Count Cells applies the lambda to every cell.
+#
+#   domain examples/06_tall_trees.domain
+#   Expected output: 9
+Cursed Energy: 06_tall_trees.input
+Shikigami: Digit Grid
+Maximum Technique: Count Cells
+    Using: (h) -> h >= 5
+Reveal: stdout

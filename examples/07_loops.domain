@@ -1,0 +1,21 @@
+# Loops: Repeat a fixed number of times, then While a condition holds.
+#
+# Sum the input (35), double it three times (280), then subtract 30 while
+# the value stays above 100 — landing exactly on 100. The Binding Vow is a
+# debug assertion: try breaking the input and re-running, then shed the vow
+# with --release.
+#
+#   domain examples/07_loops.domain
+#   Expected output: 100
+Cursed Energy: 07_loops.input
+Shikigami: Ints
+Binding Vow: All Values > 0
+Maximum Technique: Sum
+Simple Domain: Repeat 3
+    Cursed Technique: Apply
+        Using: (v) -> v * 2
+Simple Domain: While
+    Using: (v) -> v > 100
+    Cursed Technique: Apply
+        Using: (v) -> v - 30
+Reveal: stdout

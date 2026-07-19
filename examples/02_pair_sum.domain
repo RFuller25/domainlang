@@ -1,0 +1,15 @@
+# Find the two numbers summing to 100 and multiply them.
+#
+# `All Pairs` with a sum-to-constant lambda is the O(n²) request; the
+# optimizer lowers it to an O(n) hash-set scan (--explain shows it). The
+# `Ints` line is a prelude Shikigami: split lines + convert to integers.
+#
+#   domain examples/02_pair_sum.domain
+#   Expected output: 2419
+Cursed Energy: 02_pair_sum.input
+Shikigami: Ints
+Domain Expansion: All Pairs
+    Mode: First
+    Using: (a, b) -> a + b = 100
+Maximum Technique: Product
+Reveal: stdout

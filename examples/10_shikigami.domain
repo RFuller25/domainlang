@@ -1,0 +1,20 @@
+# Define your own Shikigami with a typed parameter.
+#
+# "Scaled Sum" sums a list and multiplies by a factor; the parameter
+# substitutes into the lambda body when the call is inlined. A Filter
+# drops the non-positive readings first.
+#
+#   domain examples/10_shikigami.domain
+#   Expected output: 231
+Shikigami "Scaled Sum" (factor: Int)
+    Maximum Technique: Sum
+    Cursed Technique: Apply
+        Using: (v) -> v * factor
+
+Cursed Energy: 10_shikigami.input
+Shikigami: Ints
+Cursed Technique: Filter
+    Using: (x) -> x > 0
+Shikigami: Scaled Sum
+    factor: 7
+Reveal: stdout

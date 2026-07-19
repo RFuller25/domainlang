@@ -1,0 +1,12 @@
+# Set intersection over groups: which letters appear on every line?
+#
+# Splitting each line by "" makes a list of characters; Intersect reduces
+# the groups to a Set, rendered in the first line's letter order.
+#
+#   domain examples/09_common_letters.domain
+#   Expected output: {d, o, m, a, n}
+Cursed Energy: 09_common_letters.input
+Shikigami: Lines
+Cursed Technique: Split Each by ""
+Maximum Technique: Intersect
+Reveal: stdout

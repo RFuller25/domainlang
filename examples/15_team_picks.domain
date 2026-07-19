@@ -1,0 +1,13 @@
+# Exhaustive generation: every subset, filtered by a predicate.
+#
+# `Subsets` produces the power set (empty set first, whole roster last);
+# the reduction keeps only the two-person teams that include ana.
+#
+#   domain examples/15_team_picks.domain
+#   Expected output: 3
+Cursed Energy: 15_team_picks.input
+Cursed Technique: Split Text by ", "
+Domain Expansion: Subsets
+Maximum Technique: Count Matching
+    Using: (team) -> length(team) = 2 and contains(team, "ana")
+Reveal: stdout
