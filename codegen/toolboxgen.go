@@ -294,7 +294,7 @@ func (g *gen) emitMergeRanges(n *ir.Node, in string) (string, error) {
 }
 
 const declPermutations = `func dmPermutations[T any](xs []T, bound int) [][]T {
-	if len(xs) > bound {
+	if bound > 0 && len(xs) > bound {
 		dmFail("refusing to permute %d elements (n! explodes; the bound is %d)", len(xs), bound)
 	}
 	out := [][]T{}
@@ -330,7 +330,7 @@ func (g *gen) emitPermutations(n *ir.Node, in string) (string, error) {
 }
 
 const declSubsets = `func dmSubsets[T any](xs []T, bound int) [][]T {
-	if len(xs) > bound {
+	if bound > 0 && len(xs) > bound {
 		dmFail("refusing the power set of %d elements (2^n explodes; the bound is %d)", len(xs), bound)
 	}
 	total := 1 << len(xs)

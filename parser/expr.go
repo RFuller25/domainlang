@@ -10,9 +10,11 @@ const (
 	bpNone    = 0
 	bpOr      = 4  // or
 	bpAnd     = 6  // and
+	bpNot     = 8  // ikke x   (tighter than `and`, looser than a comparison,
+	//                          so `ikke a = b` reads as `ikke (a = b)`)
 	bpCompare = 10 // = < > <= >=
 	bpSum     = 20 // + -
-	bpProduct = 30 // * /
+	bpProduct = 30 // * / %
 	bpUnary   = 40 // -x
 	bpCall    = 50 // f(...) and x.field
 )
@@ -27,7 +29,7 @@ func (p *parser) infixOp() (token.Kind, int) {
 		return t.Kind, bpCompare
 	case token.PLUS, token.MINUS:
 		return t.Kind, bpSum
-	case token.STAR, token.SLASH:
+	case token.STAR, token.SLASH, token.PERCENT:
 		return t.Kind, bpProduct
 	case token.IDENT:
 		switch t.Literal {
@@ -63,6 +65,18 @@ func (p *parser) parseExpr(minBP int) (ast.Expr, error) {
 }
 
 func (p *parser) parseUnary() (ast.Expr, error) {
+	// `ikke` is prefix negation. Like `and`/`or` it arrives as an IDENT and is
+	// rewritten here, so it stays a legal identifier anywhere else. Its operand
+	// is parsed at bpNot, which pulls in a whole comparison (`ikke a = b`) but
+	// stops at `and`, so `ikke a and b` is `(ikke a) and b`.
+	if t := p.cur(); t.Kind == token.IDENT && t.Literal == "ikke" {
+		opTok := p.advance()
+		x, err := p.parseExpr(bpNot)
+		if err != nil {
+			return nil, err
+		}
+		return &ast.UnaryExpr{Op: token.NOT, X: x, Pos: opTok.Pos}, nil
+	}
 	if p.cur().Kind == token.MINUS {
 		opTok := p.advance()
 		// A MINUS immediately followed by INT is folded into a single signed
@@ -153,6 +167,9 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		if t.Literal == "if" {
 			return p.parseCond()
 		}
+		if t.Literal == "consider" {
+			return p.parseLet()
+		}
 		p.advance()
 		return &ast.Ident{Name: t.Literal, Pos: t.Pos}, nil
 	case token.LPAREN:
@@ -196,11 +213,49 @@ func (p *parser) parseCond() (ast.Expr, error) {
 	return &ast.CondExpr{Cond: cond, Then: thenE, Else: elseE, Pos: ifTok.Pos}, nil
 }
 
+// parseLet parses `consider NAME as VALUE in BODY`. Like `if`, the keywords
+// are contextual IDENTs, so `consider` stays usable as an ordinary name. The
+// body extends as far right as possible, and bindings nest:
+// `consider a as 1 in consider b as 2 in a + b`.
+func (p *parser) parseLet() (ast.Expr, error) {
+	letTok := p.advance() // the "consider" IDENT
+	nameTok := p.cur()
+	if nameTok.Kind != token.IDENT {
+		return nil, p.errf("expected a name after \"consider\", got %s", nameTok)
+	}
+	// Reject the keywords outright: `consider as ...` is a missing name, and
+	// saying so beats a confusing failure further along.
+	switch nameTok.Literal {
+	case "as", "in", "if", "then", "else", "consider":
+		return nil, p.errf("expected a name after \"consider\", got the keyword %q", nameTok.Literal)
+	}
+	p.advance()
+	if err := p.expectWordIn("as", "consider binding"); err != nil {
+		return nil, err
+	}
+	value, err := p.parseExpr(0)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectWordIn("in", "consider binding"); err != nil {
+		return nil, err
+	}
+	body, err := p.parseExpr(0)
+	if err != nil {
+		return nil, err
+	}
+	return &ast.LetExpr{Name: nameTok.Literal, Value: value, Body: body, Pos: letTok.Pos}, nil
+}
+
 // expectWord consumes an IDENT with the exact literal, or errors.
 func (p *parser) expectWord(word string) error {
+	return p.expectWordIn(word, "conditional expression")
+}
+
+func (p *parser) expectWordIn(word, ctx string) error {
 	t := p.cur()
 	if t.Kind != token.IDENT || t.Literal != word {
-		return p.errf("expected %q in conditional expression, got %s", word, t)
+		return p.errf("expected %q in %s, got %s", word, ctx, t)
 	}
 	p.advance()
 	return nil

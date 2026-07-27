@@ -1,0 +1,25 @@
+# The themed keyword in front of an operation is optional — the compiler
+# infers it from the phrase. This is example 01 written without a single
+# prefix, and it resolves to exactly the same pipeline (quickselect and all;
+# run it with --explain).
+#
+# The two spellings mix freely: the Filter below keeps its keyword, and every
+# other line drops it. A Shikigami is called by its bare name too, which is
+# why a Shikigami may not be named after a built-in operation.
+#
+#   domain examples/16_no_prefixes.domain
+#   Expected output: 15000
+Shikigami "Heavy Elves"
+    Filter
+        Using: (g) -> sum(g) > 5000
+
+16_no_prefixes.input
+Split Text by "\n\n"
+Split Each by "\n"
+Convert Each List to Integers
+Heavy Elves
+Sum Each Group
+Count Equals 3
+Quicksort, Descending
+Cursed Technique: Take Item 0
+stdout

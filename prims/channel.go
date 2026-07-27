@@ -35,7 +35,7 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("channel %q has an empty body", name)}
 	}
 
-	subNodes, subType, err := r.resolveSequence(stmt.Block, cur, false)
+	subNodes, subType, err := r.resolveSequence(stmt.Block, cur, scopeChannel)
 	if err != nil {
 		return nil, err
 	}
@@ -49,10 +49,12 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 		Meta:    map[string]any{"name": name, "nodes": subNodes},
 		Pos:     stmt.Pos,
 		Eval: func(ctx *ir.Context, in ir.Value) (ir.Value, error) {
+			ctx.PushFrame(fmt.Sprintf("Channel %q", name))
+			defer ctx.PopFrame()
 			v := in
 			var err error
 			for _, n := range subNodes {
-				if v, err = n.Eval(ctx, v); err != nil {
+				if v, err = ir.EvalNode(ctx, n, v); err != nil {
 					return nil, err
 				}
 			}
@@ -85,6 +87,8 @@ func (r *resolver) resolveConsumer(stmt *ast.Statement, cur *ir.Type) (*ir.Node,
 		return buildDifference(froms, types, cur, stmt.Pos)
 	case hasWord(stmt.Op, "Fold"):
 		return buildFoldOver(args, froms, types, cur, stmt.Pos)
+	case hasWord(stmt.Op, "Zip") && args.Has("Using"):
+		return buildZipWith(args, froms, types, cur, stmt.Pos)
 	case hasWord(stmt.Op, "Zip"):
 		return buildZip(froms, types, cur, stmt.Pos)
 	default:
@@ -145,6 +149,85 @@ func buildZip(froms []string, types []*ir.Type, cur *ir.Type, pos token.Position
 	}, nil
 }
 
+// buildZipWith is Zip with a Using: lambda: it combines the two channels
+// element-wise directly instead of handing back tuples for a following Map
+// Each to take apart. One pass, and no intermediate tuple list — the
+// optimizer performs the same rewrite on a naive `Zip` + `Map Each` pair
+// (optimizer.fuseZipWith).
+func buildZipWith(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, pos token.Position) (*ir.Node, error) {
+	if len(froms) != 2 {
+		return nil, &ResolveError{Pos: pos, Msg: "Zip needs exactly two channels (From: a, b)"}
+	}
+	for i, t := range types {
+		if t == nil || t.Kind != ir.KList {
+			return nil, &ResolveError{Pos: pos,
+				Msg: fmt.Sprintf("Zip channel %q must hold a List, got %s", froms[i], t)}
+		}
+	}
+	lam, _ := args.Lambda("Using")
+	if len(lam.Params) != 2 {
+		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"Zip Using: lambda must take 2 parameters (one per channel), got %d", len(lam.Params))}
+	}
+	elems := []*ir.Type{types[0].Elem, types[1].Elem}
+	outElem, err := typecheck.LambdaType(lam, elems...)
+	if err != nil {
+		return nil, &ResolveError{Pos: pos, Msg: "Zip With: " + err.Error()}
+	}
+	a, b := froms[0], froms[1]
+	return &ir.Node{
+		Prim:    "Zip With",
+		In:      cur,
+		Out:     ir.List(outElem),
+		Display: fmt.Sprintf("Zip With From: %s, %s", a, b),
+		Meta:    map[string]any{"from": []string{a, b}, "lambda": lam},
+		Pos:     pos,
+		Eval: func(ctx *ir.Context, _ ir.Value) (ir.Value, error) {
+			as, bs, err := zipChannelLists(ctx, "Zip With", a, b, pos)
+			if err != nil {
+				return nil, err
+			}
+			n := len(as)
+			if len(bs) < n {
+				n = len(bs) // truncated to the shorter list, like Zip
+			}
+			out := make([]ir.Value, n)
+			for i := 0; i < n; i++ {
+				r, err := eval.EvalLambdaTyped(lam, elems, as[i], bs[i])
+				if err != nil {
+					return nil, runtimeErr("Zip With", pos, "element %d: %v", i, err)
+				}
+				out[i] = r
+			}
+			return out, nil
+		},
+	}, nil
+}
+
+// zipChannelLists reads two channels and requires both to hold lists.
+func zipChannelLists(ctx *ir.Context, prim, a, b string, pos token.Position) ([]ir.Value, []ir.Value, error) {
+	get := func(name string) ([]ir.Value, error) {
+		v, ok := ctx.Channel(name)
+		if !ok {
+			return nil, runtimeErr(prim, pos, "channel %q has no value", name)
+		}
+		xs, err := ir.AsList(v)
+		if err != nil {
+			return nil, runtimeErr(prim, pos, "channel %q: %v", name, err)
+		}
+		return xs, nil
+	}
+	as, err := get(a)
+	if err != nil {
+		return nil, nil, err
+	}
+	bs, err := get(b)
+	if err != nil {
+		return nil, nil, err
+	}
+	return as, bs, nil
+}
+
 // buildFoldOver lowers `Fold` with a `From:` channel: fold over the channel's
 // list with the *current pipeline value* as the seed. This is how a state
 // value built upstream (e.g. crate stacks) threads through a list that lives
@@ -167,11 +250,12 @@ func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, 
 	if !ok {
 		return nil, &ResolveError{Pos: pos, Msg: "Fold requires a Using: lambda"}
 	}
-	if len(lam.Params) != 2 {
+	wantArity := 2 + ambientDepth()
+	if len(lam.Params) != wantArity {
 		return nil, &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("Fold lambda must take 2 parameters (acc, item), got %d", len(lam.Params))}
+			Msg: fmt.Sprintf("Fold lambda must take %d parameters (acc, item, ...), got %d", wantArity, len(lam.Params))}
 	}
-	bodyType, err := typecheck.LambdaType(lam, cur, over.Elem)
+	bodyType, err := typecheck.LambdaType(lam, append([]*ir.Type{cur, over.Elem}, ambientTypes()...)...)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: "Fold: " + err.Error()}
 	}
@@ -198,7 +282,7 @@ func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, 
 			}
 			acc := in
 			for i, x := range xs {
-				acc, err = eval.EvalLambdaTyped(lam, []*ir.Type{cur, over.Elem}, acc, x)
+				acc, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{cur, over.Elem}, ambientTypes()...), append([]ir.Value{acc, x}, ambientArgs()...)...)
 				if err != nil {
 					return nil, runtimeErr("FoldOver", pos, "item %d: %v", i, err)
 				}
@@ -215,12 +299,13 @@ func buildCombine(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, p
 	if !ok {
 		return nil, &ResolveError{Pos: pos, Msg: "Combine requires a Using: lambda"}
 	}
-	if len(lam.Params) != len(froms) {
+	wantArity := len(froms) + ambientDepth()
+	if len(lam.Params) != wantArity {
 		return nil, &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("Combine lambda takes %d parameter(s) but From: names %d channel(s)",
-				len(lam.Params), len(froms))}
+			Msg: fmt.Sprintf("Combine lambda takes %d parameter(s) but From: names %d channel(s) (plus %d ambient)",
+				len(lam.Params), len(froms), ambientDepth())}
 	}
-	outType, err := typecheck.LambdaType(lam, types...)
+	outType, err := typecheck.LambdaType(lam, append(types, ambientTypes()...)...)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: "Combine: " + err.Error()}
 	}
@@ -241,7 +326,7 @@ func buildCombine(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, p
 				}
 				vals[i] = v
 			}
-			r, err := eval.EvalLambdaTyped(lam, types, vals...)
+			r, err := eval.EvalLambdaTyped(lam, append(types, ambientTypes()...), append(vals, ambientArgs()...)...)
 			if err != nil {
 				return nil, runtimeErr("Combine", pos, "%v", err)
 			}

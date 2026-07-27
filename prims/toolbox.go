@@ -435,12 +435,17 @@ func rangeEnds(v ir.Value, loName, hiName string) (int64, int64, error) {
 
 // ---------------------------------------------------------------------------
 // Domain Expansion: Permutations — List<T> -> List<List<T>>, every ordering
-// in lexicographic index order. Bounded: n! explodes, so n > 9 is refused.
+// in lexicographic index order.
 // ---------------------------------------------------------------------------
 
-// MaxPermutationInput bounds Permutations (n! explodes). Codegen emits the
-// same bound so both backends refuse identically.
-const MaxPermutationInput = 9
+// MaxPermutationInput optionally bounds Permutations. Zero — the default —
+// means unlimited. It used to be a hard 9, which refused a 10-element input
+// (3.6M orderings) that a machine handles comfortably; a limit must never be
+// the reason a correct program cannot run. n! still explodes, so a large
+// input is now slow or memory-hungry rather than a clean refusal. Codegen
+// emits whatever this says, so both backends behave identically. It is a var
+// so a caller (or a test) can opt back into a ceiling.
+var MaxPermutationInput = 0
 
 var permutations = &Primitive{
 	ID:      "Permutations",
@@ -463,7 +468,7 @@ var permutations = &Primitive{
 				if err != nil {
 					return nil, runtimeErr("Permutations", pos, "%v", err)
 				}
-				if len(xs) > MaxPermutationInput {
+				if MaxPermutationInput > 0 && len(xs) > MaxPermutationInput {
 					return nil, runtimeErr("Permutations", pos,
 						"refusing to permute %d elements (n! explodes; the bound is %d)",
 						len(xs), MaxPermutationInput)
@@ -498,10 +503,12 @@ var permutations = &Primitive{
 // ---------------------------------------------------------------------------
 // Domain Expansion: Subsets — List<T> -> List<List<T>>, the power set. Subset
 // k of the output includes element i iff bit i of k is set, so the empty set
-// comes first and the full list last. Bounded: n > 16 is refused.
+// comes first and the full list last.
 // ---------------------------------------------------------------------------
 
-const MaxSubsetInput = 16
+// MaxSubsetInput optionally bounds Subsets; zero (the default) is unlimited,
+// for the same reason as MaxPermutationInput. 2^n still explodes.
+var MaxSubsetInput = 0
 
 var subsets = &Primitive{
 	ID:      "Subsets",
@@ -524,7 +531,7 @@ var subsets = &Primitive{
 				if err != nil {
 					return nil, runtimeErr("Subsets", pos, "%v", err)
 				}
-				if len(xs) > MaxSubsetInput {
+				if MaxSubsetInput > 0 && len(xs) > MaxSubsetInput {
 					return nil, runtimeErr("Subsets", pos,
 						"refusing the power set of %d elements (2^n explodes; the bound is %d)",
 						len(xs), MaxSubsetInput)

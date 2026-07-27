@@ -32,10 +32,10 @@ const maxSourceRewrites = 25
 // OptimizeSource repeatedly applies the first available source-level rewrite
 // until none remain. The input must already resolve cleanly; a rewrite whose
 // result stops resolving is rolled back and ends the loop.
-func OptimizeSource(src string) (string, []SourceRewrite) {
+func OptimizeSource(path, src string) (string, []SourceRewrite) {
 	var all []SourceRewrite
 	for round := 0; round < maxSourceRewrites; round++ {
-		prog := parseClean(src)
+		prog := parseClean(path, src)
 		if prog == nil {
 			break
 		}
@@ -44,7 +44,7 @@ func OptimizeSource(src string) (string, []SourceRewrite) {
 			break
 		}
 		next := op.apply(src)
-		if parseClean(next) == nil {
+		if parseClean(path, next) == nil {
 			break // the rewrite broke the program; keep the last good source
 		}
 		src = next
@@ -54,8 +54,8 @@ func OptimizeSource(src string) (string, []SourceRewrite) {
 }
 
 // parseClean returns the parsed program when src lexes, parses, and resolves;
-// nil otherwise.
-func parseClean(src string) *ast.Program {
+// nil otherwise. path gives imports their file context.
+func parseClean(path, src string) *ast.Program {
 	toks, err := lexer.Lex(src)
 	if err != nil {
 		return nil
@@ -64,7 +64,7 @@ func parseClean(src string) *ast.Program {
 	if err != nil {
 		return nil
 	}
-	if _, err := prims.Resolve(prog); err != nil {
+	if _, err := prims.ResolveWith(prog, prims.FileOptions(path)); err != nil {
 		return nil
 	}
 	return prog

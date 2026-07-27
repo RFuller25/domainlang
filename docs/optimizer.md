@@ -18,7 +18,7 @@ quickselect. `--explain` prints every step of the chain.
 
 ## The pass catalog
 
-Twenty-six passes in four families. "Cost" is what the rewrite saves.
+Thirty passes in four families. "Cost" is what the rewrite saves.
 
 ### Algorithm substitutions
 
@@ -36,6 +36,7 @@ provably identical result.
 | 7 | `All Pairs` with `(a, b) -> a * b = K`, Mode First/Count | `DivisorPairScan` (each element's only partner is K÷element; zeros counted separately, since a zero pairs with *everything* exactly when K = 0) | O(n²) → O(n) |
 | 8 | `Window size [step]` + `Map Each ((w) -> sum(w)/max(w)/min(w))` | `WindowedReduce`: prefix sums for sum, a monotonic deque for max/min — one streaming pass, no window lists materialized | O(n·size) time and space → O(n) |
 | 9 | `BFS`/`Dijkstra` + `Apply ((g) -> at(g, R, C))` | `SearchTarget`: early-exit search that stops the moment the target settles (BFS labels at enqueue, Dijkstra at pop — the value is already final) | whole-grid exploration → only cells at distance/cost ≤ the target's |
+| 10 | `Filter` (total predicate) + `Take Item 0` | `Find`: stop at the first match instead of testing every element and building the list of all of them, and report `Take Item`'s own message when there is no match | O(n) tests + a match list → tests up to the first hit, no list |
 
 For 2–4 and 7 the lambda is recognized in any operand order or association,
 with the literal on either side of `=`, and the parameters must be distinct
@@ -59,6 +60,7 @@ they guard against cannot occur.
 [explain] Domain rewrote All Pairs (product = 12) → Cursed Divisor Scan. Guaranteed hit.
 [explain] Domain rewrote Window 3 + Map Each (sum) → Cursed Sliding-Window Sum (one pass, no window lists). Guaranteed hit.
 [explain] Domain rewrote BFS + at(2, 2) → early-exit search (stops when the target settles). Guaranteed hit.
+[explain] Domain rewrote Filter + Take Item 0 → Cursed First Match (stops at the first hit). Guaranteed hit.
 ```
 
 ### Reordering dead code
@@ -67,40 +69,48 @@ Reorderings whose effect is provably invisible are cancelled or hoisted.
 
 | # | Pattern | Rewrite |
 |---|---------|---------|
-| 10 | `Sort` + `Sort` | keep only the second (the first ordering is dead) |
-| 11 | `Reverse` + `Reverse` | drop both (an involution applied twice) |
-| 12 | `Sort` + `Reverse` | one `Sort` with the opposite order |
-| 13 | `Sort`/`Reverse` + `Sum`/`Count`/`Max`/`Min`/`Product` | drop the reordering (the reduction is order-insensitive) |
-| 14 | `Unique` + `Unique` | one `Unique` (idempotent) |
-| 15 | `Unique` + `Max`/`Min` | drop `Unique` (duplicates cannot move an extremum) |
-| 16 | `Sort` + `Unique` | swap to `Unique` + `Sort` (dedupe first, sort d ≤ n elements) |
+| 11 | `Sort` + `Sort` | keep only the second (the first ordering is dead) |
+| 12 | `Reverse` + `Reverse` | drop both (an involution applied twice) |
+| 13 | `Sort` + `Reverse` | one `Sort` with the opposite order |
+| 14 | `Sort`/`Reverse` + `Sum`/`Count`/`Max`/`Min`/`Product` | drop the reordering (the reduction is order-insensitive) |
+| 15 | `Unique` + `Unique` | one `Unique` (idempotent) |
+| 16 | `Unique` + `Max`/`Min` | drop `Unique` (duplicates cannot move an extremum) |
+| 17 | `Sort` + `Unique` | swap to `Unique` + `Sort` (dedupe first, sort d ≤ n elements) |
 
-Pass 13 deliberately excludes `Count Matching`: its *result* is
+Pass 14 deliberately excludes `Count Matching`: its *result* is
 order-insensitive but its per-element error positions are not.
 
 ### Map/Filter dead code and fusion
 
 | # | Pattern | Rewrite |
 |---|---------|---------|
-| 17 | `Map Each ((x) -> x)` | drop the node (often the residue of pass 24) |
-| 18 | `Map Each` (total lambda) + `Count` | drop the map (mapping preserves length) |
-| 19 | `Map Each` + `Map Each` (first lambda total) | one fused `Map Each` running the composed lambda — one pass, no intermediate list |
-| 20 | `Filter` + `Filter` | one fused `Filter` with the conjoined predicate |
-| 21 | `Filter` + `Count` | `Count Matching` (count without materializing the list) |
-| 22 | `Fold` with `Seed: 0` and `(acc, x) -> acc + x` | `Sum` |
-| 23 | constant predicates (after folding): always-true `Filter` disappears; always-false `Filter` returns `[]` without scanning; always-true `Count Matching` becomes `Count`; always-false becomes `0` | |
+| 18 | `Map Each ((x) -> x)` | drop the node (often the residue of pass 28) |
+| 19 | `Map Each` (total lambda) + `Count` | drop the map (mapping preserves length) |
+| 20 | `Map Each` + `Map Each` (first lambda total) | one fused `Map Each` running the composed lambda — one pass, no intermediate list |
+| 21 | `Filter` + `Filter` | one fused `Filter` with the conjoined predicate |
+| 22 | `Filter` + `Count` | `Count Matching` (count without materializing the list) |
+| 23 | `Fold` with `Seed: 0` and `(acc, x) -> acc + x` | `Sum` |
+| 24 | constant predicates (after folding): always-true `Filter` disappears; always-false `Filter` returns `[]` without scanning; always-true `Count Matching` becomes `Count`; always-false becomes `0` | |
+| 25 | `Map Each` + `Sum` / `Product` | `Sum By` / `Product By` — folds each mapped value as it is produced, so no mapped list is built |
+| 26 | `Zip` + `Map Each` | one fused pass that builds each pair as a loop-local; the compiled form has no `[]tuple` in it |
+| 27 | constant predicates on the early-exit primitives: always-true `Take While` (and always-false `Drop While`) disappear, their opposites return `[]` unscanned; `Any`/`All` become a constant or an emptiness test |  |
+
+Passes 25 and 26 are unconditional: neither reorders lambda calls nor
+substitutes one body into another, so every evaluation the naive pipeline
+performed still happens, in the same order, and a lambda that fails still
+fails on the same element.
 
 ### Expression-layer simplification
 
 These rewrite `Using:` lambda bodies in place (interpreter and compiler
 share the lambda, so both see it), and they feed the structural passes —
-folding `1 = 2` to `false` is what arms pass 23.
+folding `1 = 2` to `false` is what arms passes 24 and 27.
 
 | # | Pattern | Examples |
 |---|---------|----------|
-| 24 | algebraic identities | `x + 0 → x` · `x * 1 → x` · `x / 1 → x` · `x * 0 → 0` · `x - x → 0` · `x = x → true` |
-| 25 | constant folding | `2 + 3 → 5` · `7 / 2 → 3` · `2 < 3 → true` · `"a" = "b" → false` · `-(4) → -4` |
-| 26 | boolean short-circuit | `true and p → p` · `false and p → false` · `p or false → p` |
+| 28 | algebraic identities | `x + 0 → x` · `x * 1 → x` · `x / 1 → x` · `x * 0 → 0` · `x - x → 0` · `x = x → true` |
+| 29 | constant folding | `2 + 3 → 5` · `7 / 2 → 3` · `2 < 3 → true` · `"a" = "b" → false` · `-(4) → -4` |
+| 30 | boolean short-circuit | `true and p → p` · `false and p → false` · `p or false → p` |
 
 ```
 [explain] Domain simplified the Using: lambda of Filter (boolean short-circuit, constant folding). Guaranteed hit.
@@ -180,3 +190,16 @@ Candidate future passes:
   errors on empty, but `Fold Seed: 1` returns 1 — semantics differ on empty
   input).
 - Common-subexpression elimination inside lambda bodies.
+- **Common prefix hoisting across `Part` blocks.** Two Parts that start with
+  the same operations could share one computation. This is CSE over
+  sub-pipelines and wants its own design — the naive version would have to
+  prove the shared prefix total, since discarding a failing computation would
+  swallow an error the naive program reports.
+- **Part-local dead code.** A `Part` whose body never `Reveal`s computes
+  nothing observable and could be dropped entirely under `--release`. Today
+  it is a lint warning, which is the right first step.
+- **Length-changing passes inside sub-pipelines.** Rule 4 above confines them
+  to the top level, so `Sort` + `Select Top K` written inside a `Part`,
+  `Channel` or loop body is not fused. Lifting that means nested node lists
+  can no longer be captured by their parents' `Eval` closures — a real
+  refactor of how those bodies are held, not a new pass.

@@ -305,6 +305,8 @@ func (l *lexer) lexOperator() error {
 		k = token.STAR
 	case '/':
 		k = token.SLASH
+	case '%':
+		k = token.PERCENT
 	case '=':
 		k = token.EQ
 	case '<':

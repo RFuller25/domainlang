@@ -23,11 +23,24 @@ type SparseValue struct {
 	minR, maxR, minC, maxC int64
 }
 
-// MaxSparseDense caps the bounding-box area (rows × cols) that Convert To
-// Grid will materialize from a sparse grid, in cells. Two far-apart cells
-// imply a huge dense box; failing with a clear error beats an OOM. Shared by
-// the interpreter and the compiled backend so the guard is identical.
-const MaxSparseDense = 4_000_000
+// MaxSparseDense optionally caps the bounding-box area (rows × cols) that
+// Convert To Grid will materialize from a sparse grid, in cells.
+//
+// Zero — the default — means unlimited. It used to be a hard 4,000,000, which
+// refused a plot larger than that even when the machine had room for it; a
+// limit must never be the reason a correct program cannot run. Two far-apart
+// cells still imply a huge dense box, so the failure mode for a genuinely
+// unreasonable densify is now memory pressure rather than a clean error. It
+// is a var so a caller can opt back into a ceiling; the interpreter and the
+// compiled backend read the same value, so the guard stays identical.
+var MaxSparseDense = 0
+
+// maxRepresentableCells is not a policy limit but a physical one: a slice
+// this long cannot be allocated on any machine, and Go's makeslice panics
+// rather than returning an error. Densifying past it is impossible, not
+// merely expensive, so it still earns a clean message — removing the tunable
+// ceiling above was about not refusing work that *could* succeed.
+const maxRepresentableCells = 1 << 40
 
 func NewSparseValue(def Value) *SparseValue {
 	return &SparseValue{Def: def, cells: map[[2]int64]Value{}}
@@ -127,4 +140,31 @@ func (s *SparseValue) ToGrid() *GridValue {
 		g.SetAt(int(k[0]-minR), int(k[1]-minC), v)
 	}
 	return g
+}
+
+// TooLargeToDensify reports whether a bounding box of rows x cols cannot be
+// materialized: either it exceeds the configured MaxSparseDense ceiling (when
+// one is set), or it is beyond what a Go slice can represent at all. The
+// per-side checks come first so rows*cols cannot overflow int64.
+func TooLargeToDensify(rows, cols int64) bool {
+	if rows <= 0 || cols <= 0 {
+		return false
+	}
+	if MaxSparseDense > 0 {
+		lim := int64(MaxSparseDense)
+		if rows > lim || cols > lim || rows*cols > lim {
+			return true
+		}
+	}
+	return rows > maxRepresentableCells || cols > maxRepresentableCells ||
+		rows > maxRepresentableCells/cols
+}
+
+// DensifyLimit is the cell count TooLargeToDensify compared against, for the
+// error message.
+func DensifyLimit() int64 {
+	if MaxSparseDense > 0 {
+		return int64(MaxSparseDense)
+	}
+	return maxRepresentableCells
 }

@@ -85,7 +85,7 @@ func (s *Server) completion(params json.RawMessage) any {
 		return nil
 	}
 	prefix := linePrefix(doc.text, p.Position.Line, p.Position.Character)
-	items := completionItems(prefix)
+	items := CompletionItems(prefix)
 	return map[string]any{"isIncomplete": false, "items": items}
 }
 
@@ -117,9 +117,11 @@ func utf16OffsetToBytes(s string, units int) int {
 	return len(s)
 }
 
-// completionItems is the pure decision function (tested directly): given the
-// text before the cursor on a line, decide what to offer.
-func completionItems(prefix string) []map[string]any {
+// CompletionItems is the pure decision function (tested directly, and
+// reused directly by the REPL's tab completion — see
+// cmd/domain/repl_complete.go): given the text before the cursor on a
+// line, decide what to offer.
+func CompletionItems(prefix string) []map[string]any {
 	indented := len(prefix) > 0 && (prefix[0] == ' ' || prefix[0] == '\t')
 	trimmed := strings.TrimSpace(prefix)
 
@@ -144,8 +146,10 @@ func completionItems(prefix string) []map[string]any {
 		}
 	}
 
-	// Otherwise the cursor is at the head of a line → offer statement keywords.
-	return keywordItems()
+	// Otherwise the cursor is at the head of a line. Both spellings are valid
+	// there — the themed keyword, or the bare operation phrase that infers it —
+	// so offer the keywords first and then every primitive.
+	return append(keywordItems(), bareOperationItems()...)
 }
 
 // splitKeyword splits a trimmed line into the text before the first ':' and
@@ -194,6 +198,25 @@ func argItems() []map[string]any {
 			"documentation": md(a.Summary),
 			"insertText":    a.Label + ": ",
 			"sortText":      sortKey(i),
+		})
+	}
+	return out
+}
+
+// bareOperationItems lists every primitive as a prefix-free statement head,
+// sorted after the keywords so that a user who wants the themed spelling still
+// meets it first. The detail line names the keyword each one infers.
+func bareOperationItems() []map[string]any {
+	out := make([]map[string]any, 0, len(prims.Registry))
+	for i, prim := range prims.Registry {
+		doc, _ := prims.Doc(prim.ID)
+		out = append(out, map[string]any{
+			"label":         prim.ID,
+			"kind":          kindFunction,
+			"detail":        prim.Keyword + " — " + doc.Signature,
+			"documentation": md(doc.Summary + "\n\nThe `" + prim.Keyword + ":` keyword is optional.\n\n_See primitives.md#" + doc.DocAnchor + "_"),
+			"insertText":    prim.ID,
+			"sortText":      sortKey(len(statementKeywords) + i),
 		})
 	}
 	return out

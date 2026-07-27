@@ -4,8 +4,10 @@ import (
 	"fmt"
 
 	"domain/ast"
+	"domain/eval"
 	"domain/ir"
 	"domain/token"
+	"domain/typecheck"
 )
 
 // Binding Vow: a debug-time assertion over the current pipeline value. A vow
@@ -24,7 +26,7 @@ var bindingVow = &Primitive{
 		if in == nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Binding Vow has no value to assert over"}
 		}
-		check, display, meta, err := buildVowCheck(op, pos)
+		check, display, meta, err := buildVowCheck(op, args, in, pos)
 		if err != nil {
 			return nil, err
 		}
@@ -55,8 +57,38 @@ var bindingVow = &Primitive{
 
 type vowCheck func(v ir.Value) error
 
-func buildVowCheck(op *ast.Operation, pos token.Position) (vowCheck, string, map[string]any, error) {
+func buildVowCheck(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (vowCheck, string, map[string]any, error) {
 	switch {
+	// The general form: any predicate over the current value, whatever its
+	// type. The two literal shapes below are both about List<Int> and both
+	// bounded by an integer literal, while the expression layer can express
+	// anything — a vow had no way to reach a Grid, Map, Record or Sparse.
+	case hasWord(op, "Holds"):
+		lam, ok := args.Lambda("Using")
+		if !ok {
+			return nil, "", nil, &ResolveError{Pos: pos,
+				Msg: "Binding Vow: Holds needs a Using: predicate"}
+		}
+		bt, err := typecheck.LambdaType(lam, append([]*ir.Type{in}, ambientTypes()...)...)
+		if err != nil {
+			return nil, "", nil, &ResolveError{Pos: pos, Msg: "Binding Vow: " + err.Error()}
+		}
+		if !bt.Equal(ir.Bool()) {
+			return nil, "", nil, &ResolveError{Pos: pos,
+				Msg: fmt.Sprintf("Binding Vow: Holds predicate must return Bool, got %s", bt)}
+		}
+		return func(v ir.Value) error {
+			r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in}, ambientTypes()...),
+				append([]ir.Value{v}, ambientArgs()...)...)
+			if err != nil {
+				return err
+			}
+			if b, ok := r.(bool); !ok || !b {
+				return fmt.Errorf("predicate is false")
+			}
+			return nil
+		}, "Holds", map[string]any{"kind": "holds", "lambda": lam, "raw": op.Raw}, nil
+
 	case hasWord(op, "Count") && (hasWord(op, "Equals") || hasSym(op, "=")):
 		if len(op.Ints) == 0 {
 			return nil, "", nil, &ResolveError{Pos: pos, Msg: "Count vow requires a number, e.g. Count Equals 200"}
@@ -99,7 +131,7 @@ func buildVowCheck(op *ast.Operation, pos token.Position) (vowCheck, string, map
 
 	default:
 		return nil, "", nil, &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("unsupported Binding Vow %q (v0.1 supports 'Count Equals N' and 'All Values <cmp> N')", op.Raw)}
+			Msg: fmt.Sprintf("unsupported Binding Vow %q (Count Equals N, All Values <cmp> N, or Holds with a Using: predicate)", op.Raw)}
 	}
 }
 

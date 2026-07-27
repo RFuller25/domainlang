@@ -1,0 +1,17 @@
+# A Shikigami library, imported with `Innate Domain: lib/shapes`.
+#
+# A library holds Shikigami definitions and nothing else — no pipeline
+# statements, because a library is not a program. It lives in a subdirectory so
+# the examples test harness, which runs every .domain file in examples/, does
+# not try to run it.
+
+# Every line's integers, as one flat list.
+Shikigami "All Ints"
+    Cursed Technique: Extract Integers
+    Cursed Technique: Flatten
+
+# The n largest values, summed. Naming Quicksort is a request: the optimizer
+# fuses this pair into a quickselect, and it does so through the import.
+Shikigami "Biggest" (n: Int)
+    Domain Expansion: Quicksort, Descending
+    Maximum Technique: Select Top n, Sum

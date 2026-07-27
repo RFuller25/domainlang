@@ -115,6 +115,20 @@ const declFmtFloat = `func dmFmtFloat(f float64) string {
 	return strconv.FormatFloat(f, 'g', -1, 64)
 }`
 
+// dmLabel mirrors ir.LabelledOutput: Reveal inside a Part block prefixes its
+// output with the Part's label, putting a multi-line value (a grid, a sparse
+// picture) on the lines after the label instead of beside it. The interpreter
+// and this helper must agree byte for byte; a Part oracle test pins that.
+const declLabel = `func dmLabel(label, s string) string {
+	if label == "" {
+		return s
+	}
+	if strings.Contains(s, "\n") {
+		return "Part " + label + ":\n" + s
+	}
+	return "Part " + label + ": " + s
+}`
+
 const declSqrt = `func dmSqrt(f float64) float64 {
 	if f < 0 {
 		dmFail("sqrt of a negative number (%s)", dmFmtFloat(f))
@@ -673,6 +687,168 @@ const declAbs = `func dmAbs[T int64 | float64](n T) T {
 		return -n
 	}
 	return n
+}`
+
+// dmMod mirrors eval.euclidMod exactly, including the failure wording: the
+// result is non-negative for a positive modulus whatever the sign of a.
+const declMod = `func dmMod(a, b int64) int64 {
+	if b == 0 {
+		dmFail("mod by zero")
+	}
+	r := a % b
+	if r != 0 && (r < 0) != (b < 0) {
+		r += b
+	}
+	return r
+}`
+
+const declPow = `func dmPow(b, e int64) int64 {
+	if e < 0 {
+		dmFail("pow: exponent must be non-negative, got %d", e)
+	}
+	r := int64(1)
+	for e > 0 {
+		if e&1 == 1 {
+			r *= b
+		}
+		b *= b
+		e >>= 1
+	}
+	return r
+}`
+
+const declISqrt = `func dmISqrt(x int64) int64 {
+	if x < 0 {
+		dmFail("isqrt: negative input %d", x)
+	}
+	if x < 2 {
+		return x
+	}
+	n := x
+	g := x/2 + 1
+	for g < n {
+		n = g
+		g = (g + x/g) / 2
+	}
+	return n
+}`
+
+const declFactorial = `func dmFactorial(n int64) int64 {
+	if n < 0 {
+		dmFail("factorial: negative input %d", n)
+	}
+	if n > 20 {
+		dmFail("factorial: %d! overflows Int (max is 20!)", n)
+	}
+	r := int64(1)
+	for i := int64(2); i <= n; i++ {
+		r *= i
+	}
+	return r
+}`
+
+const declChoose = `func dmChoose(n, k int64) int64 {
+	if n < 0 {
+		dmFail("choose: negative n %d", n)
+	}
+	if k < 0 || k > n {
+		return 0
+	}
+	if k > n-k {
+		k = n - k
+	}
+	r := int64(1)
+	for i := int64(1); i <= k; i++ {
+		r = r * (n - k + i) / i
+	}
+	return r
+}`
+
+const declClamp = `func dmClamp[T int64 | float64](v, lo, hi T) T {
+	if lo > hi {
+		dmFail("clamp: low bound %v exceeds high bound %v", lo, hi)
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}`
+
+const declReverseText = `func dmReverseText(s string) string {
+	rs := []rune(s)
+	for i, j := 0, len(rs)-1; i < j; i, j = i+1, j-1 {
+		rs[i], rs[j] = rs[j], rs[i]
+	}
+	return string(rs)
+}`
+
+const declChars = `func dmChars(s string) []string {
+	rs := []rune(s)
+	out := make([]string, len(rs))
+	for i, r := range rs {
+		out[i] = string(r)
+	}
+	return out
+}`
+
+// dmIndexOfText answers in runes, matching dmCharAt and dmSliceText, so every
+// text position in a compiled binary means the same thing it does under the
+// interpreter.
+const declIndexOfText = `func dmIndexOfText(s, sub string) int64 {
+	b := strings.Index(s, sub)
+	if b < 0 {
+		return -1
+	}
+	return int64(utf8.RuneCountInString(s[:b]))
+}`
+
+const declIndexOf = `func dmIndexOf[T comparable](xs []T, v T) int64 {
+	for i, e := range xs {
+		if e == v {
+			return int64(i)
+		}
+	}
+	return -1
+}`
+
+const declCharAt = `func dmCharAt(s string, i int64) string {
+	rs := []rune(s)
+	if i < 0 || i >= int64(len(rs)) {
+		dmFail("charat: index %d out of range (length %d)", i, len(rs))
+	}
+	return string(rs[i])
+}`
+
+const declClampRange = `func dmClampRange(lo, hi, n int64) (int64, int64) {
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > n {
+		hi = n
+	}
+	if hi < lo {
+		hi = lo
+	}
+	if lo > n {
+		lo, hi = n, n
+	}
+	return lo, hi
+}`
+
+const declSliceText = `func dmSliceText(s string, lo, hi int64) string {
+	rs := []rune(s)
+	l, h := dmClampRange(lo, hi, int64(len(rs)))
+	return string(rs[l:h])
+}`
+
+const declSliceList = `func dmSliceList[T any](xs []T, lo, hi int64) []T {
+	l, h := dmClampRange(lo, hi, int64(len(xs)))
+	out := make([]T, h-l)
+	copy(out, xs[l:h])
+	return out
 }`
 
 const declSign = `func dmSign(n int64) int64 {

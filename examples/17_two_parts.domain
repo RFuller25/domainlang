@@ -1,0 +1,26 @@
+# Part blocks: two answers from one parse.
+#
+# Every Advent of Code day asks two questions about the same input, and the
+# parse above the Parts happens once. A Part branches from the current value
+# like a Channel does, but labels what its body Reveals instead of storing it
+# under a name — and it is a passthrough, so sibling Parts each see the same
+# upstream list.
+#
+#   domain examples/17_two_parts.domain
+#   Expected output:
+#     Part 1: 24000
+#     Part 2: 45000
+Cursed Energy: 17_two_parts.input
+Cursed Technique: Split Text by "\n\n"
+Cursed Technique: Split Each by "\n"
+Channeled Energy: Convert Each List to Integers
+Maximum Technique: Sum Each Group
+
+Part "1":
+    Maximum Technique: Max
+    Reveal: stdout
+
+Part "2":
+    Domain Expansion: Quicksort, Descending
+    Maximum Technique: Select Top 3, Sum
+    Reveal: stdout

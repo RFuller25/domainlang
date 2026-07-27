@@ -3,6 +3,8 @@ package optimizer
 import (
 	"math/rand"
 	"testing"
+
+	"domain/ir"
 )
 
 // Naive oracles for the sliding-window rewrite: materialize every window and
@@ -48,10 +50,10 @@ func TestWindowedSumsMatchNaive(t *testing.T) {
 		xs := randInts(rng, 30, 12)
 		size := int64(rng.Intn(6) + 1)
 		step := int64(rng.Intn(4) + 1)
-		got := WindowedSums(xs, size, step)
+		got := ir.WindowedSums(xs, size, step)
 		want := naiveWindowedSums(xs, size, step)
 		if !equalSlices(got, want) {
-			t.Fatalf("iter %d: WindowedSums(%v, %d, %d) = %v, want %v", iter, xs, size, step, got, want)
+			t.Fatalf("iter %d: ir.WindowedSums(%v, %d, %d) = %v, want %v", iter, xs, size, step, got, want)
 		}
 	}
 }
@@ -63,10 +65,10 @@ func TestWindowedExtremaMatchNaive(t *testing.T) {
 		size := int64(rng.Intn(6) + 1)
 		step := int64(rng.Intn(4) + 1)
 		for _, min := range []bool{false, true} {
-			got := WindowedExtrema(xs, size, step, min)
+			got := ir.WindowedExtrema(xs, size, step, min)
 			want := naiveWindowedExtrema(xs, size, step, min)
 			if !equalSlices(got, want) {
-				t.Fatalf("iter %d: WindowedExtrema(%v, %d, %d, min=%v) = %v, want %v",
+				t.Fatalf("iter %d: ir.WindowedExtrema(%v, %d, %d, min=%v) = %v, want %v",
 					iter, xs, size, step, min, got, want)
 			}
 		}

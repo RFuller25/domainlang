@@ -161,7 +161,7 @@ var countBy = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		keyType, err := typecheck.LambdaType(lam, elem)
+		keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Count By: " + err.Error()}
 		}
@@ -182,7 +182,7 @@ var countBy = &Primitive{
 				}
 				m := ir.NewMapValue()
 				for i, x := range xs {
-					k, err := eval.EvalLambdaTyped(lam, []*ir.Type{elem}, x)
+					k, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{x}, ambientArgs()...)...)
 					if err != nil {
 						return nil, runtimeErr("Count By", pos, "item %d: %v", i, err)
 					}
@@ -223,7 +223,7 @@ func keyedExtremum(id string, better func(k, best int64) bool) *Primitive {
 			if err != nil {
 				return nil, err
 			}
-			keyType, err := typecheck.LambdaType(lam, elem)
+			keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
 			if err != nil {
 				return nil, &ResolveError{Pos: pos, Msg: id + ": " + err.Error()}
 			}
@@ -270,7 +270,7 @@ func keyedExtremum(id string, better func(k, best int64) bool) *Primitive {
 // intKey evaluates a key lambda expected to produce an Int; elem is the
 // statically inferred parameter type (nil when unknown).
 func intKey(lam *ast.Lambda, elem *ir.Type, x ir.Value) (int64, error) {
-	k, err := eval.EvalLambdaTyped(lam, []*ir.Type{elem}, x)
+	k, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{x}, ambientArgs()...)...)
 	if err != nil {
 		return 0, err
 	}
@@ -279,6 +279,15 @@ func intKey(lam *ast.Lambda, elem *ir.Type, x ir.Value) (int64, error) {
 		return 0, fmt.Errorf("key lambda did not return an Int (got %s)", ir.DescribeValue(k))
 	}
 	return n, nil
+}
+
+// anyKey is intKey's untyped sibling: it hands back whatever ordered value
+// the key lambda produced, for the comparison in ir.Compare to order. The
+// key's type was checked at resolve time.
+func anyKey(lam *ast.Lambda, elem *ir.Type, x ir.Value) (ir.Value, error) {
+	return eval.EvalLambdaTyped(lam,
+		append([]*ir.Type{elem}, ambientTypes()...),
+		append([]ir.Value{x}, ambientArgs()...)...)
 }
 
 func splitID(id string) []string {
@@ -315,13 +324,17 @@ var sortBy = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		keyType, err := typecheck.LambdaType(lam, elem)
+		keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Sort By: " + err.Error()}
 		}
-		if !keyType.Equal(ir.Int()) {
+		// Any ordered key: Int, Float, Text, or a tuple of them. A tuple key
+		// is how a tiebreak gets written — `tuple(r.group, r.score)` sorts by
+		// group and then by score, in one pass.
+		if !ir.Ordered(keyType) {
 			return nil, &ResolveError{Pos: pos,
-				Msg: fmt.Sprintf("Sort By key lambda must return Int, got %s", keyType)}
+				Msg: fmt.Sprintf("Sort By key lambda must return an ordered type "+
+					"(Int, Float, Text, or a Tuple of them), got %s", keyType)}
 		}
 		desc := hasModifier(op, "Descending")
 		order := "Ascending"
@@ -334,16 +347,16 @@ var sortBy = &Primitive{
 			Out:       in,
 			Display:   "Sort By, " + order,
 			Swappable: true,
-			Meta:      map[string]any{"lambda": lam, "desc": desc},
+			Meta:      map[string]any{"lambda": lam, "desc": desc, "key": keyType.String()},
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				xs, err := ir.AsList(v)
 				if err != nil {
 					return nil, runtimeErr("Sort By", pos, "%v", err)
 				}
-				keys := make([]int64, len(xs))
+				keys := make([]ir.Value, len(xs))
 				for i, x := range xs {
-					if keys[i], err = intKey(lam, elem, x); err != nil {
+					if keys[i], err = anyKey(lam, elem, x); err != nil {
 						return nil, runtimeErr("Sort By", pos, "item %d: %v", i, err)
 					}
 				}
@@ -352,10 +365,11 @@ var sortBy = &Primitive{
 					idx[i] = i
 				}
 				sort.SliceStable(idx, func(a, b int) bool {
+					c := ir.Compare(keys[idx[a]], keys[idx[b]])
 					if desc {
-						return keys[idx[a]] > keys[idx[b]]
+						return c > 0
 					}
-					return keys[idx[a]] < keys[idx[b]]
+					return c < 0
 				})
 				out := make([]ir.Value, len(xs))
 				for i, j := range idx {

@@ -53,6 +53,29 @@ type gen struct {
 	varn    int
 	parsen  int
 	release bool // strip Binding Vows (Options.Release)
+	// partLabel is the label of the Part block currently being emitted, or ""
+	// at the top level. Unlike the interpreter — which must carry the label on
+	// ir.Context because an Emit node inside a Part is reached through the
+	// Part's Eval closure — the compiler knows every label statically, so it
+	// bakes the prefix straight into the emitted print. A compiled binary has
+	// no label variable and no runtime branch.
+	partLabel string
+	// ambient is the stack of enclosing `Simple Domain: For` loop variables,
+	// outermost first — the compiled mirror of prims/ambient.go's resolve-time
+	// stack. Each entry is the Go variable holding the current lap's element.
+	ambient []ambientVar
+	// ambientNames maps the *current* lambda's trailing parameter names to
+	// those variables. The resolver appends exactly len(ambient) extra
+	// parameters to every lambda inside a For body, so the trailing ones are
+	// the ambient ones — which is what lets nodeLambda bind them without
+	// knowing any primitive's own arity. See compileExpr's Ident case.
+	ambientNames exprEnv
+}
+
+// ambientVar is one enclosing For loop's current-lap binding in generated Go.
+type ambientVar struct {
+	v   string
+	typ *ir.Type
 }
 
 type chanVar struct {
@@ -191,19 +214,63 @@ func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
 			i += consumed - 1
 			continue
 		}
+		mark := g.main.Len()
 		v, err := g.emitNode(nodes[i], cur)
 		if err != nil {
 			return "", err
 		}
+		g.keepAlive(cur, v, mark)
 		cur = v
 	}
 	return cur, nil
 }
 
+// keepAlive blanks the previous pipeline variable when the node that just ran
+// never mentioned it. A lambda is free to ignore its parameter — `Apply
+// Using: (s) -> 5` is legal Domain — and the upstream Go variable is then
+// declared and never read, which does not compile. Emitting `_ = prev` costs
+// nothing at runtime and keeps the generated program valid.
+//
+// The check is textual over exactly the lines this node emitted (from mark),
+// so the blank is only added when it is actually needed.
+func (g *gen) keepAlive(prev, next string, mark int) {
+	if prev == "" || prev == next {
+		return
+	}
+	if bytes.Contains(g.main.Bytes()[mark:], []byte(prev)) {
+		return
+	}
+	g.wl("_ = %s", prev)
+}
+
 // emitNode lowers one IR node. in is the Go variable holding the current
 // pipeline value ("" for the source node); the returned variable holds the
 // node's output. Passthrough nodes return in unchanged.
+// setConsumers are the primitives that read their input as a sequence and so
+// accept a Set wherever they accept a List (prims/higher_order.go's listElem
+// is the resolve-time counterpart). A Set compiles to dmSet, which cannot be
+// ranged over directly, so the emitted expression is its .elems slice.
+//
+// The list is explicit rather than "everything except Count": passthroughs
+// (Channel, Part, Binding Vow) return their input variable unchanged, and
+// rewriting it under them would hand a slice to a downstream node still typed
+// as a Set.
+// It is exactly the set of primitives whose Build calls listElem — the ones
+// that reject anything else by type, like Join and Sum, still do.
+var setConsumers = map[string]bool{
+	"Chunk": true, "Convert To Set": true, "Count By": true,
+	"Count Matching": true, "Enumerate": true, "Filter": true,
+	"Find Cycle": true, "Fold": true, "Group By": true, "Map Each": true,
+	"Merge Ranges": true, "Pairs": true, "Partition": true,
+	"Permutations": true, "Reduce": true, "Scan": true, "Sort By": true,
+	"Subsets": true, "Take Item": true, "Unique": true, "Window": true,
+}
+
 func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
+	if n.In != nil && n.In.Kind == ir.KSet && setConsumers[n.Prim] {
+		g.helper("dmSet", declSet)
+		in += ".elems"
+	}
 	switch n.Prim {
 	case "Read Source":
 		return g.emitReadSource(n)
@@ -273,6 +340,30 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitTranspose(n, in)
 	case "Fold":
 		return g.emitFold(n, in)
+	case "Reduce":
+		return g.emitReduce(n, in)
+	case "Scan":
+		return g.emitScan(n, in)
+	case "Pairs":
+		return g.emitPairs(n, in)
+	case "Take While", "Drop While":
+		return g.emitPrefixWhile(n, in)
+	case "Chunk":
+		return g.emitChunk(n, in)
+	case "Partition":
+		return g.emitPartition(n, in)
+	case "Iterate":
+		return g.emitIterate(n, in)
+	case "Unfold":
+		return g.emitUnfold(n, in)
+	case "Any", "All":
+		return g.emitQuantifier(n, in)
+	case "Find", "Find Index":
+		return g.emitFind(n, in)
+	case "Sum By", "Product By":
+		return g.emitKeyedArithmetic(n, in)
+	case "Zip With", "ZipMap":
+		return g.emitZipWith(n, in)
 	case "Group By":
 		return g.emitGroupBy(n, in)
 	case "Intersect", "Union":
@@ -321,14 +412,43 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitDijkstra(n, in)
 	case "Flood Fill":
 		return g.emitFloodFill(n, in)
+	case "Range":
+		return g.emitRange(n, in)
+	case "Topological Sort":
+		return g.emitTopologicalSort(n, in)
+	case "Subgrid":
+		return g.emitSubgrid(n, in)
+	case "Pad Grid":
+		return g.emitPadGrid(n, in)
+	case "Rotate Grid":
+		return g.emitRotateGrid(n, in)
+	case "Flip Grid":
+		return g.emitFlipGrid(n, in)
+	case "Convert To Rows":
+		return g.emitConvertToRows(n, in)
+	case "Find Cycle":
+		return g.emitFindCycle(n, in)
+	case "Convert To Entries":
+		return g.emitConvertToEntries(n, in)
+	case "Convert To Map":
+		return g.emitConvertToMap(n, in)
+	case "Map Values":
+		return g.emitMapValues(n, in)
+	case "Filter Entries":
+		return g.emitFilterEntries(n, in)
+	case "Explore":
+		return g.emitExplore(n, in)
 	case "Connected Components":
 		return g.emitConnectedComponents(n, in)
 	case "SearchTarget":
 		return g.emitSearchTarget(n, in)
-	case "Simple Domain (Repeat)", "Simple Domain (While)", "Simple Domain (Fixed Point)":
+	case "Simple Domain (Repeat)", "Simple Domain (While)", "Simple Domain (Fixed Point)",
+		"Simple Domain (For)":
 		return g.emitLoop(n, in)
 	case "Channel":
 		return g.emitChannel(n, in)
+	case "Part":
+		return g.emitPart(n, in)
 	case "Combine":
 		return g.emitCombine(n, in)
 	case "Binding Vow":
@@ -531,12 +651,57 @@ func (g *gen) emitSort(n *ir.Node, in string) (string, error) {
 	g.imp("sort")
 	v := g.fresh("v")
 	g.wl("%s := append([]%s(nil), %s...)", v, elem, in)
-	op := "<"
-	if desc {
-		op = ">"
+	// Int, Float and Text lower to Go's own <, which is already the order the
+	// interpreter uses. A tuple element needs the lexicographic chain.
+	lt, err := lessExpr(n.In.Elem, v+"[i]", v+"[j]")
+	if err != nil {
+		return "", unsupported(n, "%v", err)
 	}
-	g.wl("sort.Slice(%s, func(i, j int) bool { return %s[i] %s %s[j] })", v, v, op, v)
+	if desc {
+		if lt, err = lessExpr(n.In.Elem, v+"[j]", v+"[i]"); err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+	}
+	// SliceStable, not Slice: for a tuple element the comparison is not a
+	// strict total order over *equal* keys, and an unstable sort would then
+	// permute ties differently from the interpreter's stable one.
+	g.wl("sort.SliceStable(%s, func(i, j int) bool { return %s })", v, lt)
 	return v, nil
+}
+
+// lessExpr builds a Go expression for `a < b` over an ordered Domain type.
+// Scalars use Go's own operator; a tuple compares lexicographically, first
+// differing element deciding — matching ir.Compare exactly, which is what
+// keeps a compiled sort byte-identical to the interpreter's.
+func lessExpr(t *ir.Type, a, b string) (string, error) {
+	if t == nil {
+		return "", fmt.Errorf("sort needs an element type")
+	}
+	switch t.Kind {
+	case ir.KInt, ir.KFloat, ir.KText:
+		return a + " < " + b, nil
+	case ir.KTuple:
+		// Built right to left: f0 < f0 || (f0 == f0 && (f1 < f1 || ...)).
+		expr := ""
+		for i := len(t.Elems) - 1; i >= 0; i-- {
+			af := a + "." + tupleField(i)
+			bf := b + "." + tupleField(i)
+			inner, err := lessExpr(t.Elems[i], af, bf)
+			if err != nil {
+				return "", err
+			}
+			if expr == "" {
+				expr = inner
+				continue
+			}
+			expr = "(" + inner + " || (" + af + " == " + bf + " && " + expr + "))"
+		}
+		if expr == "" {
+			return "", fmt.Errorf("cannot sort by an empty tuple")
+		}
+		return expr, nil
+	}
+	return "", fmt.Errorf("cannot sort by %s (not an ordered type)", t)
 }
 
 func (g *gen) emitSelectTopK(n *ir.Node, in string) (string, error) {
@@ -906,7 +1071,32 @@ func (g *gen) nodeLambda(n *ir.Node) (*ast.Lambda, error) {
 	if lam == nil {
 		return nil, unsupported(n, "missing lambda metadata")
 	}
+	g.bindAmbientParams(lam)
 	return lam, nil
+}
+
+// bindAmbientParams records how the lambda about to be compiled names the
+// enclosing For loops' variables. Inside a For body the resolver gives every
+// `Using:` lambda len(ambient) extra trailing parameters, bound positionally
+// outermost-first — so the trailing slice is exactly the ambient one, and no
+// primitive's own arity needs to be known here.
+//
+// Callers reach a lambda through nodeLambda and compile it immediately, and
+// codegen is single-pass and single-threaded, so the mapping is only ever
+// consulted for the lambda that just went through here. A leading parameter
+// that happens to share a name still wins: compileExpr checks the caller's
+// env first, and this map is only the fallback.
+func (g *gen) bindAmbientParams(lam *ast.Lambda) {
+	k := len(g.ambient)
+	if k == 0 || len(lam.Params) < k {
+		g.ambientNames = nil
+		return
+	}
+	names := make(exprEnv, k)
+	for i, p := range lam.Params[len(lam.Params)-k:] {
+		names[p] = exprBinding{expr: g.ambient[i].v, typ: g.ambient[i].typ}
+	}
+	g.ambientNames = names
 }
 
 func (g *gen) emitMapEach(n *ir.Node, in string) (string, error) {
@@ -1055,6 +1245,14 @@ func (g *gen) emitApply(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "lambda: %v", err)
 	}
 	v := g.fresh("v")
+	// Declared with its type rather than inferred with `:=`. A body that is a
+	// bare integer literal (`Apply Using: (s) -> 3`, legal Domain) is an
+	// untyped Go constant, and `:=` would make it `int` — which then fails to
+	// assign anywhere an int64 is expected downstream.
+	if goT, err := g.goType(n.Out); err == nil {
+		g.wl("var %s %s = %s", v, goT, body)
+		return v, nil
+	}
 	g.wl("%s := %s", v, body)
 	return v, nil
 }
@@ -1124,6 +1322,12 @@ func (g *gen) emitUnique(n *ir.Node, in string) (string, error) {
 }
 
 func (g *gen) emitReverse(n *ir.Node, in string) (string, error) {
+	if n.In != nil && n.In.Kind == ir.KText {
+		g.helper("dmReverseText", declReverseText)
+		v := g.fresh("v")
+		g.wl("%s := dmReverseText(%s)", v, in)
+		return v, nil
+	}
 	elemGo, err := g.goType(n.In.Elem)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
@@ -1256,6 +1460,23 @@ func (g *gen) emitBindingVow(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 		return in, nil
+	case "holds":
+		// The general form: any predicate over the current value, compiled
+		// inline like every other lambda.
+		lam, err := g.nodeLambda(n)
+		if err != nil {
+			return "", err
+		}
+		pred, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+		if err != nil {
+			return "", unsupported(n, "predicate: %v", err)
+		}
+		g.wl("if !(%s) {", pred)
+		g.in()
+		g.wl(`dmFail("vow violated [%%s]: predicate is false", %s)`, goStr(raw))
+		g.out()
+		g.wl("}")
+		return in, nil
 	default:
 		return "", unsupported(n, "vow kind %q", kind)
 	}
@@ -1263,21 +1484,90 @@ func (g *gen) emitBindingVow(n *ir.Node, in string) (string, error) {
 
 func (g *gen) emitEmit(n *ir.Node, in string) (string, error) {
 	g.imp("fmt")
+	if g.partLabel != "" {
+		return g.emitLabelledEmit(n, in)
+	}
+	// `Reveal: stderr` picks the other stream. Like the Part label, the target
+	// is a compile-time literal, so the binary has no runtime branch.
+	println, printf := "fmt.Println(%s)", "fmt.Println(%s(%s))"
+	if target, _ := n.Meta["target"].(string); target == "stderr" {
+		g.imp("os")
+		println, printf = "fmt.Fprintln(os.Stderr, %s)", "fmt.Fprintln(os.Stderr, %s(%s))"
+	}
 	switch n.In.Kind {
 	case ir.KInt, ir.KText, ir.KBool:
-		g.wl("fmt.Println(%s)", in)
+		g.wl(println, in)
 	case ir.KFloat:
 		// fmt's %v for float64 is exactly strconv.FormatFloat('g', -1), the
 		// same rendering ir.FormatValue uses — but keep it explicit so the
 		// parity contract is visible in the generated source.
 		g.helper("dmFmtFloat", declFmtFloat, "strconv")
-		g.wl("fmt.Println(dmFmtFloat(%s))", in)
+		g.wl(printf, "dmFmtFloat", in)
 	default:
 		fn, err := g.fmtFunc(n.In)
 		if err != nil {
 			return "", unsupported(n, "cannot render %s: %v", n.In, err)
 		}
-		g.wl("fmt.Println(%s(%s))", fn, in)
+		g.wl(printf, fn, in)
 	}
 	return in, nil
+}
+
+// emitLabelledEmit is Reveal inside a Part block. The label is a compile-time
+// literal, so it is baked into the call; only the single-line/multi-line choice
+// has to happen at runtime, and only because Text (and every composite) can
+// contain a newline. dmLabel mirrors ir.LabelledOutput exactly — that pairing is
+// what keeps the two backends byte-identical.
+func (g *gen) emitLabelledEmit(n *ir.Node, in string) (string, error) {
+	rendered, err := g.renderToString(n, in)
+	if err != nil {
+		return "", err
+	}
+	g.helper("dmLabel", declLabel, "strings")
+	g.wl("fmt.Println(dmLabel(%s, %s))", goStr(g.partLabel), rendered)
+	return in, nil
+}
+
+// renderToString returns a Go expression of type string rendering the node's
+// input value exactly as ir.FormatValue would.
+func (g *gen) renderToString(n *ir.Node, in string) (string, error) {
+	switch n.In.Kind {
+	case ir.KText:
+		return in, nil
+	case ir.KInt, ir.KBool:
+		return fmt.Sprintf("fmt.Sprint(%s)", in), nil
+	case ir.KFloat:
+		g.helper("dmFmtFloat", declFmtFloat, "strconv")
+		return fmt.Sprintf("dmFmtFloat(%s)", in), nil
+	default:
+		fn, err := g.fmtFunc(n.In)
+		if err != nil {
+			return "", unsupported(n, "cannot render %s: %v", n.In, err)
+		}
+		return fmt.Sprintf("%s(%s)", fn, in), nil
+	}
+}
+
+// emitPart emits a Part block: its body inline, with the label in scope for any
+// Reveal inside it, and the main pipeline value passed through untouched.
+func (g *gen) emitPart(n *ir.Node, in string) (string, error) {
+	label, _ := n.Meta["label"].(string)
+	subNodes, _ := n.Meta["nodes"].([]*ir.Node)
+	if subNodes == nil {
+		return "", unsupported(n, "missing part body metadata")
+	}
+	prev := g.partLabel
+	g.partLabel = label
+	defer func() { g.partLabel = prev }()
+
+	cur, err := g.emitSequence(subNodes, in)
+	if err != nil {
+		return "", err
+	}
+	// A Part's own result is discarded (only its Reveal is observable), so a
+	// body that does not end in Emit leaves a value Go would reject as unused.
+	if cur != "" && cur != in && subNodes[len(subNodes)-1].Prim != "Emit" {
+		g.wl("_ = %s", cur)
+	}
+	return in, nil // a Part is a passthrough for the main pipeline
 }

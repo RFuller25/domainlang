@@ -23,6 +23,8 @@ func Lint(prog *ast.Program, src string) []Diagnostic {
 	lintChannels(prog, add)
 	lintShikigami(prog, add)
 	lintReveal(prog, add)
+	lintParts(prog, add)
+	lintImports(prog, add)
 	forEachSequence(prog, func(stmts []*ast.Statement) {
 		lintPatterns(stmts, add)
 	})
@@ -78,6 +80,54 @@ func lintChannels(prog *ast.Program, add func(Diagnostic)) {
 	}
 }
 
+// lintImports warns about an `Innate Domain` library none of whose operations
+// are used, and about importing the same library twice.
+//
+// "Used" is judged by name: a library's definitions are not in the AST, so the
+// check asks whether the program summons any Shikigami the file does not define
+// itself. That is deliberately conservative — it cannot name *which* import is
+// unused when several are present, so it only fires when the program summons no
+// foreign Shikigami at all.
+func lintImports(prog *ast.Program, add func(Diagnostic)) {
+	seen := map[string]bool{}
+	for _, imp := range prog.Imports {
+		if seen[imp.Target] {
+			add(Diagnostic{
+				Severity: Warning, Code: "style", Pos: imp.Pos,
+				Msg:  fmt.Sprintf("library %q is imported more than once", imp.Target),
+				Help: "delete the duplicate `Innate Domain` line",
+			})
+		}
+		seen[imp.Target] = true
+	}
+	if len(prog.Imports) == 0 {
+		return
+	}
+
+	local := map[string]bool{}
+	for _, def := range prog.Shikigamis {
+		local[def.Name] = true
+	}
+	foreign := false
+	forEachSequence(prog, func(stmts []*ast.Statement) {
+		for _, s := range stmts {
+			if s.Keyword == "Shikigami" && s.Op != nil && !local[strings.TrimSpace(s.Op.Raw)] {
+				foreign = true
+			}
+		}
+	})
+	if foreign {
+		return
+	}
+	for _, imp := range prog.Imports {
+		add(Diagnostic{
+			Severity: Warning, Code: "style", Pos: imp.Pos,
+			Msg:  fmt.Sprintf("library %q is imported but nothing from it is summoned", imp.Target),
+			Help: "call one of its Shikigami, or delete the `Innate Domain` line",
+		})
+	}
+}
+
 // lintShikigami warns about user definitions that are never summoned, are
 // defined twice, or shadow a prelude name.
 func lintShikigami(prog *ast.Program, add func(Diagnostic)) {
@@ -122,17 +172,39 @@ func lintShikigami(prog *ast.Program, add func(Diagnostic)) {
 
 // lintReveal warns when a program computes but never outputs, and when
 // top-level statements sit beyond the last Reveal with no observable effect.
+//
+// Part blocks make this per-scope. A Part is a passthrough whose body does the
+// revealing, so a program whose Parts all reveal is complete even with no
+// top-level Reveal, and top-level statements after a Part are not dead.
 func lintReveal(prog *ast.Program, add func(Diagnostic)) {
 	if len(prog.Statements) == 0 {
 		return
 	}
-	lastReveal := -1
+
+	lastReveal, lastPart := -1, -1
 	for i, s := range prog.Statements {
-		if s.Keyword == "Reveal" {
+		switch s.Keyword {
+		case "Reveal":
 			lastReveal = i
+		case "Part":
+			lastPart = i
 		}
 	}
-	if lastReveal == -1 {
+
+	// A Part whose body never reveals computes nothing observable — the one
+	// hazard of Parts printing only what they explicitly Reveal.
+	for _, s := range prog.Statements {
+		if s.Keyword != "Part" || revealsSomewhere(s.Block) {
+			continue
+		}
+		add(Diagnostic{
+			Severity: Warning, Code: "style", Pos: s.Pos,
+			Msg:  fmt.Sprintf("Part %q never reveals anything, so it produces no output", s.PartName),
+			Help: "add `Reveal: stdout` at the end of the Part's body",
+		})
+	}
+
+	if lastReveal == -1 && lastPart == -1 {
 		last := prog.Statements[len(prog.Statements)-1]
 		add(Diagnostic{
 			Severity: Warning, Code: "style", Pos: last.Pos,
@@ -141,8 +213,38 @@ func lintReveal(prog *ast.Program, add func(Diagnostic)) {
 		})
 		return
 	}
-	for _, s := range prog.Statements[lastReveal+1:] {
-		if s.Keyword == "Reveal" || s.Keyword == "Binding Vow" {
+
+	// A Part's own body is its own scope: work after its final Reveal is dead
+	// within the Part, because a Part's result is discarded.
+	for _, s := range prog.Statements {
+		if s.Keyword == "Part" {
+			lintDeadAfterReveal(s.Block, add)
+		}
+	}
+
+	// Only a top-level Reveal makes what follows dead; a Part does not, since
+	// the main pipeline value flows past it untouched.
+	if lastReveal == -1 {
+		return
+	}
+	lintDeadAfterReveal(prog.Statements, add)
+}
+
+// lintDeadAfterReveal warns about statements in one sequence that run after its
+// final Reveal. Reveals, vows and Parts are exempt: all three are observable.
+func lintDeadAfterReveal(stmts []*ast.Statement, add func(Diagnostic)) {
+	last := -1
+	for i, s := range stmts {
+		if s.Keyword == "Reveal" {
+			last = i
+		}
+	}
+	if last == -1 {
+		return
+	}
+	for _, s := range stmts[last+1:] {
+		switch s.Keyword {
+		case "Reveal", "Binding Vow", "Part":
 			continue
 		}
 		add(Diagnostic{
@@ -150,6 +252,39 @@ func lintReveal(prog *ast.Program, add func(Diagnostic)) {
 			Msg:  "this statement runs after the last Reveal; its result is never observed",
 			Help: "move it before the Reveal, or delete it",
 		})
+	}
+}
+
+// revealsSomewhere reports whether a statement sequence contains a Reveal,
+// looking into nested blocks (a Reveal inside a loop body still prints).
+func revealsSomewhere(stmts []*ast.Statement) bool {
+	for _, s := range stmts {
+		if s.Keyword == "Reveal" {
+			return true
+		}
+		if len(s.Block) > 0 && revealsSomewhere(s.Block) {
+			return true
+		}
+	}
+	return false
+}
+
+// lintParts warns about two Part blocks sharing a label, which makes their
+// output indistinguishable.
+func lintParts(prog *ast.Program, add func(Diagnostic)) {
+	seen := map[string]bool{}
+	for _, s := range prog.Statements {
+		if s.Keyword != "Part" || s.PartName == "" {
+			continue
+		}
+		if seen[s.PartName] {
+			add(Diagnostic{
+				Severity: Warning, Code: "style", Pos: s.Pos,
+				Msg:  fmt.Sprintf("Part %q is defined more than once", s.PartName),
+				Help: "give each Part a distinct label so its output can be told apart",
+			})
+		}
+		seen[s.PartName] = true
 	}
 }
 
@@ -170,8 +305,9 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 			}
 			add(Diagnostic{
 				Severity: Hint, Code: "perf", Pos: s.Pos,
-				Msg:  "Sort followed by Reverse is one sort in the opposite direction",
-				Help: fmt.Sprintf("write `Domain Expansion: %s, %s` and drop the Reverse", sortName(s), flip),
+				Msg: "Sort followed by Reverse is one sort in the opposite direction",
+				Help: fmt.Sprintf("write `%s%s, %s` and drop the Reverse",
+					keywordPrefix(s, "Domain Expansion"), sortName(s), flip),
 				Notes: []string{
 					"the optimizer already fuses this pair; the hint is about source clarity",
 				},
@@ -197,8 +333,9 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 			}
 			add(Diagnostic{
 				Severity: Hint, Code: "perf", Pos: s.Pos,
-				Msg:  "sorting the whole list to take the first item is O(n log n) for an O(n) question",
-				Help: fmt.Sprintf("replace both lines with `Maximum Technique: %s`", want),
+				Msg: "sorting the whole list to take the first item is O(n log n) for an O(n) question",
+				Help: fmt.Sprintf("replace both lines with `%s%s`",
+					keywordPrefix(s, "Maximum Technique"), want),
 			})
 		}
 	}
@@ -214,8 +351,9 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 				len(next.Op.Words) == 1 && strings.EqualFold(next.Op.Words[0], "Count") {
 				add(Diagnostic{
 					Severity: Hint, Code: "perf", Pos: s.Pos,
-					Msg:  "Filter followed by Count can be a single pass",
-					Help: "write `Maximum Technique: Count Matching` with the same Using: lambda",
+					Msg: "Filter followed by Count can be a single pass",
+					Help: "write `" + keywordPrefix(next, "Maximum Technique") +
+						"Count Matching` with the same Using: lambda",
 					Notes: []string{
 						"the optimizer fuses this pair automatically; the hint is about source clarity",
 					},
@@ -223,6 +361,16 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 			}
 		}
 	}
+}
+
+// keywordPrefix renders the keyword a suggested replacement line should
+// carry, in the style of the statement being advised: a program that leaves
+// the themed keywords out gets advice that leaves them out too.
+func keywordPrefix(s *ast.Statement, keyword string) string {
+	if s.KeywordInferred {
+		return ""
+	}
+	return keyword + ": "
 }
 
 // sortDirection reports whether a statement is a plain sort (Sort/Quicksort,

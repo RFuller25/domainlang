@@ -68,6 +68,7 @@ var passes = []func(*ir.Pipeline) []Rewrite{
 	fuseLinearMapExtremum,
 	fuseWindowReduce,
 	fuseSearchTarget,
+	fuseFilterFirst,
 	// reordering dead code
 	fuseSortReverse,
 	elideRedundantSort,
@@ -83,7 +84,10 @@ var passes = []func(*ir.Pipeline) []Rewrite{
 	fuseFilterFilter,
 	fuseFilterCount,
 	fuseFoldSum,
+	fuseMapReduceBy,
+	fuseZipWith,
 	elideConstPredicates,
+	elideConstEarlyExits,
 }
 
 // maxRounds caps the cascade loop. Every pass either strictly shrinks the

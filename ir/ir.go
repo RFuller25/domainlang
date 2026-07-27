@@ -223,8 +223,14 @@ type Value = any
 // Context carries I/O for primitives that need it (input source, output sink),
 // plus the named-value environment for Channels.
 type Context struct {
-	Stdin    io.Reader
-	Stdout   io.Writer
+	Stdin  io.Reader
+	Stdout io.Writer
+	// Stderr is the sink for `Reveal: stderr`. A mid-pipeline Reveal to
+	// stderr is a debugging tool that does not disturb the program's answer —
+	// or its golden test. Nil discards, exactly as a nil Stdout does: a
+	// caller that captures only stdout must not find stderr output mixed into
+	// it, or the two backends would disagree about what a program printed.
+	Stderr io.Writer
 	BaseDir  string           // directory used to resolve relative input file paths
 	Channels map[string]Value // values produced by Channel sub-pipelines
 	// Release disables Binding Vows (they become passthroughs). It lives on
@@ -232,6 +238,35 @@ type Context struct {
 	// inside Channel and loop bodies are captured by their parents' Eval
 	// closures, out of reach of node-list rewriting.
 	Release bool
+	// PartLabel is the label of the enclosing Part block, or "" at the top
+	// level. A Part sets it around its body and restores it afterwards; Emit
+	// reads it to prefix its output. It lives here for the same reason
+	// Release does — the Emit node inside a Part body is reached through the
+	// Part's Eval closure, so there is no node to rewrite.
+	PartLabel string
+	// Trace, when set, observes every node evaluation — see trace.go. nil
+	// means untraced, which is one nil check per node.
+	Trace Tracer
+	// frames is the stack of enclosing sub-pipeline labels, maintained only
+	// while tracing.
+	frames []string
+}
+
+// LabelledOutput renders a value for Reveal under the given Part label. A
+// single-line value goes on the label's own line; a multi-line one (a grid, a
+// sparse picture) starts on the line after, so the picture stays readable and
+// column-aligned. An empty label renders the value alone.
+//
+// Both backends must agree byte for byte, so this is the one implementation of
+// the rule: the interpreter calls it and codegen emits the same branch.
+func LabelledOutput(label, rendered string) string {
+	if label == "" {
+		return rendered
+	}
+	if strings.Contains(rendered, "\n") {
+		return "Part " + label + ":\n" + rendered
+	}
+	return "Part " + label + ": " + rendered
 }
 
 // Channel stores a named channel value, lazily creating the map.
@@ -264,6 +299,25 @@ type Node struct {
 	Meta      map[string]any
 	Pos       token.Position
 	Eval      func(ctx *Context, in Value) (Value, error)
+}
+
+// MetaForeign marks a node whose Pos belongs to a source other than the
+// program file — the embedded prelude, or an imported library. Inlining copies
+// a Shikigami's body into the caller's pipeline carrying the *definition's*
+// positions, and token.Position holds no file, so without this marker a tool
+// that maps nodes back to source lines would point confidently at the wrong
+// line of the user's program. The value names the source, for display.
+const MetaForeign = "foreign"
+
+// Foreign reports the source a node's position belongs to, when that source is
+// not the program file. Anything resolving Pos against the user's source has to
+// ask this first.
+func (n *Node) Foreign() (string, bool) {
+	if n == nil || n.Meta == nil {
+		return "", false
+	}
+	s, ok := n.Meta[MetaForeign].(string)
+	return s, ok && s != ""
 }
 
 // Pipeline is the linear chain of resolved nodes.

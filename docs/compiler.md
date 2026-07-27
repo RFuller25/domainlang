@@ -37,6 +37,22 @@ quicksort or pair loop — the thesis survives compilation intact.
   inside a Go loop; Fixed Point convergence uses generated structural
   equality functions (`dmEqN`), the same machinery that backs composite `=`
   in lambdas.
+- **Imports vanish.** `Innate Domain` libraries are loaded and their
+  Shikigami inlined before codegen runs, so an imported operation gets every
+  optimizer rewrite a local one would and the emitted program contains no
+  trace of the library. Libraries are needed at **build** time only; the
+  binary stays self-contained.
+- **Part labels are compile-time constants.** A `Part` block's body is
+  emitted inline and its label is baked straight into the print
+  (`fmt.Println(dmLabel("1", …))`), so a compiled binary carries no label
+  variable and no runtime branch for it. The interpreter *must* carry the
+  label on `ir.Context`, because the `Emit` node inside a Part body is
+  reached through the Part's own `Eval` closure and there is no node to
+  rewrite — this is one of the few places where the compiler can specialize
+  something the interpreter has to keep dynamic. The one runtime decision
+  that remains in both backends is whether the rendered value is multi-line
+  (`dmLabel` mirrors `ir.LabelledOutput` exactly), since `Text` and every
+  composite can contain a newline.
 - **Expression builtins** lower to direct Go (`length` → `int64(len(x))`)
   or tiny generic `dm*` helpers emitted on demand.
 - **Release mode** (`--release`) simply never emits vow nodes — zero
@@ -133,7 +149,7 @@ The full AoC toolbox surface is compiled:
   failure wording. The Permutations/Subsets bounds are shared constants
   with the interpreter (`prims.MaxPermutationInput` / `MaxSubsetInput`),
   so both backends refuse identically.
-- **Expression builtins:** all 61 compile. Points lower to the interned
+- **Expression builtins:** all 92 compile. Points lower to the interned
   `(Int, Int)` tuple struct; `padd`/`manhattan`/`rotl`/`rotr`/`dirs4`/
   `neighbors4`/`neighbors8`/`solve2x2` become concrete `dm*` helpers over
   that struct; the sparse group (`sparse`/`put`/`has`/`cells`/bounds and

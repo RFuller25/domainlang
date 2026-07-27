@@ -81,19 +81,21 @@ func (g *gen) emitGridSearchFromLines(gridNode, searchNode *ir.Node, lines strin
 		}
 		g.helper("dmCheckStart", declCheckStart)
 		g.helper("dmDistGrid", declDistGrid)
+		g.helper("dmSearchDirs", declSearchDirs)
 		g.helper("dmBFS", declBFS)
-		g.wl("%s := dmBFS(%s, %s, %s, %d, %d)", v, rows, cols, mask, sr, sc)
+		g.wl("%s := dmBFS(%s, %s, %s, %d, %d, %t)", v, rows, cols, mask, sr, sc, nodeDiag(searchNode))
 	case "Connected Components":
 		g.helper("dmComponents", declComponents)
-		g.wl("%s := dmComponents(%s, %s, %s)", v, rows, cols, mask)
+		g.wl("%s := dmComponents(%s, %s, %s, %t)", v, rows, cols, mask, nodeDiag(searchNode))
 	case "Flood Fill":
 		sr, sc, err := startCoords(searchNode)
 		if err != nil {
 			return "", err
 		}
 		g.helper("dmCheckStart", declCheckStart)
+		g.helper("dmSearchDirs", declSearchDirs)
 		g.helper("dmFloodFill", declFloodFill)
-		g.wl("%s := dmFloodFill(%s, %s, %s, %d, %d)", v, rows, cols, mask, sr, sc)
+		g.wl("%s := dmFloodFill(%s, %s, %s, %d, %d, %t)", v, rows, cols, mask, sr, sc, nodeDiag(searchNode))
 	default:
 		return "", unsupported(searchNode, "grid-search fusion")
 	}
@@ -136,6 +138,17 @@ const declCheckStart = `func dmCheckStart(rows, cols int, sr, sc int64) {
 	}
 }`
 
+// dmSearchDirs is the neighbour table the grid searches walk. Mode: 4 takes
+// the orthogonal prefix, Mode: 8 the whole thing — the same per-call choice
+// the interpreter makes via ir.GridValue.Neighbors.
+const declSearchDirs = `func dmSearchDirs(diag bool) [][2]int64 {
+	d := [][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}}
+	if diag {
+		return d
+	}
+	return d[:4]
+}`
+
 const declDistGrid = `func dmDistGrid(rows, cols int) dmGrid[int64] {
 	out := dmGrid[int64]{rows: rows, cols: cols, cells: make([]int64, rows*cols)}
 	for i := range out.cells {
@@ -144,7 +157,7 @@ const declDistGrid = `func dmDistGrid(rows, cols int) dmGrid[int64] {
 	return out
 }`
 
-const declBFS = `func dmBFS(rows, cols int, mask []bool, sr, sc int64) dmGrid[int64] {
+const declBFS = `func dmBFS(rows, cols int, mask []bool, sr, sc int64, diag bool) dmGrid[int64] {
 	dmCheckStart(rows, cols, sr, sc)
 	if !mask[sr*int64(cols)+sc] {
 		dmFail("start (%d, %d) is not walkable", sr, sc)
@@ -156,7 +169,7 @@ const declBFS = `func dmBFS(rows, cols int, mask []bool, sr, sc int64) dmGrid[in
 		cur := queue[0]
 		queue = queue[1:]
 		d := out.cells[cur[0]*int64(cols)+cur[1]]
-		for _, dl := range [4][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		for _, dl := range dmSearchDirs(diag) {
 			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
 			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= int64(cols) {
 				continue
@@ -185,13 +198,14 @@ func (g *gen) emitBFS(n *ir.Node, in string) (string, error) {
 	g.helper("dmGrid", declGrid)
 	g.helper("dmCheckStart", declCheckStart)
 	g.helper("dmDistGrid", declDistGrid)
+	g.helper("dmSearchDirs", declSearchDirs)
 	g.helper("dmBFS", declBFS)
 	v := g.fresh("v")
-	g.wl("%s := dmBFS(%s.rows, %s.cols, %s, %d, %d)", v, in, in, mask, r, c)
+	g.wl("%s := dmBFS(%s.rows, %s.cols, %s, %d, %d, %t)", v, in, in, mask, r, c, nodeDiag(n))
 	return v, nil
 }
 
-const declFloodFill = `func dmFloodFill(rows, cols int, mask []bool, sr, sc int64) dmGrid[int64] {
+const declFloodFill = `func dmFloodFill(rows, cols int, mask []bool, sr, sc int64, diag bool) dmGrid[int64] {
 	dmCheckStart(rows, cols, sr, sc)
 	if !mask[sr*int64(cols)+sc] {
 		dmFail("start (%d, %d) is not in the region (its predicate is false there)", sr, sc)
@@ -202,7 +216,7 @@ const declFloodFill = `func dmFloodFill(rows, cols int, mask []bool, sr, sc int6
 	for len(stack) > 0 {
 		cur := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		for _, dl := range [4][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		for _, dl := range dmSearchDirs(diag) {
 			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
 			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= int64(cols) {
 				continue
@@ -230,9 +244,10 @@ func (g *gen) emitFloodFill(n *ir.Node, in string) (string, error) {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmGrid", declGrid)
 	g.helper("dmCheckStart", declCheckStart)
+	g.helper("dmSearchDirs", declSearchDirs)
 	g.helper("dmFloodFill", declFloodFill)
 	v := g.fresh("v")
-	g.wl("%s := dmFloodFill(%s.rows, %s.cols, %s, %d, %d)", v, in, in, mask, r, c)
+	g.wl("%s := dmFloodFill(%s.rows, %s.cols, %s, %d, %d, %t)", v, in, in, mask, r, c, nodeDiag(n))
 	return v, nil
 }
 
@@ -242,7 +257,7 @@ func (g *gen) emitFloodFill(n *ir.Node, in string) (string, error) {
 // lazy-deletion Dijkstra), so the heap only ever holds relaxations that beat
 // the best distance seen for a cell — far fewer heap operations than pushing
 // every unsettled neighbour, with identical final distances.
-const declDijkstra = `func dmDijkstra(rows, cols int, costs []int64, sr, sc int64) dmGrid[int64] {
+const declDijkstra = `func dmDijkstra(rows, cols int, costs []int64, sr, sc int64, diag bool) dmGrid[int64] {
 	for i, c := range costs {
 		if c < 0 {
 			dmFail("cell %d has a negative or non-Int cost (%d)", i, c)
@@ -297,7 +312,7 @@ const declDijkstra = `func dmDijkstra(rows, cols int, costs []int64, sr, sc int6
 			continue
 		}
 		out.cells[i] = cur.d
-		for _, dl := range [4][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		for _, dl := range dmSearchDirs(diag) {
 			nr, nc := cur.r+dl[0], cur.c+dl[1]
 			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= int64(cols) {
 				continue
@@ -325,9 +340,10 @@ func (g *gen) emitDijkstra(n *ir.Node, in string) (string, error) {
 	g.helper("dmGrid", declGrid)
 	g.helper("dmCheckStart", declCheckStart)
 	g.helper("dmDistGrid", declDistGrid)
+	g.helper("dmSearchDirs", declSearchDirs)
 	g.helper("dmDijkstra", declDijkstra)
 	v := g.fresh("v")
-	g.wl("%s := dmDijkstra(%s.rows, %s.cols, %s.cells, %d, %d)", v, in, in, in, r, c)
+	g.wl("%s := dmDijkstra(%s.rows, %s.cols, %s.cells, %d, %d, %t)", v, in, in, in, r, c, nodeDiag(n))
 	return v, nil
 }
 
@@ -335,7 +351,7 @@ func (g *gen) emitDijkstra(n *ir.Node, in string) (string, error) {
 // of a search with a single at(target) read (optimizer.fuseSearchTarget):
 // same validations and wording as the full helpers plus at()'s bounds check,
 // returning the moment the target settles.
-const declBFSTarget = `func dmBFSTarget(rows, cols int, mask []bool, sr, sc, tr, tc int64) int64 {
+const declBFSTarget = `func dmBFSTarget(rows, cols int, mask []bool, sr, sc, tr, tc int64, diag bool) int64 {
 	dmCheckStart(rows, cols, sr, sc)
 	if !mask[sr*int64(cols)+sc] {
 		dmFail("start (%d, %d) is not walkable", sr, sc)
@@ -358,7 +374,7 @@ const declBFSTarget = `func dmBFSTarget(rows, cols int, mask []bool, sr, sc, tr,
 		cur := queue[0]
 		queue = queue[1:]
 		d := dist[cur[0]*w+cur[1]]
-		for _, dl := range [4][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		for _, dl := range dmSearchDirs(diag) {
 			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
 			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= w {
 				continue
@@ -377,7 +393,7 @@ const declBFSTarget = `func dmBFSTarget(rows, cols int, mask []bool, sr, sc, tr,
 	return -1
 }`
 
-const declDijkstraTarget = `func dmDijkstraTarget(rows, cols int, costs []int64, sr, sc, tr, tc int64) int64 {
+const declDijkstraTarget = `func dmDijkstraTarget(rows, cols int, costs []int64, sr, sc, tr, tc int64, diag bool) int64 {
 	for i, c := range costs {
 		if c < 0 {
 			dmFail("cell %d has a negative or non-Int cost (%d)", i, c)
@@ -443,7 +459,7 @@ const declDijkstraTarget = `func dmDijkstraTarget(rows, cols int, costs []int64,
 		if i == target {
 			return cur.d
 		}
-		for _, dl := range [4][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+		for _, dl := range dmSearchDirs(diag) {
 			nr, nc := cur.r+dl[0], cur.c+dl[1]
 			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= w {
 				continue
@@ -483,18 +499,20 @@ func (g *gen) emitSearchTarget(n *ir.Node, in string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		g.helper("dmSearchDirs", declSearchDirs)
 		g.helper("dmBFSTarget", declBFSTarget)
-		g.wl("%s := dmBFSTarget(%s.rows, %s.cols, %s, %d, %d, %d, %d)", v, in, in, mask, r, c, tr, tc)
+		g.wl("%s := dmBFSTarget(%s.rows, %s.cols, %s, %d, %d, %d, %d, %t)", v, in, in, mask, r, c, tr, tc, nodeDiag(n))
 		return v, nil
 	case "Dijkstra":
+		g.helper("dmSearchDirs", declSearchDirs)
 		g.helper("dmDijkstraTarget", declDijkstraTarget)
-		g.wl("%s := dmDijkstraTarget(%s.rows, %s.cols, %s.cells, %d, %d, %d, %d)", v, in, in, in, r, c, tr, tc)
+		g.wl("%s := dmDijkstraTarget(%s.rows, %s.cols, %s.cells, %d, %d, %d, %d, %t)", v, in, in, in, r, c, tr, tc, nodeDiag(n))
 		return v, nil
 	}
 	return "", unsupported(n, "unknown search kind %q", kind)
 }
 
-const declComponents = `func dmComponents(rows, cols int, mask []bool) int64 {
+const declComponents = `func dmComponents(rows, cols int, mask []bool, diag bool) int64 {
 	parent := make([]int, rows*cols)
 	size := make([]int, rows*cols)
 	for i := range parent {
@@ -531,6 +549,17 @@ const declComponents = `func dmComponents(rows, cols int, mask []bool) int64 {
 			if r+1 < rows && mask[i+cols] {
 				union(i, i+cols)
 			}
+			// Under Mode: 8 the two downward diagonals complete the
+			// neighbourhood; the upward ones are covered by the cell above
+			// having already unioned toward this one.
+			if diag && r+1 < rows {
+				if c+1 < cols && mask[i+cols+1] {
+					union(i, i+cols+1)
+				}
+				if c > 0 && mask[i+cols-1] {
+					union(i, i+cols-1)
+				}
+			}
 		}
 	}
 	var n int64
@@ -549,6 +578,13 @@ func (g *gen) emitConnectedComponents(n *ir.Node, in string) (string, error) {
 	}
 	g.helper("dmComponents", declComponents)
 	v := g.fresh("v")
-	g.wl("%s := dmComponents(%s.rows, %s.cols, %s)", v, in, in, mask)
+	g.wl("%s := dmComponents(%s.rows, %s.cols, %s, %t)", v, in, in, mask, nodeDiag(n))
 	return v, nil
+}
+
+// nodeDiag reads the connectivity a grid search resolved to (Mode: 4 | 8).
+// Absent means 4, which is what every one of them used to hard-code.
+func nodeDiag(n *ir.Node) bool {
+	d, _ := n.Meta["diagonal"].(bool)
+	return d
 }

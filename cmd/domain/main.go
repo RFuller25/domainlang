@@ -37,6 +37,8 @@ type Options struct {
 	Explain  bool
 	Optimize bool
 	Release  bool // skip Binding Vows (debug-on / release-off)
+	Stats    bool // report per-stage counts and timings on stderr
+	Verbose  bool // with Stats: list nested (loop/channel/part) steps too
 }
 
 // BuildOptions controls a single build.
@@ -91,6 +93,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
 			os.Exit(1)
 		}
+	case "fmt":
+		paths, opts, err := parseFmtArgs(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
+			os.Exit(2)
+		}
+		os.Exit(Fmt(paths, opts, os.Stdin, os.Stdout, os.Stderr))
 	case "repl":
 		os.Exit(Repl(os.Stdin, os.Stdout))
 	case "lsp":
@@ -155,6 +164,7 @@ Usage:
   domain run <file.domain> [flags]    interpret, explicitly (accepts the shared flags)
   domain build <file.domain> [flags]  compile, explicitly
   domain check <file.domain>          typecheck only: report the first error, run nothing
+  domain fmt <file.domain>... [-w]    canonical whitespace (-w in place, --check for CI)
   domain repl                         interactive pipeline builder (replay-on-each-line)
   domain lsp                          language server over stdio (diagnostics, hover, defs, fixes)
   domain help | -h | --help           show this help
@@ -165,12 +175,17 @@ Expansion commands (the diagnostics engine):
   domain expansion: fix <file>              apply unambiguous fixes in place (original kept as .bak)
   domain expansion: optimize <file>         optimization report; rewrites the source where possible (.bak)
   domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
+  domain expansion: visualize <file>        step through a run and watch the data change shape
   domain expansion: documentation [-p PORT] serve the browsable docs website locally (default port 4444)
 
 Shared flags (run and build):
   --explain      print the algorithm substitutions the optimizer made
   --no-optimize  use the naive pipeline (skip the optimizer)
   --release      shed Binding Vows: run skips them, build compiles them out
+
+Run flags:
+  --stats        per-stage counts and timings on stderr (interpreter only)
+  --verbose      with --stats, also list nested loop/channel/part steps
 
 Build flags:
   -o <binary>    where to write the compiled binary (default: source name without .domain)
@@ -196,6 +211,10 @@ func parseRunArgs(args []string) (string, Options, error) {
 			opts.Optimize = false
 		case "--release":
 			opts.Release = true
+		case "--stats":
+			opts.Stats = true
+		case "--verbose":
+			opts.Verbose = true
 		default:
 			if len(a) > 0 && a[0] == '-' {
 				return "", opts, fmt.Errorf("unknown flag %q", a)
@@ -302,7 +321,7 @@ func loadPipeline(path string, optimize, explain bool, stderr io.Writer) (*ir.Pi
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
 
-	pipe, err := prims.Resolve(prog)
+	pipe, err := prims.ResolveWith(prog, prims.FileOptions(path))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
@@ -330,13 +349,24 @@ func Execute(path string, opts Options, stdin io.Reader, stdout, stderr io.Write
 	ctx := &ir.Context{
 		Stdin:   stdin,
 		Stdout:  stdout,
+		Stderr:  os.Stderr,
 		BaseDir: filepath.Dir(path),
 		Release: opts.Release,
 	}
-	if _, err := interp.Run(pipe, ctx); err != nil {
-		return err
+	// --stats installs the aggregating tracer. Without it ctx.Trace stays nil
+	// and every evaluation site is one nil check away from what it always was.
+	var stats *interp.Stats
+	if opts.Stats {
+		stats = interp.NewStats()
+		ctx.Trace = stats
 	}
-	return nil
+	_, runErr := interp.Run(pipe, ctx)
+	// Report even on failure: the stage that failed is usually the interesting
+	// one, and the table shows how far the program got.
+	if stats != nil {
+		stats.Report(stderr, opts.Verbose)
+	}
+	return runErr
 }
 
 // Build compiles a Domain program to a standalone optimized Go binary. The

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"strings"
 
 	"domain/ast"
@@ -26,6 +27,7 @@ import (
 	"domain/lexer"
 	"domain/parser"
 	"domain/prims"
+	"domain/token"
 )
 
 // Server is one LSP session over a reader/writer pair.
@@ -41,10 +43,17 @@ type Server struct {
 // is invalidated by replacing the whole struct on didOpen/didChange, so a
 // stale pipe/prog can never outlive the text it was computed from.
 type document struct {
-	text     string
+	text string
+	// path is the document's filesystem path, so `Innate Domain` imports
+	// resolve against the file's own directory. Unsaved buffers still work:
+	// resolveText reads library files through the open documents first.
+	path     string
 	resolved bool // pipe/prog computed for text
 	pipe     *ir.Pipeline
 	prog     *ast.Program
+	// sites records where each Shikigami was defined, so go-to-definition can
+	// follow an imported name into its library file.
+	sites map[string]prims.DefSite
 }
 
 // resolve returns the front-end result for the document's current text,
@@ -52,7 +61,8 @@ type document struct {
 // single-threaded (one request at a time off one stdin), so no locking.
 func (d *document) resolve() (*ir.Pipeline, *ast.Program) {
 	if !d.resolved {
-		d.pipe, d.prog = resolveText(d.text)
+		d.sites = map[string]prims.DefSite{}
+		d.pipe, d.prog = resolveText(d.path, d.text, d.sites)
 		d.resolved = true
 	}
 	return d.pipe, d.prog
@@ -151,6 +161,7 @@ func (s *Server) dispatch(req *request) {
 				"hoverProvider":      true,
 				"definitionProvider": true,
 				"codeActionProvider": true,
+				"inlayHintProvider":  true,
 				"completionProvider": map[string]any{
 					"triggerCharacters": []string{":", " "},
 					"resolveProvider":   false,
@@ -170,7 +181,7 @@ func (s *Server) dispatch(req *request) {
 			} `json:"textDocument"`
 		}
 		if json.Unmarshal(req.Params, &p) == nil {
-			s.docs[p.TextDocument.URI] = &document{text: p.TextDocument.Text}
+			s.docs[p.TextDocument.URI] = &document{text: p.TextDocument.Text, path: uriPath(p.TextDocument.URI)}
 			s.publishDiagnostics(p.TextDocument.URI)
 		}
 	case "textDocument/didChange":
@@ -183,7 +194,10 @@ func (s *Server) dispatch(req *request) {
 			} `json:"contentChanges"`
 		}
 		if json.Unmarshal(req.Params, &p) == nil && len(p.ContentChanges) > 0 {
-			s.docs[p.TextDocument.URI] = &document{text: p.ContentChanges[len(p.ContentChanges)-1].Text}
+			s.docs[p.TextDocument.URI] = &document{
+				text: p.ContentChanges[len(p.ContentChanges)-1].Text,
+				path: uriPath(p.TextDocument.URI),
+			}
 			s.publishDiagnostics(p.TextDocument.URI)
 		}
 	case "textDocument/didClose":
@@ -205,6 +219,8 @@ func (s *Server) dispatch(req *request) {
 		s.reply(req.ID, s.definition(req.Params))
 	case "textDocument/codeAction":
 		s.reply(req.ID, s.codeActions(req.Params))
+	case "textDocument/inlayHint":
+		s.reply(req.ID, s.inlayHints(req.Params))
 	default:
 		if len(req.ID) > 0 {
 			s.reply(req.ID, nil) // unknown request: honest null beats silence
@@ -339,10 +355,15 @@ func (s *Server) hover(params json.RawMessage) any {
 			}
 			params := make([]string, len(def.Params))
 			for i, pr := range def.Params {
-				params[i] = pr.Name + ": " + pr.Type
+				params[i] = pr.Name + ": " + prims.TypeString(pr.Type)
 			}
-			body := fmt.Sprintf("```\nShikigami %q (%s) — %d statement(s)\n```",
-				def.Name, strings.Join(params, ", "), len(def.Body))
+			sig := ""
+			if def.Sig != nil {
+				sig = fmt.Sprintf(" : %s -> %s",
+					prims.TypeString(def.Sig.In), prims.TypeString(def.Sig.Out))
+			}
+			body := fmt.Sprintf("```\nShikigami %q (%s)%s — %d statement(s)\n```",
+				def.Name, strings.Join(params, ", "), sig, len(def.Body))
 			return markupHover(body)
 		}
 	}
@@ -447,7 +468,49 @@ func (s *Server) definition(params json.RawMessage) any {
 			}
 		}
 	}
+	// An imported Shikigami lives in a library file: jump there. The definition
+	// site came back from the resolver, which is the only thing that knows which
+	// file on the search path actually answered the import.
+	if site, ok := doc.sites[name]; ok && site.Origin == "import" && site.Path != "" {
+		if def := importedDef(site.Path, name); def != nil {
+			pos := map[string]int{"line": def.Pos.Line - 1, "character": def.Pos.Col - 1}
+			return map[string]any{
+				"uri":   "file://" + def.file,
+				"range": map[string]any{"start": pos, "end": pos},
+			}
+		}
+	}
 	return nil // prelude Shikigami live in the embedded source, not a file
+}
+
+// importedDefSite is a definition found inside a library file.
+type importedDefSite struct {
+	Pos  token.Position
+	file string
+}
+
+// importedDef re-reads a library file to locate a definition's position in it.
+// Re-parsing here rather than caching the AST keeps the resolver from holding
+// every library it ever loaded; go-to-definition is a rare, interactive request.
+func importedDef(path, name string) *importedDefSite {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	toks, err := lexer.Lex(string(src))
+	if err != nil {
+		return nil
+	}
+	prog, err := parser.Parse(string(src), toks)
+	if err != nil {
+		return nil
+	}
+	for _, def := range prog.Shikigamis {
+		if def.Name == name {
+			return &importedDefSite{Pos: def.Pos, file: path}
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -490,8 +553,10 @@ func (s *Server) codeActions(params json.RawMessage) any {
 }
 
 // resolveText runs the front end over editor text, tolerating failure at any
-// stage: hover/definition work with whatever was reachable.
-func resolveText(text string) (*ir.Pipeline, *ast.Program) {
+// stage: hover/definition work with whatever was reachable. path gives
+// `Innate Domain` imports their file context, and sites (when non-nil) is
+// filled in with each Shikigami's definition site.
+func resolveText(path, text string, sites map[string]prims.DefSite) (*ir.Pipeline, *ast.Program) {
 	toks, err := lexer.Lex(text)
 	if err != nil {
 		return nil, nil
@@ -500,9 +565,14 @@ func resolveText(text string) (*ir.Pipeline, *ast.Program) {
 	if err != nil {
 		return nil, nil
 	}
-	pipe, err := prims.Resolve(prog)
+	opts := prims.FileOptions(path)
+	opts.Sites = sites
+	pipe, err := prims.ResolveWith(prog, opts)
 	if err != nil {
-		return nil, prog
+		// Resolution hands back the nodes it managed before failing, so hover
+		// and inlay hints still work for the prefix that type-checked — the
+		// REPL's incremental feel, in a file that does not yet resolve.
+		return pipe, prog
 	}
 	return pipe, prog
 }

@@ -51,6 +51,42 @@ func buildFloatSort(op *ast.Operation, pos token.Position) *ir.Node {
 	}
 }
 
+// buildOrderedSort is the Sort arm for a non-Int ordered element type — Text
+// (alphabetical) and tuples (lexicographic). It shares the "Sort" Prim so the
+// type-guarded optimizer passes recognize it, and records the element kind in
+// Meta so codegen can pick a comparison.
+func buildOrderedSort(op *ast.Operation, in *ir.Type, pos token.Position) *ir.Node {
+	desc := hasModifier(op, "Descending")
+	order := "Ascending"
+	if desc {
+		order = "Descending"
+	}
+	return &ir.Node{
+		Prim:      "Sort",
+		In:        in,
+		Out:       in,
+		Display:   "Quicksort (" + in.Elem.String() + "), " + order,
+		Swappable: true,
+		Meta:      map[string]any{"desc": desc, "elem": in.Elem.String(), "ordered": true},
+		Pos:       pos,
+		Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+			xs, err := ir.AsList(v)
+			if err != nil {
+				return nil, runtimeErr("Sort", pos, "%v", err)
+			}
+			out := append([]ir.Value(nil), xs...)
+			sort.SliceStable(out, func(i, j int) bool {
+				c := ir.Compare(out[i], out[j])
+				if desc {
+					return c > 0
+				}
+				return c < 0
+			})
+			return out, nil
+		},
+	}
+}
+
 // buildFloatReduce is the List<Float> arm of Max/Min/Product.
 func buildFloatReduce(id string, pos token.Position) *ir.Node {
 	want := ir.List(ir.Float())

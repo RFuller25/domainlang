@@ -152,6 +152,156 @@ func TestCompiledInlineProgramsMatchInterpreter(t *testing.T) {
 		src   string
 		input string
 	}{
+		// Part blocks. The interpreter carries the label on ir.Context and
+		// branches at runtime; the compiler bakes it in as a literal. These pin
+		// the two to byte-identical output over every shape the label rule
+		// distinguishes — scalar, multi-line text, composite, and grid.
+		{
+			name: "part blocks with scalar answers",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Part "1":
+    Maximum Technique: Max
+    Reveal: stdout
+Part "2":
+    Maximum Technique: Sum
+    Reveal: stdout
+`,
+			input: "3\n1\n4\n1\n5",
+		},
+		{
+			name: "part revealing a multi-line text",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Part "joined":
+    Maximum Technique: Join with "\n"
+    Reveal: stdout
+`,
+			input: "a,b,c",
+		},
+		{
+			name: "part revealing a grid picture",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Part "picture":
+    Channeled Energy: Convert To Grid
+    Reveal: stdout
+`,
+			input: "ab\ncd",
+		},
+		{
+			name: "part revealing a list and a float",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Part "list":
+    Domain Expansion: Quicksort
+    Reveal: stdout
+Part "mean-ish":
+    Channeled Energy: Convert List to Floats
+    Maximum Technique: Sum
+    Reveal: stdout
+`,
+			input: "5\n1\n9",
+		},
+		{
+			name: "part passthrough with a following top-level reveal",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Part "1":
+    Maximum Technique: Sum
+    Reveal: stdout
+Maximum Technique: Count
+Reveal: stdout
+`,
+			input: "3\n1\n4",
+		},
+		{
+			name: "part with no reveal computes nothing observable",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Part "quiet":
+    Maximum Technique: Sum
+Maximum Technique: Count
+Reveal: stdout
+`,
+			input: "3\n1\n4",
+		},
+		{
+			name: "part consuming a channel defined above it",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Channel "total":
+    Maximum Technique: Sum
+Part "1":
+    Maximum Technique: Combine
+        From: total
+        Using: (t) -> t * 2
+    Reveal: stdout
+`,
+			input: "3\n1\n4",
+		},
+		{
+			name: "part containing a loop and a vow",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Part "doubled":
+    Simple Domain: Repeat 3
+        Cursed Technique: Map Each
+            Using: (x) -> x * 2
+    Binding Vow: All Values > 0
+    Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		// Shikigami signatures and richer parameters are resolve-time only —
+		// the body is still inlined, so the compiler sees plain primitives.
+		// These pin that: a lambda parameter must compile to the same inlined
+		// expression a written-out lambda would.
+		{
+			name: "higher-order shikigami with a lambda parameter",
+			src: `Shikigami "Count Where" (p: (Int) -> Bool) : List<Int> -> Int
+    Maximum Technique: Count Matching
+        Using: p
+Cursed Energy: stdin
+Shikigami: Ints
+Shikigami: Count Where
+    p: (x) -> x > 3
+Reveal: stdout
+`,
+			input: "1\n5\n2\n9",
+		},
+		{
+			name: "shikigami with float and bool parameters",
+			src: `Shikigami "Scale If" (f: Float, on: Bool) : List<Int> -> List<Float>
+    Cursed Technique: Map Each
+        Using: (x) -> if on then x * f else x * 1.0
+Cursed Energy: stdin
+Shikigami: Ints
+Shikigami: Scale If
+    f: 2.5
+    on: true
+Reveal: stdout
+`,
+			input: "2\n4",
+		},
+		{
+			name: "signed shikigami still fuses into a quickselect",
+			src: `Shikigami "Top Two" : List<Int> -> Int
+    Domain Expansion: Quicksort, Descending
+    Maximum Technique: Select Top 2, Sum
+Cursed Energy: stdin
+Shikigami: Ints
+Shikigami: Top Two
+Reveal: stdout
+`,
+			input: "5\n1\n9\n7",
+		},
 		{
 			name: "regex fallback word holes",
 			src: `Cursed Energy: stdin
@@ -856,6 +1006,24 @@ func TestUnsupportedPrimitiveErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Frobnicate") || !strings.Contains(err.Error(), "domain run") {
 		t.Errorf("error should name the primitive and point at 'domain run': %v", err)
+	}
+}
+
+// For loops used to be interpreter-only — the one advertised exception to
+// "every primitive works in both backends". They compile now; what remains is
+// that a malformed node still fails cleanly rather than emitting broken Go.
+func TestForLoopWithoutMetadataErrors(t *testing.T) {
+	pipe := &ir.Pipeline{Nodes: []*ir.Node{{
+		Prim: "Simple Domain (For)",
+		In:   ir.List(ir.Int()),
+		Out:  ir.List(ir.Int()),
+	}}}
+	_, err := codegen.EmitProgram(pipe, codegen.Options{})
+	if err == nil {
+		t.Fatal("expected an error for a For node with no body metadata, got none")
+	}
+	if !strings.Contains(err.Error(), "Simple Domain (For)") {
+		t.Errorf("error should name the primitive: %v", err)
 	}
 }
 

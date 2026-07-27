@@ -67,7 +67,16 @@ distance against the *live* vocabulary, never a hardcoded list:
   then fuzzily against the IDs under the written keyword (`Splitt Each` →
   `Split Each`); placeholder words in IDs (`K`) match literal integers;
 - unknown **Shikigami** against user definitions plus the prelude;
-- unknown **channels** against the Channels actually defined in the file.
+- unknown **channels** against the Channels actually defined in the file;
+- **prefix-free lines** whose phrase names no operation (`Splt Each by …`)
+  fuzzily against every primitive ID; since there is no keyword on the line to
+  move, the repair rewrites the phrase itself.
+
+**Prefix inference** ([optional keywords](language.md#optional-keywords)) adds
+two errors of its own, both of which prefer asking to guessing: a phrase that
+matches primitives under two different keywords reports both and asks for the
+keyword, and a Shikigami named after a built-in is refused at its definition
+with the reserved-name rule spelled out.
 
 **Type intelligence** — a type mismatch explains what the pipeline was
 carrying versus what the primitive needs, and when a single-step bridge
@@ -86,8 +95,14 @@ Style and hygiene (warnings):
 - a `Shikigami` defined but never summoned, defined twice, or shadowing a
   prelude name;
 - statements after the last `Reveal` whose results nothing observes
-  (`Binding Vow` and further `Reveal`s are exempt — they are observable);
-- a pipeline that never `Reveal`s at all.
+  (`Binding Vow`, further `Reveal`s and `Part` blocks are exempt — all three
+  are observable), checked per scope, so work after a `Part`'s own final
+  `Reveal` is reported too;
+- a pipeline that never `Reveal`s at all — satisfied by a program whose
+  `Part` blocks do the revealing;
+- a `Part` whose body never `Reveal`s, so it produces no output;
+- two `Part` blocks sharing a label, which makes their output
+  indistinguishable.
 
 Performance hints:
 
@@ -131,7 +146,7 @@ the file is touched.
    statements after the final `Reveal`, and deleting unused Channels. Each
    rewrite is applied one at a time and the program is re-resolved after
    each; a rewrite that would break the program is rolled back.
-2. *The IR report* — everything the 26-pass optimizer will substitute on
+2. *The IR report* — everything the 30-pass optimizer will substitute on
    every run/build of the (possibly rewritten) program, in the same wording
    as `--explain`.
 

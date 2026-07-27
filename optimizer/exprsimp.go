@@ -96,6 +96,13 @@ func (s *simplifier) simplify(e ast.Expr) ast.Expr {
 			Else: s.simplify(x.Else),
 			Pos:  x.Pos,
 		}
+	case *ast.LetExpr:
+		e = &ast.LetExpr{
+			Name:  x.Name,
+			Value: s.simplify(x.Value),
+			Body:  s.simplify(x.Body),
+			Pos:   x.Pos,
+		}
 	}
 	for {
 		next, changed := s.rewriteLocal(e)

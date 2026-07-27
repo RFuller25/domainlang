@@ -4,20 +4,120 @@
 // and Binding Vow predicates.
 package ast
 
-import "domain/token"
+import (
+	"strings"
+
+	"domain/token"
+)
+
+// Keywords is the canonical list of themed statement keywords. Writing one is
+// optional — a statement may be written as a bare operation phrase and
+// prims.Infer recovers the keyword from the phrase — but a keyword that *is*
+// written must be spelled from this list.
+//
+// The list lives here, in the syntax layer, because the parser needs it to
+// tell `Reveal stdout` (a keyword missing its colon) apart from a prefix-free
+// phrase. A test in package prims pins it to the keywords the primitive
+// registry actually uses, so the two cannot drift.
+var Keywords = []string{
+	"Innate Domain",
+	"Cursed Energy",
+	"Cursed Technique",
+	"Channeled Energy",
+	"Maximum Technique",
+	"Domain Expansion",
+	"Reverse Cursed Technique",
+	"Simple Domain",
+	"Channel",
+	"Part",
+	"Shikigami",
+	"Binding Vow",
+	"Reveal",
+}
+
+// KeywordPrefix reports whether words begins with a themed keyword, returning
+// that keyword and how many words it spans. The longest keyword wins, so a
+// keyword that is a prefix of another can never mask it.
+func KeywordPrefix(words []string) (keyword string, n int, ok bool) {
+	for _, kw := range Keywords {
+		kwWords := strings.Fields(kw)
+		if len(kwWords) <= n || len(words) < len(kwWords) {
+			continue
+		}
+		match := true
+		for i, w := range kwWords {
+			if !strings.EqualFold(words[i], w) {
+				match = false
+				break
+			}
+		}
+		if match {
+			keyword, n, ok = kw, len(kwWords), true
+		}
+	}
+	return keyword, n, ok
+}
 
 // Program is an ordered list of pipeline statements, plus any Shikigami
-// (user-defined operation) definitions collected from the source.
+// (user-defined operation) definitions and `Innate Domain` imports collected
+// from the source.
 type Program struct {
 	Statements []*Statement
 	Shikigamis []*ShikigamiDef
+	Imports    []*Import
 }
 
-// Param is a typed Shikigami parameter, e.g. `k: Int`.
+// Import is an `Innate Domain: <target>` statement: a Shikigami library to
+// load before this program. Like Shikigami definitions, imports are hoisted out
+// of the statement list — they are declarations, not pipeline steps, so where
+// they appear in the file does not matter.
+//
+// Target is written without the `.domain` extension, matching how a
+// `Cursed Energy:` target is written as a bare path.
+type Import struct {
+	Target string
+	Pos    token.Position
+}
+
+// Param is a typed Shikigami parameter, e.g. `k: Int` or
+// `p: (Int) -> Bool`.
 type Param struct {
 	Name string
-	Type string // "Int" or "Text" in v0.2
+	Type *TypeExpr
 	Pos  token.Position
+}
+
+// TypeExpr is a type as *written*: a syntactic tree, deliberately not an
+// ir.Type. Lowering it (prims.lowerTypeExpr) is where names are checked and
+// keyability is enforced, which keeps the parser free of the type model.
+//
+// Exactly one shape is set:
+//
+//	Name != ""     a named type, with Args for generics: Int, List<Int>, Map<K,V>
+//	Tuple != nil   a positional tuple: (Int, Int)
+//	Lambda != nil  a lambda type: (Int) -> Bool
+type TypeExpr struct {
+	Name   string
+	Args   []*TypeExpr
+	Tuple  []*TypeExpr
+	Lambda *LambdaType
+	Pos    token.Position
+}
+
+// LambdaType is the type of a lambda-valued Shikigami parameter.
+type LambdaType struct {
+	Params []*TypeExpr
+	Result *TypeExpr
+}
+
+// Signature is a Shikigami's declared pipeline type, `: In -> Out`. It is
+// optional: a Shikigami without one is checked at each call site as before,
+// which is also how a polymorphic Shikigami stays writable (Domain has no type
+// variables, so a declared signature is necessarily monomorphic).
+type Signature struct {
+	In  *TypeExpr
+	Out *TypeExpr
+	Pos token.Position
 }
 
 // ShikigamiDef is a user-defined, parameterized operation composed from
@@ -29,6 +129,7 @@ type Param struct {
 type ShikigamiDef struct {
 	Name   string
 	Params []Param
+	Sig    *Signature // declared `: In -> Out`; nil when not written
 	Body   []*Statement
 	Pos    token.Position
 }
@@ -38,9 +139,19 @@ type ShikigamiDef struct {
 //	Keyword: <operation phrase>
 //	    Name: <arg value>     # optional indented named arguments
 //	    <child statements>    # or an indented sub-pipeline
+//
+// A statement written without its keyword — a bare operation phrase such as
+// `Split Text by "\n"` — parses with Keyword == "". prims.Infer fills the
+// keyword in from the phrase before resolution, so every later stage sees a
+// fully-keyworded statement and behaves identically either way —
+// KeywordInferred is how a tool that wants to speak the source's own style
+// (a linter's advice, a formatter) can still tell the two apart.
 type Statement struct {
-	Keyword     string       // e.g. "Cursed Energy", "Domain Expansion"
+	Keyword         string // e.g. "Cursed Energy", "Domain Expansion"; "" until inferred
+	KeywordInferred bool   // the source wrote no keyword; Keyword was recovered from Op
+
 	ChannelName string       // for `Channel "name":` statements; "" otherwise
+	PartName    string       // for `Part "1":` statements; "" otherwise
 	Op          *Operation   // the inline operation phrase (nil for a pure block opener)
 	Args        []*Arg       // named arguments from an indented block (Mode:, Using:)
 	Block       []*Statement // an indented sub-pipeline (mutually exclusive with Args)
@@ -161,6 +272,16 @@ type CondExpr struct {
 	Pos  token.Position
 }
 
+// LetExpr is `consider NAME as VALUE in BODY`: a local binding, so a
+// subexpression can be named instead of written twice. NAME is in scope only
+// inside BODY, and shadows an outer binding of the same name.
+type LetExpr struct {
+	Name  string
+	Value Expr
+	Body  Expr
+	Pos   token.Position
+}
+
 func (*IntLit) expr()      {}
 func (*FloatLit) expr()    {}
 func (*BoolLit) expr()     {}
@@ -171,3 +292,4 @@ func (*UnaryExpr) expr()   {}
 func (*FieldAccess) expr() {}
 func (*CallExpr) expr()    {}
 func (*CondExpr) expr()    {}
+func (*LetExpr) expr()     {}

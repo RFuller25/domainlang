@@ -157,6 +157,129 @@ Concatenates the groups in order.
 Pairs every element with its 0-based index. Over `List<Int>` the pairs are
 points, so `prow`/`pcol` read index/value in a following lambda.
 
+### Pairs — `List<T> -> List<(T, T)>`
+
+```domain
+Cursed Technique: Pairs
+```
+
+Every element tupled with the one after it (`zip xs (tail xs)`): `n` elements
+give `n-1` pairs, and a list shorter than 2 gives none. Over `List<Int>` the
+pairs are points, so a following lambda reads the two sides with
+`prow`/`pcol` — the 2021 D1 "count the increases" idiom without a Window:
+
+```domain
+Cursed Technique: Pairs
+Maximum Technique: Count Matching
+    Using: (p) -> pcol(p) > prow(p)
+```
+
+`Window 2` covers the same ground with `List<List<T>>` elements; reach for
+`Pairs` when you want a tuple (points, `Map`/`Group By` keys — tuples are
+keyable, lists are not).
+
+### Chunk — `List<T> -> List<List<T>>`
+
+```domain
+Cursed Technique: Chunk 3
+```
+
+Consecutive non-overlapping blocks of the given size, **keeping a short final
+block**. That is the difference from `Window 3 3`, which drops a trailing
+partial window — usually a bug rather than the intent. Size must be ≥ 1; a
+list shorter than the size yields one block holding all of it.
+
+### Take While / Drop While — `List<T> × (T -> Bool) -> List<T>`
+
+```domain
+Cursed Technique: Take While
+    Using: (x) -> x < 4        # [1, 2, 9, 3] -> [1, 2]
+Cursed Technique: Drop While
+    Using: (x) -> x < 4        # [1, 2, 9, 3] -> [9, 3]
+```
+
+The longest leading run all of whose elements satisfy the predicate, and
+everything from the first failure onward. **They are not `Filter`**: both stop
+testing at the boundary, so the `3` after the `9` above is neither taken nor
+tested — a `Filter` would have kept it.
+
+Together they split the list at one point: `Take While p` ++ `Drop While p` is
+always the original.
+
+### Partition — `List<T> × (T -> Bool) -> List<List<T>>`
+
+```domain
+Cursed Technique: Partition
+    Using: (x) -> x > 2
+Cursed Technique: Take Item 0   # the matches
+```
+
+A two-element list, `[matching, non-matching]`, each in the input's order. One
+pass and one predicate evaluation per element, where a `Filter` and its
+negation cost two of each.
+
+The halves are reached the way input sections already are — `Take Item 0` /
+`Take Item 1` in the pipeline, `first(p)` / `last(p)` inside a lambda.
+
+### Iterate — `T × (T -> T) -> List<T>`
+
+```domain
+Cursed Technique: Iterate 5
+    Using: (x) -> x * 2        # 1 -> [2, 4, 8, 16, 32]
+```
+
+The value after each of `n` applications of the step. A `Simple Domain:
+Repeat n` loop threads a value through a body and keeps only where it ended
+up; `Iterate` keeps the whole trajectory, which is what "had I been here
+before?" needs. As with `Scan`, the starting value is not re-emitted, so the
+result has exactly `n` elements and its last one is where the equivalent
+`Repeat` would have finished.
+
+The step must return its own input type — it has to be applicable again — but
+that type can be anything, including a whole list or grid.
+
+Not to be confused with `Simple Domain: Iterate Until Fixed Point`, the loop.
+
+### Unfold — `T × (T -> Bool) × (T -> T) -> List<T>`
+
+The dual of `Fold`: where a fold consumes a list into a value, an unfold grows
+a value into a list.
+
+```domain
+Cursed Technique: Unfold
+    While: (x) -> x > 1
+    Using: (x) -> x / 2        # 20 -> [20, 10, 5, 2]
+```
+
+The current value is emitted while the `While:` predicate holds and advanced
+by the `Using:` step, so a predicate that is false at the start gives the
+empty list. Like the `Simple Domain` loops it is bounded: a step that never
+falsifies the predicate fails loudly instead of hanging.
+
+### Scan — `List<T> × Seed? × (Acc, T -> Acc) -> List<Acc>`
+
+The running fold: `Fold` keeps only the final accumulator, `Scan` keeps them
+all.
+
+```domain
+Cursed Technique: Scan            # seedless: Acc is the element type
+    Using: (a, b) -> a + b        # [1,2,3,4] -> [1, 3, 6, 10]
+
+Cursed Technique: Scan            # seeded: Seed: fixes Acc, as in Fold
+    Seed: 100
+    Using: (acc, x) -> acc + x    # [1,2,3] -> [101, 103, 106]
+```
+
+There is exactly **one result per input element** — the accumulator *after*
+folding that element in — so the result stays index-aligned with the list it
+scanned, and the seed is not re-emitted. Index `i` of the output is the fold
+of the first `i+1` inputs, and the last element equals what `Fold` with the
+same seed and lambda would have returned.
+
+Without `Seed:` the first element starts the accumulator (so `Acc` is the
+element type, and any type works — not just the Int and Text a `Seed:`
+literal can spell). Scanning the empty list gives the empty list either way.
+
 ### Take Item — `List<T> -> T`
 
 ```domain
@@ -196,6 +319,80 @@ coordinates.
 ### Transpose — `Grid<T> -> Grid<T>`
 
 Swaps rows and columns.
+
+### Range — `-> List<Int>`
+
+```domain
+Cursed Technique: Range 5        # [0, 1, 2, 3, 4]
+Cursed Technique: Range 1 16     # [1, …, 15]
+```
+
+The half-open integer range `[lo, hi)`, replacing the current value (like
+`Combine` and `Zip`, which also ignore it). Half-open **deliberately**:
+`range(N)` in a `For` header already means `0..N-1`, and two meanings of
+"range" in one language would be worse than the occasional `Range 1 16`. It
+also matches `slice`, `take` and `drop`. An inverted range is a resolve error.
+
+### Subgrid — `Grid<T> -> Grid<T>`
+
+```domain
+Cursed Technique: Subgrid 1 1 2 2      # ROW COL HEIGHT WIDTH
+```
+
+A rectangular crop. A crop that does not fit is a **runtime error, not a
+clamp** — silently returning fewer rows than asked for would be a wrong answer
+that looks right.
+
+### Pad Grid — `Grid<T> -> Grid<T>`
+
+```domain
+Cursed Technique: Pad Grid 1
+    Fill: "."
+```
+
+Adds a border `n` cells wide (default 1). `Fill:` is an Int or Text literal and
+must match the grid's element type. This is the standard move before a flood
+fill: a one-cell border lets the fill reach every outside cell without
+special-casing the edges.
+
+### Rotate Grid — `Grid<T> -> Grid<T>`
+
+```domain
+Cursed Technique: Rotate Grid
+    Mode: Right          # Right (default) | Left | Half
+```
+
+A quarter or half turn in grid coordinates: `Right` sends `(r, c)` to
+`(c, rows-1-r)`, the clockwise turn you get by reading the first column
+bottom-to-top as the new first row. A quarter turn swaps the dimensions.
+`Rotate Right` equals `Transpose` + `Flip Grid Horizontal`, and four right
+turns are the identity — both pinned by tests.
+
+### Flip Grid — `Grid<T> -> Grid<T>`
+
+```domain
+Cursed Technique: Flip Grid
+    Mode: Horizontal     # Horizontal (default, mirrors left-right) | Vertical
+```
+
+### Map Values — `Map<K,V> × (V -> W) -> Map<K,W>`
+
+```domain
+Cursed Technique: Map Values
+    Using: (b) -> sum(b)
+```
+
+Transforms every value; keys and their order are unchanged. `Group By` then
+`Map Values` is the two-line spelling of a grouped aggregation.
+
+### Filter Entries — `Map<K,V> × ((K, V) -> Bool) -> Map<K,V>`
+
+```domain
+Cursed Technique: Filter Entries
+    Using: (k, n) -> n > 1
+```
+
+The lambda takes **two** parameters, key then value.
 
 ---
 
@@ -263,15 +460,54 @@ input type:
   points collapse. A row that is not exactly two integers is a runtime
   error.
 
+### Convert To Rows — `Grid<T> -> List<List<T>>`
+
+The inverse of `Convert To Grid`, which was otherwise a one-way door: anything
+the grid primitives do not cover can be reached by dropping back to lists.
+
+### Convert To Entries — `Map<K,V> -> List<(K, V)>`
+
+```domain
+Channeled Energy: Convert To Entries
+```
+
+Drops a Map back into the list vocabulary, in insertion order (the order a Map
+already renders in), where `Sort By` and `Select Top K` already live. This is
+how the "which key occurred most?" idiom is written:
+
+```domain
+Maximum Technique: Count By
+    Using: (s) -> charat(s, 0)
+Channeled Energy: Convert To Entries
+Domain Expansion: Sort By, Descending
+    Using: (e) -> item(e, 1)
+Cursed Technique: Take Item 0
+```
+
+### Convert To Map — `List<(K, V)> -> Map<K,V>` (K keyable)
+
+The inverse. Duplicate keys: last write wins.
+
 ### Convert To Set — `List<T> -> Set<T>` (T keyable)
 
 ```domain
 Channeled Energy: Convert To Set
 ```
 
-Deduplicates a list into a Set, preserving first-seen order. Sets support
-`Count`, the Channel consumers (`Difference`), and the `contains(s, v)`
-expression builtin.
+Deduplicates a list into a Set, preserving first-seen order.
+
+**A Set is accepted wherever a list-shaped primitive takes a List** — `Map
+Each`, `Filter`, `Count Matching`, `Count By`, `Group By`, `Fold`, `Reduce`,
+`Scan`, `Unique`, `Enumerate`, `Pairs`, `Window`, `Chunk`, `Partition`, `Take
+Item`, `Sort By`, `Permutations`, `Subsets`, `Merge Ranges`, `Find Cycle` — and
+is read in insertion order, the order it already renders and iterates in. The
+**result is a List**: a transform may map two distinct elements onto the same
+value, and silently deduplicating would lose data the program asked for.
+
+Primitives that check their input type directly rather than by shape (`Join`,
+`Sum`, `Sort`) still require a List. Sets also support `Count`, the Channel
+consumers (`Difference`), and the `contains`/`size`/`tolist` expression
+builtins.
 
 ---
 
@@ -326,7 +562,10 @@ Maximum Technique: Fold
 ```
 
 `Seed:` is an Int or Text literal and fixes the accumulator type; the lambda
-must return that same type.
+must return that same type. Two variations live nearby: [Reduce](#reduce) is
+the same left fold seeded by the first element instead (so the accumulator
+can be any type), and [Scan](#scan) keeps every intermediate accumulator
+rather than only the last.
 
 **Fold as a channel consumer.** With `From:` naming one channel, Fold runs
 over the *channel's* list and the **current pipeline value is the seed** —
@@ -339,6 +578,97 @@ Maximum Technique: Fold
     From: moves
     Using: (stacks, m) -> set(stacks, m.f - 1, drop(item(stacks, m.f - 1), m.n))
 ```
+
+### Reduce — `List<T> × (T, T -> T) -> T`
+
+The seedless fold: the first element *is* the starting accumulator, so no
+`Seed:` is needed and none is accepted.
+
+```domain
+Maximum Technique: Reduce
+    Using: (a, b) -> a * 10 + b   # [1,2,3,4] -> 1234
+```
+
+It folds left, like `Fold`, and a one-element list is its own answer (the
+lambda never runs). Because the accumulator is an element, the lambda must
+be `T × T -> T` — and `T` can be anything the pipeline carries, including
+composites a `Seed:` literal cannot spell:
+
+```domain
+Maximum Technique: Reduce
+    Using: (a, b) -> padd(a, b)   # sum a list of points
+```
+
+**`Reduce` of an empty list is a runtime error** — there is no accumulator to
+start from. Use `Fold` with a `Seed:` when the empty case needs an answer.
+
+### Any / All — `List<T> × (T -> Bool) -> Bool`
+
+```domain
+Maximum Technique: Any
+    Using: (x) -> x > 4
+Maximum Technique: All
+    Using: (x) -> x > 0
+```
+
+Whether some — or every — element satisfies the predicate. **Both stop at the
+element that decides the answer**: `Any` at the first true, `All` at the first
+false. `Count Matching … > 0` computes the same thing but always visits the
+whole list.
+
+On the empty list each takes the identity of its connective: `Any` is `false`
+(nothing satisfies it), `All` is `true` (nothing violates it).
+
+Note that `All Pairs` is the [combination generator](#all-pairs--combinations-k)
+and `All Values > n` is a [Binding Vow](#simple-domain-channel-shikigami-binding-vow-reveal);
+neither is this reduction.
+
+### Find / Find Index — `List<T> × (T -> Bool) -> T` | `-> Int`
+
+```domain
+Maximum Technique: Find
+    Using: (r) -> r.n > 3
+Maximum Technique: Find Index
+    Using: (x) -> x > 3        # 0-based, or -1 when absent
+```
+
+The first element satisfying the predicate, or its position. Both stop there —
+the rest of the list is never touched.
+
+`Find` on no match is a runtime error (there is no element to hand back);
+`Find Index` answers `-1`, the sentinel the expression layer already uses for
+"not there". `Filter` + `Take Item 0` is the long way round, and the optimizer
+[rewrites it into a `Find`](optimizer.md) when the predicate cannot fail.
+
+### Find Cycle — `List<T> -> (Int, Int)` (T keyable)
+
+```domain
+Cursed Technique: Iterate 200
+    Using: (s) -> step(s)
+Maximum Technique: Find Cycle      # -> (first index of the repeat, period)
+```
+
+Where a trajectory first repeats, and its period. `Iterate` produces the
+trajectory precisely so a program can ask "have I been here before?", but the
+asking had no primitive — `Find Index` needs a predicate over one element, not
+a seen-set over the prefix. The answer is what turns "run this a billion
+times" into arithmetic.
+
+A trajectory with no repeat gives `(-1, 0)` — the sentinel `Find Index`
+already uses — rather than an error, since that is a legitimate result.
+
+### Sum By / Product By — `List<T> × (T -> Int) -> Int`
+
+```domain
+Maximum Technique: Sum By
+    Using: (x) -> x * x
+```
+
+Folds the lambda's Int key over the list without building the mapped list
+first, completing the key-lambda family that already has `Count By`, `Min By`
+and `Max By`. `Map Each` + `Sum` is the two-pass spelling, and the optimizer
+fuses it into exactly this. The empty list gives the identity: `0` for `Sum
+By`, `1` for `Product By`.
 
 ### Join — `List<Text> -> Text`
 
@@ -435,6 +765,20 @@ Pairs two channel lists element-wise, truncated to the shorter one. Over
 two Int lists the pairs are points (`prow`/`pcol` read them). The main
 pipeline's current value is ignored, like Combine.
 
+**Zip With.** Adding a two-parameter `Using:` lambda combines the channels
+directly instead of handing back tuples for a following `Map Each` to take
+apart — one pass, and no intermediate tuple list:
+
+```domain
+Maximum Technique: Zip
+    From: xs, ys
+    Using: (x, y) -> x * y      # -> List<Int>, not List<(Int, Int)>
+```
+
+The lambda must take one parameter per channel. Writing the naive `Zip` +
+`Map Each` pair is fine too: the optimizer fuses it into the same single
+pass.
+
 ---
 
 ## Domain Expansion — swappable algorithms
@@ -442,24 +786,34 @@ pipeline's current value is ignored, like Combine.
 These are the optimizer's targets: you name an algorithm, the compiler owes
 you its *result*.
 
-### Sort / Quicksort — `List<Int> -> List<Int>`
+### Sort / Quicksort — `List<T> -> List<T>` (T ordered)
 
 ```domain
 Domain Expansion: Quicksort, Descending
 ```
 
-Ascending by default; the `Descending` modifier flips it. Followed
+Ascending by default; the `Descending` modifier flips it. An **ordered** type
+is `Int`, `Float`, `Text`, or a Tuple built from ordered types — so a
+`List<Text>` sorts alphabetically and a list of tuples lexicographically.
+Ordered is deliberately narrower than keyable at both ends: `Float` is ordered
+but not keyable, and a `Record` is keyable but not ordered, its fields having
+names rather than positions. Followed
 immediately by `Select Top K`, the pair is rewritten to a partial selection
 that never fully sorts.
 
-### Sort By — `List<T> × (T -> Int) -> List<T>`
+### Sort By — `List<T> × (T -> K) -> List<T>` (K ordered)
 
 ```domain
 Domain Expansion: Sort By, Descending
     Using: (r) -> r.score
+
+Domain Expansion: Sort By                  # a two-level sort in one pass
+    Using: (r) -> tuple(r.group, r.score)
 ```
 
-Stable sort by the lambda's Int key, ascending by default.
+Stable sort by the lambda's key, ascending by default. The key may be any
+ordered type; a **tuple key is how a tiebreak is written**, comparing
+lexicographically.
 
 ### All Pairs / Combinations k — `List<T> × Mode × lambda -> …`
 
@@ -486,6 +840,37 @@ order). The lambda takes k parameters. Modes:
 `All Pairs` with a sum-to-constant predicate (`Mode: First` or `Count`) is
 rewritten to an O(n) hash-set scan — see [optimizer.md](optimizer.md).
 
+### Sliding Reduce — `List<Int> -> List<Int>`
+
+```domain
+Domain Expansion: Sliding Reduce 3
+    Mode: Sum                    # Sum (default) | Max | Min | Product
+Domain Expansion: Sliding Reduce 2 2   # size 2, step 2
+```
+
+The reduction of every fully-contained window, in one streaming pass. `Sum`
+uses prefix sums and `Max`/`Min` a monotonic deque, so both are **O(n) in the
+list length no matter how wide the window is** — the naive spelling is
+O(n·size) and materializes every window besides. `Product` has no such trick
+(a single zero destroys the prefix), so it is the honest per-window scan, but
+it still never builds the windows.
+
+This is the same node the optimizer already reaches from below: `Window n`
+feeding a `Map Each` that reduces each window fuses into it. Naming it
+directly says what you meant, and gets the streaming form whether or not the
+optimizer is running:
+
+```domain
+Cursed Technique: Window 3           # these two
+Cursed Technique: Map Each
+    Using: (w) -> max(w)
+
+Domain Expansion: Sliding Reduce 3   # are the same program
+    Mode: Max
+```
+
+Size and step must be ≥ 1; a list shorter than the window yields no windows.
+
 ### Permutations — `List<T> -> List<List<T>>`
 
 ```domain
@@ -506,6 +891,67 @@ The power set. Subset k includes element i iff bit i of k is set, so the
 empty set comes first and the full list last; each subset preserves element
 order. Bounded: more than 16 elements is a runtime error (2^n explodes).
 
+### Explore — `S × (S -> List<S>) -> …` (S keyable)
+
+```domain
+Domain Expansion: Explore
+    Mode: Steps                        # Collect (default) | Count | Distances | Steps
+    Until: (s) -> s = target
+    Using: (s) -> successors(s)
+```
+
+Breadth-first search over the **implicit** graph the successor lambda
+describes. The seed is the current pipeline value, and the visited set both
+bounds the search over a cyclic space and answers "how many distinct
+configurations". BFS order rather than depth-first is what makes the step
+counts the *shortest* ones.
+
+| Mode | Result |
+|---|---|
+| `Collect` (default) | `List<S>` — every reachable state, in BFS order, seed first |
+| `Count` | `Int` — how many distinct states |
+| `Distances` | `Map<S, Int>` — shortest step count from the seed to each |
+| `Steps` | `Int` — steps to the first state satisfying `Until:`, or `-1` |
+
+`Until:` is required by `Steps` and optional elsewhere, where it prunes: a
+satisfying state is recorded but never expanded.
+
+**This is what Domain has instead of recursion.** A Shikigami is inlined at
+its call site, so a self-referential one has no finite expansion and is
+refused (see [language.md](language.md)); the problems that look recursive —
+reachability, fewest-moves, "how many configurations" — are searches, and this
+states them directly. It is also the non-grid half of graph search: the four
+primitives below all take a `Grid`, while Explore takes a *state*, so the
+graph can be nodes named in a text file or tuples of position and facing.
+
+The state must be keyable, which is what makes termination possible; build a
+compound one with `tuple(...)`.
+
+### Topological Sort — `Map<K, List<K>> | List<(K, K)> -> List<K>` (K keyable)
+
+```domain
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Domain Expansion: Topological Sort
+```
+
+A dependency order over an *explicit* graph — the other standard question
+about one, beside Explore's reachability.
+
+Two input shapes, like `Merge Ranges`: an adjacency `Map<K, List<K>>` (a node
+mapped to its successors), or an **edge list** — `List<(K, K)>` or a
+two-element `List<List<K>>`, which is exactly what a positional `Match
+Pattern` produces, so a parsed dependency file needs no reshaping.
+
+Ties break by **first-seen order** (keys in the map's insertion order, then
+successors in list order), so the result is deterministic rather than merely
+valid: two runs of the same program agree, and so do the two backends. A node
+that appears only as a target is still ordered.
+
+A cycle is a runtime error that **names a blocked node** — "there is a cycle"
+alone leaves you to find it by hand in a large input.
+
 ### BFS — `Grid<T> × (T -> Bool) -> Grid<Int>`
 
 ```domain
@@ -514,7 +960,9 @@ Domain Expansion: BFS from 0 0
 ```
 
 Breadth-first search from the `from ROW COL` start over the cells the
-`Using:` predicate marks walkable, 4-connectivity. Produces a grid of step
+`Using:` predicate marks walkable. Connectivity is `Mode: 4` (default) or
+`Mode: 8`, a per-call choice rather than a property of the grid — the same way
+`neighbors4`/`neighbors8` work. Produces a grid of step
 distances from the start; unreachable (and unwalkable) cells hold `-1`.
 Read results with `at`, or reduce with `Count Cells`. A start that is out
 of bounds or not walkable is a runtime error.
@@ -527,7 +975,7 @@ Domain Expansion: Dijkstra from 0 0
 
 Minimum total cost from the start to every cell, where stepping **into** a
 cell costs that cell's value (the AoC risk-map convention — the start's own
-value is not paid), 4-connectivity, min-heap under the hood. Negative cell
+value is not paid), min-heap under the hood. `Mode: 4` (default) or `Mode: 8`. Negative cell
 costs are a runtime error.
 
 ### Flood Fill — `Grid<T> × (T -> Bool) -> Grid<Int>`
@@ -537,8 +985,9 @@ Domain Expansion: Flood Fill from 0 0
     Using: (c) -> c = "#"
 ```
 
-Marks the start's 4-connected region: `1` for every cell reachable from the
-start through cells satisfying the predicate, `0` elsewhere. A start that
+Marks the start's connected region: `1` for every cell reachable from the
+start through cells satisfying the predicate, `0` elsewhere. `Mode: 4`
+(default) or `Mode: 8`. A start that
 is out of bounds or fails the predicate is a runtime error.
 
 ### Connected Components — `Grid<T> × (T -> Bool) -> Int`
@@ -548,20 +997,27 @@ Domain Expansion: Connected Components
     Using: (c) -> c = "#"
 ```
 
-How many 4-connected regions of matching cells the grid contains (union-find
-under the hood). `0` for a grid with no matching cells.
+How many connected regions of matching cells the grid contains (union-find
+under the hood), with `Mode: 4` (default) or `Mode: 8`. `0` for a grid with no
+matching cells.
 
 ---
 
 ## Reverse Cursed Technique — inversions
 
-### Reverse — `List<T> -> List<T>`
+### Reverse — `List<T> -> List<T>` or `Text -> Text`
 
-Reverses element order.
+Reverses element order — or, over `Text`, the runes. A palindrome check used
+to have to round-trip through `Split Text by ""`.
 
 ---
 
 ## Simple Domain, Channel, Shikigami, Binding Vow, Reveal
+
+`Reveal: stderr` sends the value to standard error instead of stdout, so a
+mid-pipeline Reveal becomes a debugging tool that does not disturb the
+program's answer — or its golden test. A nil sink discards, so a host that
+captures only stdout never sees stderr output mixed in.
 
 Control flow (`Repeat N` / `While` / `Iterate Until Fixed Point`), Channels
 and their consumers, Shikigami definition/calls, vows, and the output sink

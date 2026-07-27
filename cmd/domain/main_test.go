@@ -599,3 +599,82 @@ func TestImplicitModeSelection(t *testing.T) {
 		}
 	}
 }
+
+// --stats must not disturb the program: the table goes to stderr, and stdout
+// stays byte-identical to an ordinary run.
+func TestStatsLeavesStdoutAlone(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "p.domain")
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \",\"\n" +
+		"Channeled Energy: Convert List to Integers\n" +
+		"Simple Domain: Repeat 2\n" +
+		"    Cursed Technique: Map Each\n" +
+		"        Using: (x) -> x + 1\n" +
+		"Maximum Technique: Sum\n" +
+		"Reveal: stdout\n"
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(opts Options) (string, string) {
+		var out, errBuf bytes.Buffer
+		if err := Execute(prog, opts, strings.NewReader("1,2,3"), &out, &errBuf); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		return out.String(), errBuf.String()
+	}
+
+	plainOut, plainErr := run(Options{Optimize: true})
+	statsOut, statsErr := run(Options{Optimize: true, Stats: true})
+
+	if statsOut != plainOut {
+		t.Errorf("stdout changed with --stats:\n got %q\nwant %q", statsOut, plainOut)
+	}
+	if plainErr != "" {
+		t.Errorf("plain run wrote to stderr: %q", plainErr)
+	}
+	for _, want := range []string{"[stats]", "interpreter", "Repeat 2", "frames"} {
+		if !strings.Contains(statsErr, want) {
+			t.Errorf("stats report missing %q:\n%s", want, statsErr)
+		}
+	}
+
+	// --verbose adds the nested detail lines.
+	_, verboseErr := run(Options{Optimize: true, Stats: true, Verbose: true})
+	if !strings.Contains(verboseErr, "↳") {
+		t.Errorf("--verbose should list nested steps:\n%s", verboseErr)
+	}
+}
+
+// A failing run still gets its table: the stage that failed is the interesting
+// one, and the report shows how far the program got.
+func TestStatsReportedOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "bad.domain")
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \",\"\n" +
+		"Channeled Energy: Convert List to Integers\n" +
+		"Reveal: stdout\n"
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errBuf bytes.Buffer
+	err := Execute(prog, Options{Optimize: true, Stats: true}, strings.NewReader("1,nope"), &out, &errBuf)
+	if err == nil {
+		t.Fatal("expected a runtime error")
+	}
+	if !strings.Contains(errBuf.String(), "[stats]") {
+		t.Errorf("stats should still be reported after a failure:\n%s", errBuf.String())
+	}
+}
+
+func TestParseRunArgsStats(t *testing.T) {
+	_, opts, err := parseRunArgs([]string{"p.domain", "--stats", "--verbose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.Stats || !opts.Verbose {
+		t.Errorf("opts = %+v, want Stats and Verbose set", opts)
+	}
+}

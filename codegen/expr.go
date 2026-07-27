@@ -39,18 +39,30 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 	case *ast.Ident:
 		b, ok := env[x.Name]
 		if !ok {
-			return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+			// Fall back to the enclosing For loops' variables — the lambda's
+			// trailing ambient parameters. The caller's env wins, so a leading
+			// parameter of the same name still shadows.
+			if b, ok = g.ambientNames[x.Name]; !ok {
+				return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+			}
 		}
 		return b.expr, b.typ, nil
 	case *ast.UnaryExpr:
-		if x.Op != token.MINUS {
-			return "", nil, fmt.Errorf("unsupported unary operator %s", x.Op)
+		switch x.Op {
+		case token.MINUS:
+			v, vt, err := g.compileExpr(x.X, env)
+			if err != nil {
+				return "", nil, err
+			}
+			return "(-" + v + ")", vt, nil
+		case token.NOT:
+			v, _, err := g.compileExpr(x.X, env)
+			if err != nil {
+				return "", nil, err
+			}
+			return "(!" + v + ")", ir.Bool(), nil
 		}
-		v, vt, err := g.compileExpr(x.X, env)
-		if err != nil {
-			return "", nil, err
-		}
-		return "(-" + v + ")", vt, nil
+		return "", nil, fmt.Errorf("unsupported unary operator %s", x.Op)
 	case *ast.BinaryExpr:
 		return g.compileBinary(x, env)
 	case *ast.FieldAccess:
@@ -71,9 +83,48 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 		return g.compileCall(x, env)
 	case *ast.CondExpr:
 		return g.compileCond(x, env)
+	case *ast.LetExpr:
+		return g.compileLet(x, env)
 	default:
 		return "", nil, fmt.Errorf("unsupported expression %T", e)
 	}
+}
+
+// compileLet lowers `consider n as v in body` to a Go local inside an
+// immediately-invoked function — the same shape compileCond already uses, and
+// one the Go compiler inlines. The binding is evaluated exactly once, which is
+// the whole point of the form.
+//
+// The Go variable is name-mangled rather than used verbatim: a Domain binding
+// may legally be called `len`, `string`, or the name of a dm* helper, and
+// shadowing one of those inside the generated function would break unrelated
+// code in the same expression.
+func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) {
+	val, valT, err := g.compileExpr(x.Value, env)
+	if err != nil {
+		return "", nil, err
+	}
+	goValT, err := g.goType(valT)
+	if err != nil {
+		return "", nil, err
+	}
+	local := "dmLet" + fieldName(x.Name)
+	// Shadow in a copy so sibling expressions keep the outer binding.
+	inner := make(exprEnv, len(env)+1)
+	for k, v := range env {
+		inner[k] = v
+	}
+	inner[x.Name] = exprBinding{expr: local, typ: valT}
+	body, bodyT, err := g.compileExpr(x.Body, inner)
+	if err != nil {
+		return "", nil, err
+	}
+	goBodyT, err := g.goType(bodyT)
+	if err != nil {
+		return "", nil, err
+	}
+	return "func() " + goBodyT + " {\n\t\tvar " + local + " " + goValT + " = " + val +
+		"\n\t\t_ = " + local + "\n\t\treturn " + body + "\n\t}()", bodyT, nil
 }
 
 // compileCond lowers `if c then a else b` to an immediately-invoked func
@@ -139,11 +190,28 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 
 	switch name {
 	case "length":
+		if types[0] != nil && types[0].Kind == ir.KText {
+			g.imp("unicode/utf8")
+			return "int64(utf8.RuneCountInString(" + args[0] + "))", ir.Int(), nil
+		}
+		if types[0] != nil && types[0].Kind == ir.KTuple {
+			return fmt.Sprintf("int64(%d)", len(types[0].Elems)), ir.Int(), nil
+		}
 		if _, err := listElem(0); err != nil {
 			return "", nil, err
 		}
 		return "int64(len(" + args[0] + "))", ir.Int(), nil
 	case "item":
+		// Tuple access compiles to a direct struct field — typecheck already
+		// proved the index is a literal in range, so there is nothing to check
+		// at runtime.
+		if types[0] != nil && types[0].Kind == ir.KTuple {
+			lit, ok := x.Args[1].(*ast.IntLit)
+			if !ok {
+				return "", nil, fmt.Errorf("item over a Tuple needs a literal index")
+			}
+			return "(" + args[0] + ")." + tupleField(int(lit.Value)), types[0].Elems[lit.Value], nil
+		}
 		elem, err := listElem(0)
 		if err != nil {
 			return "", nil, err
@@ -164,6 +232,10 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmDrop", declDrop)
 		return "dmDrop(" + args[0] + ", " + args[1] + ")", types[0], nil
 	case "reverse":
+		if types[0] != nil && types[0].Kind == ir.KText {
+			g.helper("dmReverseText", declReverseText)
+			return "dmReverseText(" + args[0] + ")", ir.Text(), nil
+		}
 		if _, err := listElem(0); err != nil {
 			return "", nil, err
 		}
@@ -198,20 +270,35 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		}
 		g.helper("dmSum", declSumInts)
 		return "dmSum(" + args[0] + ")", elem, nil
-	case "min":
+	case "min", "max":
+		// Two arguments is the scalar form; one is the list reduction.
+		if len(args) == 2 {
+			decl, fn := declMin2, "dmMin2"
+			if name == "max" {
+				decl, fn = declMax2, "dmMax2"
+			}
+			g.helper(fn, decl)
+			res, a, b := ir.Int(), args[0], args[1]
+			if isFloatType(types[0]) || isFloatType(types[1]) {
+				res = ir.Float()
+				if !isFloatType(types[0]) {
+					a = "float64(" + a + ")"
+				}
+				if !isFloatType(types[1]) {
+					b = "float64(" + b + ")"
+				}
+			}
+			return fn + "(" + a + ", " + b + ")", res, nil
+		}
 		elem, err := listElem(0)
 		if err != nil {
 			return "", nil, err
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMin", declMinInts)
-		return "dmMin(" + args[0] + ")", elem, nil
-	case "max":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
+		if name == "min" {
+			g.helper("dmMin", declMinInts)
+			return "dmMin(" + args[0] + ")", elem, nil
 		}
-		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmMax", declMaxInts)
 		return "dmMax(" + args[0] + ")", elem, nil
 	case "contains":
@@ -326,6 +413,56 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmModPow", declModPow)
 		return "dmModPow(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
+	case "mod":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmMod", declMod)
+		return "dmMod(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "divmod":
+		// Built inline rather than via a helper: the result is a generated
+		// tuple struct whose name is only known here.
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmMod", declMod)
+		g.helper("dmDiv", declDiv)
+		pt, err := g.pointGo()
+		if err != nil {
+			return "", nil, err
+		}
+		a, b := args[0], args[1]
+		return pt + "{dmDiv(" + a + " - dmMod(" + a + ", " + b + "), " + b + "), dmMod(" + a + ", " + b + ")}",
+			irPoint(), nil
+	case "pow":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmPow", declPow)
+		return "dmPow(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "isqrt":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmISqrt", declISqrt)
+		return "dmISqrt(" + args[0] + ")", ir.Int(), nil
+	case "factorial":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmFactorial", declFactorial)
+		return "dmFactorial(" + args[0] + ")", ir.Int(), nil
+	case "choose":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmChoose", declChoose)
+		return "dmChoose(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "clamp":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmClamp", declClamp)
+		res := ir.Int()
+		a := args
+		if isFloatType(types[0]) || isFloatType(types[1]) || isFloatType(types[2]) {
+			res = ir.Float()
+			a = make([]string, 3)
+			for i := 0; i < 3; i++ {
+				if isFloatType(types[i]) {
+					a[i] = args[i]
+				} else {
+					a[i] = "float64(" + args[i] + ")"
+				}
+			}
+		}
+		return "dmClamp(" + a[0] + ", " + a[1] + ", " + a[2] + ")", res, nil
 	case "modinv":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmModInv", declModInv)
@@ -349,6 +486,57 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	case "repeats":
 		g.helper("dmRepeats", declRepeats, "strings")
 		return "dmRepeats(" + args[0] + ")", ir.Bool(), nil
+	case "trim":
+		g.imp("strings")
+		return "strings.TrimSpace(" + args[0] + ")", ir.Text(), nil
+	case "upper":
+		g.imp("strings")
+		return "strings.ToUpper(" + args[0] + ")", ir.Text(), nil
+	case "lower":
+		g.imp("strings")
+		return "strings.ToLower(" + args[0] + ")", ir.Text(), nil
+	case "chars":
+		g.helper("dmChars", declChars)
+		return "dmChars(" + args[0] + ")", ir.List(ir.Text()), nil
+	case "startswith":
+		g.imp("strings")
+		return "strings.HasPrefix(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+	case "endswith":
+		g.imp("strings")
+		return "strings.HasSuffix(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+	case "replace":
+		g.imp("strings")
+		return "strings.ReplaceAll(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text(), nil
+	case "indexof":
+		if types[0] != nil && types[0].Kind == ir.KText {
+			g.helper("dmIndexOfText", declIndexOfText, "strings", "unicode/utf8")
+			return "dmIndexOfText(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		}
+		elem, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmIndexOf", declIndexOf)
+		_ = elem
+		return "dmIndexOf(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "charat":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmCharAt", declCharAt)
+		return "dmCharAt(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+	case "slice":
+		g.helper("dmClampRange", declClampRange)
+		if types[0] != nil && types[0].Kind == ir.KText {
+			g.helper("dmSliceText", declSliceText)
+			return "dmSliceText(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text(), nil
+		}
+		if _, err := listElem(0); err != nil {
+			return "", nil, err
+		}
+		g.helper("dmSliceList", declSliceList)
+		return "dmSliceList(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+	case "textjoin":
+		g.imp("strings")
+		return "strings.Join(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
 
 	// -- grid geometry ----------------------------------------------------------
 	case "inbounds":
@@ -366,6 +554,13 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "", nil, err
 		}
 		return pt + "{" + args[0] + ", " + args[1] + "}", irPoint(), nil
+	case "tuple":
+		tt := ir.Tuple(types...)
+		gt, err := g.tupleType(tt)
+		if err != nil {
+			return "", nil, err
+		}
+		return gt + "{" + strings.Join(args, ", ") + "}", tt, nil
 	case "prow":
 		return "(" + args[0] + ").f0", ir.Int(), nil
 	case "pcol":
@@ -379,6 +574,114 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	return %[1]s{a.f0 + b.f0, a.f1 + b.f1}
 }`, pt))
 		return "dmPAdd(" + args[0] + ", " + args[1] + ")", irPoint(), nil
+	case "psub":
+		pt, err := g.pointGo()
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmPSub", fmt.Sprintf(`func dmPSub(a, b %[1]s) %[1]s {
+	return %[1]s{a.f0 - b.f0, a.f1 - b.f1}
+}`, pt))
+		return "dmPSub(" + args[0] + ", " + args[1] + ")", irPoint(), nil
+	case "pscale":
+		pt, err := g.pointGo()
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmPScale", fmt.Sprintf(`func dmPScale(p %[1]s, n int64) %[1]s {
+	return %[1]s{p.f0 * n, p.f1 * n}
+}`, pt))
+		return "dmPScale(" + args[0] + ", " + args[1] + ")", irPoint(), nil
+	case "chebyshev":
+		pt, err := g.pointGo()
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmAbs", declAbs)
+		g.helper("dmChebyshev", fmt.Sprintf(`func dmChebyshev(a, b %[1]s) int64 {
+	dr, dc := dmAbs(a.f0-b.f0), dmAbs(a.f1-b.f1)
+	if dr > dc {
+		return dr
+	}
+	return dc
+}`, pt))
+		return "dmChebyshev(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "dirs8":
+		pt, err := g.pointGo()
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmDirs8", fmt.Sprintf(`func dmDirs8() []%[1]s {
+	return []%[1]s{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}}
+}`, pt))
+		return "dmDirs8()", ir.List(irPoint()), nil
+	case "around4", "around8":
+		// Neighbours of a point with no grid and no bounds — what a Sparse
+		// automaton needs, since neighbors4/8 require a dense Grid.
+		pt, err := g.pointGo()
+		if err != nil {
+			return "", nil, err
+		}
+		if name == "around4" {
+			g.helper("dmAround4", fmt.Sprintf(`func dmAround4(p %[1]s) []%[1]s {
+	return []%[1]s{{p.f0 - 1, p.f1}, {p.f0 + 1, p.f1}, {p.f0, p.f1 - 1}, {p.f0, p.f1 + 1}}
+}`, pt))
+			return "dmAround4(" + args[0] + ")", ir.List(irPoint()), nil
+		}
+		g.helper("dmAround8", fmt.Sprintf(`func dmAround8(p %[1]s) []%[1]s {
+	return []%[1]s{
+		{p.f0 - 1, p.f1 - 1}, {p.f0 - 1, p.f1}, {p.f0 - 1, p.f1 + 1},
+		{p.f0, p.f1 - 1}, {p.f0, p.f1 + 1},
+		{p.f0 + 1, p.f1 - 1}, {p.f0 + 1, p.f1}, {p.f0 + 1, p.f1 + 1},
+	}
+}`, pt))
+		return "dmAround8(" + args[0] + ")", ir.List(irPoint()), nil
+	case "haskey":
+		g.helper("dmMap", declMap)
+		return "func() bool { _, ok := (" + args[0] + ").vals[" + args[1] + "]; return ok }()", ir.Bool(), nil
+	case "getor":
+		// The total lookup: `get` errors on a missing key and there was no way
+		// to guard it, which made a Count By map unreadable.
+		g.helper("dmMap", declMap)
+		valGo, err := g.goType(types[0].Elem)
+		if err != nil {
+			return "", nil, err
+		}
+		return "func() " + valGo + " { if v, ok := (" + args[0] + ").vals[" + args[1] +
+			"]; ok { return v }; return " + args[2] + " }()", types[0].Elem, nil
+	case "keys":
+		g.helper("dmMap", declMap)
+		return "(" + args[0] + ").keys", ir.List(types[0].Key), nil
+	case "values":
+		g.helper("dmMap", declMap)
+		keyGo, err := g.goType(types[0].Key)
+		if err != nil {
+			return "", nil, err
+		}
+		valGo, err := g.goType(types[0].Elem)
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmMapValues", fmt.Sprintf(`func dmMapValues[K comparable, V any](m dmMap[K, V]) []V {
+	out := make([]V, 0, len(m.keys))
+	for _, k := range m.keys {
+		out = append(out, m.vals[k])
+	}
+	return out
+}`))
+		_ = keyGo
+		_ = valGo
+		return "dmMapValues(" + args[0] + ")", ir.List(types[0].Elem), nil
+	case "tolist":
+		g.helper("dmSet", declSet)
+		return "(" + args[0] + ").elems", ir.List(types[0].Elem), nil
+	case "size":
+		if types[0] != nil && types[0].Kind == ir.KSet {
+			g.helper("dmSet", declSet)
+			return "int64(len((" + args[0] + ").elems))", ir.Int(), nil
+		}
+		g.helper("dmMap", declMap)
+		return "int64(len((" + args[0] + ").keys))", ir.Int(), nil
 	case "manhattan":
 		pt, err := g.pointGo()
 		if err != nil {
@@ -706,6 +1009,10 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 	case token.OR:
 		return "(" + l + " || " + r + ")", ir.Bool(), nil
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH:
+		// Text + Text is concatenation, which Go spells the same way.
+		if x.Op == token.PLUS && lt != nil && lt.Kind == ir.KText && rt != nil && rt.Kind == ir.KText {
+			return "(" + l + " + " + r + ")", ir.Text(), nil
+		}
 		// Numeric promotion: mixing Int with Float computes in Float, so the
 		// integer side is wrapped in a float64 conversion.
 		res := ir.Int()
@@ -731,6 +1038,11 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmDiv", declDiv)
 		return "dmDiv(" + l + ", " + r + ")", res, nil
+	case token.PERCENT:
+		// Euclidean, and guarded — Go's % is truncated and panics on zero.
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmMod", declMod)
+		return "dmMod(" + l + ", " + r + ")", ir.Int(), nil
 	case token.EQ:
 		if (isFloatType(lt) || isFloatType(rt)) && numericType(lt) && numericType(rt) {
 			if !isFloatType(lt) {

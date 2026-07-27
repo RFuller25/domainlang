@@ -10,14 +10,19 @@
         f system nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAllSystems (system: pkgs: rec {
-        domain = pkgs.buildGoModule {
+      packages = forAllSystems (system: pkgs: let
+        # go.mod requires go >= 1.25; nixos-25.05's default `go` is 1.24.10,
+        # so pin the toolchain via `.override` (buildGoModule's `go` is a
+        # callPackage-bound argument, not a settable field on the derivation
+        # attrset below — passing `go = ...;` there is silently ignored).
+        buildGoModule = pkgs.buildGoModule.override { go = pkgs.go_1_25; };
+      in rec {
+        domain = buildGoModule {
           pname = "domain";
           version = "0.3.0";
           src = self;
 
-          # The module is stdlib-only (no external Go dependencies).
-          vendorHash = null;
+          vendorHash = "sha256-VdBnS/3z3PRMoZ4vbtl7YBZrQcpG1pNQhVqkDRMFZ1Q=";
           subPackages = [ "cmd/domain" ];
 
           # `domain <file> <args...>` (the compiler path) shells out to the
@@ -31,7 +36,7 @@
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postInstall = ''
             wrapProgram $out/bin/domain \
-              --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go ]}
+              --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go_1_25 ]}
           '';
 
           # The repo's test suite is an interpreter-vs-binary oracle: it
@@ -68,7 +73,7 @@
 
       devShells = forAllSystems (system: pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.go pkgs.gopls pkgs.gotools ];
+          packages = [ pkgs.go_1_25 pkgs.gopls pkgs.gotools ];
         };
       });
 

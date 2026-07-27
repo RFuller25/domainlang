@@ -24,7 +24,9 @@ func Run(p *ir.Pipeline, ctx *ir.Context) (result ir.Value, err error) {
 	}
 	var cur ir.Value
 	for _, n := range p.Nodes {
-		v, e := n.Eval(ctx, cur)
+		// ir.EvalNode reports to ctx.Trace when one is set; without a tracer it
+		// is n.Eval plus a nil check.
+		v, e := ir.EvalNode(ctx, n, cur)
 		if e != nil {
 			return nil, e
 		}

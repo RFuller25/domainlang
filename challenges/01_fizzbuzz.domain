@@ -2,8 +2,8 @@
 # say Fizz, multiples of 5 say Buzz, and multiples of both say FizzBuzz.
 #
 # Domain has no range generator, so the program builds 1..15 itself: start
-# from [1] and Repeat appending length+1. Divisibility is n/k*k = n
-# (integer division), and totext renders the plain numbers.
+# from [1] and Repeat appending length+1. Divisibility is mod(n, k) = 0, and
+# totext renders the plain numbers.
 #
 #   domain challenges/01_fizzbuzz.domain
 Cursed Energy: 01_fizzbuzz.input
@@ -13,6 +13,6 @@ Simple Domain: Repeat 14
     Cursed Technique: Apply
         Using: (xs) -> concat(xs, list(length(xs) + 1))
 Cursed Technique: Map Each
-    Using: (n) -> if n / 15 * 15 = n then "FizzBuzz" else (if n / 3 * 3 = n then "Fizz" else (if n / 5 * 5 = n then "Buzz" else totext(n)))
+    Using: (n) -> if mod(n, 15) = 0 then "FizzBuzz" else (if mod(n, 3) = 0 then "Fizz" else (if mod(n, 5) = 0 then "Buzz" else totext(n)))
 Maximum Technique: Join with "\n"
 Reveal: stdout

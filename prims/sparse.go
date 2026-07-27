@@ -197,9 +197,9 @@ func gridFromSparseNode(in *ir.Type, pos token.Position) *ir.Node {
 			if minR, minC, maxR, maxC, has := sp.Bounds(); has {
 				rows, cols := maxR-minR+1, maxC-minC+1
 				// Per-side checks first so rows*cols cannot overflow int64.
-				if rows > ir.MaxSparseDense || cols > ir.MaxSparseDense || rows*cols > ir.MaxSparseDense {
+				if ir.TooLargeToDensify(rows, cols) {
 					return nil, runtimeErr("Convert To Grid", pos,
-						"sparse grid too large to densify (%dx%d, limit %d cells)", rows, cols, ir.MaxSparseDense)
+						"sparse grid too large to densify (%dx%d, limit %d cells)", rows, cols, ir.DensifyLimit())
 				}
 			}
 			return sp.ToGrid(), nil
@@ -220,9 +220,10 @@ func sparseCellLambda(args ArgSet, prim string, pos token.Position) (*ast.Lambda
 	if !ok {
 		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim)}
 	}
-	if len(lam.Params) != 1 {
+	wantArity := 1 + ambientDepth()
+	if len(lam.Params) != wantArity {
 		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-			"%s over a Sparse grid takes a 1-parameter lambda (the cell value); the positional (grid, row, col) form needs dense bounds — Convert To Grid first", prim)}
+			"%s over a Sparse grid takes a %d-parameter lambda (the cell value, plus any enclosing For loop variable(s)); the positional (grid, row, col) form needs dense bounds — Convert To Grid first", prim, wantArity)}
 	}
 	return lam, nil
 }
@@ -232,7 +233,7 @@ func mapCellsSparseNode(args ArgSet, in *ir.Type, pos token.Position) (*ir.Node,
 	if err != nil {
 		return nil, err
 	}
-	outElem, err := typecheck.LambdaType(lam, in.Elem)
+	outElem, err := typecheck.LambdaType(lam, append([]*ir.Type{in.Elem}, ambientTypes()...)...)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: "Map Cells: " + err.Error()}
 	}
@@ -248,13 +249,13 @@ func mapCellsSparseNode(args ArgSet, in *ir.Type, pos token.Position) (*ir.Node,
 			if !ok {
 				return nil, runtimeErr("Map Cells", pos, "expected Sparse, got %s", ir.DescribeValue(v))
 			}
-			newDef, err := eval.EvalLambdaTyped(lam, []*ir.Type{in.Elem}, sp.Def)
+			newDef, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in.Elem}, ambientTypes()...), append([]ir.Value{sp.Def}, ambientArgs()...)...)
 			if err != nil {
 				return nil, runtimeErr("Map Cells", pos, "default: %v", err)
 			}
 			out := ir.NewSparseValue(newDef)
 			for _, p := range sp.Points() {
-				r, err := eval.EvalLambdaTyped(lam, []*ir.Type{in.Elem}, sp.At(p[0], p[1]))
+				r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in.Elem}, ambientTypes()...), append([]ir.Value{sp.At(p[0], p[1])}, ambientArgs()...)...)
 				if err != nil {
 					return nil, runtimeErr("Map Cells", pos, "cell (%d, %d): %v", p[0], p[1], err)
 				}

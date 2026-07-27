@@ -57,7 +57,7 @@ func Analyze(path, src string) *Report {
 	seen := map[string]bool{}
 
 	for round := 0; round < maxRepairRounds; round++ {
-		stage, prog, pipe := frontEnd(working)
+		stage, prog, pipe := frontEnd(path, working)
 		if prog != nil {
 			r.Program = prog
 		}
@@ -94,8 +94,9 @@ func Analyze(path, src string) *Report {
 
 // frontEnd runs lex → parse → resolve on src and returns the enriched
 // diagnostics of the first failing stage (empty when clean), plus whatever
-// later artifacts were reached.
-func frontEnd(src string) ([]Diagnostic, *ast.Program, *ir.Pipeline) {
+// later artifacts were reached. path gives `Innate Domain` imports their file
+// context; it may be empty, and then a program with imports reports that.
+func frontEnd(path, src string) ([]Diagnostic, *ast.Program, *ir.Pipeline) {
 	toks, err := lexer.Lex(src)
 	if err != nil {
 		return []Diagnostic{lexDiag(err, src)}, nil, nil
@@ -104,7 +105,7 @@ func frontEnd(src string) ([]Diagnostic, *ast.Program, *ir.Pipeline) {
 	if err != nil {
 		return parseDiags(err, src), nil, nil
 	}
-	pipe, err := prims.Resolve(prog)
+	pipe, err := prims.ResolveWith(prog, prims.FileOptions(path))
 	if err != nil {
 		return resolveDiags(err, prog, src), prog, nil
 	}
@@ -418,6 +419,8 @@ var (
 	// unknownOpMessage always emits after it.
 	reUnknownOp      = regexp.MustCompile(`unknown operation "(.*)" under "([^"]+)"(?:; known operations: (.*))?$`)
 	reUnknownShiki   = regexp.MustCompile(`unknown Shikigami "([^"]+)"`)
+	reCannotInfer    = regexp.MustCompile(`^cannot infer a keyword for "(.*)": `)
+	reAmbiguousOp    = regexp.MustCompile(`^ambiguous operation "(.*)" without a keyword`)
 	reUnknownChannel = regexp.MustCompile(`unknown channel "([^"]+)" in From:`)
 	reTypeMismatch   = regexp.MustCompile(`^(.+?) expects input of type (.+), but the pipeline produced (.+)$`)
 	reExpectsGot     = regexp.MustCompile(`^(.+?) expects (.+?), got (.+)$`)
@@ -443,6 +446,19 @@ func resolveDiags(err error, prog *ast.Program, src string) []Diagnostic {
 		d.Code = "name"
 		m := reUnknownOp.FindStringSubmatch(msg)
 		enrichUnknownOp(&d, prog, src, m[1], m[2], m[3])
+
+	case reCannotInfer.MatchString(msg):
+		d.Code = "name"
+		enrichCannotInfer(&d, prog, src)
+
+	case reAmbiguousOp.MatchString(msg):
+		d.Code = "name"
+		d.Help = "write the themed keyword in front of the operation to say which one you mean"
+
+	case strings.Contains(msg, "is named after"):
+		d.Code = "name"
+		d.Help = "the themed keyword is optional, so a Shikigami's name is also how it is called; " +
+			"reserved names are every primitive, keyword, and expression builtin"
 
 	case reUnknownShiki.MatchString(msg):
 		d.Code = "name"
@@ -583,6 +599,29 @@ func enrichUnknownOp(d *Diagnostic, prog *ast.Program, src, raw, keyword, known 
 	n := len(strings.Fields(s.Op))
 	start, end, ok := spanOfLeadingWords(src, op.Pos.Offset, n)
 	if ok {
+		d.Fix = &Fix{Start: start, End: end, Replacement: s.Op, Confident: s.Confident}
+	}
+}
+
+// enrichCannotInfer handles a prefix-free line that names no operation. There
+// is no keyword to correct here — the phrase itself is the whole statement —
+// so the suggestion (and the fix) rewrites the phrase's leading words into the
+// primitive the user was reaching for.
+func enrichCannotInfer(d *Diagnostic, prog *ast.Program, src string) {
+	stmt := stmtAt(prog, d.Pos)
+	if stmt == nil || stmt.Op == nil {
+		d.Help = "start the line with a themed keyword, or see docs/primitives.md for the vocabulary"
+		return
+	}
+	s := suggestBareOperation(stmt.Op)
+	if s == nil {
+		d.Help = "no operation is spelled like this; write the line as `Keyword: operation`, " +
+			"or see docs/primitives.md for the vocabulary"
+		return
+	}
+	d.Help = fmt.Sprintf("did you mean %q (%s)?", s.Op, s.Keyword)
+	n := len(strings.Fields(s.Op))
+	if start, end, ok := spanOfLeadingWords(src, stmt.Op.Pos.Offset, n); ok {
 		d.Fix = &Fix{Start: start, End: end, Replacement: s.Op, Confident: s.Confident}
 	}
 }

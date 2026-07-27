@@ -295,6 +295,133 @@ Cursed Technique: Split Text by "\n"
 	}
 }
 
+// A program whose Parts each reveal is complete, even with no top-level Reveal.
+func TestLintPartsSatisfyTheRevealCheck(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Part "1":
+    Maximum Technique: Count
+    Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, "never revealed"); d != nil {
+		t.Errorf("a revealing Part should satisfy the reveal check, got %v", d)
+	}
+}
+
+// The hazard of Parts printing only what they explicitly Reveal.
+func TestLintPartWithoutReveal(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Part "quiet":
+    Maximum Technique: Count
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if diagWith(r, Warning, `Part "quiet" never reveals anything`) == nil {
+		t.Errorf("missing silent-Part warning in %v", r.Diags)
+	}
+}
+
+// A Reveal inside a nested block still counts as revealing.
+func TestLintPartRevealingInsideALoop(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Part "1":
+    Simple Domain: Repeat 2
+        Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, "never reveals anything"); d != nil {
+		t.Errorf("a Reveal nested in a loop body counts, got %v", d)
+	}
+}
+
+func TestLintDuplicatePartLabels(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Part "1":
+    Maximum Technique: Count
+    Reveal: stdout
+Part "1":
+    Maximum Technique: Count
+    Reveal: stdout
+`
+	r := analyze(t, src)
+	if diagWith(r, Warning, `Part "1" is defined more than once`) == nil {
+		t.Errorf("missing duplicate-Part warning in %v", r.Diags)
+	}
+}
+
+// A Part is a passthrough, so top-level statements after one are not dead.
+func TestLintStatementsAfterAPartAreNotDead(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Part "1":
+    Maximum Technique: Count
+    Reveal: stdout
+Maximum Technique: Count
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, "runs after the last Reveal"); d != nil {
+		t.Errorf("statements after a Part are still observed, got %v", d)
+	}
+}
+
+// Within a Part, though, work after its own final Reveal is dead.
+func TestLintDeadCodeInsideAPart(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Part "1":
+    Reveal: stdout
+    Maximum Technique: Count
+`
+	r := analyze(t, src)
+	if diagWith(r, Warning, "runs after the last Reveal") == nil {
+		t.Errorf("missing dead-code warning inside a Part in %v", r.Diags)
+	}
+}
+
+func TestLintUnusedImport(t *testing.T) {
+	src := `Innate Domain: shapes
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if diagWith(r, Warning, `library "shapes" is imported but nothing from it is summoned`) == nil {
+		t.Errorf("missing unused-import warning in %v", r.Diags)
+	}
+}
+
+// Calling a Shikigami the file does not define itself counts as using an
+// import, so the warning must not fire.
+func TestLintImportUsedByBareCall(t *testing.T) {
+	src := `Innate Domain: shapes
+Cursed Energy: input.txt
+Shikigami: Doubled
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, "nothing from it is summoned"); d != nil {
+		t.Errorf("a summoned import should not warn, got %v", d)
+	}
+}
+
+func TestLintDuplicateImport(t *testing.T) {
+	src := `Innate Domain: shapes
+Innate Domain: shapes
+Cursed Energy: input.txt
+Shikigami: Doubled
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if diagWith(r, Warning, `library "shapes" is imported more than once`) == nil {
+		t.Errorf("missing duplicate-import warning in %v", r.Diags)
+	}
+}
+
 func TestLintDoubleSortAndTakeFirst(t *testing.T) {
 	src := `Cursed Energy: input.txt
 Cursed Technique: Split Text by "\n"
@@ -344,7 +471,7 @@ Reverse Cursed Technique: Reverse
 Maximum Technique: Select Top 3, Sum
 Reveal: stdout
 `
-	out, rewrites := OptimizeSource(src)
+	out, rewrites := OptimizeSource("", src)
 	if len(rewrites) != 1 {
 		t.Fatalf("rewrites = %v, want exactly the fusion", rewrites)
 	}
@@ -368,7 +495,7 @@ Reveal: stdout
 Binding Vow: All Values > 0
 Cursed Technique: Unique
 `
-	out, rewrites := OptimizeSource(src)
+	out, rewrites := OptimizeSource("", src)
 	if len(rewrites) != 3 {
 		t.Fatalf("rewrites = %v, want redundant sort + orphan channel + dead code", rewrites)
 	}
@@ -383,7 +510,7 @@ Cursed Technique: Unique
 }
 
 func TestOptimizeSourceLeavesCleanProgramAlone(t *testing.T) {
-	out, rewrites := OptimizeSource(day1)
+	out, rewrites := OptimizeSource("", day1)
 	if len(rewrites) != 0 || out != day1 {
 		t.Fatalf("expected no rewrites, got %v", rewrites)
 	}
@@ -410,5 +537,103 @@ func TestRenderShowsCaretHelpAndFixNote(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("render output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Prefix-free programs
+
+// day1Bare is day1 with every themed keyword left out.
+const day1Bare = `input.txt
+Split Text by "\n\n"
+Split Each by "\n"
+Convert Each List to Integers
+Sum Each Group
+Quicksort, Descending
+Select Top 3, Sum
+stdout
+`
+
+// A prefix-free program is a clean program: the analyzer must not report the
+// absent keywords, and the lint rules (which read keywords) must still see a
+// pipeline that reads its input and reveals its result.
+func TestPrefixFreeProgramIsClean(t *testing.T) {
+	r := analyze(t, day1Bare)
+	if len(r.Diags) != 0 {
+		t.Fatalf("expected no diagnostics, got %v", r.Diags)
+	}
+	if r.Pipe == nil {
+		t.Fatal("expected a resolved pipeline")
+	}
+}
+
+// A misspelled bare operation gets the same "did you mean" treatment as a
+// misspelled one under a keyword — and here the repair is the phrase itself,
+// since there is no keyword on the line to move.
+func TestBareOperationTypoSuggestionAndFix(t *testing.T) {
+	src := strings.Replace(day1Bare, "Split Each by", "Splt Each by", 1)
+	r := analyze(t, src)
+	d := diagWith(r, Error, "cannot infer a keyword")
+	if d == nil {
+		t.Fatalf("no inference diagnostic in %v", r.Diags)
+	}
+	if !strings.Contains(d.Help, `"Split Each"`) {
+		t.Errorf("help = %q, want a Split Each suggestion", d.Help)
+	}
+	if !d.HasConfidentFix() {
+		t.Fatal("expected a confident fix")
+	}
+	if r.FixedSrc != day1Bare {
+		t.Errorf("FixedSrc =\n%s\nwant original day1Bare", r.FixedSrc)
+	}
+}
+
+// A phrase nothing is spelled like says so, and offers the escape hatch.
+func TestBareOperationWithNoSuggestion(t *testing.T) {
+	src := strings.Replace(day1Bare, "Sum Each Group", "Frobnicate Everything", 1)
+	r := analyze(t, src)
+	d := diagWith(r, Error, "cannot infer a keyword")
+	if d == nil {
+		t.Fatalf("no inference diagnostic in %v", r.Diags)
+	}
+	if !strings.Contains(d.Help, "Keyword: operation") {
+		t.Errorf("help = %q, want the explicit-keyword hint", d.Help)
+	}
+}
+
+// Naming a Shikigami after a built-in is an error that explains itself.
+func TestShikigamiNamedAfterBuiltin(t *testing.T) {
+	src := "Shikigami \"Quicksort\"\n    Maximum Technique: Sum\n\n" + day1
+	r := analyze(t, src)
+	d := diagWith(r, Error, "is named after")
+	if d == nil {
+		t.Fatalf("no naming diagnostic in %v", r.Diags)
+	}
+	if !strings.Contains(d.Help, "reserved") {
+		t.Errorf("help = %q, want an explanation of the reserved names", d.Help)
+	}
+}
+
+// Advice that proposes a replacement line is written in the style of the
+// program it is advising: no themed keyword in a prefix-free file.
+func TestLintAdviceMatchesTheSourceStyle(t *testing.T) {
+	bare := "stdin\nInts\nQuicksort\nReverse\nstdout\n"
+	keyworded := "Cursed Energy: stdin\nShikigami: Ints\n" +
+		"Domain Expansion: Quicksort\nReverse Cursed Technique: Reverse\nReveal: stdout\n"
+
+	d := diagWith(analyze(t, bare), Hint, "Sort followed by Reverse")
+	if d == nil {
+		t.Fatal("expected the Sort+Reverse hint on the prefix-free program")
+	}
+	if !strings.Contains(d.Help, "`Quicksort, Descending`") {
+		t.Errorf("prefix-free advice should stay prefix-free, got %q", d.Help)
+	}
+
+	d = diagWith(analyze(t, keyworded), Hint, "Sort followed by Reverse")
+	if d == nil {
+		t.Fatal("expected the Sort+Reverse hint on the keyworded program")
+	}
+	if !strings.Contains(d.Help, "`Domain Expansion: Quicksort, Descending`") {
+		t.Errorf("keyworded advice should carry the keyword, got %q", d.Help)
 	}
 }

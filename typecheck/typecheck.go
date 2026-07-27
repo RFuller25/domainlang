@@ -48,9 +48,27 @@ func ExprType(e ast.Expr, env Env) (*ir.Type, error) {
 		return callType(x, env)
 	case *ast.CondExpr:
 		return condType(x, env)
+	case *ast.LetExpr:
+		return letType(x, env)
 	default:
 		return nil, fmt.Errorf("unsupported expression %T", e)
 	}
+}
+
+// letType types `consider n as v in body`: the body is typed in an
+// environment extended with n. The binding shadows an outer name of the same
+// spelling and is restored afterwards, so sibling expressions are unaffected.
+func letType(x *ast.LetExpr, env Env) (*ir.Type, error) {
+	vt, err := ExprType(x.Value, env)
+	if err != nil {
+		return nil, err
+	}
+	inner := make(Env, len(env)+1)
+	for k, v := range env {
+		inner[k] = v
+	}
+	inner[x.Name] = vt
+	return ExprType(x.Body, inner)
 }
 
 // condType types `if c then a else b`: the condition must be Bool and the
@@ -83,14 +101,19 @@ func condType(x *ast.CondExpr, env Env) (*ir.Type, error) {
 // interpreter/binary parity. Keep the layers in sync when extending the
 // table.
 var Builtins = []string{
-	"abs", "at", "band", "bor", "bxor", "ceil", "cells", "col", "cols",
-	"concat", "contains", "dirs4", "drop", "first", "floor", "frombin",
-	"gcd", "get", "has", "inbounds", "item", "last", "lcm", "length", "list",
-	"manhattan", "max", "maxcol", "maxrow", "min", "mincol", "minrow",
-	"modinv", "modpow", "neighbors4", "neighbors8", "occurrences", "padd",
-	"pcol", "point", "prow", "put", "repeats", "reverse", "rotl", "rotr",
-	"round", "row", "rows", "set", "shl", "shr", "sign", "solve2x2",
-	"sparse", "sqrt", "sum", "take", "tofloat", "toint", "totext",
+	"abs", "at", "band", "bor", "bxor", "ceil", "cells", "choose", "clamp",
+	"col", "cols", "concat", "contains", "dirs4", "divmod", "drop",
+	"factorial", "first", "floor", "frombin", "gcd", "get", "has", "inbounds",
+	"isqrt", "item", "last", "lcm", "length", "list", "manhattan", "max",
+	"maxcol", "maxrow", "min", "mincol", "minrow", "mod", "modinv", "modpow",
+	"neighbors4", "neighbors8", "occurrences", "padd", "pcol", "point", "pow",
+	"prow", "put", "repeats", "reverse", "rotl", "rotr", "round", "row",
+	"rows", "set", "shl", "shr", "sign", "solve2x2", "sparse", "sqrt", "sum",
+	"take", "textjoin", "tofloat", "toint", "totext", "trim", "tuple",
+	"upper", "lower", "slice", "charat", "chars", "indexof", "startswith",
+	"endswith", "replace",
+	"psub", "pscale", "chebyshev", "dirs8", "around4", "around8",
+	"haskey", "getor", "keys", "values", "size", "tolist",
 }
 
 // PointType is the expression-layer representation of a 2D point: an
@@ -108,18 +131,29 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 
 	arity := map[string]int{
 		"length": 1, "item": 2, "take": 2, "drop": 2, "reverse": 1,
-		"concat": 2, "first": 1, "last": 1, "sum": 1, "min": 1, "max": 1,
+		"concat": 2, "first": 1, "last": 1, "sum": 1,
+		"min": -1, "max": -1, // 1 = list reduction, 2 = scalar form
 		"contains": 2, "get": 2, "at": 3,
 		// math / number theory
 		"abs": 1, "sign": 1, "gcd": 2, "lcm": 2, "modpow": 3, "modinv": 2,
 		"solve2x2": 6,
+		"mod":      2, "divmod": 2, "pow": 2, "isqrt": 1, "clamp": 3,
+		"factorial": 1, "choose": 2,
+		// heterogeneous tuple construction
+		"tuple": -1, // variadic, >= 2
 		// text
 		"toint": 1, "occurrences": 2, "repeats": 1, "totext": 1,
+		"slice": 3, "charat": 2, "chars": 1, "indexof": 2,
+		"startswith": 2, "endswith": 2, "replace": 3, "trim": 1,
+		"upper": 1, "lower": 1, "textjoin": 2,
 		// floats (H)
 		"tofloat": 1, "floor": 1, "ceil": 1, "round": 1, "sqrt": 1,
 		// points (tuples of (row, col)) and grid geometry
 		"point": 2, "prow": 1, "pcol": 1, "padd": 2, "manhattan": 2,
-		"rotl": 1, "rotr": 1, "dirs4": 0,
+		"rotl": 1, "rotr": 1, "dirs4": 0, "dirs8": 0,
+		"psub": 2, "pscale": 2, "chebyshev": 2, "around4": 1, "around8": 1,
+		// map / set escape hatches
+		"haskey": 2, "getor": 3, "keys": 1, "values": 1, "size": 1, "tolist": 1,
 		"inbounds": 3, "neighbors4": 3, "neighbors8": 3,
 		// list/grid construction and access (A.2)
 		"set": 3, "row": 2, "col": 2, "rows": 1, "cols": 1,
@@ -136,8 +170,19 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			x.Pos, name, strings.Join(Builtins, ", "))
 	}
 	if want == -1 {
-		if len(x.Args) < 1 {
-			return nil, fmt.Errorf("%s: %s takes at least 1 argument, got 0", x.Pos, name)
+		// Variadic, with a per-name range. `tuple` needs two (a 1-tuple is
+		// just the value); `min`/`max` are either the list reduction (1) or
+		// the two-scalar form.
+		rng := map[string][2]int{
+			"list": {1, -1}, "tuple": {2, -1}, "min": {1, 2}, "max": {1, 2},
+		}[name]
+		if len(x.Args) < rng[0] || (rng[1] != -1 && len(x.Args) > rng[1]) {
+			if rng[1] == -1 {
+				return nil, fmt.Errorf("%s: %s takes at least %d argument(s), got %d",
+					x.Pos, name, rng[0], len(x.Args))
+			}
+			return nil, fmt.Errorf("%s: %s takes %d or %d argument(s), got %d",
+				x.Pos, name, rng[0], rng[1], len(x.Args))
 		}
 	} else if len(x.Args) != want {
 		return nil, fmt.Errorf("%s: %s takes %d argument(s), got %d", x.Pos, name, want, len(x.Args))
@@ -166,11 +211,30 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 
 	switch name {
 	case "length":
+		// Text counts runes, matching `Split Text by ""` and charat/slice, so
+		// the two layers agree about what position 3 means.
+		if args[0] != nil && (args[0].Kind == ir.KText || args[0].Kind == ir.KTuple) {
+			return ir.Int(), nil
+		}
 		if _, err := needList(0); err != nil {
 			return nil, err
 		}
 		return ir.Int(), nil
 	case "item":
+		// Over a Tuple, `item` is the general element accessor (prow/pcol are
+		// the (Int, Int) special case). The index must be a literal: a tuple's
+		// elements have different types, so the result type is only knowable
+		// statically when the position is.
+		if args[0] != nil && args[0].Kind == ir.KTuple {
+			lit, ok := x.Args[1].(*ast.IntLit)
+			if !ok {
+				return nil, fmt.Errorf("%s: item over a Tuple needs a literal index (its elements have different types)", x.Pos)
+			}
+			if lit.Value < 0 || lit.Value >= int64(len(args[0].Elems)) {
+				return nil, fmt.Errorf("%s: item index %d out of range for %s", x.Pos, lit.Value, args[0])
+			}
+			return args[0].Elems[lit.Value], nil
+		}
 		elem, err := needList(0)
 		if err != nil {
 			return nil, err
@@ -188,6 +252,9 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return args[0], nil
 	case "reverse":
+		if args[0] != nil && args[0].Kind == ir.KText {
+			return ir.Text(), nil
+		}
 		if _, err := needList(0); err != nil {
 			return nil, err
 		}
@@ -208,6 +275,15 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return elem, nil
 	case "sum", "min", "max":
+		// Two-argument min/max is the scalar form: min(a, b). One argument is
+		// the list reduction.
+		if len(args) == 2 {
+			if !numeric(args[0]) || !numeric(args[1]) {
+				return nil, fmt.Errorf("%s: %s of two values needs Int or Float, got %s and %s",
+					x.Pos, name, args[0], args[1])
+			}
+			return promote(args[0], args[1]), nil
+		}
 		if args[0] == nil || args[0].Kind != ir.KList || !numeric(args[0].Elem) {
 			return nil, fmt.Errorf("%s: %s needs List<Int> or List<Float>, got %s", x.Pos, name, args[0])
 		}
@@ -289,13 +365,34 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		return ir.Int(), nil
-	case "gcd", "lcm", "modinv":
+	case "gcd", "lcm", "modinv", "mod", "pow", "choose":
 		for i := 0; i < 2; i++ {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
 		}
 		return ir.Int(), nil
+	case "divmod":
+		for i := 0; i < 2; i++ {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		return PointType(), nil // (quotient, remainder) — an (Int, Int) pair
+	case "isqrt", "factorial":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.Int(), nil
+	case "clamp":
+		// Polymorphic over the numeric tower, like the arithmetic operators:
+		// all three arguments promote together.
+		for i := 0; i < 3; i++ {
+			if !numeric(args[i]) {
+				return nil, fmt.Errorf("%s: clamp needs Int or Float arguments, got %s", x.Pos, args[i])
+			}
+		}
+		return promote(promote(args[0], args[1]), args[2]), nil
 	case "modpow":
 		for i := 0; i < 3; i++ {
 			if err := needInt(i); err != nil {
@@ -351,6 +448,81 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, fmt.Errorf("%s: repeats needs Text, got %s", x.Pos, args[0])
 		}
 		return ir.Bool(), nil
+	case "trim", "upper", "lower", "chars":
+		if !args[0].Equal(ir.Text()) {
+			return nil, fmt.Errorf("%s: %s needs Text, got %s", x.Pos, name, args[0])
+		}
+		if name == "chars" {
+			return ir.List(ir.Text()), nil
+		}
+		return ir.Text(), nil
+	case "startswith", "endswith":
+		for i := 0; i < 2; i++ {
+			if !args[i].Equal(ir.Text()) {
+				return nil, fmt.Errorf("%s: %s argument %d must be Text, got %s", x.Pos, name, i+1, args[i])
+			}
+		}
+		return ir.Bool(), nil
+	case "indexof":
+		// Over a List this is "position of an element"; over Text, "position
+		// of a substring". Both answer -1 when absent, like Find Index.
+		if args[0] != nil && args[0].Kind == ir.KList {
+			if !ir.Keyable(args[0].Elem) {
+				return nil, fmt.Errorf("%s: indexof needs keyable elements, got %s", x.Pos, args[0].Elem)
+			}
+			if !args[1].Equal(args[0].Elem) {
+				return nil, fmt.Errorf("%s: indexof value must be %s, got %s", x.Pos, args[0].Elem, args[1])
+			}
+			return ir.Int(), nil
+		}
+		for i := 0; i < 2; i++ {
+			if !args[i].Equal(ir.Text()) {
+				return nil, fmt.Errorf("%s: indexof needs Text arguments or a List and an element, got %s", x.Pos, args[i])
+			}
+		}
+		return ir.Int(), nil
+	case "replace":
+		for i := 0; i < 3; i++ {
+			if !args[i].Equal(ir.Text()) {
+				return nil, fmt.Errorf("%s: replace argument %d must be Text, got %s", x.Pos, i+1, args[i])
+			}
+		}
+		return ir.Text(), nil
+	case "charat":
+		if !args[0].Equal(ir.Text()) {
+			return nil, fmt.Errorf("%s: charat needs Text, got %s", x.Pos, args[0])
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		return ir.Text(), nil
+	case "slice":
+		// Also slices a List, so the two collection kinds stay symmetric.
+		if args[0] != nil && args[0].Kind == ir.KList {
+			for i := 1; i < 3; i++ {
+				if err := needInt(i); err != nil {
+					return nil, err
+				}
+			}
+			return args[0], nil
+		}
+		if !args[0].Equal(ir.Text()) {
+			return nil, fmt.Errorf("%s: slice needs Text or a List, got %s", x.Pos, args[0])
+		}
+		for i := 1; i < 3; i++ {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.Text(), nil
+	case "textjoin":
+		if args[0] == nil || args[0].Kind != ir.KList || !args[0].Elem.Equal(ir.Text()) {
+			return nil, fmt.Errorf("%s: textjoin needs List<Text>, got %s", x.Pos, args[0])
+		}
+		if !args[1].Equal(ir.Text()) {
+			return nil, fmt.Errorf("%s: textjoin separator must be Text, got %s", x.Pos, args[1])
+		}
+		return ir.Text(), nil
 
 	// -- points and grid geometry ---------------------------------------------
 	case "point":
@@ -365,13 +537,79 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		return ir.Int(), nil
-	case "padd":
+	case "padd", "psub":
 		for i := 0; i < 2; i++ {
 			if err := needPoint(x, name, args, i); err != nil {
 				return nil, err
 			}
 		}
 		return PointType(), nil
+	case "pscale":
+		if err := needPoint(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		return PointType(), nil
+	case "around4", "around8":
+		// Neighbours of a *point*, with no grid and no bounds — what a Sparse
+		// automaton needs, since neighbors4/8 require a dense Grid.
+		if err := needPoint(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		return ir.List(PointType()), nil
+	case "dirs8":
+		return ir.List(PointType()), nil
+	case "chebyshev":
+		for i := 0; i < 2; i++ {
+			if err := needPoint(x, name, args, i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.Int(), nil
+	case "haskey":
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: haskey needs a Map argument, got %s", x.Pos, args[0])
+		}
+		if !args[1].Equal(args[0].Key) {
+			return nil, fmt.Errorf("%s: haskey key must be %s, got %s", x.Pos, args[0].Key, args[1])
+		}
+		return ir.Bool(), nil
+	case "getor":
+		// The total lookup. `get` errors on a missing key and there was no way
+		// to guard it, which made a Count By map unreadable.
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: getor needs a Map argument, got %s", x.Pos, args[0])
+		}
+		if !args[1].Equal(args[0].Key) {
+			return nil, fmt.Errorf("%s: getor key must be %s, got %s", x.Pos, args[0].Key, args[1])
+		}
+		if !args[2].Equal(args[0].Elem) {
+			return nil, fmt.Errorf("%s: getor default must be %s, got %s", x.Pos, args[0].Elem, args[2])
+		}
+		return args[0].Elem, nil
+	case "keys":
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: keys needs a Map argument, got %s", x.Pos, args[0])
+		}
+		return ir.List(args[0].Key), nil
+	case "values":
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: values needs a Map argument, got %s", x.Pos, args[0])
+		}
+		return ir.List(args[0].Elem), nil
+	case "tolist":
+		if args[0] == nil || args[0].Kind != ir.KSet {
+			return nil, fmt.Errorf("%s: tolist needs a Set argument, got %s", x.Pos, args[0])
+		}
+		return ir.List(args[0].Elem), nil
+	case "size":
+		// Count, without leaving the lambda.
+		if args[0] == nil || (args[0].Kind != ir.KMap && args[0].Kind != ir.KSet) {
+			return nil, fmt.Errorf("%s: size needs a Map or Set argument, got %s", x.Pos, args[0])
+		}
+		return ir.Int(), nil
 	case "manhattan":
 		for i := 0; i < 2; i++ {
 			if err := needPoint(x, name, args, i); err != nil {
@@ -410,6 +648,10 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			}
 		}
 		return ir.List(args[0]), nil
+	case "tuple":
+		// Heterogeneous, unlike `list`: the whole point is a pair whose sides
+		// differ, which is what Group By keys and Sort By tiebreaks need.
+		return ir.Tuple(args...), nil
 	case "set":
 		elem, err := needList(0)
 		if err != nil {
@@ -468,11 +710,17 @@ func unaryType(x *ast.UnaryExpr, env Env) (*ir.Type, error) {
 	if err != nil {
 		return nil, err
 	}
-	if x.Op == token.MINUS {
+	switch x.Op {
+	case token.MINUS:
 		if !numeric(t) {
 			return nil, fmt.Errorf("%s: unary minus needs Int or Float, got %s", x.Pos, t)
 		}
 		return t, nil
+	case token.NOT:
+		if !t.Equal(ir.Bool()) {
+			return nil, fmt.Errorf("%s: ikke needs a Bool operand, got %s", x.Pos, t)
+		}
+		return ir.Bool(), nil
 	}
 	return nil, fmt.Errorf("%s: unsupported unary operator %s", x.Pos, x.Op)
 }
@@ -494,10 +742,22 @@ func binaryType(x *ast.BinaryExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Bool(), nil
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH:
+		// `+` doubles as Text concatenation — the one non-numeric operator
+		// overload, and the obvious meaning for two strings.
+		if x.Op == token.PLUS && lt.Equal(ir.Text()) && rt.Equal(ir.Text()) {
+			return ir.Text(), nil
+		}
 		if !numeric(lt) || !numeric(rt) {
 			return nil, fmt.Errorf("%s: arithmetic needs Int or Float operands, got %s and %s", x.Pos, lt, rt)
 		}
 		return promote(lt, rt), nil
+	case token.PERCENT:
+		// Modulo is Int-only: Euclidean remainder over floats is not the
+		// operation anyone means, and IEEE rounding would make it lie.
+		if !lt.Equal(ir.Int()) || !rt.Equal(ir.Int()) {
+			return nil, fmt.Errorf("%s: %% needs Int operands, got %s and %s", x.Pos, lt, rt)
+		}
+		return ir.Int(), nil
 	case token.LT, token.GT, token.LE, token.GE:
 		if !numeric(lt) || !numeric(rt) {
 			return nil, fmt.Errorf("%s: comparison needs Int or Float operands, got %s and %s", x.Pos, lt, rt)

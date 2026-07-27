@@ -65,7 +65,7 @@ func buildCombinations(prim string, k int, args ArgSet, in *ir.Type, pos token.P
 	if err != nil {
 		return nil, err
 	}
-	params := repeatType(elem, k)
+	params := append(repeatType(elem, k), ambientTypes()...)
 	bodyType, err := typecheck.LambdaType(lam, params...)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: prim + ": " + err.Error()}
@@ -175,7 +175,7 @@ func combosEval(prim string, k int, mode string, lam *ast.Lambda, elem *ir.Type,
 		case "Map":
 			out := make([]ir.Value, 0)
 			err := genCombos(n, k, func(idx []int) (bool, error) {
-				r, err := eval.EvalLambdaTyped(lam, params, pick(xs, idx)...)
+				r, err := eval.EvalLambdaTyped(lam, params, append(pick(xs, idx), ambientArgs()...)...)
 				if err != nil {
 					return false, err
 				}
@@ -192,7 +192,7 @@ func combosEval(prim string, k int, mode string, lam *ast.Lambda, elem *ir.Type,
 }
 
 func evalComboPredicate(lam *ast.Lambda, params []*ir.Type, xs []ir.Value, idx []int) (bool, error) {
-	r, err := eval.EvalLambdaTyped(lam, params, pick(xs, idx)...)
+	r, err := eval.EvalLambdaTyped(lam, params, append(pick(xs, idx), ambientArgs()...)...)
 	if err != nil {
 		return false, err
 	}

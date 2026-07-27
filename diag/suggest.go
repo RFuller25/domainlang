@@ -166,6 +166,31 @@ func suggestOperation(keyword string, op *ast.Operation) *opSuggestion {
 	return nil
 }
 
+// suggestBareOperation proposes the primitive a prefix-free line was reaching
+// for. Unlike suggestOperation there is no keyword on the line to move, so a
+// near-miss anywhere in the registry is as repairable as one under a keyword
+// the user already named: the fix only ever rewrites the phrase.
+func suggestBareOperation(op *ast.Operation) *opSuggestion {
+	if op == nil || len(op.Words) == 0 {
+		return nil
+	}
+	var ids []string
+	for _, p := range prims.Registry {
+		ids = append(ids, p.ID)
+	}
+	s := fuzzyOp(op.Words, ids)
+	if s == nil {
+		return nil
+	}
+	for _, p := range prims.Registry {
+		if p.ID == s.Op {
+			s.Keyword = p.Keyword
+			break
+		}
+	}
+	return s
+}
+
 // fuzzyOp compares the leading words of the phrase against each ID.
 func fuzzyOp(words []string, ids []string) *opSuggestion {
 	best, bestD := "", 1<<30

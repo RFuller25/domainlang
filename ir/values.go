@@ -9,11 +9,18 @@ import (
 
 // AsList asserts that v is a list, returning a helpful error otherwise.
 func AsList(v Value) ([]Value, error) {
-	l, ok := v.([]Value)
-	if !ok {
-		return nil, fmt.Errorf("expected a list, got %s", DescribeValue(v))
+	if l, ok := v.([]Value); ok {
+		return l, nil
 	}
-	return l, nil
+	// A Set reads as its elements, in insertion order — the order it already
+	// renders and iterates in. This is what lets the list primitives consume a
+	// Set directly instead of leaving Convert To Set a dead end whose only
+	// remaining moves were Count, contains and Difference. Tuples are []Value
+	// already, so they need no case.
+	if s, ok := v.(*SetValue); ok {
+		return s.Elems(), nil
+	}
+	return nil, fmt.Errorf("expected a list, got %s", DescribeValue(v))
 }
 
 // AsInt asserts that v is an integer.

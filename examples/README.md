@@ -1,6 +1,6 @@
 # Examples
 
-Fifteen small, self-contained programs, each with its input (`*.input`) and
+Eighteen small, self-contained programs, each with its input (`*.input`) and
 its exact expected output (`*.expected`). (For classic programming
 challenges — FizzBuzz, Two Sum, Game of Life — see
 [../challenges/](../challenges/README.md); for a guided tour, start at
@@ -49,6 +49,7 @@ self-contained Go helpers (see [docs/compiler.md](../docs/compiler.md)).
 | `13_gear_ratios` | `22` | `Split Fields` (whitespace); `lcm`/`gcd` number-theory builtins |
 | `14_regions` | `507` | **`Connected Components`** + `Find Cells` → points → `manhattan`, branched via Channels |
 | `15_team_picks` | `3` | **`Subsets`** (the power set) filtered with `length`/`contains` |
+| `16_no_prefixes` | `15000` | **prefix inference** — example 01 with the themed keywords left out |
 
 Things to try with any of them:
 

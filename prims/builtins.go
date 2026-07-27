@@ -439,6 +439,12 @@ var sortPrim = &Primitive{
 		if in != nil && in.Equal(ir.List(ir.Float())) {
 			return buildFloatSort(op, pos), nil
 		}
+		// Text (and any other ordered element) sorts by its natural order —
+		// alphabetical for Text, lexicographic for a tuple. Only Int keeps the
+		// specialized int path the optimizer's quickselect fusion targets.
+		if in != nil && in.Kind == ir.KList && ir.Ordered(in.Elem) && !in.Elem.Equal(ir.Int()) {
+			return buildOrderedSort(op, in, pos), nil
+		}
 		want := ir.List(ir.Int())
 		if !in.Equal(want) {
 			return nil, typeErr(pos, "Sort", want, in)
@@ -485,15 +491,32 @@ var emit = &Primitive{
 		if in == nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Reveal has nothing to emit (empty pipeline)"}
 		}
+		// `Reveal: stderr` sends the value to standard error instead. That
+		// makes a mid-pipeline Reveal a debugging tool: it does not disturb
+		// the program's answer, so a golden test still passes with one in
+		// place.
+		toStderr := hasWord(op, "stderr")
+		target := "stdout"
+		if toStderr {
+			target = "stderr"
+		}
 		return &ir.Node{
 			Prim:    "Emit",
 			In:      in,
 			Out:     in,
-			Display: "Reveal -> stdout",
+			Display: "Reveal -> " + target,
+			Meta:    map[string]any{"target": target},
 			Pos:     pos,
 			Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
-				if ctx.Stdout != nil {
-					fmt.Fprintln(ctx.Stdout, ir.FormatValue(v))
+				// A nil writer discards, the same rule Stdout already
+				// follows — never cross the streams, or a caller capturing
+				// stdout would see stderr output the binary keeps separate.
+				w := ctx.Stdout
+				if toStderr {
+					w = ctx.Stderr
+				}
+				if w != nil {
+					fmt.Fprintln(w, ir.LabelledOutput(ctx.PartLabel, ir.FormatValue(v)))
 				}
 				return v, nil
 			},

@@ -133,15 +133,16 @@ func cellLambda(args ArgSet, prim string, pos token.Position) (*ast.Lambda, bool
 	if !ok {
 		return nil, false, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim)}
 	}
+	depth := ambientDepth()
 	switch len(lam.Params) {
-	case 1:
+	case 1 + depth:
 		return lam, false, nil
-	case 3:
+	case 3 + depth:
 		return lam, true, nil
 	}
 	return nil, false, &ResolveError{Pos: pos,
-		Msg: fmt.Sprintf("%s lambda must take 1 parameter (the cell) or 3 (grid, row, col), got %d",
-			prim, len(lam.Params))}
+		Msg: fmt.Sprintf("%s lambda must take %d parameter (the cell) or %d (grid, row, col), got %d",
+			prim, 1+depth, 3+depth, len(lam.Params))}
 }
 
 var mapCells = &Primitive{
@@ -161,9 +162,9 @@ var mapCells = &Primitive{
 		}
 		var outElem *ir.Type
 		if positional {
-			outElem, err = typecheck.LambdaType(lam, in, ir.Int(), ir.Int())
+			outElem, err = typecheck.LambdaType(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...)...)
 		} else {
-			outElem, err = typecheck.LambdaType(lam, in.Elem)
+			outElem, err = typecheck.LambdaType(lam, append([]*ir.Type{in.Elem}, ambientTypes()...)...)
 		}
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Map Cells: " + err.Error()}
@@ -185,10 +186,10 @@ var mapCells = &Primitive{
 					var r ir.Value
 					var err error
 					if positional {
-						r, err = eval.EvalLambdaTyped(lam, []*ir.Type{in, ir.Int(), ir.Int()},
-							g, int64(i/g.Cols), int64(i%g.Cols))
+						r, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...),
+							append([]ir.Value{g, int64(i / g.Cols), int64(i % g.Cols)}, ambientArgs()...)...)
 					} else {
-						r, err = eval.EvalLambdaTyped(lam, []*ir.Type{in.Elem}, cell)
+						r, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{in.Elem}, ambientTypes()...), append([]ir.Value{cell}, ambientArgs()...)...)
 					}
 					if err != nil {
 						return nil, runtimeErr("Map Cells", pos, "cell %d: %v", i, err)
@@ -313,7 +314,7 @@ var countCells = &Primitive{
 			return nil, err
 		}
 		if positional {
-			bodyType, err := typecheck.LambdaType(lam, in, ir.Int(), ir.Int())
+			bodyType, err := typecheck.LambdaType(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...)...)
 			if err != nil {
 
 				return nil, &ResolveError{Pos: pos, Msg: "Count Cells: " + err.Error()}
@@ -342,8 +343,8 @@ var countCells = &Primitive{
 					var err error
 					if positional {
 						var r ir.Value
-						r, err = eval.EvalLambdaTyped(lam, []*ir.Type{in, ir.Int(), ir.Int()},
-							g, int64(i/g.Cols), int64(i%g.Cols))
+						r, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...),
+							append([]ir.Value{g, int64(i / g.Cols), int64(i % g.Cols)}, ambientArgs()...)...)
 						if err == nil {
 							b, ok := r.(bool)
 							if !ok {

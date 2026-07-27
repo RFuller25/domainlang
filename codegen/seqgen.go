@@ -61,6 +61,23 @@ func (g *gen) emitWindowedReduce(n *ir.Node, in string) (string, error) {
 		g.helper("dmSlidingExtremum", declSlidingExtremum)
 		g.wl("%s := dmSlidingExtremum(%s, %d, %d, %v)", v, in, size, step, op == "min")
 		return v, nil
+	case "product":
+		// No prefix trick survives a zero, so this is the honest per-window
+		// scan — it still never materializes the windows.
+		i, p, x := g.fresh("i"), g.fresh("p"), g.fresh("x")
+		g.wl("%s := []int64{}", v)
+		g.wl("for %s := int64(0); %s+%d <= int64(len(%s)); %s += %d {", i, i, size, in, i, step)
+		g.in()
+		g.wl("%s := int64(1)", p)
+		g.wl("for _, %s := range %s[%s : %s+%d] {", x, in, i, i, size)
+		g.in()
+		g.wl("%s *= %s", p, x)
+		g.out()
+		g.wl("}")
+		g.wl("%s = append(%s, %s)", v, v, p)
+		g.out()
+		g.wl("}")
+		return v, nil
 	}
 	return "", unsupported(n, "unknown windowed reduction %q", op)
 }
@@ -611,6 +628,21 @@ func (g *gen) emitWindowedReduceSum(n *ir.Node, in string) (string, error) {
 		g.helper("dmSlidingExtremumSum", declSlidingExtremumSum)
 		g.wl("%s := dmSlidingExtremumSum(%s, %d, %d, %v)", v, in, size, step, op == "min")
 		return v, nil
+	case "product":
+		i, p, x := g.fresh("i"), g.fresh("p"), g.fresh("x")
+		g.wl("var %s int64", v)
+		g.wl("for %s := int64(0); %s+%d <= int64(len(%s)); %s += %d {", i, i, size, in, i, step)
+		g.in()
+		g.wl("%s := int64(1)", p)
+		g.wl("for _, %s := range %s[%s : %s+%d] {", x, in, i, i, size)
+		g.in()
+		g.wl("%s *= %s", p, x)
+		g.out()
+		g.wl("}")
+		g.wl("%s += %s", v, p)
+		g.out()
+		g.wl("}")
+		return v, nil
 	}
 	return "", unsupported(n, "unknown windowed reduction %q", op)
 }
@@ -755,9 +787,15 @@ func (g *gen) emitSortBy(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	body, keyT, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
+	}
+	// The key may be Int, Float, Text, or a tuple of them — a tuple key is how
+	// a tiebreak is written, and it compares lexicographically.
+	keyGo, err := g.goType(keyT)
+	if err != nil {
+		return "", unsupported(n, "key: %v", err)
 	}
 	g.imp("slices")
 	// Sort (key, original-index) pairs with an unstable pdqsort (slices.SortFunc,
@@ -766,7 +804,7 @@ func (g *gen) emitSortBy(n *ir.Node, in string) (string, error) {
 	// key sort produces — for both ascending and descending key order the equal-
 	// key run keeps original order. Then materialize the permutation.
 	kv, pairs, i := g.fresh("kv"), g.fresh("pairs"), g.fresh("i")
-	g.wl("type %s struct { k int64; i int }", kv)
+	g.wl("type %s struct { k %s; i int }", kv, keyGo)
 	g.wl("%s := make([]%s, len(%s))", pairs, kv, in)
 	g.wl("for %s, %s := range %s {", i, e, in)
 	g.in()
@@ -774,13 +812,22 @@ func (g *gen) emitSortBy(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	a, b := g.fresh("a"), g.fresh("b")
-	keyLt := "<"
+	lo, hi := a+".k", b+".k"
 	if desc {
-		keyLt = ">"
+		lo, hi = hi, lo
+	}
+	keyLess, err := lessExpr(keyT, lo, hi)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	keyMore, err := lessExpr(keyT, hi, lo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
 	}
 	g.wl("slices.SortFunc(%s, func(%s, %s %s) int {", pairs, a, b, kv)
 	g.in()
-	g.wl("if %s.k != %s.k { if %s.k %s %s.k { return -1 }; return 1 }", a, b, a, keyLt, b)
+	g.wl("if %s { return -1 }", keyLess)
+	g.wl("if %s { return 1 }", keyMore)
 	g.wl("if %s.i < %s.i { return -1 }", a, b)
 	g.wl("if %s.i > %s.i { return 1 }", a, b)
 	g.wl("return 0")

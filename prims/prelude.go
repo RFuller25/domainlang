@@ -13,25 +13,29 @@ import (
 // ordinary Shikigami — named compositions of primitives — demonstrating that
 // the language extends without new built-in magic. They are loaded before every
 // program.
+// Each definition declares its signature. All five are monomorphic, so this
+// costs nothing in generality and is the feature's dogfood case: the same check
+// a user's Shikigami gets applies to the standard library, and hover shows a
+// declared type rather than a reconstructed one.
 const preludeSource = `
-Shikigami "Lines"
+Shikigami "Lines" : Text -> List<Text>
     Cursed Technique: Split Text by "\n"
 
-Shikigami "Blocks"
+Shikigami "Blocks" : Text -> List<List<Text>>
     Cursed Technique: Split Text by "\n\n"
     Cursed Technique: Split Each by "\n"
 
-Shikigami "Ints"
+Shikigami "Ints" : Text -> List<Int>
     Cursed Technique: Split Text by "\n"
     Channeled Energy: Convert List to Integers
 
-Shikigami "Digit Grid"
+Shikigami "Digit Grid" : Text -> Grid<Int>
     Cursed Technique: Split Text by "\n"
     Cursed Technique: Split Each by ""
     Channeled Energy: Convert Each List to Integers
     Channeled Energy: Convert To Grid
 
-Shikigami "Top K Sum" (k: Int)
+Shikigami "Top K Sum" (k: Int) : List<Int> -> Int
     Domain Expansion: Quicksort, Descending
     Maximum Technique: Select Top k, Sum
 `

@@ -111,18 +111,23 @@ func (g *gen) emitSparseDensify(n *ir.Node, in string) (string, error) {
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, rows, cols := g.fresh("v"), g.fresh("rows"), g.fresh("cols")
 	i, k, e := g.fresh("i"), g.fresh("k"), g.fresh("e")
-	lim := strconv.FormatInt(ir.MaxSparseDense, 10)
+	lim := strconv.FormatInt(ir.DensifyLimit(), 10)
 	g.wl("var %s %s", v, gridGo)
 	g.wl("if len(%s.cells) > 0 {", in)
 	g.in()
 	g.wl("%s := %s.maxR - %s.minR + 1", rows, in, in)
 	g.wl("%s := %s.maxC - %s.minC + 1", cols, in, in)
-	g.wl("if %s > %s || %s > %s || %s*%s > %s {", rows, lim, cols, lim, rows, cols, lim)
-	g.in()
-	g.wl(`dmFail("sparse grid too large to densify (%%dx%%d, limit %%d cells)", %s, %s, int64(%s))`,
-		rows, cols, lim)
-	g.out()
-	g.wl("}")
+	// The tunable ceiling is gone, but a box Go cannot represent still gets a
+	// clean message instead of a makeslice panic — DensifyLimit answers with
+	// the configured ceiling when there is one and the physical cap otherwise.
+	{
+		g.wl("if %s > %s || %s > %s || %s/1 > %s/%s {", rows, lim, cols, lim, rows, lim, cols)
+		g.in()
+		g.wl(`dmFail("sparse grid too large to densify (%%dx%%d, limit %%d cells)", %s, %s, int64(%s))`,
+			rows, cols, lim)
+		g.out()
+		g.wl("}")
+	}
 	g.wl("%s.rows, %s.cols = int(%s), int(%s)", v, v, rows, cols)
 	g.wl("%s.cells = make([]%s, %s*%s)", v, elemGo, rows, cols)
 	g.wl("for %s := range %s.cells {", i, v)

@@ -69,11 +69,30 @@ tooling relies on:
 | `Maximum Technique:` | reductions (`Sum`, `Count`, `Fold`, `Group By`, …) |
 | `Domain Expansion:` | a **named algorithm the optimizer may replace** |
 | `Reverse Cursed Technique:` | inversions (`Reverse`) |
-| `Simple Domain:` | loops (`Repeat N`, `While`, `Iterate Until Fixed Point`) |
+| `Simple Domain:` | loops (`Repeat N`, `While`, `Iterate Until Fixed Point`, `For x in <source>`) |
 | `Channel "name":` | a named side branch of the pipeline |
 | `Shikigami:` | call a user-defined (or prelude) operation |
 | `Binding Vow:` | a debug assertion over the current value |
 | `Reveal:` | print the current value |
+
+They are also **optional**. The role of a step is usually obvious from the
+step itself, so the compiler will work it out — `hello.domain` can be written
+like this and means exactly the same thing:
+
+```domain
+stdin
+Split Text by "\n"
+Convert List to Integers
+Sum
+stdout
+```
+
+Write the keyword where it clarifies, drop it where it does not; the two mix
+line by line. The rest of this guide keeps the keywords, because they are the
+best way to *learn* the roles above — see
+[optional keywords](language.md#optional-keywords) for the full rules,
+including the one thing it costs you: a Shikigami you define may not be named
+after a built-in operation.
 
 Everything is **typechecked before anything runs**: misspell a primitive or
 feed `Sum` a `List<Text>` and you get a positioned error, not a crash midway
@@ -110,7 +129,7 @@ Things to notice:
   language. `and`/`or` short-circuit.
 - `if cond then a else b` is an expression with lazy arms, so
   `if length(xs) = 0 then -1 else first(xs)` is safe.
-- There are 61 builtin functions available inside lambdas — list ops
+- There are 92 builtin functions available inside lambdas — list ops
   (`length`, `item`, `take`, `sum`, …), math (`gcd`, `modpow`, …), text
   (`toint`, `totext`, …), bits (`band`, `frombin`, …), points and grids
   (`point`, `manhattan`, `at`, `neighbors4`, …), and sparse grids (`put`,

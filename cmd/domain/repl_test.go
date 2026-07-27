@@ -162,3 +162,53 @@ func TestReplRuntimeErrorRollsBack(t *testing.T) {
 		t.Errorf("session type lost after runtime error:\n%s", out)
 	}
 }
+
+// TestReplWithoutKeywords: every REPL line may be written as a bare operation
+// phrase — the same session, with the themed keywords left out.
+func TestReplWithoutKeywords(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("nums.txt", []byte("3\n1\n2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := runRepl(t,
+		"nums.txt",
+		`Split Text by "\n"`,
+		"Convert To Integers",
+		"Sort, Descending",
+		"Map Each", // needs Using: — continuation mode works bare too
+		"    Using: (x) -> x * 10",
+		"",
+		"Sum",
+		"stdout",
+		":quit",
+	)
+	for _, want := range []string{
+		`=> "3\n1\n2" : Text`,
+		`=> ["3", "1", "2"] : List<Text>`,
+		"=> [3, 1, 2] : List<Int>",
+		"=> [3, 2, 1] : List<Int>",
+		"   ...> ",
+		"=> [30, 20, 10] : List<Int>",
+		"=> 60 : Int",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// A phrase the REPL cannot name is reported and dropped, like any other bad
+// statement — the session survives it.
+func TestReplUnknownBarePhraseIsReported(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("nums.txt", []byte("1\n2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := runRepl(t, "nums.txt", "Frobnicate", `Split Text by "\n"`, ":quit")
+	if !strings.Contains(out, "cannot infer a keyword") {
+		t.Errorf("expected the inference error, got:\n%s", out)
+	}
+	if !strings.Contains(out, `=> ["1", "2"] : List<Text>`) {
+		t.Errorf("the session should carry on after a dropped line:\n%s", out)
+	}
+}

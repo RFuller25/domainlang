@@ -262,14 +262,14 @@ func TestHoverDocumentsPrimitiveEvenWhenProgramDoesNotTypeCheck(t *testing.T) {
 
 func TestCompletionOffersKeywordsPrimitivesAndArgs(t *testing.T) {
 	// At the head of a fresh line: statement keywords.
-	kw := labelsOf(completionItems(""))
+	kw := labelsOf(CompletionItems(""))
 	if !kw["Cursed Technique"] || !kw["Domain Expansion"] || !kw["Reveal"] {
 		t.Errorf("head-of-line completion missing statement keywords: %v", keys(kw))
 	}
 
 	// After a keyword and colon: that keyword's primitives, and nothing from
 	// another class.
-	ops := labelsOf(completionItems("Domain Expansion: "))
+	ops := labelsOf(CompletionItems("Domain Expansion: "))
 	if !ops["BFS"] || !ops["Dijkstra"] || !ops["Sort"] {
 		t.Errorf("operation completion missing Domain Expansion primitives: %v", keys(ops))
 	}
@@ -278,13 +278,13 @@ func TestCompletionOffersKeywordsPrimitivesAndArgs(t *testing.T) {
 	}
 
 	// Indented continuation line: argument labels.
-	args := labelsOf(completionItems("    "))
+	args := labelsOf(CompletionItems("    "))
 	if !args["Using:"] || !args["Mode:"] {
 		t.Errorf("indented completion missing argument labels: %v", keys(args))
 	}
 
 	// After Mode:, its enum values.
-	modes := labelsOf(completionItems("    Mode: "))
+	modes := labelsOf(CompletionItems("    Mode: "))
 	if !modes["Each"] || !modes["First"] {
 		t.Errorf("Mode value completion missing: %v", keys(modes))
 	}

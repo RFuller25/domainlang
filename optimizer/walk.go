@@ -62,6 +62,20 @@ func substIdent(e ast.Expr, name string, repl ast.Expr) ast.Expr {
 			Else: substIdent(x.Else, name, repl),
 			Pos:  x.Pos,
 		}
+	case *ast.LetExpr:
+		// The bound value is always in the outer scope, so it substitutes.
+		// The body does not when the binding shadows the name being replaced —
+		// inside it, `name` refers to the local, not to what we are rewriting.
+		body := x.Body
+		if x.Name != name {
+			body = substIdent(body, name, repl)
+		}
+		return &ast.LetExpr{
+			Name:  x.Name,
+			Value: substIdent(x.Value, name, repl),
+			Body:  body,
+			Pos:   x.Pos,
+		}
 	default:
 		return e // literals
 	}
@@ -80,8 +94,9 @@ func isTotal(e ast.Expr) bool {
 	case *ast.UnaryExpr:
 		return isTotal(x.X)
 	case *ast.BinaryExpr:
-		if x.Op == token.SLASH {
-			// Safe only when the divisor is a nonzero literal.
+		if x.Op == token.SLASH || x.Op == token.PERCENT {
+			// Safe only when the divisor is a nonzero literal — mod by zero
+			// fails exactly like division by zero.
 			if lit, ok := x.Right.(*ast.IntLit); !ok || lit.Value == 0 {
 				return false
 			}
@@ -96,8 +111,14 @@ func isTotal(e ast.Expr) bool {
 			return false
 		}
 		switch id.Name {
-		case "length", "take", "drop", "reverse", "concat", "sum", "contains":
-			// total builtins (take/drop clamp)
+		case "length", "take", "drop", "reverse", "concat", "sum", "contains",
+			// v0.5 total additions. slice clamps like take/drop, indexof
+			// answers -1 rather than failing, and the text transforms cannot
+			// fail on any input. mod/divmod/pow/isqrt/factorial/charat/clamp
+			// are deliberately absent: each has a documented error case.
+			"slice", "indexof", "startswith", "endswith", "replace", "trim",
+			"upper", "lower", "chars", "textjoin", "tuple":
+			// total builtins (take/drop/slice clamp)
 		default:
 			return false // item, first, last, min, max, get, at are partial
 		}
@@ -109,6 +130,8 @@ func isTotal(e ast.Expr) bool {
 		return true
 	case *ast.CondExpr:
 		return isTotal(x.Cond) && isTotal(x.Then) && isTotal(x.Else)
+	case *ast.LetExpr:
+		return isTotal(x.Value) && isTotal(x.Body)
 	default:
 		return false
 	}

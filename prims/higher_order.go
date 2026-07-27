@@ -16,8 +16,14 @@ import (
 // the eval package.
 
 // listElem requires that in is a List and returns its element type.
+// listElem is the element type a list-shaped primitive consumes. A Set is
+// accepted wherever a List is: its insertion order is already the order it
+// renders and iterates in, so reading one as a sequence is unambiguous. The
+// result is a List — the primitive builds ir.List(elem) — because a transform
+// may map two distinct elements onto the same value, and silently
+// deduplicating would lose data the program asked for.
 func listElem(in *ir.Type, prim string, pos token.Position) (*ir.Type, error) {
-	if in == nil || in.Kind != ir.KList {
+	if in == nil || (in.Kind != ir.KList && in.Kind != ir.KSet) {
 		return nil, &ResolveError{Pos: pos,
 			Msg: fmt.Sprintf("%s expects a List input, got %s", prim, in)}
 	}
@@ -30,9 +36,10 @@ func requireLambda(args ArgSet, arity int, prim string, pos token.Position) (*as
 	if !ok {
 		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim)}
 	}
-	if len(lam.Params) != arity {
+	wantArity := arity + ambientDepth()
+	if len(lam.Params) != wantArity {
 		return nil, &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("%s lambda must take %d parameter(s), got %d", prim, arity, len(lam.Params))}
+			Msg: fmt.Sprintf("%s lambda must take %d parameter(s), got %d", prim, wantArity, len(lam.Params))}
 	}
 	return lam, nil
 }
@@ -65,7 +72,7 @@ var mapEach = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		outElem, err := typecheck.LambdaType(lam, elem)
+		outElem, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Map Each: " + err.Error()}
 		}
@@ -83,7 +90,7 @@ var mapEach = &Primitive{
 				}
 				out := make([]ir.Value, len(items))
 				for i, e := range items {
-					r, err := eval.EvalLambdaTyped(lam, []*ir.Type{elem}, e)
+					r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{e}, ambientArgs()...)...)
 					if err != nil {
 						return nil, runtimeErr("Map Each", pos, "element %d: %v", i, err)
 					}
@@ -351,7 +358,7 @@ var fold = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		accType, err := typecheck.LambdaType(lam, seedType, elem)
+		accType, err := typecheck.LambdaType(lam, append([]*ir.Type{seedType, elem}, ambientTypes()...)...)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Fold: " + err.Error()}
 		}
@@ -373,7 +380,7 @@ var fold = &Primitive{
 				}
 				acc := seedVal
 				for i, e := range items {
-					acc, err = eval.EvalLambdaTyped(lam, []*ir.Type{seedType, elem}, acc, e)
+					acc, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{seedType, elem}, ambientTypes()...), append([]ir.Value{acc, e}, ambientArgs()...)...)
 					if err != nil {
 						return nil, runtimeErr("Fold", pos, "element %d: %v", i, err)
 					}
@@ -411,7 +418,7 @@ var groupBy = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		keyType, err := typecheck.LambdaType(lam, elem)
+		keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Group By: " + err.Error()}
 		}
@@ -432,7 +439,7 @@ var groupBy = &Primitive{
 				}
 				m := ir.NewMapValue()
 				for i, e := range items {
-					k, err := eval.EvalLambdaTyped(lam, []*ir.Type{elem}, e)
+					k, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{e}, ambientArgs()...)...)
 					if err != nil {
 						return nil, runtimeErr("Group By", pos, "element %d: %v", i, err)
 					}
@@ -521,7 +528,7 @@ func setFromGroup(g ir.Value, id string, pos token.Position) (*ir.SetValue, erro
 // ---------------------------------------------------------------------------
 
 func requirePredicate(lam *ast.Lambda, elem *ir.Type, prim string, pos token.Position) error {
-	bodyType, err := typecheck.LambdaType(lam, elem)
+	bodyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
 	if err != nil {
 		return &ResolveError{Pos: pos, Msg: prim + ": " + err.Error()}
 	}
@@ -535,7 +542,7 @@ func requirePredicate(lam *ast.Lambda, elem *ir.Type, prim string, pos token.Pos
 // evalPredicate runs a one-parameter predicate lambda; elem is the
 // statically inferred parameter type (nil when unknown).
 func evalPredicate(lam *ast.Lambda, elem *ir.Type, e ir.Value) (bool, error) {
-	r, err := eval.EvalLambdaTyped(lam, []*ir.Type{elem}, e)
+	r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{e}, ambientArgs()...)...)
 	if err != nil {
 		return false, err
 	}

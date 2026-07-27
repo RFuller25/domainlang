@@ -158,7 +158,7 @@ func TestParseShikigamiDef(t *testing.T) {
 	if def.Name != "Top K Sum" {
 		t.Fatalf("name: %q", def.Name)
 	}
-	if len(def.Params) != 1 || def.Params[0].Name != "k" || def.Params[0].Type != "Int" {
+	if len(def.Params) != 1 || def.Params[0].Name != "k" || def.Params[0].Type.Name != "Int" {
 		t.Fatalf("params: %+v", def.Params)
 	}
 	if len(def.Body) != 2 {
@@ -275,7 +275,10 @@ func TestParseRecoveryNeverAcceptsABrokenProgram(t *testing.T) {
 // TestParseRecoveryErrorCap: a file that is wrong on every line stops at the
 // cap instead of producing an avalanche.
 func TestParseRecoveryErrorCap(t *testing.T) {
-	src := strings.Repeat("Broken Line Here\n", 25)
+	// Every line is a keyword missing its colon — the parser's own error, not
+	// one the keyword-inference stage would take over (a colon-free line that
+	// does not open with a keyword parses fine as a bare operation phrase).
+	src := strings.Repeat("Cursed Technique Broken Line Here\n", 25)
 	toks, err := lexer.Lex(src)
 	if err != nil {
 		t.Fatal(err)
@@ -574,5 +577,108 @@ func TestParseIntArgValueOnEOF(t *testing.T) {
 	}
 	if _, err := Parse(src, toks); err == nil {
 		t.Fatal("expected an error for a dangling '-' with no following digit")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Prefix-free statements: the themed keyword is optional, and a line without
+// one parses into the same Statement with an empty Keyword for prims.Infer to
+// fill in.
+
+func TestParseKeywordlessStatements(t *testing.T) {
+	src := `input.txt
+Split Text by "\n\n"
+Maximum Technique: Select Top 3, Sum
+stdout
+`
+	prog := parse(t, src)
+	if len(prog.Statements) != 4 {
+		t.Fatalf("expected 4 statements, got %d", len(prog.Statements))
+	}
+	// The phrase of a bare line is parsed exactly as it would be after a
+	// keyword — the only difference is the empty Keyword.
+	src0, src1, src3 := prog.Statements[0], prog.Statements[1], prog.Statements[3]
+	if src0.Keyword != "" || src0.Op.Raw != "input.txt" {
+		t.Errorf("source line: keyword %q raw %q", src0.Keyword, src0.Op.Raw)
+	}
+	if src1.Keyword != "" || len(src1.Op.Strings) != 1 || src1.Op.Strings[0] != "\n\n" {
+		t.Errorf("split line: keyword %q strings %v", src1.Keyword, src1.Op.Strings)
+	}
+	if prog.Statements[2].Keyword != "Maximum Technique" {
+		t.Errorf("a keyworded line among bare ones keeps its keyword: %q", prog.Statements[2].Keyword)
+	}
+	if src3.Keyword != "" || src3.Op.Raw != "stdout" {
+		t.Errorf("sink line: keyword %q raw %q", src3.Keyword, src3.Op.Raw)
+	}
+}
+
+// A bare statement carries its indented block (named arguments and nested
+// pipelines) exactly like a keyworded one.
+func TestParseKeywordlessStatementWithBlock(t *testing.T) {
+	src := `Map Each
+    Using: (x) -> x * 2
+Repeat 3
+    Reverse
+`
+	prog := parse(t, src)
+	if len(prog.Statements) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Statements))
+	}
+	mapEach := prog.Statements[0]
+	if mapEach.Keyword != "" || len(mapEach.Args) != 1 || mapEach.Args[0].Name != "Using" {
+		t.Fatalf("Map Each: keyword %q args %+v", mapEach.Keyword, mapEach.Args)
+	}
+	loop := prog.Statements[1]
+	if loop.Keyword != "" || len(loop.Block) != 1 || loop.Block[0].Op.Raw != "Reverse" {
+		t.Fatalf("Repeat: keyword %q block %+v", loop.Keyword, loop.Block)
+	}
+	if loop.Block[0].Keyword != "" {
+		t.Fatalf("a bare statement inside a block should also defer its keyword, got %q", loop.Block[0].Keyword)
+	}
+}
+
+// Bare source targets are paths, and a path does not always open with an
+// identifier: `16_input.txt` lexes as an INT and `./day1.txt` as a DOT.
+func TestParseKeywordlessPathTargets(t *testing.T) {
+	for _, path := range []string{"16_no_prefixes.input", "./day1.txt", "../data/day1.txt", "/tmp/day1.txt"} {
+		prog := parse(t, path+"\n")
+		if len(prog.Statements) != 1 {
+			t.Fatalf("%s: expected 1 statement, got %d", path, len(prog.Statements))
+		}
+		if got := prog.Statements[0].Op.Raw; got != path {
+			t.Errorf("%s: raw phrase is %q", path, got)
+		}
+	}
+}
+
+// A forgotten colon after a real keyword must stay the precise syntax error it
+// has always been, rather than being re-read as a prefix-free phrase (which
+// would name no operation and report something far vaguer, far later).
+func TestParseKeywordWithoutColonStillFails(t *testing.T) {
+	for _, src := range []string{"Reveal stdout\n", "Cursed Energy input.txt\n", "Reverse Cursed Technique Reverse\n"} {
+		toks, err := lexer.Lex(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = Parse(src, toks)
+		if err == nil {
+			t.Fatalf("%q should still be a parse error", src)
+		}
+		if !strings.Contains(err.Error(), "expected ':' after keyword") {
+			t.Errorf("%q: got %v", src, err)
+		}
+	}
+}
+
+// A line that cannot begin a statement at all is still a syntax error, not
+// something handed on to keyword inference.
+func TestParseNonStatementLine(t *testing.T) {
+	src := "-> x\n"
+	toks, err := lexer.Lex(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(src, toks); err == nil {
+		t.Fatal("expected a parse error")
 	}
 }

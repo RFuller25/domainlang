@@ -26,6 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/x/term"
+
 	"domain/interp"
 	"domain/ir"
 	"domain/lexer"
@@ -56,8 +58,19 @@ type repl struct {
 }
 
 // Repl runs the interactive loop until :quit or EOF. It returns the process
-// exit code.
+// exit code. A real terminal gets arrow-key editing, session history, and
+// auto-indented continuation lines (repl_tty.go); anything else (piped
+// input, and every test below, which feeds a strings.Reader) gets the plain
+// line-at-a-time reader.
 func Repl(stdin io.Reader, stdout io.Writer) int {
+	if f, ok := stdin.(*os.File); ok && term.IsTerminal(f.Fd()) {
+		return replTTY(f, stdout)
+	}
+	return replPlain(stdin, stdout)
+}
+
+// replPlain is today's REPL loop, unchanged in behavior.
+func replPlain(stdin io.Reader, stdout io.Writer) int {
 	r := &repl{in: bufio.NewScanner(stdin), out: stdout, baseDir: "."}
 	fmt.Fprintln(r.out, "Domain REPL — an interactive domain expansion. :help lists commands, :quit leaves.")
 	for {
@@ -75,25 +88,33 @@ func Repl(stdin io.Reader, stdout io.Writer) int {
 			return 0
 		}
 		line := strings.TrimRight(r.in.Text(), " \t\r")
-		switch {
-		case strings.HasPrefix(strings.TrimSpace(line), ":"):
-			r.flushPending()
-			if quit := r.command(strings.TrimSpace(line)); quit {
-				return 0
-			}
-		case line == "":
-			r.flushPending()
-		case line[0] == ' ' || line[0] == '\t':
-			if len(r.pending) == 0 {
-				fmt.Fprintln(r.out, "error: this indented line continues nothing — start with a top-level `Keyword: operation`")
-				continue
-			}
-			r.pending = append(r.pending, strings.ReplaceAll(line, "\t", "    "))
-		default:
-			r.flushPending()
-			r.acceptTopLevel(line)
+		if quit := r.handleLine(line); quit {
+			return 0
 		}
 	}
+}
+
+// handleLine routes one already-read, right-trimmed input line: a :command,
+// a blank line (completes a pending block), an indented continuation line,
+// or a fresh top-level statement. It reports whether the session should end.
+func (r *repl) handleLine(line string) (quit bool) {
+	switch {
+	case strings.HasPrefix(strings.TrimSpace(line), ":"):
+		r.flushPending()
+		return r.command(strings.TrimSpace(line))
+	case line == "":
+		r.flushPending()
+	case line[0] == ' ' || line[0] == '\t':
+		if len(r.pending) == 0 {
+			fmt.Fprintln(r.out, "error: this indented line continues nothing — start with a top-level `Keyword: operation`")
+			return false
+		}
+		r.pending = append(r.pending, strings.ReplaceAll(line, "\t", "    "))
+	default:
+		r.flushPending()
+		r.acceptTopLevel(line)
+	}
+	return false
 }
 
 // acceptTopLevel starts a new statement. If it already forms a complete,
@@ -164,7 +185,10 @@ func (r *repl) frontEnd(stmts []string) (*ir.Pipeline, string, error) {
 	if err != nil {
 		return nil, src, err
 	}
-	pipe, err := prims.Resolve(prog)
+	// Imports resolve against the REPL's base directory, the same root
+	// Cursed Energy file targets use.
+	opts := prims.ResolveOptions{BaseDir: r.baseDir, Search: prims.SearchPath()}
+	pipe, err := prims.ResolveWith(prog, opts)
 	if err != nil {
 		return nil, src, err
 	}

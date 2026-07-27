@@ -205,7 +205,24 @@ func TestPermutationsOrderAndContent(t *testing.T) {
 	}
 }
 
-func TestPermutationsBound(t *testing.T) {
+// Permutations is unbounded by default: a 10-element input used to be
+// refused by a hard-coded ceiling of 9, though 3.6M orderings are perfectly
+// computable. The ceiling still exists as an opt-in.
+func TestPermutationsUnboundedByDefault(t *testing.T) {
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \",\"\n" +
+		"Domain Expansion: Permutations\n" +
+		"Maximum Technique: Count\n"
+	v, _ := runPipeline(t, src, "a,b,c,d,e,f,g,h,i,j") // 10 elements
+	if v.(int64) != 3628800 {
+		t.Fatalf("10! = 3628800, got %v", v)
+	}
+}
+
+func TestPermutationsBoundWhenConfigured(t *testing.T) {
+	old := MaxPermutationInput
+	MaxPermutationInput = 9
+	defer func() { MaxPermutationInput = old }()
 	src := "Cursed Energy: stdin\n" +
 		"Cursed Technique: Split Text by \",\"\n" +
 		"Domain Expansion: Permutations\n"
@@ -235,6 +252,22 @@ func TestSubsetsCountAndBound(t *testing.T) {
 	if v.(int64) != 32 {
 		t.Fatalf("2^5 = 32, got %v", v)
 	}
+	// 17 elements is fine now; the old hard ceiling of 16 refused it.
+	long := strings.Repeat("1,", 16) + "1"
+	v, _ = runPipeline(t, src, long)
+	if v.(int64) != 131072 {
+		t.Fatalf("2^17 = 131072, got %v", v)
+	}
+}
+
+func TestSubsetsBoundWhenConfigured(t *testing.T) {
+	old := MaxSubsetInput
+	MaxSubsetInput = 16
+	defer func() { MaxSubsetInput = old }()
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \",\"\n" +
+		"Channeled Energy: Convert List to Integers\n" +
+		"Domain Expansion: Subsets\n"
 	long := strings.Repeat("1,", 16) + "1" // 17 elements
 	_, err := runErr(t, src, long)
 	if err == nil || !strings.Contains(err.Error(), "refusing the power set") {

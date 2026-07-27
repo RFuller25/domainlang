@@ -32,9 +32,10 @@ const (
 
 	PLUS  // +
 	MINUS // -
-	STAR  // *
-	SLASH // /
-	EQ    // =   (equality; there is no assignment in Domain)
+	STAR    // *
+	SLASH   // /
+	PERCENT // %   (Euclidean modulo; see the `mod` builtin)
+	EQ      // =   (equality; there is no assignment in Domain)
 	LT    // <
 	GT    // >
 	LE    // <=
@@ -45,6 +46,11 @@ const (
 	// these kinds. They are not reserved words outside infix position.
 	AND // and
 	OR  // or
+
+	// NOT is the prefix negation, spelled `ikke`. Like AND/OR it is lexed as
+	// an IDENT and rewritten by the expression parser in prefix position, so
+	// it stays usable as an ordinary name elsewhere.
+	NOT // ikke
 )
 
 var kindNames = map[Kind]string{
@@ -67,6 +73,7 @@ var kindNames = map[Kind]string{
 	MINUS:   "MINUS",
 	STAR:    "STAR",
 	SLASH:   "SLASH",
+	PERCENT: "PERCENT",
 	EQ:      "EQ",
 	LT:      "LT",
 	GT:      "GT",
@@ -74,6 +81,7 @@ var kindNames = map[Kind]string{
 	GE:      "GE",
 	AND:     "AND",
 	OR:      "OR",
+	NOT:     "NOT",
 }
 
 // String returns the symbolic name of a token kind, for diagnostics.

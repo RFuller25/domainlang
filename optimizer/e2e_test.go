@@ -261,6 +261,100 @@ func diffCases() []diffCase {
 		{name: "fused maps then count elided",
 			src:     p("Cursed Technique: Map Each\n    Using: (x) -> x + 1\nCursed Technique: Map Each\n    Using: (y) -> y * 3\nMaximum Technique: Count\n"),
 			explain: "preserves length"},
+		// --- early-exit / single-pass rewrites ---
+		{name: "map then sum becomes sum by",
+			src:         p("Cursed Technique: Map Each\n    Using: (x) -> x * 3\nMaximum Technique: Sum\n"),
+			explain:     "→ Sum By",
+			extraInputs: []string{"", "5"}},
+		{name: "map then product becomes product by",
+			src:         p("Cursed Technique: Map Each\n    Using: (x) -> x + 1\nMaximum Technique: Product\n"),
+			explain:     "→ Product By",
+			extraInputs: []string{"", "0\n3", "4"}},
+		{name: "failing map then sum still fails on the same element",
+			src:         p("Cursed Technique: Map Each\n    Using: (x) -> 10 / x\nMaximum Technique: Sum\n"),
+			explain:     "→ Sum By",
+			extraInputs: []string{"5\n0\n2", "0", ""}},
+		{name: "filter then take item 0 becomes a first match",
+			src:     p("Cursed Technique: Filter\n    Using: (x) -> x > 2\nCursed Technique: Take Item 0\n"),
+			explain: "Cursed First Match",
+			// No match at all: the rewritten node must fail exactly as the
+			// Take Item it replaced did.
+			extraInputs: []string{"", "1\n2", "5\n1", "1\n5"}},
+		{name: "filter then take item 1 NOT rewritten",
+			src:           p("Cursed Technique: Filter\n    Using: (x) -> x > 2\nCursed Technique: Take Item 1\n"),
+			explainAbsent: "Cursed First Match",
+			extraInputs:   []string{"3\n4\n5", "3"}},
+		{name: "failable filter then take item 0 NOT rewritten",
+			src:           p("Cursed Technique: Filter\n    Using: (x) -> 10 / x > 1\nCursed Technique: Take Item 0\n"),
+			explainAbsent: "Cursed First Match",
+			// The 0 makes the full Filter scan fail; short-circuiting would
+			// have returned the 5 instead, so the guard must hold.
+			extraInputs: []string{"5\n0\n2", "5\n1"}},
+		// --- constant predicates on the early-exit primitives ---
+		{name: "always-true take while dropped",
+			src:     p("Cursed Technique: Take While\n    Using: (x) -> 2 < 3\n"),
+			explain: "Take While (constant predicate) → nothing at all"},
+		{name: "always-false take while empties",
+			src:     p("Cursed Technique: Take While\n    Using: (x) -> 3 < 2\n"),
+			explain: "Take While (constant predicate) → the empty list"},
+		{name: "always-false drop while dropped",
+			src:     p("Cursed Technique: Drop While\n    Using: (x) -> 3 < 2\n"),
+			explain: "Drop While (constant predicate) → nothing at all"},
+		{name: "always-true drop while empties",
+			src:     p("Cursed Technique: Drop While\n    Using: (x) -> 2 < 3\n"),
+			explain: "Drop While (constant predicate) → the empty list"},
+		{name: "always-false any is a constant",
+			src:         p("Maximum Technique: Any\n    Using: (x) -> 3 < 3\n"),
+			explain:     "Any (constant predicate) → a constant",
+			extraInputs: []string{""}},
+		{name: "always-true all is a constant",
+			src:         p("Maximum Technique: All\n    Using: (x) -> 3 >= 3\n"),
+			explain:     "All (constant predicate) → a constant",
+			extraInputs: []string{""}},
+		{name: "always-true any is an emptiness test",
+			src:         p("Maximum Technique: Any\n    Using: (x) -> 3 >= 3\n"),
+			explain:     "Any (constant predicate) → an emptiness test",
+			extraInputs: []string{""}},
+		{name: "always-false all is an emptiness test",
+			src:         p("Maximum Technique: All\n    Using: (x) -> 3 < 3\n"),
+			explain:     "All (constant predicate) → an emptiness test",
+			extraInputs: []string{""}},
+		// --- the new primitives run unrewritten through the oracle too ---
+		{name: "sliding reduce matches window plus map",
+			src:         p("Domain Expansion: Sliding Reduce 3\n    Mode: Max\n"),
+			extraInputs: []string{"1\n2", "5\n1\n9\n3\n7"}},
+		{name: "chunk keeps the short block",
+			src:         p("Cursed Technique: Chunk 3\n"),
+			extraInputs: []string{"", "1", "1\n2\n3\n4"}},
+		{name: "partition halves",
+			src:         p("Cursed Technique: Partition\n    Using: (x) -> x > 2\n"),
+			extraInputs: []string{"", "1\n2", "3\n4"}},
+		{name: "scan then pairs then reduce",
+			src: p("Cursed Technique: Scan\n    Using: (a, b) -> a + b\n" +
+				"Cursed Technique: Pairs\nCursed Technique: Map Each\n    Using: (p) -> pcol(p) - prow(p)\n"),
+			extraInputs: []string{"", "1", "1\n2\n3"}},
+		// --- Part bodies are sub-pipelines, so optimizer safety rule 4 applies:
+		// in-place passes reach into them, length-changing ones do not.
+		{name: "expression simplification inside a Part body",
+			src: listHeader + "Part \"1\":\n    Cursed Technique: Filter\n" +
+				"        Using: (x) -> x > 0 and 2 < 3\n    Reveal: stdout\n",
+			explain:     "simplified the Using: lambda",
+			extraInputs: []string{"", "1\n-2\n3"}},
+		{name: "in-place simplification fires in both Part bodies",
+			src: listHeader + "Part \"1\":\n    Cursed Technique: Map Each\n" +
+				"        Using: (x) -> x + 0\n    Reveal: stdout\n" +
+				"Part \"2\":\n    Cursed Technique: Filter\n" +
+				"        Using: (y) -> y > 1 and 1 = 1\n    Reveal: stdout\n",
+			explain:     "simplified the Using: lambda",
+			extraInputs: []string{"", "3\n-1\n4"}},
+		{name: "length-changing fusion does not fire inside a Part body",
+			src: listHeader + "Part \"1\":\n    Domain Expansion: Quicksort, Descending\n" +
+				"    Maximum Technique: Select Top 2, Sum\n    Reveal: stdout\n",
+			// Nested node lists are captured by their parent's Eval closure, so
+			// re-slicing one would diverge from what the interpreter runs. The
+			// naive pair must therefore survive — and still be correct.
+			explainAbsent: "Cursed Quickselect",
+			extraInputs:   []string{"1", "9\n4\n6\n1\n7"}},
 	}
 }
 

@@ -1,6 +1,8 @@
 package codegen
 
 import (
+	"fmt"
+
 	"domain/ir"
 )
 
@@ -9,10 +11,11 @@ import (
 // single mutable variable. Bodies preserve the value type by construction,
 // so the reassignment always typechecks.
 
-// dmMaxLoopIterations mirrors prims.maxLoopIterations' default. Compiled
-// binaries always use the default (the prims var is only lowered by
-// interpreter tests).
-const dmMaxLoopIterations = 1_000_000
+// dmMaxLoopIterations mirrors prims.maxLoopIterations' default: zero, meaning
+// unlimited. The guard is emitted only when this is positive, so a compiled
+// binary carries no iteration counter at all by default — and, like the
+// interpreter, never refuses a long-running but correct loop.
+const dmMaxLoopIterations = 0
 
 // comparableScalarElem reports whether t is a list whose element is a scalar
 // comparable with Go's != (so convergence can be detected inline).
@@ -63,13 +66,24 @@ func (g *gen) emitFixedPointMapLoop(mapNode *ir.Node, v, it string) error {
 	g.wl("break")
 	g.out()
 	g.wl("}")
-	g.wl("if %s >= %d {", it, dmMaxLoopIterations)
-	g.in()
-	g.wl("dmFail(%s)", goStr("did not converge within 1000000 iterations"))
-	g.out()
-	g.wl("}")
+	g.emitIterationGuard(it, "did not converge")
 	g.wl("%s = %s", v, next)
 	return nil
+}
+
+// emitIterationGuard emits the runaway-loop check, and only when a bound is
+// configured. At the default of zero the binary carries no counter comparison
+// at all — a correct but long-running loop is never refused.
+func (g *gen) emitIterationGuard(it, what string) {
+	if dmMaxLoopIterations <= 0 {
+		return
+	}
+	g.helper("dmFail", declFail, "fmt", "os")
+	g.wl("if %s >= %d {", it, dmMaxLoopIterations)
+	g.in()
+	g.wl("dmFail(%s)", goStr(fmt.Sprintf("%s within %d iterations", what, dmMaxLoopIterations)))
+	g.out()
+	g.wl("}")
 }
 
 func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
@@ -122,11 +136,7 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		g.wl("break")
 		g.out()
 		g.wl("}")
-		g.wl("if %s >= %d {", it, dmMaxLoopIterations)
-		g.in()
-		g.wl("dmFail(%s)", goStr("loop exceeded 1000000 iterations (non-terminating?)"))
-		g.out()
-		g.wl("}")
+		g.emitIterationGuard(it, "loop exceeded")
 		if err := emitBody(); err != nil {
 			return "", err
 		}
@@ -173,12 +183,45 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 			g.wl("break")
 			g.out()
 			g.wl("}")
-			g.wl("if %s >= %d {", it, dmMaxLoopIterations)
-			g.in()
-			g.wl("dmFail(%s)", goStr("did not converge within 1000000 iterations"))
-			g.out()
-			g.wl("}")
+			g.emitIterationGuard(it, "did not converge")
 			g.wl("%s = %s", v, cur)
+		}
+		g.out()
+		g.wl("}")
+		return v, nil
+
+	case "for":
+		// `For x in <source>` iterates a channel's list (or an inline
+		// range(N)), binding each element as an ambient trailing parameter on
+		// every Using: lambda in the body. The loop itself is an ordinary Go
+		// range; the binding is what needs care, and lives in g.ambient.
+		elemT, _ := n.Meta["elem"].(*ir.Type)
+		if elemT == nil {
+			return "", unsupported(n, "For loop is missing its element type")
+		}
+		x := g.fresh("x")
+		isRange, _ := n.Meta["isRange"].(bool)
+		if isRange {
+			count, _ := n.Meta["rangeN"].(int64)
+			g.wl("for %s := int64(0); %s < %d; %s++ {", x, x, count, x)
+		} else {
+			name, _ := n.Meta["channel"].(string)
+			cv, ok := g.chans[name]
+			if !ok {
+				return "", unsupported(n, "For source channel %q has no value", name)
+			}
+			g.wl("for _, %s := range %s {", x, cv.v)
+		}
+		g.in()
+		// Push before emitting the body so the body's lambdas can see it, and
+		// pop after — nested For loops stack outermost-first, exactly like the
+		// interpreter's ambient stack.
+		g.ambient = append(g.ambient, ambientVar{v: x, typ: elemT})
+		err := emitBody()
+		g.ambient = g.ambient[:len(g.ambient)-1]
+		g.ambientNames = nil
+		if err != nil {
+			return "", err
 		}
 		g.out()
 		g.wl("}")

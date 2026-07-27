@@ -35,11 +35,19 @@ Points are `(Int, Int)` tuples of `(row, col)` — the grid coordinate system.
 | `Grid.At(p)` | expr `at(g, r, c)` (error out of bounds); guard with `inbounds` first |
 | `Grid.InBounds(p)` | expr `inbounds(g, r, c)` |
 | `Grid.Neighbors4(p)` | expr `neighbors4(g, r, c)` — in-bounds only |
+| `Grid.SubGrid(r, c, h, w)` | prim `Cursed Technique: Subgrid r c h w` |
+| pad a border before a fill | prim `Cursed Technique: Pad Grid n` + `Fill:` |
+| `Grid.Rotate/Flip` | prim `Rotate Grid` / `Flip Grid` |
 | `Grid.Neighbors8(p)` | expr `neighbors8(g, r, c)` |
 | `Grid.Find(target)` | prim `Cursed Technique: Find Cells` + `Using:` predicate |
 | `Point.Add(o)` | expr `padd(p, q)` |
 | `Point.Manhattan(o)` | expr `manhattan(p, q)` |
 | `Dirs4` | expr `dirs4()` — up, down, left, right unit vectors |
+| `Dirs8` | expr `dirs8()` — the eight, diagonals included |
+| `Point.Sub(o)` | expr `psub(p, q)` |
+| `Point.Scale(n)` | expr `pscale(p, n)` — step n along a direction |
+| `Point.Chebyshev(o)` | expr `chebyshev(p, q)` |
+| `Neighbors(p)` without a grid | expr `around4(p)` / `around8(p)` — no bounds check, for `Sparse<T>` |
 | `Point.RotateRight()` | expr `rotr(p)` — `rotr(up)` is right |
 | `Point.RotateLeft()` | expr `rotl(p)` |
 
@@ -58,6 +66,7 @@ unknown extent, negative coordinates — use `Sparse<T>`:
 | `len(m)` | expr `cells(g)` |
 | bounding box scan | expr `minrow`/`maxrow`/`mincol`/`maxcol`, or densify |
 | "print the board" | `Channeled Energy: Convert To Grid` (translates to (0,0), default-fills) |
+| neighbor walk on a sparse plane | expr `around4`/`around8` — `neighbors4`/`neighbors8` need a dense Grid |
 
 See the Sparse section of [data-model.md](data-model.md) and the Game of
 Life / origami / Minesweeper programs in
@@ -72,6 +81,21 @@ Life / origami / Minesweeper programs in
 | `Set.Has(v)` | expr `contains(s, v)` |
 | `Set.Len()` | `Maximum Technique: Count` |
 | difference | `Maximum Technique: Difference` (Channel consumer) |
+| iterate a set | pass it straight to `Map Each`/`Filter`/… — the list-shaped primitives accept a Set — or expr `tolist(s)` inside a lambda |
+
+## Map / frequency table
+
+| Classic helper | In Domain |
+|---|---|
+| `map[K]V` from a fold | `Maximum Technique: Group By` / `Count By` |
+| `m[k]` | expr `get(m, k)` (errors when absent) or `getor(m, k, d)` (total) |
+| `_, ok := m[k]` | expr `haskey(m, k)` |
+| `len(m)` | expr `size(m)`, or `Maximum Technique: Count` |
+| iterate keys / values | expr `keys(m)` / `values(m)` |
+| transform values | prim `Cursed Technique: Map Values` |
+| filter entries | prim `Cursed Technique: Filter Entries` |
+| `[]Pair` from a map | prim `Channeled Energy: Convert To Entries` (and `Convert To Map` back) |
+| "most common element" | `Count By` → `Convert To Entries` → `Sort By, Descending` → `Take Item 0` |
 
 ## Queue / Stack / Priority queue
 
@@ -86,7 +110,8 @@ primitives, each with its own unit tests:
 | `PQ[T]` (push with priority / pop min) | runtime `ir.PQ` (min-heap, stable ties) — drives **Dijkstra** |
 
 If a solve seems to need an explicit queue, it is usually one of the search
-primitives below wearing a disguise.
+primitives below wearing a disguise — or, when the graph is not a grid,
+`Domain Expansion: Explore`.
 
 ## Graph search
 
@@ -99,12 +124,19 @@ optimizer is allowed to substitute.
 | `Dijkstra(start, cost)` | `Domain Expansion: Dijkstra from R C` over a `Grid<Int>` of cell entry costs → `Grid<Int>` min total costs |
 | `FloodFill(grid, start, match)` | `Domain Expansion: Flood Fill from R C` + `Using:` region predicate → `Grid<Int>` 0/1 mask |
 | counting regions | `Domain Expansion: Connected Components` + `Using:` predicate → `Int` |
+| 8-connectivity (diagonals) | `Mode: 8` on any grid search; `Mode: 4` is the default |
+| BFS over a **non-grid** graph | `Domain Expansion: Explore` + `Using:` successor lambda — states, not cells |
+| fewest moves to a goal | `Domain Expansion: Explore` `Mode: Steps` + `Until:` |
+| reachable-state count | `Domain Expansion: Explore` `Mode: Count` |
+| shortest distances to every state | `Domain Expansion: Explore` `Mode: Distances` → `Map<S, Int>` |
+| `TopoSort(deps)` | `Domain Expansion: Topological Sort` — takes an adjacency Map or an edge list |
 
 ## Memoization
 
 | Classic helper | In Domain |
 |---|---|
-| `Memo[K, V].Get(key, compute)` | runtime `ir.Memo` — compute-once keyed caching for primitive implementers (codegen uses it to intern generated struct declarations). Pipelines themselves are pure, so user programs don't memoize explicitly. |
+| `Memo[K, V].Get(key, compute)` | runtime `ir.Memo` — compute-once keyed caching for primitive implementers (codegen uses it to intern generated struct declarations). |
+| memoized recursion / DP | `Domain Expansion: Explore` — Domain has no recursion, and a search over keyable states is what the visited set memoizes. |
 
 ## Union-Find
 
@@ -119,6 +151,13 @@ All expression builtins; all compile.
 | Classic helper | In Domain |
 |---|---|
 | `GCD(a, b)` | expr `gcd(a, b)` |
+| `Mod(a, b)` (Euclidean) | expr `mod(a, b)` or the `%` operator — never negative for a positive modulus |
+| `DivMod(a, b)` | expr `divmod(a, b)` |
+| `Pow(b, e)` | expr `pow(b, e)` |
+| `IntSqrt(n)` | expr `isqrt(n)` — exact at perfect squares |
+| `Clamp(v, lo, hi)` | expr `clamp(v, lo, hi)` |
+| `Factorial(n)` / `Choose(n, k)` | expr `factorial(n)` / `choose(n, k)` |
+| `Min(a, b)` / `Max(a, b)` | expr `min(a, b)` / `max(a, b)` (two-argument form) |
 | `LCM(a, b)` | expr `lcm(a, b)` |
 | `Abs(x)` | expr `abs(x)` |
 | `Sign(x)` | expr `sign(x)` |
@@ -130,6 +169,7 @@ All expression builtins; all compile.
 
 | Classic helper | In Domain |
 |---|---|
+| `for i := lo; i < hi; i++` | prim `Cursed Technique: Range lo hi` — half-open, like `range(N)` in a For header |
 | `Range{Lo, Hi}` | a two-Int-field record (`Match Pattern: "{lo:int}-{hi:int}"`) or an `(Int, Int)` pair |
 | `Range.Contains(x)` | lambda: `(r) -> r.lo <= x and x <= r.hi` |
 | `Range.Overlaps(o)` | lambda: `(a, b) -> a.lo <= b.hi and b.lo <= a.hi` |
@@ -149,3 +189,21 @@ All expression builtins; all compile.
 |---|---|
 | `IsRepeatedPattern(s)` | expr `repeats(s)` |
 | `CountOccurrences(s, sub)` | expr `occurrences(s, sub)` |
+| `len(s)` | expr `length(s)` — runes |
+| `s[i]` | expr `charat(s, i)` |
+| `s[a:b]` | expr `slice(s, a, b)` — clamped |
+| `strings.Index` | expr `indexof(s, sub)` — `-1` when absent |
+| `strings.HasPrefix` / `HasSuffix` | expr `startswith` / `endswith` |
+| `strings.ReplaceAll` | expr `replace(s, old, new)` |
+| `strings.TrimSpace` | expr `trim(s)` |
+| `strings.ToUpper` / `ToLower` | expr `upper(s)` / `lower(s)` |
+| `strings.Split(s, "")` | expr `chars(s)` |
+| `strings.Join` | expr `textjoin(xs, sep)` |
+| reverse a string | prim `Reverse Cursed Technique: Reverse` over Text, or expr `reverse(s)` |
+| `a + b` | the `+` operator over two Texts |
+
+## Cycle detection
+
+| Classic helper | In Domain |
+|---|---|
+| "find the loop, then do the arithmetic" | prim `Maximum Technique: Find Cycle` over an `Iterate` trajectory → `(start, period)` |

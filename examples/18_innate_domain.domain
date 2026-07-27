@@ -1,0 +1,20 @@
+# Innate Domain: importing a Shikigami library.
+#
+# `Innate Domain: lib/shapes` loads examples/lib/shapes.domain before this
+# program, so its operations are callable by name — exactly like the prelude's.
+# Imports are declarations, not pipeline steps, so the line can sit anywhere;
+# by convention it goes at the top.
+#
+# Libraries cost nothing at runtime: a Shikigami is inlined at its call site,
+# so `Biggest` fuses into a quickselect just as if it had been written here.
+# Run with --explain to watch that happen through the import.
+#
+#   domain examples/18_innate_domain.domain
+#   Expected output: 28
+Innate Domain: lib/shapes
+Cursed Energy: 18_innate_domain.input
+Shikigami: Lines
+Shikigami: All Ints
+Shikigami: Biggest
+    n: 3
+Reveal: stdout

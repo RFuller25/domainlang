@@ -58,6 +58,35 @@ func checkStart(g *ir.GridValue, r, c int64, mask []bool, prim, role string, pos
 	return nil
 }
 
+// connectivity reads the optional `Mode: 4 | 8` argument shared by the grid
+// searches. 4 (orthogonal) is the default and what every one of them used to
+// hard-code; 8 adds the diagonals. It is a per-call choice rather than a
+// property of the grid, matching how the neighbor builtins already work.
+func connectivity(args ArgSet, prim string, pos token.Position) (bool, error) {
+	m, ok := args.Ident("Mode")
+	if !ok {
+		if n, isInt := args.Int("Mode"); isInt {
+			switch n {
+			case 4:
+				return false, nil
+			case 8:
+				return true, nil
+			}
+		} else {
+			return false, nil
+		}
+		return false, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("%s: Mode must be 4 or 8", prim)}
+	}
+	switch m {
+	case "4":
+		return false, nil
+	case "8":
+		return true, nil
+	}
+	return false, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s: unknown Mode %q (4 or 8)", prim, m)}
+}
+
 // distGrid builds a Grid<Int> initialized to -1 (unreached).
 func distGrid(rows, cols int) *ir.GridValue {
 	out := ir.NewGridValue(rows, cols)
@@ -91,13 +120,17 @@ var bfs = &Primitive{
 		if err := requirePredicate(lam, in.Elem, "BFS", pos); err != nil {
 			return nil, err
 		}
+		diagonal, err := connectivity(args, "BFS", pos)
+		if err != nil {
+			return nil, err
+		}
 		return &ir.Node{
 			Prim:      "BFS",
 			In:        in,
 			Out:       ir.Grid(ir.Int()),
 			Display:   fmt.Sprintf("BFS from (%d, %d)", r, c),
 			Swappable: true,
-			Meta:      map[string]any{"row": r, "col": c, "lambda": lam},
+			Meta:      map[string]any{"row": r, "col": c, "lambda": lam, "diagonal": diagonal},
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
@@ -121,7 +154,7 @@ var bfs = &Primitive{
 						break
 					}
 					d, _ := out.At(cur[0], cur[1])
-					for _, nb := range g.Neighbors(cur[0], cur[1], false) {
+					for _, nb := range g.Neighbors(cur[0], cur[1], diagonal) {
 						i := nb[0]*g.Cols + nb[1]
 						if !mask[i] || out.Cells[i] != int64(-1) {
 							continue
@@ -158,13 +191,17 @@ var dijkstra = &Primitive{
 		if err != nil {
 			return nil, err
 		}
+		diagonal, err := connectivity(args, "Dijkstra", pos)
+		if err != nil {
+			return nil, err
+		}
 		return &ir.Node{
 			Prim:      "Dijkstra",
 			In:        want,
 			Out:       want,
 			Display:   fmt.Sprintf("Dijkstra from (%d, %d)", r, c),
 			Swappable: true,
-			Meta:      map[string]any{"row": r, "col": c},
+			Meta:      map[string]any{"row": r, "col": c, "diagonal": diagonal},
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
@@ -193,7 +230,7 @@ var dijkstra = &Primitive{
 						continue // already settled with a smaller distance
 					}
 					out.Cells[i] = d
-					for _, nb := range g.Neighbors(cur[0], cur[1], false) {
+					for _, nb := range g.Neighbors(cur[0], cur[1], diagonal) {
 						j := nb[0]*g.Cols + nb[1]
 						if out.Cells[j] != int64(-1) {
 							continue
@@ -231,13 +268,17 @@ var floodFill = &Primitive{
 		if err := requirePredicate(lam, in.Elem, "Flood Fill", pos); err != nil {
 			return nil, err
 		}
+		diagonal, err := connectivity(args, "Flood Fill", pos)
+		if err != nil {
+			return nil, err
+		}
 		return &ir.Node{
 			Prim:      "Flood Fill",
 			In:        in,
 			Out:       ir.Grid(ir.Int()),
 			Display:   fmt.Sprintf("Flood Fill from (%d, %d)", r, c),
 			Swappable: true,
-			Meta:      map[string]any{"row": r, "col": c, "lambda": lam},
+			Meta:      map[string]any{"row": r, "col": c, "lambda": lam, "diagonal": diagonal},
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
@@ -263,7 +304,7 @@ var floodFill = &Primitive{
 					if !ok {
 						break
 					}
-					for _, nb := range g.Neighbors(cur[0], cur[1], false) {
+					for _, nb := range g.Neighbors(cur[0], cur[1], diagonal) {
 						i := nb[0]*g.Cols + nb[1]
 						if !mask[i] || out.Cells[i] == int64(1) {
 							continue
@@ -299,13 +340,17 @@ var connectedComponents = &Primitive{
 		if err := requirePredicate(lam, in.Elem, "Connected Components", pos); err != nil {
 			return nil, err
 		}
+		diagonal, err := connectivity(args, "Connected Components", pos)
+		if err != nil {
+			return nil, err
+		}
 		return &ir.Node{
 			Prim:      "Connected Components",
 			In:        in,
 			Out:       ir.Int(),
 			Display:   "Connected Components",
 			Swappable: true,
-			Meta:      map[string]any{"lambda": lam},
+			Meta:      map[string]any{"lambda": lam, "diagonal": diagonal},
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
@@ -329,6 +374,17 @@ var connectedComponents = &Primitive{
 						}
 						if r+1 < g.Rows && mask[i+g.Cols] {
 							uf.Union(i, i+g.Cols)
+						}
+						// Under Mode: 8 the two downward diagonals complete the
+						// neighbourhood; the upward ones are covered by the
+						// cell above having already unioned toward this one.
+						if diagonal && r+1 < g.Rows {
+							if c+1 < g.Cols && mask[i+g.Cols+1] {
+								uf.Union(i, i+g.Cols+1)
+							}
+							if c > 0 && mask[i+g.Cols-1] {
+								uf.Union(i, i+g.Cols-1)
+							}
 						}
 					}
 				}

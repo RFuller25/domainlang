@@ -10,6 +10,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"domain/ast"
 	"domain/ir"
@@ -53,7 +54,8 @@ func evalExpr(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		if x.Op == token.MINUS {
+		switch x.Op {
+		case token.MINUS:
 			switch n := v.(type) {
 			case int64:
 				return -n, nil
@@ -61,6 +63,12 @@ func evalExpr(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 				return -n, nil
 			}
 			return nil, fmt.Errorf("%s: unary minus: expected a number, got %s", x.Pos, ir.DescribeValue(v))
+		case token.NOT:
+			b, ok := v.(bool)
+			if !ok {
+				return nil, fmt.Errorf("%s: ikke: expected a Bool, got %s", x.Pos, ir.DescribeValue(v))
+			}
+			return !b, nil
 		}
 		return nil, fmt.Errorf("%s: unsupported unary operator %s", x.Pos, x.Op)
 	case *ast.BinaryExpr:
@@ -84,6 +92,30 @@ func evalExpr(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 			return evalExpr(x.Then, env, types)
 		}
 		return evalExpr(x.Else, env, types)
+	case *ast.LetExpr:
+		// Evaluated once, then bound for the body — which is the point: the
+		// alternative spelling writes the subexpression twice and computes it
+		// twice, since lambda-body CSE is not an implemented optimizer pass.
+		v, err := evalExpr(x.Value, env, types)
+		if err != nil {
+			return nil, err
+		}
+		inner := make(Env, len(env)+1)
+		for k, val := range env {
+			inner[k] = val
+		}
+		inner[x.Name] = v
+		var innerTypes typecheck.Env
+		if types != nil {
+			innerTypes = make(typecheck.Env, len(types)+1)
+			for k, t := range types {
+				innerTypes[k] = t
+			}
+			if vt, err := typecheck.ExprType(x.Value, types); err == nil {
+				innerTypes[x.Name] = vt
+			}
+		}
+		return evalExpr(x.Body, inner, innerTypes)
 	default:
 		return nil, fmt.Errorf("unsupported expression %T", e)
 	}
@@ -114,6 +146,10 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 
 	switch name {
 	case "length":
+		// Runes, not bytes — the unit `Split Text by ""` already uses.
+		if s, ok := args[0].(string); ok {
+			return int64(utf8.RuneCountInString(s)), nil
+		}
 		xs, err := ir.AsList(args[0])
 		if err != nil {
 			return fail("length: %v", err)
@@ -152,6 +188,14 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		return xs[n:], nil
 	case "reverse":
+		// By rune, like every other text position in the language.
+		if s, ok := args[0].(string); ok {
+			rs := []rune(s)
+			for i, j := 0, len(rs)-1; i < j; i, j = i+1, j-1 {
+				rs[i], rs[j] = rs[j], rs[i]
+			}
+			return string(rs), nil
+		}
 		xs, err := ir.AsList(args[0])
 		if err != nil {
 			return fail("reverse: %v", err)
@@ -212,6 +256,28 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		return s, nil
 	case "min", "max":
+		// Two arguments is the scalar form; one is the list reduction.
+		if len(args) == 2 {
+			if isFloatOperand(args[0]) || isFloatOperand(args[1]) {
+				a, err1 := ir.AsFloat(args[0])
+				b, err2 := ir.AsFloat(args[1])
+				if err := firstErr(err1, err2); err != nil {
+					return fail("%s: %v", name, err)
+				}
+				if name == "min" {
+					return math.Min(a, b), nil
+				}
+				return math.Max(a, b), nil
+			}
+			a, b, err := twoInts(args, name)
+			if err != nil {
+				return fail("%v", err)
+			}
+			if (name == "min") == (a < b) {
+				return a, nil
+			}
+			return b, nil
+		}
 		xs, err := ir.AsList(args[0])
 		if err != nil {
 			return fail("%s: %v", name, err)
@@ -384,6 +450,105 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("%v", err)
 		}
 		return lcmInt(a, b), nil
+	case "mod":
+		a, b, err := twoInts(args, "mod")
+		if err != nil {
+			return fail("%v", err)
+		}
+		r, err := euclidMod(a, b)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return r, nil
+	case "divmod":
+		a, b, err := twoInts(args, "divmod")
+		if err != nil {
+			return fail("%v", err)
+		}
+		q, err := euclidDiv(a, b)
+		if err != nil {
+			return fail("divmod by zero")
+		}
+		m, err := euclidMod(a, b)
+		if err != nil {
+			return fail("divmod by zero")
+		}
+		return []ir.Value{q, m}, nil
+	case "pow":
+		a, b, err := twoInts(args, "pow")
+		if err != nil {
+			return fail("%v", err)
+		}
+		r, err := powInt(a, b)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return r, nil
+	case "isqrt":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("isqrt: %v", err)
+		}
+		r, err := isqrtInt(n)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return r, nil
+	case "factorial":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("factorial: %v", err)
+		}
+		r, err := factorialInt(n)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return r, nil
+	case "choose":
+		n, k, err := twoInts(args, "choose")
+		if err != nil {
+			return fail("%v", err)
+		}
+		r, err := chooseInt(n, k)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return r, nil
+	case "clamp":
+		// Float if any operand is, matching the arithmetic promotion rule.
+		if isFloatOperand(args[0]) || isFloatOperand(args[1]) || isFloatOperand(args[2]) {
+			v, err1 := ir.AsFloat(args[0])
+			lo, err2 := ir.AsFloat(args[1])
+			hi, err3 := ir.AsFloat(args[2])
+			if err := firstErr(err1, err2, err3); err != nil {
+				return fail("clamp: %v", err)
+			}
+			if lo > hi {
+				return fail("clamp: low bound %v exceeds high bound %v", lo, hi)
+			}
+			return math.Min(math.Max(v, lo), hi), nil
+		}
+		v, err1 := ir.AsInt(args[0])
+		lo, err2 := ir.AsInt(args[1])
+		hi, err3 := ir.AsInt(args[2])
+		if err := firstErr(err1, err2, err3); err != nil {
+			return fail("clamp: %v", err)
+		}
+		if lo > hi {
+			return fail("clamp: low bound %d exceeds high bound %d", lo, hi)
+		}
+		if v < lo {
+			return lo, nil
+		}
+		if v > hi {
+			return hi, nil
+		}
+		return v, nil
+	case "tuple":
+		// Heterogeneous by construction; the static type carries the shape.
+		out := make([]ir.Value, len(args))
+		copy(out, args)
+		return out, nil
 	case "modpow":
 		base, err1 := ir.AsInt(args[0])
 		exp, err2 := ir.AsInt(args[1])
@@ -493,6 +658,127 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("repeats: expected Text, got %s", ir.DescribeValue(args[0]))
 		}
 		return isRepeatedPattern(s), nil
+	case "trim":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("trim: expected Text, got %s", ir.DescribeValue(args[0]))
+		}
+		return strings.TrimSpace(s), nil
+	case "upper", "lower":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
+		}
+		if name == "upper" {
+			return strings.ToUpper(s), nil
+		}
+		return strings.ToLower(s), nil
+	case "chars":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("chars: expected Text, got %s", ir.DescribeValue(args[0]))
+		}
+		rs := []rune(s)
+		out := make([]ir.Value, len(rs))
+		for i, r := range rs {
+			out[i] = string(r)
+		}
+		return out, nil
+	case "startswith", "endswith":
+		s, ok1 := args[0].(string)
+		sub, ok2 := args[1].(string)
+		if !ok1 || !ok2 {
+			return fail("%s: expected Text arguments", name)
+		}
+		if name == "startswith" {
+			return strings.HasPrefix(s, sub), nil
+		}
+		return strings.HasSuffix(s, sub), nil
+	case "indexof":
+		// Over a List: element position. Over Text: substring position, in
+		// runes so it lines up with charat/slice. -1 when absent, either way.
+		if s, ok := args[0].(string); ok {
+			sub, ok2 := args[1].(string)
+			if !ok2 {
+				return fail("indexof: expected a Text needle, got %s", ir.DescribeValue(args[1]))
+			}
+			b := strings.Index(s, sub)
+			if b < 0 {
+				return int64(-1), nil
+			}
+			return int64(utf8.RuneCountInString(s[:b])), nil
+		}
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("indexof: %v", err)
+		}
+		for i, e := range xs {
+			if valuesEqual(e, args[1]) {
+				return int64(i), nil
+			}
+		}
+		return int64(-1), nil
+	case "replace":
+		s, ok1 := args[0].(string)
+		old, ok2 := args[1].(string)
+		nw, ok3 := args[2].(string)
+		if !ok1 || !ok2 || !ok3 {
+			return fail("replace: expected Text arguments")
+		}
+		return strings.ReplaceAll(s, old, nw), nil
+	case "charat":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("charat: expected Text, got %s", ir.DescribeValue(args[0]))
+		}
+		i, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("charat: %v", err)
+		}
+		rs := []rune(s)
+		if i < 0 || i >= int64(len(rs)) {
+			return fail("charat: index %d out of range (length %d)", i, len(rs))
+		}
+		return string(rs[i]), nil
+	case "slice":
+		// Half-open and clamped, like take/drop: slice never errors on a
+		// range that runs off either end.
+		lo, err1 := ir.AsInt(args[1])
+		hi, err2 := ir.AsInt(args[2])
+		if err := firstErr(err1, err2); err != nil {
+			return fail("slice: %v", err)
+		}
+		if s, ok := args[0].(string); ok {
+			rs := []rune(s)
+			l, h := clampRange(lo, hi, int64(len(rs)))
+			return string(rs[l:h]), nil
+		}
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("slice: %v", err)
+		}
+		l, h := clampRange(lo, hi, int64(len(xs)))
+		out := make([]ir.Value, h-l)
+		copy(out, xs[l:h])
+		return out, nil
+	case "textjoin":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("textjoin: %v", err)
+		}
+		sep, ok := args[1].(string)
+		if !ok {
+			return fail("textjoin: separator must be Text, got %s", ir.DescribeValue(args[1]))
+		}
+		parts := make([]string, len(xs))
+		for i, e := range xs {
+			s, ok := e.(string)
+			if !ok {
+				return fail("textjoin: element %d is not Text", i)
+			}
+			parts[i] = s
+		}
+		return strings.Join(parts, sep), nil
 
 	// -- points and grid geometry ---------------------------------------------
 	case "point":
@@ -517,6 +803,114 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("%v", err)
 		}
 		return []ir.Value{r1 + r2, c1 + c2}, nil
+	case "psub":
+		a, err1 := ir.AsList(args[0])
+		b, err2 := ir.AsList(args[1])
+		if err := firstErr(err1, err2); err != nil {
+			return fail("psub: %v", err)
+		}
+		ar, _ := ir.AsInt(a[0])
+		ac, _ := ir.AsInt(a[1])
+		br, _ := ir.AsInt(b[0])
+		bc, _ := ir.AsInt(b[1])
+		return []ir.Value{ar - br, ac - bc}, nil
+	case "pscale":
+		p, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("pscale: %v", err)
+		}
+		n, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("pscale: %v", err)
+		}
+		pr, _ := ir.AsInt(p[0])
+		pc, _ := ir.AsInt(p[1])
+		return []ir.Value{pr * n, pc * n}, nil
+	case "chebyshev":
+		a, err1 := ir.AsList(args[0])
+		b, err2 := ir.AsList(args[1])
+		if err := firstErr(err1, err2); err != nil {
+			return fail("chebyshev: %v", err)
+		}
+		ar, _ := ir.AsInt(a[0])
+		ac, _ := ir.AsInt(a[1])
+		br, _ := ir.AsInt(b[0])
+		bc, _ := ir.AsInt(b[1])
+		dr, dc := absInt(ar-br), absInt(ac-bc)
+		if dr > dc {
+			return dr, nil
+		}
+		return dc, nil
+	case "dirs8":
+		out := make([]ir.Value, 0, 8)
+		for _, d := range [][2]int64{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}} {
+			out = append(out, []ir.Value{d[0], d[1]})
+		}
+		return out, nil
+	case "around4", "around8":
+		// Neighbours of a point with no grid and no bounds — what a Sparse
+		// automaton needs, since neighbors4/8 require a dense Grid.
+		p, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		pr, _ := ir.AsInt(p[0])
+		pc, _ := ir.AsInt(p[1])
+		deltas := [][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
+		if name == "around8" {
+			deltas = [][2]int64{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}}
+		}
+		out := make([]ir.Value, 0, len(deltas))
+		for _, d := range deltas {
+			out = append(out, []ir.Value{pr + d[0], pc + d[1]})
+		}
+		return out, nil
+	case "haskey":
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("haskey: expected a Map, got %s", ir.DescribeValue(args[0]))
+		}
+		return m.Has(args[1]), nil
+	case "getor":
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("getor: expected a Map, got %s", ir.DescribeValue(args[0]))
+		}
+		if v, ok := m.Get(args[1]); ok {
+			return v, nil
+		}
+		return args[2], nil
+	case "keys":
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("keys: expected a Map, got %s", ir.DescribeValue(args[0]))
+		}
+		return append([]ir.Value(nil), m.Keys()...), nil
+	case "values":
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("values: expected a Map, got %s", ir.DescribeValue(args[0]))
+		}
+		out := make([]ir.Value, 0, m.Len())
+		for _, k := range m.Keys() {
+			v, _ := m.Get(k)
+			out = append(out, v)
+		}
+		return out, nil
+	case "tolist":
+		s, ok := args[0].(*ir.SetValue)
+		if !ok {
+			return fail("tolist: expected a Set, got %s", ir.DescribeValue(args[0]))
+		}
+		return append([]ir.Value(nil), s.Elems()...), nil
+	case "size":
+		switch x := args[0].(type) {
+		case *ir.MapValue:
+			return int64(x.Len()), nil
+		case *ir.SetValue:
+			return int64(x.Len()), nil
+		}
+		return fail("size: expected a Map or Set, got %s", ir.DescribeValue(args[0]))
 	case "manhattan":
 		r1, c1, err1 := asPoint(args[0], name)
 		r2, c2, err2 := asPoint(args[1], name)
@@ -694,11 +1088,133 @@ func firstErr(errs ...error) error {
 	return nil
 }
 
+// clampRange normalizes a half-open [lo, hi) against a length, the way take
+// and drop clamp their counts: out-of-range bounds narrow to the collection
+// instead of erroring, and an inverted range yields empty.
+func clampRange(lo, hi, n int64) (int64, int64) {
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > n {
+		hi = n
+	}
+	if hi < lo {
+		hi = lo
+	}
+	if lo > n {
+		lo = n
+		hi = n
+	}
+	return lo, hi
+}
+
 func absInt(n int64) int64 {
 	if n < 0 {
 		return -n
 	}
 	return n
+}
+
+// euclidMod is Euclidean remainder: the result always has the sign of the
+// divisor's magnitude — it is non-negative for a positive modulus, whatever
+// the sign of a. That is deliberately *not* Go's `%`, because the dominant
+// use is wrap-around indexing (`mod(i - 1, length(xs))`), where truncated
+// remainder gives a negative index at exactly the interesting boundary.
+func euclidMod(a, b int64) (int64, error) {
+	if b == 0 {
+		return 0, fmt.Errorf("mod by zero")
+	}
+	r := a % b
+	if r != 0 && (r < 0) != (b < 0) {
+		r += b
+	}
+	return r, nil
+}
+
+// euclidDiv is the quotient matching euclidMod, so that
+// euclidDiv(a,b)*b + euclidMod(a,b) == a for every a and every non-zero b.
+func euclidDiv(a, b int64) (int64, error) {
+	m, err := euclidMod(a, b)
+	if err != nil {
+		return 0, err
+	}
+	return (a - m) / b, nil
+}
+
+// powInt is integer exponentiation by squaring. A negative exponent is an
+// error rather than a silent 0: Domain has no rationals, so there is no
+// answer to hand back.
+func powInt(b, e int64) (int64, error) {
+	if e < 0 {
+		return 0, fmt.Errorf("pow: exponent must be non-negative, got %d", e)
+	}
+	r := int64(1)
+	for e > 0 {
+		if e&1 == 1 {
+			r *= b
+		}
+		b *= b
+		e >>= 1
+	}
+	return r, nil
+}
+
+// isqrtInt is the integer square root: the largest n with n*n <= x. Newton's
+// method on int64, so it never rounds the way float sqrt does near a perfect
+// square — isqrt(k*k) is exactly k for every k in range.
+func isqrtInt(x int64) (int64, error) {
+	if x < 0 {
+		return 0, fmt.Errorf("isqrt: negative input %d", x)
+	}
+	if x < 2 {
+		return x, nil
+	}
+	n := x
+	g := x/2 + 1
+	for g < n {
+		n = g
+		g = (g + x/g) / 2
+	}
+	return n, nil
+}
+
+// factorialInt errors on overflow rather than wrapping: 21! exceeds int64,
+// and a silently wrapped factorial is a wrong answer that looks like a right
+// one.
+func factorialInt(n int64) (int64, error) {
+	if n < 0 {
+		return 0, fmt.Errorf("factorial: negative input %d", n)
+	}
+	if n > 20 {
+		return 0, fmt.Errorf("factorial: %d! overflows Int (max is 20!)", n)
+	}
+	r := int64(1)
+	for i := int64(2); i <= n; i++ {
+		r *= i
+	}
+	return r, nil
+}
+
+// chooseInt is the binomial coefficient, computed by a multiplicative loop
+// that divides at every step, so it stays in range far past where factorial
+// would overflow.
+func chooseInt(n, k int64) (int64, error) {
+	if n < 0 {
+		return 0, fmt.Errorf("choose: negative n %d", n)
+	}
+	if k < 0 || k > n {
+		return 0, nil
+	}
+	if k > n-k {
+		k = n - k
+	}
+	// After step i the running value is C(n-k+i, i), always an integer, so
+	// the division is exact at every step and nothing is lost to truncation.
+	r := int64(1)
+	for i := int64(1); i <= k; i++ {
+		r = r * (n - k + i) / i
+	}
+	return r, nil
 }
 
 // gcdInt is the non-negative greatest common divisor; gcd(0, 0) = 0.
@@ -883,6 +1399,16 @@ func evalBinary(x *ast.BinaryExpr, env Env, types typecheck.Env) (ir.Value, erro
 
 	switch x.Op {
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH:
+		// `+` over two Texts is concatenation.
+		if x.Op == token.PLUS {
+			if ls, ok := lv.(string); ok {
+				rs, ok := rv.(string)
+				if !ok {
+					return nil, fmt.Errorf("%s: cannot add Text and %s", x.Pos, ir.DescribeValue(rv))
+				}
+				return ls + rs, nil
+			}
+		}
 		// The numeric tower's one implicit conversion: mixing an Int with a
 		// Float computes in Float.
 		if isFloatOperand(lv) || isFloatOperand(rv) {
@@ -929,6 +1455,20 @@ func evalBinary(x *ast.BinaryExpr, env Env, types typecheck.Env) (ir.Value, erro
 			}
 			return a / b, nil
 		}
+	case token.PERCENT:
+		a, err := ir.AsInt(lv)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", x.Pos, err)
+		}
+		b, err := ir.AsInt(rv)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", x.Pos, err)
+		}
+		r, err := euclidMod(a, b)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", x.Pos, err)
+		}
+		return r, nil
 	case token.EQ:
 		if isFloatOperand(lv) || isFloatOperand(rv) {
 			a, errA := ir.AsFloat(lv)

@@ -80,6 +80,20 @@ func (a ArgSet) Text(name string) (string, bool) {
 	return "", false
 }
 
+// Float returns a float named argument. An integer literal is accepted and
+// widened, matching the numeric tower's single promotion rule.
+func (a ArgSet) Float(name string) (float64, bool) {
+	if v, ok := a.get(name); ok {
+		switch x := v.(type) {
+		case ast.FloatArg:
+			return x.Value, true
+		case ast.IntArg:
+			return float64(x.Value), true
+		}
+	}
+	return 0, false
+}
+
 // Ident returns a bare-identifier named argument (e.g. Mode: Filter).
 func (a ArgSet) Ident(name string) (string, bool) {
 	if v, ok := a.get(name); ok {
@@ -115,8 +129,18 @@ var Registry = []*Primitive{
 	extractIntegers,
 	raggedColumns,
 	window,
+	chunk,
 	flatten,
 	enumerate,
+	pairs, // after nothing in particular, but its matcher excludes "All Pairs"
+	scan,
+	takeWhile, // before Take Item: "While" and "Item" pick them apart
+	dropWhile,
+	partition,
+	iterate, // matcher excludes the Iterate Until Fixed Point loop head
+	unfold,
+	mapValues,   // before Map Each: "Map Values" is the more specific phrase
+	filterEntries, // before Filter, likewise
 	mapEach,
 	filter,
 	unique,
@@ -124,14 +148,23 @@ var Registry = []*Primitive{
 	takeItem,
 	mapCells,
 	findCells,
+	rangePrim, // before Merge Ranges: its matcher excludes that phrase
 	transpose,
+	rotateGrid,
+	flipGrid,
+	subgrid,
+	padGrid,
 	apply,
 	convertToIntegers,
 	convertToFloats,
 	convertToSparseGrid, // before Convert To Grid: its phrase also names Grid
 	convertToGrid,
 	convertToSet,
+	convertToRows,
+	convertToEntries,
+	convertToMap,
 	// Maximum Technique (reductions) — By-variants before their bare forms.
+	sumBy, // before Sum Each Group / Sum
 	sumEachGroup,
 	sum,
 	selectTopK,
@@ -143,21 +176,32 @@ var Registry = []*Primitive{
 	maxBy,
 	maxPrim,
 	minPrim,
+	productBy, // before Product
 	product,
 	fold,
+	reduce,
+	anyPrim,
+	allPrim,
+	findCycle, // before Find/Find Index: "Cycle" is what tells them apart
+	findIndex, // before Find: "Index" is what tells them apart
+	findPrim,
 	groupBy,
 	intersectAll,
 	unionAll,
 	differenceAll,
 	mergeRanges,
 	join,
-	// Domain Expansion (swappable algorithms) — Sort By before Sort.
+	// Domain Expansion (swappable algorithms) — Sort By and Topological Sort
+	// before Sort, whose matcher accepts any phrase containing "Sort".
+	topologicalSort,
 	sortBy,
 	sortPrim,
+	slidingReduce,
 	allPairs,
 	combinations,
 	permutations,
 	subsets,
+	explore,
 	bfs,
 	dijkstra,
 	floodFill,
@@ -182,21 +226,50 @@ func (e *ResolveError) Error() string {
 // resolver carries the channel type environment and the Shikigami registry
 // while lowering a program.
 type resolver struct {
-	channels     map[string]*ir.Type
-	shikigamis   map[string]*ast.ShikigamiDef
-	preludeNames map[string]bool // defs that came from the embedded prelude
-	depth        int             // Shikigami inlining depth, for recursion guard
+	channels   map[string]*ir.Type
+	parts      map[string]bool // Part labels already defined, to catch duplicates
+	shikigamis map[string]*ast.ShikigamiDef
+	// origins says where each Shikigami came from — the embedded prelude, an
+	// imported library, or the user's own file. token.Position carries no file,
+	// so this is how an error inside an inlined body can say which file the
+	// position belongs to instead of masquerading as one in the user's source.
+	origins  map[string]DefSite
+	displays map[string]string // Shikigami name → library file name, for messages
+	// inlining is the chain of Shikigami currently being inlined, outermost
+	// first. Inlining terminates because a name may not appear twice in the
+	// chain — that is a cycle, and it is reported as one. There is no depth
+	// limit: a deeply composed but non-recursive program is legal however deep
+	// it goes, and the old fixed ceiling refused those too.
+	inlining []string
 }
 
 // Resolve lowers a program into a typed pipeline, matching each statement to a
 // primitive and type-checking the chain. Channel statements branch named
 // sub-pipelines from the current value; From:-consumers recombine them;
 // Shikigami calls inline their (parameter-substituted) bodies.
+//
+// It begins by running Infer over prog, which fills in the keyword of every
+// statement written as a bare operation phrase — so prog is mutated, and from
+// this point on the two spellings are the same program.
 func Resolve(prog *ast.Program) (*ir.Pipeline, error) {
+	return ResolveWith(prog, ResolveOptions{})
+}
+
+// ResolveWith is Resolve with the file context `Innate Domain` imports need.
+// Callers that have a program path (the CLI, the REPL, the language server, the
+// diagnostics engine) pass its directory as BaseDir plus SearchPath(); the
+// zero-value options reject imports with a positioned error rather than
+// silently dropping them.
+//
+// Definitions are registered weakest-first — prelude, then imports in load
+// order, then the program's own — so each layer shadows the one beneath it.
+func ResolveWith(prog *ast.Program, opts ResolveOptions) (*ir.Pipeline, error) {
 	r := &resolver{
-		channels:     map[string]*ir.Type{},
-		shikigamis:   map[string]*ast.ShikigamiDef{},
-		preludeNames: map[string]bool{},
+		channels:   map[string]*ir.Type{},
+		parts:      map[string]bool{},
+		shikigamis: map[string]*ast.ShikigamiDef{},
+		origins:    map[string]DefSite{},
+		displays:   map[string]string{},
 	}
 	// The prelude defines standard operations as Shikigami; load them first so
 	// programs (and the user's own definitions) can build on them.
@@ -206,26 +279,70 @@ func Resolve(prog *ast.Program) (*ir.Pipeline, error) {
 	}
 	for _, d := range prelude {
 		r.shikigamis[d.Name] = d
-		r.preludeNames[d.Name] = true
+		r.origins[d.Name] = DefSite{Origin: "prelude"}
+	}
+	// Imports next: a library shadows the prelude, and the program shadows both.
+	// This runs before Infer because inference resolves a bare phrase against
+	// the callable names, which now include every imported Shikigami.
+	if err := r.loadImports(prog, opts); err != nil {
+		return nil, err
 	}
 	for _, d := range prog.Shikigamis {
 		r.shikigamis[d.Name] = d
-		// A user definition shadows a prelude name; its body positions are in
-		// the user's file again, so drop the prelude label.
-		delete(r.preludeNames, d.Name)
+		// A local definition shadows a prelude or imported name; its body
+		// positions are in the user's own file, so it is a local origin again.
+		r.origins[d.Name] = DefSite{Origin: "local"}
+		delete(r.displays, d.Name)
+	}
+	if opts.Sites != nil {
+		for name, site := range r.origins {
+			opts.Sites[name] = site
+		}
 	}
 
-	nodes, _, err := r.resolveSequence(prog.Statements, nil, true)
-	if err != nil {
+	if err := InferWith(prog, callableNames(r.shikigamis)); err != nil {
 		return nil, err
+	}
+
+	nodes, _, err := r.resolveSequence(prog.Statements, nil, scopeTop)
+	if err != nil {
+		// The partial pipeline rides along with the error; see resolveSequence.
+		return &ir.Pipeline{Nodes: nodes}, err
 	}
 	return &ir.Pipeline{Nodes: nodes}, nil
 }
 
-// resolveSequence lowers a run of statements threading a current type. When
-// allowChannels is true (top level), Channel statements and From:-consumers are
-// permitted; channel sub-pipelines pass false (no nesting in v0.1).
-func (r *resolver) resolveSequence(stmts []*ast.Statement, in *ir.Type, allowChannels bool) ([]*ir.Node, *ir.Type, error) {
+// callableNames is the set of Shikigami names a bare phrase may resolve to.
+func callableNames(defs map[string]*ast.ShikigamiDef) []string {
+	names := make([]string, 0, len(defs))
+	for name := range defs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// scope says which structural statements a run of statements may contain.
+// Channel definitions and Part blocks belong to the top level only; From:
+// consumers are also legal inside a Part, which is what lets each Part combine
+// channels that were parsed once above it.
+type scope int
+
+const (
+	scopeTop     scope = iota // Channel definitions, Part blocks, From: consumers
+	scopePart                 // From: consumers only
+	scopeChannel              // From: consumers only — a Channel body
+	scopeNested               // neither: loop and Shikigami bodies
+)
+
+// resolveSequence lowers a run of statements threading a current type. sc says
+// what structural statements are permitted here (see scope).
+//
+// On failure it returns the nodes resolved *before* the error along with it, so
+// tooling can still say something about the prefix that type-checked — the
+// language server's inlay hints show types up to the first bad line. Callers
+// that only want a whole program check err first, as they always did.
+func (r *resolver) resolveSequence(stmts []*ast.Statement, in *ir.Type, sc scope) ([]*ir.Node, *ir.Type, error) {
 	var nodes []*ir.Node
 	cur := in
 	for _, stmt := range stmts {
@@ -233,42 +350,60 @@ func (r *resolver) resolveSequence(stmts []*ast.Statement, in *ir.Type, allowCha
 		case stmt.Keyword == "Shikigami":
 			subNodes, outType, err := r.resolveShikigamiCall(stmt, cur)
 			if err != nil {
-				return nil, nil, err
+				return nodes, nil, err
 			}
 			nodes = append(nodes, subNodes...) // inline the body
 			cur = outType
 		case stmt.Keyword == "Simple Domain":
 			node, err := r.resolveLoop(stmt, cur)
 			if err != nil {
-				return nil, nil, err
+				return nodes, nil, err
 			}
 			nodes = append(nodes, node)
 			cur = node.Out
 		case stmt.Keyword == "Channel":
-			if !allowChannels {
-				return nil, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "Channels cannot be nested inside a Channel body (v0.1)"}
+			if sc == scopePart {
+				return nodes, nil, &ResolveError{Pos: stmt.Pos,
+					Msg: "Channels cannot be defined inside a Part; define them above the Parts and consume them with From:"}
+			}
+			if sc != scopeTop {
+				return nodes, nil, &ResolveError{Pos: stmt.Pos,
+					Msg: "Channels cannot be nested inside a Channel body"}
 			}
 			node, err := r.resolveChannel(stmt, cur)
 			if err != nil {
-				return nil, nil, err
+				return nodes, nil, err
 			}
 			nodes = append(nodes, node) // a Channel does not change the current value
+		case stmt.Keyword == "Part":
+			if sc != scopeTop {
+				return nodes, nil, &ResolveError{Pos: stmt.Pos,
+					Msg: "Part blocks are only allowed at the top level"}
+			}
+			node, err := r.resolvePart(stmt, cur)
+			if err != nil {
+				return nodes, nil, err
+			}
+			nodes = append(nodes, node) // a Part does not change the current value
 		case hasFrom(stmt):
-			if !allowChannels {
-				return nil, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "From: consumers are not allowed inside a Channel body (v0.1)"}
+			// A Channel body may consume channels declared *above* it: a name
+			// enters r.channels only once its own body has resolved, so a
+			// self- or forward-reference is already an unknown-channel error
+			// and declaration order gives the dependency DAG for free.
+			if sc == scopeNested {
+				return nodes, nil, &ResolveError{Pos: stmt.Pos,
+					Msg: "From: consumers are not allowed inside a loop or Shikigami body"}
 			}
 			node, err := r.resolveConsumer(stmt, cur)
 			if err != nil {
-				return nil, nil, err
+				return nodes, nil, err
 			}
 			nodes = append(nodes, node)
 			cur = node.Out
 		default:
 			node, err := r.resolveOne(stmt, cur)
 			if err != nil {
-				return nil, nil, err
+				return nodes, nil, err
 			}
 			nodes = append(nodes, node)
 			cur = node.Out

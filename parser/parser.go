@@ -121,7 +121,19 @@ func (p *parser) parseProgram() (*ast.Program, error) {
 		default:
 			var stmt *ast.Statement
 			if stmt, err = p.parseStatement(); err == nil {
-				prog.Statements = append(prog.Statements, stmt)
+				// `Innate Domain: lib` is a declaration, not a pipeline step:
+				// hoist it out of the statement list like a Shikigami
+				// definition, so its position in the file does not matter.
+				if stmt.Keyword == "Innate Domain" {
+					imp, ierr := importOf(stmt)
+					if ierr != nil {
+						err = ierr
+					} else {
+						prog.Imports = append(prog.Imports, imp)
+					}
+				} else {
+					prog.Statements = append(prog.Statements, stmt)
+				}
 			}
 		}
 		if err != nil {
@@ -147,6 +159,20 @@ func (p *parser) parseProgram() (*ast.Program, error) {
 	default:
 		return nil, errs
 	}
+}
+
+// importOf converts a parsed `Innate Domain:` statement into an Import. The
+// target is the phrase's raw source text, so a path with separators
+// (`grids/hex`) survives exactly as written.
+func importOf(stmt *ast.Statement) (*ast.Import, error) {
+	if stmt.Op == nil || strings.TrimSpace(stmt.Op.Raw) == "" {
+		return nil, &Error{Pos: stmt.Pos,
+			Msg: "Innate Domain needs a library name, e.g. Innate Domain: aoc"}
+	}
+	if len(stmt.Block) > 0 || len(stmt.Args) > 0 {
+		return nil, &Error{Pos: stmt.Pos, Msg: "Innate Domain takes no arguments or block"}
+	}
+	return &ast.Import{Target: strings.TrimSpace(stmt.Op.Raw), Pos: stmt.Pos}, nil
 }
 
 // synchronize skips ahead to the start of the next top-level line after a
@@ -183,7 +209,8 @@ func (p *parser) synchronize() {
 	}
 }
 
-// parseShikigamiDef parses `Shikigami "Name" (params)` and its indented body.
+// parseShikigamiDef parses `Shikigami "Name" (params) : In -> Out` and its
+// indented body. Both the parameter list and the signature are optional.
 func (p *parser) parseShikigamiDef() (*ast.ShikigamiDef, error) {
 	startPos := p.cur().Pos
 	p.advance()            // "Shikigami"
@@ -195,6 +222,12 @@ func (p *parser) parseShikigamiDef() (*ast.ShikigamiDef, error) {
 		return nil, err
 	}
 	def.Params = params
+
+	sig, err := p.parseSignatureOpt()
+	if err != nil {
+		return nil, err
+	}
+	def.Sig = sig
 
 	if _, err := p.expect(token.NEWLINE); err != nil {
 		return nil, err
@@ -226,11 +259,11 @@ func (p *parser) parseParamsOpt() ([]ast.Param, error) {
 			if _, err := p.expect(token.COLON); err != nil {
 				return nil, err
 			}
-			typ, err := p.expect(token.IDENT)
+			typ, err := p.parseTypeExpr(true)
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: name.Literal, Type: typ.Literal, Pos: name.Pos})
+			params = append(params, ast.Param{Name: name.Literal, Type: typ, Pos: name.Pos})
 			if p.cur().Kind == token.COMMA {
 				p.advance()
 				continue
@@ -271,14 +304,28 @@ func (p *parser) parseBody() ([]*ast.Statement, error) {
 func (p *parser) parseStatement() (*ast.Statement, error) {
 	startPos := p.cur().Pos
 
-	// Special form: `Channel "name":` opens a named sub-pipeline block.
-	if p.cur().Kind == token.IDENT && p.cur().Literal == "Channel" && p.peek().Kind == token.STRING {
-		return p.parseChannel(startPos)
+	// Special forms: `Channel "name":` and `Part "1":` open a labelled
+	// sub-pipeline block. Both are `IDENT STRING COLON`, which is what
+	// distinguishes them from a named argument (`IDENT COLON`).
+	if p.cur().Kind == token.IDENT && p.peek().Kind == token.STRING {
+		switch p.cur().Literal {
+		case "Channel":
+			return p.parseChannel(startPos)
+		case "Part":
+			return p.parsePart(startPos)
+		}
 	}
 
-	keyword, err := p.parseKeyword()
-	if err != nil {
-		return nil, err
+	// The themed keyword is optional: a line that does not open with one is a
+	// bare operation phrase, and prims.Infer recovers the keyword from it.
+	var keyword string
+	if p.keywordLine() {
+		var err error
+		if keyword, err = p.parseKeyword(); err != nil {
+			return nil, err
+		}
+	} else if !startsPhrase(p.cur().Kind) {
+		return nil, p.errf("expected a keyword or an operation, got %s", p.cur())
 	}
 
 	stmt := &ast.Statement{Keyword: keyword, Pos: startPos}
@@ -322,6 +369,71 @@ func (p *parser) parseChannel(startPos token.Position) (*ast.Statement, error) {
 		return nil, err
 	}
 	return stmt, nil
+}
+
+// parsePart parses `Part "label":` followed by an indented sub-pipeline. A Part
+// branches from the current value like a Channel, but its body's Reveal output
+// is labelled instead of being stored under a name — the two-answers-per-input
+// shape. Whether a Part is in a legal position is a resolve-time question, so
+// the parser accepts one anywhere a statement can appear.
+func (p *parser) parsePart(startPos token.Position) (*ast.Statement, error) {
+	p.advance()            // "Part"
+	nameTok := p.advance() // STRING
+	if _, err := p.expect(token.COLON); err != nil {
+		return nil, err
+	}
+	stmt := &ast.Statement{Keyword: "Part", PartName: nameTok.Literal, Pos: startPos}
+	if _, err := p.expect(token.NEWLINE); err != nil {
+		return nil, err
+	}
+	if p.cur().Kind != token.INDENT {
+		return nil, p.errf("Part %q must be followed by an indented sub-pipeline", nameTok.Literal)
+	}
+	if err := p.parseBlock(stmt); err != nil {
+		return nil, err
+	}
+	return stmt, nil
+}
+
+// startsPhrase reports whether a token can open a keyword-less statement: an
+// operation name, or a source target written as a bare path. Paths are why the
+// set is wider than IDENT — `16_no_prefixes.input` lexes as an INT first, and
+// `./day1.txt` as a DOT. Anything else (an arrow, a bracket, a stray operator)
+// cannot begin a statement, and saying so as a syntax error beats letting it
+// through to fail later as an unrecognizable operation phrase.
+func startsPhrase(k token.Kind) bool {
+	switch k {
+	case token.IDENT, token.INT, token.DOT, token.SLASH:
+		return true
+	}
+	return false
+}
+
+// keywordLine reports whether the statement at the cursor opens with an
+// explicit themed keyword, i.e. whether parseKeyword should run at all.
+//
+// A keyword is written when a colon closes the leading run of identifier words
+// (`Cursed Technique: Split Text by "\n"`). It counts as written *also* when
+// those words begin with a themed keyword but no colon follows: `Reveal
+// stdout` is the classic forgotten-colon mistake, and keeping it on the
+// keyword path preserves the precise syntax error (and its auto-fix) instead
+// of quietly re-reading the line as the prefix-free phrase "Reveal stdout",
+// which names no operation at all.
+func (p *parser) keywordLine() bool {
+	i := p.pos
+	var words []string
+	for p.toks[i].Kind == token.IDENT {
+		words = append(words, p.toks[i].Literal)
+		i++
+	}
+	if len(words) == 0 {
+		return false
+	}
+	if p.toks[i].Kind == token.COLON {
+		return true
+	}
+	_, _, ok := ast.KeywordPrefix(words)
+	return ok
 }
 
 // parseKeyword reads one or more IDENT words up to the COLON and joins them.

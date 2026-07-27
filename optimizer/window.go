@@ -54,9 +54,9 @@ func fuseWindowReduce(p *ir.Pipeline) []Rewrite {
 					return nil, &ir.RuntimeError{Prim: "WindowedReduce", Pos: pos, Msg: err.Error()}
 				}
 				if op == "sum" {
-					return ir.IntsToValue(WindowedSums(xs, size, step)), nil
+					return ir.IntsToValue(ir.WindowedSums(xs, size, step)), nil
 				}
-				return ir.IntsToValue(WindowedExtrema(xs, size, step, op == "min")), nil
+				return ir.IntsToValue(ir.WindowedExtrema(xs, size, step, op == "min")), nil
 			},
 		}
 		return []*ir.Node{fused},
@@ -86,46 +86,4 @@ func matchWindowReduce(lam *ast.Lambda) (op string, ok bool) {
 		return fn, true
 	}
 	return "", false
-}
-
-// WindowedSums returns the sums of every fully-contained window, via prefix
-// sums: O(n) regardless of window size or step.
-func WindowedSums(xs []int64, size, step int64) []int64 {
-	pre := make([]int64, len(xs)+1)
-	for i, x := range xs {
-		pre[i+1] = pre[i] + x
-	}
-	out := []int64{}
-	for i := int64(0); i+size <= int64(len(xs)); i += step {
-		out = append(out, pre[i+size]-pre[i])
-	}
-	return out
-}
-
-// WindowedExtrema returns the max (or min) of every fully-contained window
-// using a monotonic deque of candidate indices: every element is pushed and
-// popped at most once, so the whole scan is O(n) regardless of window size.
-func WindowedExtrema(xs []int64, size, step int64, min bool) []int64 {
-	beats := func(a, b int64) bool {
-		if min {
-			return a < b
-		}
-		return a > b
-	}
-	out := []int64{}
-	deque := []int64{} // indices into xs; xs[deque[0]] is the current extremum
-	next := int64(0)   // next index to admit into the deque
-	for s := int64(0); s+size <= int64(len(xs)); s += step {
-		for ; next < s+size; next++ {
-			for len(deque) > 0 && !beats(xs[deque[len(deque)-1]], xs[next]) {
-				deque = deque[:len(deque)-1]
-			}
-			deque = append(deque, next)
-		}
-		for deque[0] < s {
-			deque = deque[1:]
-		}
-		out = append(out, xs[deque[0]])
-	}
-	return out
 }

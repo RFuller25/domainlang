@@ -27,6 +27,7 @@ import (
 var expansionCommands = [][]string{
 	{"maximum", "compile"},
 	{"documentation"},
+	{"visualize"},
 	{"diagnosis"},
 	{"lint"},
 	{"optimize"},
@@ -78,7 +79,7 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		} else {
 			fmt.Fprintf(stderr, "domain: unknown expansion command %q\n", strings.Join(rest, " "))
 		}
-		fmt.Fprintln(stderr, "known: maximum compile, documentation, lint, optimize, fix, diagnosis")
+		fmt.Fprintln(stderr, "known: maximum compile, documentation, visualize, lint, optimize, fix, diagnosis")
 		return 2
 	}
 
@@ -88,6 +89,18 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 	if strings.Join(cmd, " ") == "documentation" {
 		fmt.Fprint(stdout, expansionBanner("documentation", isColorTerminal(stdout)))
 		return cmdDocumentation(rest, stdout, stderr)
+	}
+
+	// `visualize` also takes flags of its own (--input, --max-steps, --plain),
+	// so it is parsed before the shared "one file, no flags" rule below. It
+	// prints no banner: the stepper owns the screen.
+	if strings.Join(cmd, " ") == "visualize" {
+		path, opts, err := parseVisualizeArgs(rest)
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		return Visualize(path, opts, stdin, stdout, stderr)
 	}
 
 	var path string
@@ -232,7 +245,7 @@ func cmdOptimize(path, src string, w, stderr io.Writer, color bool) int {
 		return 1
 	}
 
-	out, rewrites := diag.OptimizeSource(src)
+	out, rewrites := diag.OptimizeSource(path, src)
 	if len(rewrites) > 0 {
 		if err := backupAndWrite(path, src, out); err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
