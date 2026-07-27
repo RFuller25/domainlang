@@ -106,6 +106,9 @@ func fuseFilterFirst(p *ir.Pipeline) []Rewrite {
 		if a.Prim != "Filter" || b.Prim != "Take Item" {
 			return nil, "", false
 		}
+		if hasMeasuredArg(b) {
+			return nil, "", false // valid only because the index is literally 0
+		}
 		if idx, ok := b.Meta["index"].(int); !ok || idx != 0 {
 			return nil, "", false
 		}

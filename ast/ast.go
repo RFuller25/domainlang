@@ -172,9 +172,17 @@ type Operation struct {
 }
 
 // Arg is a named argument supplied as an indented block line: `Name: value`.
+//
+// Used is set by the resolver when a primitive actually reads the argument
+// (prims.ArgSet records every lookup). Nothing in resolution depends on it —
+// it exists so the linter can say "this primitive never read that argument",
+// which is the only way to catch a `Size:` on a primitive that takes none.
+// Like the keyword filled in by prims.Infer, it is a resolve-time annotation
+// on the tree rather than part of the parse.
 type Arg struct {
 	Name  string
 	Value ArgValue
+	Used  bool
 	Pos   token.Position
 }
 

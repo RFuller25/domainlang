@@ -157,13 +157,15 @@ func (r *resolver) resolveLoop(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 
 	switch {
 	case hasWord(op, "Repeat"):
-		if len(op.Ints) == 0 {
-			return nil, &ResolveError{Pos: stmt.Pos, Msg: "Repeat needs a count, e.g. Repeat 3"}
+		timesM, err := requireMeasuredInt(op, ArgSet{stmt.Args}, "Repeat", "Times", 0, 0, cur,
+			stmt.Pos, "a count", "Repeat 3")
+		if err != nil {
+			return nil, err
 		}
-		if op.Ints[0] < 0 {
+		if !timesM.IsMeasured() && timesM.Lit < 0 {
 			return nil, &ResolveError{Pos: stmt.Pos, Msg: "Repeat count must be >= 0"}
 		}
-		return repeatNode(subNodes, op.Ints[0], cur, stmt.Pos), nil
+		return repeatNode(subNodes, timesM, cur, stmt.Pos), nil
 
 	case hasWord(op, "While"):
 		lam, ok := ArgSet{stmt.Args}.Lambda("Using")
@@ -342,13 +344,20 @@ func runIteration(ctx *ir.Context, nodes []*ir.Node, v ir.Value, label string) (
 	return runBody(ctx, nodes, v)
 }
 
-func repeatNode(body []*ir.Node, n int64, t *ir.Type, pos token.Position) *ir.Node {
+func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position) *ir.Node {
+	meta := map[string]any{"kind": "repeat", "nodes": body}
+	timesM.Meta(meta, "n")
 	return &ir.Node{
 		Prim: "Simple Domain (Repeat)", In: t, Out: t,
-		Display: fmt.Sprintf("Repeat %d", n), Pos: pos,
-		Meta: map[string]any{"kind": "repeat", "nodes": body, "n": n},
+		Display: "Repeat " + timesM.Describe(), Pos: pos,
+		Meta: meta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
-			var err error
+			// Measured once, before the first lap: the count is a property of
+			// the value entering the loop, not of each lap's value.
+			n, err := timesM.Resolve(v)
+			if err != nil {
+				return nil, err
+			}
 			for i := int64(0); i < n; i++ {
 				label := fmt.Sprintf("Repeat %d iter %d/%d", n, i+1, n)
 				if v, err = runIteration(ctx, body, v, label); err != nil {

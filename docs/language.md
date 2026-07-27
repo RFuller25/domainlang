@@ -125,8 +125,50 @@ accepts is listed in [primitives.md](primitives.md); common ones:
 - `Using:` — a lambda or a Match Pattern template string.
 - `Mode:` — a variant selector (`One`/`Each` for Match Pattern;
   `Filter`/`Count`/`First`/`Map` for All Pairs/Combinations).
-- `Seed:` — the fold accumulator's initial value (Int or Text).
+- `Seed:` — the fold accumulator's initial value (an Int or Text literal, or
+  a measured lambda, which is how the accumulator becomes a composite).
 - `From:` — the channels a consumer reads (Combine, Difference, Fold, Zip).
+- `Size:`, `Step:`, `Count:`, `Index:`, `Times:`, `Low:`, `High:`, `By:`,
+  `With:`, `Fill:`, `Default:`, `Mark:`, `Seed:`, `Row:`, `Col:`, `Height:`,
+  `Width:`, `Thickness:` — a **measured argument**: the literal
+  a phrase or an argument takes, written instead as a lambda over the current
+  value (below).
+
+An argument no primitive on that line reads is silently ignored, so the
+linter reports it (see [diagnostics.md](diagnostics.md#the-linter)).
+
+### Measured arguments
+
+An argument that a phrase takes as a literal — `Window 3`, `Chunk 4`,
+`Select Top 3`, `Split Text by ","` — may instead be given as a named argument
+holding a lambda over the **current value**, so it can depend on the data
+rather than on the source:
+
+```domain
+Cursed Technique: Window
+    Size: (xs) -> length(xs) / 2     # windows half the current list long
+```
+
+The lambda binds the whole current value (the binding `Apply` gives its
+lambda), plus one trailing parameter per enclosing `For` loop, and must
+return the slot's own type (`Int` for a count, `Text` for a separator, the
+cell type for a fill). It runs once per execution of the statement, before the
+primitive does. [primitives.md](primitives.md#measured-arguments) has the
+full rules and the list of primitives that take one.
+
+An argument is measurable when it carries **data**. Three kinds stay literal,
+and the reasons are rules rather than exceptions:
+
+1. **It types the program.** `Combinations k` fixes the `Using:` lambda's
+   arity; a `Match Pattern` template fixes the output `Record`'s fields; a
+   `Mode:` picks the result's shape. Types are settled before the program
+   runs.
+2. **It is consumed before there is a current value.** `Cursed Energy:`'s
+   source and `Innate Domain:`'s target are read at resolve time; there is
+   nothing yet to measure against.
+3. **It names a program element, not a value.** `From:` names channels;
+   `Channel`, `Part` and `Shikigami` name declarations. A name is resolved
+   against the program, not against data.
 
 ## Channels — multi-section inputs
 
@@ -271,6 +313,20 @@ lambda:
 | `f: Float` | `f: 1.5` | lambda bodies only; an Int argument widens |
 | `b: Bool` | `b: true` | lambda bodies only; written as bare `true`/`false` |
 | `p: (Int) -> Bool` | `p: (x) -> x > 100` | a **lambda parameter** — see below |
+
+A lambda parameter is also how a **measured argument** reaches a Shikigami:
+declare it as the function the slot takes and hand it to that slot.
+
+```domain
+Shikigami "Sized Windows" (size: (List<Int>) -> Int)
+    Cursed Technique: Window
+        Size: size
+```
+
+Declaring it `size: Int` and passing a lambda is rejected, and the error says
+this: a scalar parameter substitutes into the body as a *literal* — into lambda
+bodies included — which is exactly what a function has no form for. (A body may
+of course just measure directly, with no parameter at all.)
 
 Composite values (`Grid<Int>`, `List<Text>`, …) are not parameters: Domain has
 no composite literals, so there would be no way to write one at a call. Those

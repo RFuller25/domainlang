@@ -90,12 +90,19 @@ func buildVowCheck(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Positi
 		}, "Holds", map[string]any{"kind": "holds", "lambda": lam, "raw": op.Raw}, nil
 
 	case hasWord(op, "Count") && (hasWord(op, "Equals") || hasSym(op, "=")):
-		if len(op.Ints) == 0 {
-			return nil, "", nil, &ResolveError{Pos: pos, Msg: "Count vow requires a number, e.g. Count Equals 200"}
+		wantM, err := requireMeasuredInt(op, args, "Count vow", "Count", 0, NoBound, in, pos,
+			"a number", "Count Equals 200")
+		if err != nil {
+			return nil, "", nil, err
 		}
-		want := op.Ints[0]
+		meta := map[string]any{"kind": "count", "raw": op.Raw}
+		wantM.Meta(meta, "want")
 		return func(v ir.Value) error {
 			l, err := ir.AsList(v)
+			if err != nil {
+				return err
+			}
+			want, err := wantM.Resolve(v)
 			if err != nil {
 				return err
 			}
@@ -103,7 +110,7 @@ func buildVowCheck(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Positi
 				return fmt.Errorf("expected count %d, got %d", want, len(l))
 			}
 			return nil
-		}, fmt.Sprintf("Count Equals %d", want), map[string]any{"kind": "count", "want": want, "raw": op.Raw}, nil
+		}, "Count Equals " + wantM.Describe(), meta, nil
 
 	case hasWord(op, "All") && hasWord(op, "Values"):
 		if len(op.OpSyms) == 0 || len(op.Ints) == 0 {

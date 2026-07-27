@@ -14,7 +14,7 @@ This repository is a **tree-walking interpreter** (v0.1 → v0.2) plus the
 **v0.3 Go compiler backend (MVP)**. It has the full v0.2 vocabulary — parsing
 (`Match Pattern`), dense and sparse grids, pairs/combinations, sets/maps,
 higher-order lambda operations, named dataflow `Channel`s, loops,
-user-defined `Shikigami` + a prelude, and a **26-pass optimizer** (algorithm
+user-defined `Shikigami` + a prelude, and a **30-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
 `domain build` compiles the same optimized IR the interpreter runs into a
 standalone, aggressively typed Go binary.
@@ -43,7 +43,7 @@ go run ./cmd/domain build testdata/day1.domain -o day1
 go run ./cmd/domain build testdata/day1.domain --emit-go -
 ```
 
-Fifteen ready-to-run programs with inputs and expected outputs live in
+Eighteen ready-to-run programs with inputs and expected outputs live in
 [`examples/`](examples/README.md) — each one shows off a different piece of
 the language — and thirteen classic programming challenges (FizzBuzz, Two
 Sum, Kadane, Conway's Game of Life, Minesweeper, …) live in
@@ -67,13 +67,25 @@ source-level optimization rewrites (see
 domain expansion: diagnosis day1.domain          # every error + how to fix it
 domain expansion: fix day1.domain                # apply the unambiguous fixes (.bak kept)
 domain expansion: maximum compile day1.domain < input.txt   # fix → lint → optimize → compile → run
+domain expansion: visualize day1.domain          # step through the run, watching the data change shape
 domain expansion: documentation                  # serve the docs as a local website (port 4444)
 ```
 
 There is also an interactive REPL (`domain repl` — build a pipeline line by
 line, seeing the value and type after each statement) and a language server
-(`domain lsp` — live diagnostics, hover types, go-to-Shikigami, quick fixes
-in any LSP editor); see [docs/tooling.md](docs/tooling.md).
+(`domain lsp` — live diagnostics, inlay type hints after every statement,
+hover types, go-to-Shikigami (across imported libraries), quick fixes in any
+LSP editor); see [docs/tooling.md](docs/tooling.md).
+
+`domain run --stats` reports per-stage element counts and timings (with
+`--verbose` for the steps inside loops and Parts) — the interpreter's numbers,
+not the compiled binary's, and the header says so.
+
+`domain fmt` is the formatter — indentation is significant in Domain, so it
+fixes the part that actually bites, and `--check` makes it a CI gate. It
+never adds or removes a themed keyword (that choice is yours, line by line)
+and never rewrites an operation phrase's interior; see
+[docs/cli.md](docs/cli.md#domain-fmt).
 
 ## Install with Nix
 
@@ -127,6 +139,28 @@ Read top to bottom as a pipeline: raw text in → split into groups → split ea
 group into lines → convert to integers → sum each group → sort → take top 3 and
 sum → print.
 
+**The keywords are optional.** They say what *kind* of step a line is, and the
+compiler can work that out from the step itself, so the same program can be
+written without a single prefix — it resolves to the identical pipeline, down
+to the quickselect rewrite:
+
+```domain
+input.txt
+Split Text by "\n\n"
+Split Each by "\n"
+Convert Each List to Integers
+Sum Each Group
+Quicksort, Descending
+Select Top 3, Sum
+stdout
+```
+
+Both spellings mix freely, line by line. Where a bare phrase could mean two
+different things Domain refuses to guess and asks for the keyword; and because
+a Shikigami is called by its bare name, a Shikigami may no longer be named
+after a built-in operation. See
+[docs/language.md](docs/language.md#optional-keywords).
+
 ## The two layers
 
 1. **The pipeline layer** (themed). An ordered sequence of statements, each
@@ -137,17 +171,22 @@ sum → print.
 
 ## Keyword taxonomy
 
+Every keyword below is optional — see
+[optional keywords](docs/language.md#optional-keywords).
+
 | Keyword | Semantic role | Examples |
 |---|---|---|
+| `Innate Domain:` | import a Shikigami library | `Innate Domain: aoc` |
 | `Cursed Energy:` | input / data source | Read Source |
-| `Cursed Technique:` | 1:1 transforms | Split, Map Each, Filter, Match Pattern, Take Item, Transpose, Map Cells, Apply, Unique |
+| `Cursed Technique:` | 1:1 transforms | Split, Map Each, Filter, Match Pattern, Take Item, Transpose, Map Cells, Apply, Unique, Scan, Pairs, Chunk, Take/Drop While, Partition, Iterate, Unfold |
 | `Channeled Energy:` | type coercion | Convert To Integers, Convert To Grid |
-| `Maximum Technique:` | reductions / aggregation | Sum, Max, Min, Count, Fold, Group By, Select Top K, Intersect/Union, Combine |
-| `Domain Expansion:` | a named algorithm the optimizer may swap | Quicksort, All Pairs, Combinations |
+| `Maximum Technique:` | reductions / aggregation | Sum, Max, Min, Count, Fold, Reduce, Any/All, Find, Sum By, Group By, Select Top K, Intersect/Union, Combine, Zip |
+| `Domain Expansion:` | a named algorithm the optimizer may swap | Quicksort, All Pairs, Combinations, Sliding Reduce |
 | `Reverse Cursed Technique:` | inversions | Reverse |
 | `Simple Domain:` | control flow | Repeat N, Iterate Until Fixed Point, While |
 | `Channel "name":` | named sub-pipeline (dataflow branch) | + `From:` consumers |
-| `Shikigami "name" (p: T)` | user-defined operation (inlined) | the prelude is written this way |
+| `Part "label":` | labelled output block (two answers, one parse) | + `Reveal:` inside |
+| `Shikigami "name" (p: T) : In -> Out` | user-defined operation (inlined) | the prelude is written this way |
 | `Binding Vow:` | debug-time assertion over the current value | Count Equals N, All Values > N |
 | `Reveal:` | terminal output sink | stdout |
 
@@ -159,6 +198,18 @@ sum → print.
   Grid, and Sparse (the unbounded default-valued plane).
 - **Higher-order operations** driven by `Using:` lambdas — `Map Each`, `Filter`,
   `Fold`, `Group By`, `Count Matching`, `All Pairs`/`Combinations`.
+- **The functional layer around Fold** — `Reduce` (seedless fold, so the
+  accumulator can be any type), `Scan` (the running fold), `Unfold` (Fold's
+  dual: grow a value into a list) and `Iterate n` (keep the trajectory a
+  `Repeat` loop throws away).
+- **List shaping** — `Pairs` (each element tupled with the next), `Chunk n`
+  (blocks, keeping a short final one), `Take While`/`Drop While` (split at a
+  boundary instead of filtering), `Partition` (one pass, both halves).
+- **Early-exit reductions** — `Any`/`All` stop at the element that decides the
+  answer; `Find`/`Find Index` stop at the first match; `Sum By`/`Product By`
+  fold a key lambda without building the mapped list. The optimizer rewrites
+  the naive spellings (`Filter` + `Take Item 0`, `Map Each` + `Sum`) into
+  them.
 - **Expression-layer builtins** inside lambdas — `length`, `item`, `take`,
   `drop`, `reverse`, `concat`, `first`, `last`, `sum`, `min`, `max`,
   `contains`, `get(m, k)`, `at(grid, r, c)` — e.g.
@@ -172,10 +223,24 @@ sum → print.
   challenges.
 - **`Channel`s** for inputs with multiple structurally-different sections, with
   `From:` consumers (`Combine` via lambda, `Difference`).
+- **`Part` blocks** — the two-answers-per-input shape. A Part branches from the
+  current value like a Channel and labels what its body `Reveal`s, so the parse
+  above the Parts happens once and each Part sees the same upstream value.
 - **Loops** (`Repeat`/`Iterate Until Fixed Point`/`While`), bounded against
   runaway.
+- **`Innate Domain`** — import a library of Shikigami (`Innate Domain: aoc`),
+  searched beside the program, then `$DOMAIN_PATH`, then `~/.config/domain/lib`.
+  Libraries are free: a Shikigami is inlined, so an imported operation gets
+  every optimizer rewrite a local one would, and the binary needs the library
+  only at build time.
 - **`Shikigami`** — name a composition of primitives; the prelude (`Lines`,
   `Blocks`, `Ints`, `Digit Grid`, `Top K Sum`) is itself written in Domain.
+  A Shikigami is called by its name alone, so the name may not be one a
+  built-in already answers to. Parameters may be `Int`, `Text`, `Float`,
+  `Bool`, or a **lambda** (`p: (Int) -> Bool`), which makes a Shikigami
+  higher-order; an optional declared signature (`: List<Int> -> Int`) is
+  checked at every call site *and* against the body, without stopping the
+  inlining that lets optimizer rewrites fire through it.
 - **The AoC toolbox** — the classic helper library, natively:
   `Extract Integers` / `Split Fields` / `Merge Ranges` / `Convert To Set` /
   `Find Cells`; grid searches as Domain Expansions (`BFS`, `Dijkstra`,
@@ -184,7 +249,7 @@ sum → print.
   `solve2x2`, `manhattan`/`neighbors4`/`rotr`, `occurrences`/`repeats`).
   The full map from the canonical Go helper library lives in
   [`docs/aoc-toolbox.md`](docs/aoc-toolbox.md).
-- **A 26-pass optimizer** that fires even through Shikigami abstraction (below).
+- **A 30-pass optimizer** that fires even through Shikigami abstraction (below).
 
 Worked anchor programs live in [`testdata/`](testdata): AoC 2022 Days 1/4/5/8
 and AoC 2020 Day 1 (parts 1 & 2).
@@ -208,12 +273,15 @@ The other passes follow the same idea, in four families (see
   (AoC 2020 Day 1 Part 2) drops from O(n³) to **O(n²)**; `Sort` +
   `Take Item k` becomes a quickselect of the kth order statistic; a linear
   `Map Each` feeding `Max`/`Min` reduces first and applies the lambda
-  **once**.
+  **once**; `Filter` + `Take Item 0` becomes a `Find` that stops at the
+  first match instead of collecting every one.
 - **Reordering dead code** — double sorts, `Reverse + Reverse`, reorderings
   feeding order-insensitive reductions, redundant `Unique`s.
 - **Fusion** — adjacent `Map Each`s and `Filter`s collapse into one pass;
   `Filter + Count` becomes `Count Matching`; a running-sum `Fold` becomes
-  `Sum`.
+  `Sum`; `Map Each + Sum`/`Product` becomes `Sum By`/`Product By`, folding
+  as it maps; `Zip + Map Each` becomes one pass with no tuple list;
+  `Window n + Map Each` becomes the O(n) streaming `Sliding Reduce`.
 - **Expression simplification** — constant folding, algebraic identities,
   and boolean short-circuits inside lambda bodies, cascading into the
   structural passes (an always-false predicate eliminates its whole scan).
@@ -248,7 +316,7 @@ ir/         typed pipeline graph, value/type model, runtime collections
 typecheck/  static expression typer (lambda output-type inference)
 eval/       dynamic expression evaluator (lambda bodies, runtime field access)
 prims/      primitive vocabulary + resolver/typechecker + Shikigami + prelude
-optimizer/  26 rewrite passes: algorithm substitution, fusion, dead code, expression simplification
+optimizer/  30 rewrite passes: algorithm substitution, fusion, dead code, expression simplification
 interp/     tree-walking evaluator
 codegen/    Go compiler backend: optimized IR → typed Go source → `go build`
 cmd/domain/ CLI (bare file → interpret, extra args → compile; run/build, --help)
@@ -288,7 +356,7 @@ equality functions; tuple-shaped `Match Pattern` emits positional structs.
 A future primitive that ships without a codegen case fails `domain build`
 with a positioned error and keeps working under `domain run`. Nothing is in
 that state today: the whole surface — parsing/range/set primitives, the
-grid searches, the sparse grid type, and all 61 expression builtins
+grid searches, the sparse grid type, and all 92 expression builtins
 including the point group — compiles, with oracle tests pinning
 interpreter/binary parity (see [`docs/compiler.md`](docs/compiler.md)).
 
@@ -315,6 +383,17 @@ program in both optimized and `--no-optimize` modes (the two must agree).
 Arbitrary-precision integers are deferred — everything runs on `int64`,
 which covers every anchor and challenge program (see
 [docs/data-model.md](docs/data-model.md)).
+
+There is no recursion: a Shikigami is inlined at its call site, so a
+self-referential one is refused (naming the cycle). `Domain Expansion:
+Explore` is the iterative search that covers the problems which look
+recursive — see [docs/primitives.md](docs/primitives.md).
+
+Loops and the combinatorial generators are **unbounded**. Domain used to cap
+`While`/`Iterate Until Fixed Point` at a million iterations, `Permutations` at
+9 elements and `Subsets` at 16; those ceilings refused correct programs, so
+they are gone. A genuinely non-terminating loop now spins until interrupted
+rather than failing loudly.
 
 ## License
 

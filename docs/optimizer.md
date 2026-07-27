@@ -142,6 +142,73 @@ Two documented near-misses show where the line is: `Unique` is *not*
 elided before `Sum`/`Count` (it changes them), and `Sort + Unique` swaps
 rather than drops (both are needed).
 
+## Measured arguments and the passes that fold literals
+
+A primitive's Int argument may be *measured* — a lambda over the current
+value rather than a literal (see
+[primitives.md](primitives.md#measured-arguments)). A measured argument has
+no value at optimize time: it lands in `Meta` under its own `…Expr` key, and
+the literal key is **absent**.
+
+That absence is the hazard. Every pass reads its literal with a type
+assertion whose zero value is a perfectly plausible number, so a measured
+argument does not make a pass fail to fire — it makes the pass fire with a
+fabricated constant. `Select Top (measured)` folded as `Top 0` returns the
+empty list, silently, and only when optimized.
+
+So the rule is opt-in, and there are two ways to opt in.
+
+**Carry it.** A pass whose fused node takes the argument as *data* reads it
+through `readArg` and moves it onto the fused node with `writeMeta`, never
+touching `Meta` directly. The value is resolved at run time through the
+primitive's own resolver — bound check included — so the rewrite cannot turn
+an error into a success (safety rule 2). Two passes do this:
+
+| Pass | Argument | Why it can carry |
+|---|---|---|
+| `fuseWindowReduce` | `size`, `step` | `ir.WindowedSums` / `ir.WindowedExtrema` take them as runtime arguments already |
+| Sort + `Select Top K` → quickselect | `k` | `TopK` (and the compiled `dmTopK`) take `k` as a value |
+| `fuseSearchTarget` | `row`, `col` | the early-exit search takes the start as data |
+
+`--explain` says `Top (measured)` rather than inventing a number.
+
+**Stand down.** Every other pass consults `hasMeasuredArg` before reading any
+literal, because its rewrite is valid *because of what the literal is*:
+
+| Pass | Reads | Why it cannot carry |
+|---|---|---|
+| `Filter` + `Take Item 0` → `Find` | `index` | The early exit is valid only for index 0 |
+| `Sort` + `Take Item` → extremum | `index` | Same |
+| `Fold` (seed 0) → `Sum` | `seed` | The identity depends on the seed being 0 |
+| the pair/triple scans | `k` | Not applicable — `Combinations k` fixes a lambda arity and stays literal by rule |
+
+The guard is the default, so a measured argument added later to a primitive a
+pass has never heard of is refused rather than mis-folded, and enabling a pass
+is a deliberate change at one call site.
+
+The compiler's *lowerings* have no such distinction: `gen.measuredOperand`
+emits the literal as a constant when there is one and a computed `int64`
+otherwise, so a measured argument costs one variable and the bounds check the
+interpreter runs at the same moment — in a fused lowering exactly as in an
+unfused one.
+
+The compiler's own **fusions** do, though, and for a sharper reason. The
+adjacency rules in `codegen/matchgen.go` are keyed on a `Split`'s separator,
+and three of them fire on `sep == ""` — the character-split fast paths. The
+empty string is a meaningful separator there, not a "missing" one, so a
+measured separator read through a type assertion would fire those three
+*wrongly* rather than merely failing to fire. `tryFuse` therefore checks
+`hasMeasured(nodes[0], "sep")` before any rule runs. It is the same rule as
+`hasMeasuredArg`, on the other side of the backend, and the reason both exist:
+a zero value is only safe to read as "absent" when it is not also a legal
+answer.
+
+One compiler fusion stands down for a different reason. `gridSearchFusable`
+builds a search's mask straight from input lines so the grid is never
+materialized — and a measured start is a lambda *over that grid*. There would
+be nothing to measure from, so the fusion refuses a measured start and the
+ordinary path, which does build the grid, handles it.
+
 ## Flags
 
 - `--explain` prints each applied rewrite to stderr, or

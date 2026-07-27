@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -474,22 +475,30 @@ func (g *gen) emitReadSource(n *ir.Node) (string, error) {
 }
 
 func (g *gen) emitSplit(n *ir.Node, in string) (string, error) {
-	sep, _ := n.Meta["sep"].(string)
+	sep, err := g.measuredText(n, in, "sep", n.In)
+	if err != nil {
+		return "", err
+	}
 	g.imp("strings")
 	v := g.fresh("v")
-	g.wl("%s := strings.Split(%s, %s)", v, in, goStr(sep))
+	g.wl("%s := strings.Split(%s, %s)", v, in, sep)
 	return v, nil
 }
 
 func (g *gen) emitSplitEach(n *ir.Node, in string) (string, error) {
-	sep, _ := n.Meta["sep"].(string)
+	// The lambda measures from the whole list, not from each element, so it is
+	// bound and evaluated once before the loop — as the interpreter does.
+	sep, err := g.measuredText(n, in, "sep", n.In)
+	if err != nil {
+		return "", err
+	}
 	g.imp("strings")
 	v := g.fresh("v")
 	i, s := g.fresh("i"), g.fresh("s")
 	g.wl("%s := make([][]string, len(%s))", v, in)
 	g.wl("for %s, %s := range %s {", i, s, in)
 	g.in()
-	g.wl("%s[%s] = strings.Split(%s, %s)", v, i, s, goStr(sep))
+	g.wl("%s[%s] = strings.Split(%s, %s)", v, i, s, sep)
 	g.out()
 	g.wl("}")
 	return v, nil
@@ -705,14 +714,13 @@ func lessExpr(t *ir.Type, a, b string) (string, error) {
 }
 
 func (g *gen) emitSelectTopK(n *ir.Node, in string) (string, error) {
-	k, _ := n.Meta["k"].(int64)
 	thenSum, _ := n.Meta["sum"].(bool)
-	kk := int(k)
-	if kk < 0 {
-		kk = 0
+	k, err := g.measuredOperand(n, in, "k", "Count", 0)
+	if err != nil {
+		return "", err
 	}
 	cnt := g.fresh("n")
-	g.wl("%s := %d", cnt, kk)
+	g.wl("%s := int(%s)", cnt, k)
 	g.wl("if %s > len(%s) {", cnt, in)
 	g.in()
 	g.wl("%s = len(%s)", cnt, in)
@@ -734,17 +742,25 @@ func (g *gen) emitSelectTopK(n *ir.Node, in string) (string, error) {
 }
 
 func (g *gen) emitPartialSelect(n *ir.Node, in string) (string, error) {
-	k, _ := n.Meta["k"].(int64)
 	desc, _ := n.Meta["desc"].(bool)
 	thenSum, _ := n.Meta["sum"].(bool)
+	k, err := g.measuredOperand(n, in, "k", "Count", 0)
+	if err != nil {
+		return "", err
+	}
+	// dmTopK counts in int. A literal is an untyped constant and needs no
+	// conversion; a measured count is an int64 variable and does.
+	if hasMeasured(n, "k") {
+		k = "int(" + k + ")"
+	}
 	g.helper("dmTopK", declTopK, "sort")
 	if !thenSum {
 		v := g.fresh("v")
-		g.wl("%s := dmTopK(%s, %d, %v)", v, in, int(k), desc)
+		g.wl("%s := dmTopK(%s, %s, %v)", v, in, k, desc)
 		return v, nil
 	}
 	top := g.fresh("top")
-	g.wl("%s := dmTopK(%s, %d, %v)", top, in, int(k), desc)
+	g.wl("%s := dmTopK(%s, %s, %v)", top, in, k, desc)
 	v, x := g.fresh("v"), g.fresh("x")
 	g.wl("var %s int64", v)
 	g.wl("for _, %s := range %s {", x, top)
@@ -1075,6 +1091,134 @@ func (g *gen) nodeLambda(n *ir.Node) (*ast.Lambda, error) {
 	return lam, nil
 }
 
+// measuredOperand renders one of a node's Int arguments as a Go expression.
+//
+// A literal (Meta[key], an int64) renders as itself, so every lowering that
+// used to interpolate %d keeps emitting the same constant-folded code. A
+// measured one (Meta[key+"Expr"], a lambda over the current value — see
+// prims/measure.go) compiles its body against `in` and lands in a fresh
+// int64 variable, guarded by the same lower bound the interpreter checks at
+// the same moment. The returned string is usable anywhere the literal was.
+//
+// min is the lower bound to enforce; pass math.MinInt64 for none. what names
+// the argument in the failure message ("Size:").
+func (g *gen) measuredOperand(n *ir.Node, in, key, what string, min int64) (string, error) {
+	switch lit := n.Meta[key].(type) {
+	case int64:
+		return fmt.Sprintf("%d", lit), nil
+	case int:
+		// Take Item keeps its index as an int, the shape two optimizer passes
+		// already match on; a literal is a literal either way.
+		return fmt.Sprintf("%d", lit), nil
+	}
+	lam, _ := n.Meta[key+"Expr"].(*ast.Lambda)
+	if lam == nil {
+		return "", unsupported(n, "missing %s metadata", key)
+	}
+	g.bindAmbientParams(lam)
+	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	if err != nil {
+		return "", unsupported(n, "%s: %v", what, err)
+	}
+	v := g.fresh("m")
+	g.wl("var %s int64 = %s", v, body)
+	if min == math.MinInt64 {
+		return v, nil // no lower bound of its own; the consumer range-checks it
+	}
+	g.helper("dmFail", declFail, "fmt", "os")
+	g.wl("if %s < %d {", v, min)
+	g.in()
+	// Same sentence the interpreter builds, including what it was measured
+	// from when that is a list — a compiled binary carries no source position,
+	// but there is no reason for it to drop the number that explains the
+	// failure too.
+	if n.In != nil && n.In.Kind == ir.KList {
+		g.wl(`dmFail("%s: measured %%d from a list of %%d element(s), but the %s must be >= %d", %s, len(%s))`,
+			what, strings.ToLower(what), min, v, in)
+	} else {
+		g.wl(`dmFail("%s: measured %%d, but the %s must be >= %d", %s)`,
+			what, strings.ToLower(what), min, v)
+	}
+	g.out()
+	g.wl("}")
+	return v, nil
+}
+
+// measuredText renders one of a node's Text arguments as a Go string
+// expression: the literal quoted, or the measuring lambda compiled against
+// `in` and bound to a fresh variable. The Text twin of measuredOperand; it has
+// no bound to check, so there is no guard to emit.
+func (g *gen) measuredText(n *ir.Node, in, key string, inType *ir.Type) (string, error) {
+	if lit, ok := n.Meta[key].(string); ok {
+		return goStr(lit), nil
+	}
+	lam, _ := n.Meta[key+"Expr"].(*ast.Lambda)
+	if lam == nil {
+		return "", unsupported(n, "missing %s metadata", key)
+	}
+	g.bindAmbientParams(lam)
+	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: inType}})
+	if err != nil {
+		return "", unsupported(n, "%s: %v", key, err)
+	}
+	v := g.fresh("sep")
+	g.wl("var %s string = %s", v, body)
+	return v, nil
+}
+
+// measuredLit renders one of a node's value-typed arguments (a Pad Grid fill, a
+// Sparse default) as a Go expression: the literal in its own Go form, or the
+// measuring lambda compiled against `in`. lit renders the literal case, since
+// the two consumers spell an Int differently (`int64(3)` vs a bare constant).
+func (g *gen) measuredLit(n *ir.Node, in, key string, inType, outType *ir.Type, lit func(any) (string, error)) (string, error) {
+	if v, ok := n.Meta[key]; ok {
+		return lit(v)
+	}
+	lam, _ := n.Meta[key+"Expr"].(*ast.Lambda)
+	if lam == nil {
+		return "", unsupported(n, "missing %s metadata", key)
+	}
+	g.bindAmbientParams(lam)
+	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: inType}})
+	if err != nil {
+		return "", unsupported(n, "%s: %v", key, err)
+	}
+	v := g.fresh(key)
+	goT, err := g.goType(outType)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	// Declared with its type rather than inferred, for the same reason
+	// emitApply does: a bare integer literal body is an untyped constant, and
+	// `:=` would make it `int` where an int64 is expected.
+	g.wl("var %s %s = %s", v, goT, body)
+	return v, nil
+}
+
+// seedLit renders a literal Fold/Scan seed. Only Int and Text can be written
+// as one — a named argument has no other spelling — so a measured seed is the
+// only way to a composite accumulator.
+func seedLit(v any) (string, error) {
+	switch x := v.(type) {
+	case int64:
+		return fmt.Sprintf("int64(%d)", x), nil
+	case string:
+		return goStr(x), nil
+	}
+	return "", fmt.Errorf("seed of type %T", v)
+}
+
+// hasMeasured reports whether any of a node's Int arguments is measured, which
+// is what tells a lowering that a constant-folded fast path is unavailable.
+func hasMeasured(n *ir.Node, keys ...string) bool {
+	for _, k := range keys {
+		if _, ok := n.Meta[k+"Expr"].(*ast.Lambda); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // bindAmbientParams records how the lambda about to be compiled names the
 // enclosing For loops' variables. Inside a For body the resolver gives every
 // `Using:` lambda len(ambient) extra trailing parameters, bound positionally
@@ -1275,15 +1419,18 @@ func (g *gen) emitFold(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	acc := g.fresh("acc")
-	switch seed := n.Meta["seed"].(type) {
-	case int64:
-		g.wl("%s := int64(%d)", acc, seed)
-	case string:
-		g.wl("%s := %s", acc, goStr(seed))
-	default:
-		return "", unsupported(n, "seed of type %T", seed)
+	// A literal seed is Int or Text; a measured one is whatever its lambda
+	// produces, which is how a fold gets a composite accumulator.
+	seed, err := g.measuredLit(n, in, "seed", n.In, n.Out, seedLit)
+	if err != nil {
+		return "", err
 	}
+	accGo, err := g.goType(n.Out)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	acc := g.fresh("acc")
+	g.wl("var %s %s = %s", acc, accGo, seed)
 	e := g.fresh("e")
 	body, _, err := g.compileExpr(lam.Body, exprEnv{
 		lam.Params[0]: {expr: acc, typ: n.Out},
@@ -1343,8 +1490,25 @@ func (g *gen) emitReverse(n *ir.Node, in string) (string, error) {
 }
 
 func (g *gen) emitTakeItem(n *ir.Node, in string) (string, error) {
-	idx, _ := n.Meta["index"].(int)
 	g.helper("dmFail", declFail, "fmt", "os")
+	if hasMeasured(n, "index") {
+		// The index is only known at run time, so the constant-index shortcuts
+		// below do not apply: bind it, then range-check against the list the
+		// way the interpreter does.
+		m, err := g.measuredOperand(n, in, "index", "Index", math.MinInt64)
+		if err != nil {
+			return "", err
+		}
+		g.wl("if %s < 0 || %s >= int64(len(%s)) {", m, m, in)
+		g.in()
+		g.wl(`dmFail("index %%d out of range (length %%d)", %s, len(%s))`, m, in)
+		g.out()
+		g.wl("}")
+		v := g.fresh("v")
+		g.wl("%s := %s[%s]", v, in, m)
+		return v, nil
+	}
+	idx, _ := n.Meta["index"].(int)
 	if idx < 0 {
 		// A constant negative index always fails; emit the failure plus a
 		// zero-valued binding so downstream code still compiles.
@@ -1430,10 +1594,13 @@ func (g *gen) emitBindingVow(n *ir.Node, in string) (string, error) {
 		if n.In.Kind != ir.KList {
 			return "", unsupported(n, "Count vow over %s", n.In)
 		}
-		want, _ := n.Meta["want"].(int64)
-		g.wl("if int64(len(%s)) != %d {", in, want)
+		want, err := g.measuredOperand(n, in, "want", "Count", math.MinInt64)
+		if err != nil {
+			return "", err
+		}
+		g.wl("if int64(len(%s)) != %s {", in, want)
 		g.in()
-		g.wl(`dmFail("vow violated [%%s]: expected count %%d, got %%d", %s, int64(%d), len(%s))`,
+		g.wl(`dmFail("vow violated [%%s]: expected count %%d, got %%d", %s, int64(%s), len(%s))`,
 			goStr(raw), want, in)
 		g.out()
 		g.wl("}")

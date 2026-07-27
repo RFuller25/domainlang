@@ -107,9 +107,14 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 
 	switch kind {
 	case "repeat":
-		count, _ := n.Meta["n"].(int64)
+		// Measured before the loop opens: the count is a property of the value
+		// entering it, not of each lap's value.
+		count, err := g.measuredOperand(n, v, "n", "Times", 0)
+		if err != nil {
+			return "", err
+		}
 		i := g.fresh("i")
-		g.wl("for %s := int64(0); %s < %d; %s++ {", i, i, count, i)
+		g.wl("for %s := int64(0); %s < %s; %s++ {", i, i, count, i)
 		g.in()
 		if err := emitBody(); err != nil {
 			return "", err

@@ -127,10 +127,15 @@ func TestCompiledAnchorsMatchInterpreter(t *testing.T) {
 			name     string
 			optimize bool
 		}{{"optimized", true}, {"naive", false}} {
+			// Resolution and interpretation stay on this goroutine: prims'
+			// ambient For-loop stacks are package-level, and prims/ambient.go
+			// documents that Resolve and Run are never called concurrently.
+			// Only the Go build and the binary's run — where the time actually
+			// goes — are parallel.
+			pipe := compilePipeline(t, string(src), mode.optimize)
+			want := runInterpreter(t, pipe, input)
 			t.Run(a.name+"/"+mode.name, func(t *testing.T) {
 				t.Parallel()
-				pipe := compilePipeline(t, string(src), mode.optimize)
-				want := runInterpreter(t, pipe, input)
 				got := buildAndRun(t, pipe, input, codegen.Options{})
 				if got != want {
 					t.Errorf("compiled output diverges from interpreter\n got: %q\nwant: %q", got, want)
@@ -893,6 +898,267 @@ Reveal: stdout
 `,
 			input: "2.5\n0.75",
 		},
+
+		// Measured arguments: an Int argument written as a lambda over the
+		// current value instead of a literal. The size is only known at
+		// runtime, so the compiler emits a computed operand where it used to
+		// emit a constant — these pin the two backends over every lowering
+		// that grew one.
+		{
+			name: "window measured at half the list",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Window
+    Size: (xs) -> length(xs) / 2
+Reveal: stdout
+`,
+			input: "1\n2\n3\n4\n5\n6",
+		},
+		{
+			// The measured size feeds a reduce, which is the shape the
+			// Window+Map Each fusion matches on. The pass must stand down and
+			// both backends must still agree.
+			name: "measured window feeding a reduce",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Window
+    Size: (xs) -> max(1, length(xs) / 3)
+    Step: (xs) -> 2
+Cursed Technique: Map Each
+    Using: (w) -> sum(w)
+Reveal: stdout
+`,
+			input: "1\n2\n3\n4\n5\n6\n7\n8\n9",
+		},
+		{
+			name: "chunk measured from the list length",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Chunk
+    Size: (xs) -> length(xs) / 3
+Reveal: stdout
+`,
+			input: "1\n2\n3\n4\n5\n6\n7\n8",
+		},
+		{
+			// Sort + Select Top K is the quickselect rewrite's pair; a measured
+			// count must keep the honest sort rather than fusing to Top 0.
+			name: "select top measured after a sort",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Quicksort, Descending
+Maximum Technique: Select Top
+    Count: (xs) -> length(xs) / 2
+Reveal: stdout
+`,
+			input: "3\n1\n4\n1\n5\n9\n2\n6",
+		},
+		{
+			name: "measured select top then sum",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Quicksort, Descending
+Maximum Technique: Select Top, Sum
+    Count: (xs) -> length(xs) / 4
+Reveal: stdout
+`,
+			input: "3\n1\n4\n1\n5\n9\n2\n6",
+		},
+		{
+			// The compiler's fusion rules key on the separator's *value*, and
+			// three of them fire on the empty string. A measured separator has
+			// no literal, so this pins that they stand down rather than firing
+			// on a fabricated "" — the digit-grid fast path would otherwise
+			// take a program it never saw the separator of.
+			name: "measured empty separator does not take the fused fast path",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each
+    By: (xs) -> ""
+Channeled Energy: Convert To Integers
+Channeled Energy: Convert To Grid
+Reveal: stdout
+`,
+			input: "12\n34",
+		},
+		{
+			// A measured argument reaching a slot through a Shikigami's lambda
+			// parameter: the body is inlined, so the compiler sees the measured
+			// slot exactly as if it had been written inline.
+			name: "measured argument through a Shikigami parameter",
+			src: `Shikigami "Sized Windows" (size: (List<Int>) -> Int)
+    Cursed Technique: Window
+        Size: size
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Shikigami: Sized Windows
+    size: (xs) -> length(xs) / 2
+Reveal: stdout
+`,
+			input: "1\n2\n3\n4\n5\n6",
+		},
+		{
+			// The grid family: a crop, a border and a search start all sized
+			// from the grid itself. The search also exercises the fused
+			// lines-to-search path standing down — that fusion exists to avoid
+			// materializing the grid a measured start needs.
+			name: "measured grid crop, pad and search start",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Channeled Energy: Convert To Grid
+Cursed Technique: Pad Grid
+    Thickness: (g) -> 1
+    Fill: (g) -> "."
+Cursed Technique: Subgrid
+    Row: (g) -> 1
+    Col: (g) -> 1
+    Height: (g) -> rows(g) - 2
+    Width: (g) -> cols(g) - 2
+Domain Expansion: BFS
+    Row: (g) -> rows(g) - 1
+    Col: (g) -> cols(g) - 1
+    Using: (c) -> c = "."
+Reveal: stdout
+`,
+			input: "...\n.#.\n...",
+		},
+		{
+			// The accumulator's Go type comes from the seed, so a measured one
+			// compiles to a struct rather than an int64 — the widest reach a
+			// measured argument has into the backend.
+			name: "measured fold seed with a tuple accumulator",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Maximum Technique: Fold
+    Seed: (xs) -> tuple(0, 0)
+    Using: (acc, x) -> tuple(prow(acc) + x, pcol(acc) + 1)
+Reveal: stdout
+`,
+			input: "3\n1\n4\n1\n5",
+		},
+		{
+			name: "measured fold and scan seeds from the data",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Scan
+    Seed: (xs) -> length(xs)
+    Using: (acc, x) -> acc + x
+Maximum Technique: Fold
+    Seed: (xs) -> first(xs)
+    Using: (acc, x) -> max(acc, x)
+Reveal: stdout
+`,
+			input: "3\n1\n4\n1\n5",
+		},
+		{
+			name: "measured fill and sparse default",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Channeled Energy: Convert To Grid
+Cursed Technique: Pad Grid 1
+    Fill: (g) -> at(g, 0, 0)
+Channeled Energy: Convert To Sparse Grid
+    Default: (g) -> at(g, 0, 0)
+Channeled Energy: Convert To Grid
+Reveal: stdout
+`,
+			input: "ab\ncd",
+		},
+		{
+			name: "measured sparse default and mark over points",
+			src: `Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Chunk 2
+Channeled Energy: Convert To Sparse Grid
+    Default: (ps) -> "."
+    Mark: (ps) -> "#"
+Channeled Energy: Convert To Grid
+Reveal: stdout
+`,
+			input: "0 0\n1 1\n0 2",
+		},
+		{
+			name: "measured separators, split and join",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split
+    By: (t) -> if indexof(t, "|") >= 0 then "|" else ","
+Maximum Technique: Join
+    With: (xs) -> if length(xs) > 2 then " | " else "-"
+Reveal: stdout
+`,
+			input: "a|b|c",
+		},
+		{
+			name: "measured sliding reduce",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Sliding Reduce
+    Size: (xs) -> length(xs) / 2
+    Mode: Max
+Reveal: stdout
+`,
+			input: "5\n1\n9\n2\n7\n3",
+		},
+		{
+			name: "measured take item, iterate and repeat",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Simple Domain: Repeat
+    Times: (xs) -> length(xs)
+    Cursed Technique: Map Each
+        Using: (n) -> n + 1
+Cursed Technique: Take Item
+    Index: (xs) -> length(xs) - 1
+Cursed Technique: Iterate
+    Times: (n) -> 3
+    Using: (n) -> n * 2
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			// Range discards its input, so a measured bound is the only way to
+			// size it from the data.
+			name: "measured range bounds",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Range
+    Low: (xs) -> first(xs)
+    High: (xs) -> last(xs)
+Binding Vow: Count Equals
+    Count: (xs) -> 4
+Reveal: stdout
+`,
+			input: "2\n6",
+		},
+		{
+			// Inside a For loop the measuring lambda takes the lap's binding as
+			// a trailing parameter, exactly like a Using: lambda there.
+			name: "measured window inside a for loop",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Simple Domain: For k in range(2)
+    Cursed Technique: Window
+        Size: (xs, k) -> k + 1
+    Cursed Technique: Map Each
+        Using: (w, k) -> sum(w)
+Reveal: stdout
+`,
+			input: "1\n2\n3\n4",
+		},
 	}
 	for _, p := range progs {
 		for _, optimize := range []bool{true, false} {
@@ -900,10 +1166,12 @@ Reveal: stdout
 			if optimize {
 				mode = "optimized"
 			}
+			// Sequential resolve + interpret, parallel compile — see the note
+			// in TestCompiledAnchorsMatchInterpreter.
+			pipe := compilePipeline(t, p.src, optimize)
+			want := runInterpreter(t, pipe, []byte(p.input))
 			t.Run(p.name+"/"+mode, func(t *testing.T) {
 				t.Parallel()
-				pipe := compilePipeline(t, p.src, optimize)
-				want := runInterpreter(t, pipe, []byte(p.input))
 				got := buildAndRun(t, pipe, []byte(p.input), codegen.Options{})
 				if got != want {
 					t.Errorf("compiled output diverges from interpreter\n got: %q\nwant: %q", got, want)

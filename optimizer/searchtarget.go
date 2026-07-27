@@ -36,13 +36,21 @@ func fuseSearchTarget(p *ir.Pipeline) []Rewrite {
 		if !ok {
 			return nil, "", false
 		}
-		row, _ := a.Meta["row"].(int64)
-		col, _ := a.Meta["col"].(int64)
+		// The early-exit search takes its start as data, so a measured one
+		// rides along — the fused node measures it from the same grid the
+		// naive pair would have, and reports the same out-of-bounds error.
+		rowA, okRow := readArg(a, "row")
+		colA, okCol := readArg(a, "col")
+		if !okRow || !okCol {
+			return nil, "", false
+		}
 		searchLam := nodeLambda(a) // the walkable predicate; nil for Dijkstra
 		cellType := elemType(a.In) // the grid's cell type, for the predicate
 
 		searchPos, applyPos := a.Pos, b.Pos
-		meta := map[string]any{"kind": kind, "row": row, "col": col, "trow": tr, "tcol": tc}
+		meta := map[string]any{"kind": kind, "trow": tr, "tcol": tc}
+		rowA.writeMeta(meta, "row")
+		colA.writeMeta(meta, "col")
 		if searchLam != nil {
 			meta["lambda"] = searchLam
 		}
@@ -50,7 +58,7 @@ func fuseSearchTarget(p *ir.Pipeline) []Rewrite {
 			Prim:    "SearchTarget",
 			In:      a.In,
 			Out:     ir.Int(),
-			Display: fmt.Sprintf("Early-Exit %s (%d, %d) → (%d, %d)", kind, row, col, tr, tc),
+			Display: fmt.Sprintf("Early-Exit %s (%s, %s) → (%d, %d)", kind, rowA.describe(), colA.describe(), tr, tc),
 			Meta:    meta,
 			Pos:     searchPos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
@@ -58,6 +66,14 @@ func fuseSearchTarget(p *ir.Pipeline) []Rewrite {
 				if !ok {
 					return nil, &ir.RuntimeError{Prim: kind, Pos: searchPos,
 						Msg: fmt.Sprintf("expected Grid, got %s", ir.DescribeValue(v))}
+				}
+				row, err := rowA.value(v)
+				if err != nil {
+					return nil, err
+				}
+				col, err := colA.value(v)
+				if err != nil {
+					return nil, err
 				}
 				// The naive pair's validations, in the same order with the
 				// same wording (prims/search.go, eval's at).

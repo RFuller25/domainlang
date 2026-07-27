@@ -1,8 +1,6 @@
 package prims
 
 import (
-	"fmt"
-
 	"domain/ast"
 	"domain/ir"
 	"domain/token"
@@ -101,25 +99,32 @@ var chunk = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if len(op.Ints) == 0 {
-			return nil, &ResolveError{Pos: pos, Msg: "Chunk requires a size, e.g. Chunk 3"}
+		sizeM, err := requireMeasuredInt(op, args, "Chunk", "Size", 0, 1, in, pos, "a size", "Chunk 3")
+		if err != nil {
+			return nil, err
 		}
-		size := op.Ints[0]
-		if size < 1 {
-			return nil, &ResolveError{Pos: pos,
-				Msg: fmt.Sprintf("Chunk size must be >= 1, got %d", size)}
+		if !sizeM.IsMeasured() {
+			if err := sizeM.atLeast(1, sizeM.Lit, ""); err != nil {
+				return nil, err
+			}
 		}
+		meta := map[string]any{}
+		sizeM.Meta(meta, "size")
 		return &ir.Node{
 			Prim:    "Chunk",
 			In:      in,
 			Out:     ir.List(ir.List(elem)),
-			Display: fmt.Sprintf("Chunk %d", size),
-			Meta:    map[string]any{"size": size},
+			Display: "Chunk " + sizeM.Describe(),
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				xs, err := ir.AsList(v)
 				if err != nil {
 					return nil, runtimeErr("Chunk", pos, "%v", err)
+				}
+				size, err := sizeM.Resolve(v)
+				if err != nil {
+					return nil, err
 				}
 				n := int64(len(xs))
 				out := make([]ir.Value, 0, (n+size-1)/size)

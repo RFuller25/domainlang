@@ -104,7 +104,9 @@ func TestLoopResolveErrors(t *testing.T) {
 		{
 			"repeat missing count",
 			"Cursed Energy: stdin\nShikigami: Ints\nSimple Domain: Repeat\n    Cursed Technique: Map Each\n        Using: (n) -> n\n",
-			"Repeat needs a count",
+			// Every measured argument reports the same shape: what it needs,
+			// the phrase spelling, then the named one.
+			"Repeat requires a count, e.g. Repeat 3",
 		},
 		{
 			"repeat negative count",

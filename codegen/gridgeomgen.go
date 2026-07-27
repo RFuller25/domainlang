@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"math"
 
 	"domain/ir"
 )
@@ -10,15 +11,29 @@ import (
 // a flat row-major slice, so each transform is one nested loop writing into a
 // freshly sized grid — the same arithmetic prims/gridgeom.go does.
 
-// emitRange builds the half-open [lo, hi) integer range. The bounds are
-// compile-time literals, so the length is known and the slice is allocated
-// exactly once.
+// emitRange builds the half-open [lo, hi) integer range. Literal bounds make
+// the length known, so the slice is allocated exactly once; measured bounds
+// are computed first and the capacity comes out of them.
 func (g *gen) emitRange(n *ir.Node, in string) (string, error) {
-	lo, _ := n.Meta["lo"].(int64)
-	hi, _ := n.Meta["hi"].(int64)
+	lo, err := g.measuredOperand(n, in, "lo", "Low", math.MinInt64)
+	if err != nil {
+		return "", err
+	}
+	hi, err := g.measuredOperand(n, in, "hi", "High", math.MinInt64)
+	if err != nil {
+		return "", err
+	}
+	if hasMeasured(n, "lo", "hi") {
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.wl("if %s < %s {", hi, lo)
+		g.in()
+		g.wl(`dmFail("bounds are half-open [%%d, %%d), so the high bound may not be below the low one", %s, %s)`, lo, hi)
+		g.out()
+		g.wl("}")
+	}
 	v, i := g.fresh("v"), g.fresh("i")
-	g.wl("%s := make([]int64, 0, %d)", v, hi-lo)
-	g.wl("for %s := int64(%d); %s < %d; %s++ {", i, lo, i, hi, i)
+	g.wl("%s := make([]int64, 0, %s-%s)", v, hi, lo)
+	g.wl("for %s := int64(%s); %s < %s; %s++ {", i, lo, i, hi, i)
 	g.in()
 	g.wl("%s = append(%s, %s)", v, v, i)
 	g.out()
@@ -29,10 +44,22 @@ func (g *gen) emitRange(n *ir.Node, in string) (string, error) {
 // emitSubgrid crops. The bounds are compile-time literals; the fit check is
 // not, since the grid's size comes from the input.
 func (g *gen) emitSubgrid(n *ir.Node, in string) (string, error) {
-	r0, _ := n.Meta["row"].(int64)
-	c0, _ := n.Meta["col"].(int64)
-	h, _ := n.Meta["height"].(int64)
-	w, _ := n.Meta["width"].(int64)
+	var op [4]string
+	for i, k := range [4]string{"row", "col", "height", "width"} {
+		name := [4]string{"Row", "Col", "Height", "Width"}[i]
+		// Height and width may not be negative; the origin's only constraint
+		// is the fit check below, which covers it.
+		min := int64(math.MinInt64)
+		if i >= 2 {
+			min = 0
+		}
+		s, err := g.measuredOperand(n, in, k, name, min)
+		if err != nil {
+			return "", err
+		}
+		op[i] = s
+	}
+	r0, c0, h, w := op[0], op[1], op[2], op[3]
 	gridGo, err := g.goType(n.Out)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
@@ -43,20 +70,20 @@ func (g *gen) emitSubgrid(n *ir.Node, in string) (string, error) {
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, r := g.fresh("v"), g.fresh("r")
-	g.wl("if %d < 0 || %d < 0 || %d+%d > int64(%s.rows) || %d+%d > int64(%s.cols) {",
+	g.wl("if %s < 0 || %s < 0 || %s+%s > int64(%s.rows) || %s+%s > int64(%s.cols) {",
 		r0, c0, r0, h, in, c0, w, in)
 	g.in()
-	g.wl(`dmFail("Subgrid: crop (%%d, %%d) %%dx%%d does not fit a %%dx%%d grid", int64(%d), int64(%d), int64(%d), int64(%d), int64(%s.rows), int64(%s.cols))`,
+	g.wl(`dmFail("Subgrid: crop (%%d, %%d) %%dx%%d does not fit a %%dx%%d grid", int64(%s), int64(%s), int64(%s), int64(%s), int64(%s.rows), int64(%s.cols))`,
 		r0, c0, h, w, in, in)
 	g.out()
 	g.wl("}")
 	g.wl("var %s %s", v, gridGo)
-	g.wl("%s.rows, %s.cols = %d, %d", v, v, h, w)
-	g.wl("%s.cells = make([]%s, 0, %d)", v, elemGo, h*w)
-	g.wl("for %s := int64(%d); %s < %d; %s++ {", r, r0, r, r0+h, r)
+	g.wl("%s.rows, %s.cols = int(%s), int(%s)", v, v, h, w)
+	g.wl("%s.cells = make([]%s, 0, int(%s)*int(%s))", v, elemGo, h, w)
+	g.wl("for %s := int64(%s); %s < int64(%s)+int64(%s); %s++ {", r, r0, r, r0, h, r)
 	g.in()
-	g.wl("%s.cells = append(%s.cells, %s.cells[%s*int64(%s.cols)+%d:%s*int64(%s.cols)+%d]...)",
-		v, v, in, r, in, c0, r, in, c0+w)
+	g.wl("%s.cells = append(%s.cells, %s.cells[%s*int64(%s.cols)+int64(%s):%s*int64(%s.cols)+int64(%s)+int64(%s)]...)",
+		v, v, in, r, in, c0, r, in, c0, w)
 	g.out()
 	g.wl("}")
 	return v, nil
@@ -64,7 +91,10 @@ func (g *gen) emitSubgrid(n *ir.Node, in string) (string, error) {
 
 // emitPadGrid surrounds the grid with a border of the Fill: literal.
 func (g *gen) emitPadGrid(n *ir.Node, in string) (string, error) {
-	pad, _ := n.Meta["n"].(int64)
+	pad, err := g.measuredOperand(n, in, "n", "Thickness", 0)
+	if err != nil {
+		return "", err
+	}
 	gridGo, err := g.goType(n.Out)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
@@ -73,18 +103,21 @@ func (g *gen) emitPadGrid(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	var fill string
-	switch f := n.Meta["fill"].(type) {
-	case string:
-		fill = goStr(f)
-	case int64:
-		fill = fmt.Sprintf("int64(%d)", f)
-	default:
+	fill, err := g.measuredLit(n, in, "fill", n.In, n.Out.Elem, func(f any) (string, error) {
+		switch x := f.(type) {
+		case string:
+			return goStr(x), nil
+		case int64:
+			return fmt.Sprintf("int64(%d)", x), nil
+		}
 		return "", unsupported(n, "Pad Grid needs an Int or Text Fill:")
+	})
+	if err != nil {
+		return "", err
 	}
 	v, i, r, c := g.fresh("v"), g.fresh("i"), g.fresh("r"), g.fresh("c")
 	g.wl("var %s %s", v, gridGo)
-	g.wl("%s.rows, %s.cols = %s.rows+%d, %s.cols+%d", v, v, in, 2*pad, in, 2*pad)
+	g.wl("%s.rows, %s.cols = %s.rows+2*int(%s), %s.cols+2*int(%s)", v, v, in, pad, in, pad)
 	g.wl("%s.cells = make([]%s, %s.rows*%s.cols)", v, elemGo, v, v)
 	g.wl("for %s := range %s.cells {", i, v)
 	g.in()
@@ -95,7 +128,7 @@ func (g *gen) emitPadGrid(n *ir.Node, in string) (string, error) {
 	g.in()
 	g.wl("for %s := 0; %s < %s.cols; %s++ {", c, c, in, c)
 	g.in()
-	g.wl("%s.cells[(%s+%d)*%s.cols+(%s+%d)] = %s.cells[%s*%s.cols+%s]",
+	g.wl("%s.cells[(%s+int(%s))*%s.cols+(%s+int(%s))] = %s.cells[%s*%s.cols+%s]",
 		v, r, pad, v, c, pad, in, r, in, c)
 	g.out()
 	g.wl("}")

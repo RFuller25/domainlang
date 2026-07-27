@@ -102,7 +102,24 @@ Style and hygiene (warnings):
   `Part` blocks do the revealing;
 - a `Part` whose body never `Reveal`s, so it produces no output;
 - two `Part` blocks sharing a label, which makes their output
-  indistinguishable.
+  indistinguishable;
+- a named argument the primitive on that line never read — `Sze: 3` on a
+  `Join`, or a `Size:` on a primitive that takes none. An unread argument is
+  silently dropped at runtime, so this is the quietest way to write a program
+  that does something other than what it says. The check asks the resolver
+  what happened rather than keeping a list of accepted names: `prims.ArgSet`
+  marks each argument as a primitive looks it up, so it can never drift from
+  what `Build` actually reads. It runs only over a program that resolved
+  cleanly, since a statement the resolver never reached never had the chance
+  to read anything;
+- an expression written into an operation phrase.
+  `Cursed Technique: Window length(xs) / 2` parses to the words
+  `[Window length xs]` plus the integer `2`, and every primitive reads only
+  the integer — so the line runs as `Window 2`. The test is a call shape, not
+  a name: the word must both name an expression builtin and be followed by
+  `(`, so a channel called `cells` is not mistaken for one. Expressions belong
+  in an indented lambda argument (`Size: (xs) -> length(xs) / 2`, see
+  [primitives.md](primitives.md#measured-arguments)).
 
 Performance hints:
 

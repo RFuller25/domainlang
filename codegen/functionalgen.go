@@ -57,16 +57,14 @@ func (g *gen) emitScan(n *ir.Node, in string) (string, error) {
 	}
 	g.wl("%s := make([]%s, len(%s))", v, accGo, in)
 
-	seed, seeded := n.Meta["seed"]
-	if seeded {
-		switch s := seed.(type) {
-		case int64:
-			g.wl("%s := int64(%d)", acc, s)
-		case string:
-			g.wl("%s := %s", acc, goStr(s))
-		default:
-			return "", unsupported(n, "seed of type %T", s)
+	_, hasLit := n.Meta["seed"]
+	_, hasExpr := n.Meta["seedExpr"]
+	if hasLit || hasExpr {
+		seed, err := g.measuredLit(n, in, "seed", n.In, n.Out.Elem, seedLit)
+		if err != nil {
+			return "", err
 		}
+		g.wl("var %s %s = %s", acc, accGo, seed)
 		g.wl("for %s, %s := range %s {", i, e, in)
 		g.in()
 		g.wl("%s = %s", acc, body)

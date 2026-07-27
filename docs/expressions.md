@@ -288,10 +288,12 @@ wording in both backends.
 ## What the expression layer does not have (yet)
 
 - **Record construction.** `Match Pattern` is still the only source of a
-  `Record`, so a fold whose accumulator is a small struct cannot be written.
-  `tuple` covers the positional case; a named-field constructor needs a new
-  argument form in the expression grammar and per-shape struct interning in
-  codegen.
+  `Record`, so a fold whose accumulator is a *named-field* struct cannot be
+  written. `tuple` covers the positional case, and a measured `Seed:` (see
+  [primitives.md](primitives.md#measured-arguments)) is what lets a fold
+  actually start from one — `Seed: (xs) -> tuple(0, 0)`. A named-field
+  constructor still needs a new argument form in the expression grammar and
+  per-shape struct interning in codegen.
 - **User-defined functions.** Shikigami operate at the pipeline layer instead,
   and are not recursive — see `Domain Expansion: Explore` in
   [primitives.md](primitives.md) for the search that replaces recursion.

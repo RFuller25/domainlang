@@ -413,22 +413,37 @@ var takeItem = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if len(op.Ints) == 0 {
-			return nil, &ResolveError{Pos: pos, Msg: "Take Item requires an index, e.g. Take Item 0"}
+		idxM, err := requireMeasuredInt(op, args, "Take Item", "Index", 0, NoBound, in, pos,
+			"an index", "Take Item 0")
+		if err != nil {
+			return nil, err
 		}
-		idx := int(op.Ints[0])
+		// A literal index keeps its `int` shape in Meta: two optimizer passes
+		// match on it (`Filter` + `Take Item 0`, `Sort` + `Take Item k`), and
+		// neither can carry a measured one — hasMeasuredArg stands them down.
+		meta := map[string]any{}
+		if idxM.IsMeasured() {
+			idxM.Meta(meta, "index")
+		} else {
+			meta["index"] = int(idxM.Lit)
+		}
 		return &ir.Node{
 			Prim:    "Take Item",
 			In:      in,
 			Out:     elem,
-			Display: fmt.Sprintf("Take Item %d", idx),
-			Meta:    map[string]any{"index": idx},
+			Display: "Take Item " + idxM.Describe(),
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				items, err := ir.AsList(v)
 				if err != nil {
 					return nil, runtimeErr("Take Item", pos, "%v", err)
 				}
+				n, err := idxM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				idx := int(n)
 				if idx < 0 || idx >= len(items) {
 					return nil, runtimeErr("Take Item", pos, "index %d out of range (length %d)", idx, len(items))
 				}

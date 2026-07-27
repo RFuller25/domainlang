@@ -8,6 +8,7 @@ import (
 
 	"domain/ast"
 	"domain/prims"
+	"domain/typecheck"
 )
 
 // Lint inspects a parsed program for hygiene problems (unused definitions,
@@ -27,8 +28,145 @@ func Lint(prog *ast.Program, src string) []Diagnostic {
 	lintImports(prog, add)
 	forEachSequence(prog, func(stmts []*ast.Statement) {
 		lintPatterns(stmts, add)
+		lintPhraseExpressions(stmts, add)
 	})
 	return ds
+}
+
+// lintResolved is the half of the linter that needs a *resolved* program: it
+// reads back what the resolver recorded on the tree. Analyze calls it only
+// when resolution succeeded, since a statement that never resolved never had
+// the chance to read its arguments.
+func lintResolved(prog *ast.Program, src string) []Diagnostic {
+	var ds []Diagnostic
+	add := func(d Diagnostic) {
+		d.LineText = lineAt(src, d.Pos.Line)
+		ds = append(ds, d)
+	}
+	lintUnusedArgs(prog, add)
+	return ds
+}
+
+// lintUnusedArgs warns about a named argument the primitive on that line never
+// read — `Size:` on a primitive that takes no size, or a misspelled `Usng:`.
+// Both are silently ignored at runtime, which makes them the language's
+// quietest way to write a program that does something other than what it says.
+//
+// prims.ArgSet marks each argument as it is looked up, so this asks the
+// resolver what happened rather than keeping a second table of accepted names.
+// Shikigami definition bodies are skipped: their statements are resolved as
+// substituted copies, and the originals are marked wholesale at substitution.
+func lintUnusedArgs(prog *ast.Program, add func(Diagnostic)) {
+	var walk func(stmts []*ast.Statement)
+	walk = func(stmts []*ast.Statement) {
+		for _, s := range stmts {
+			for _, a := range s.Args {
+				if a.Used {
+					continue
+				}
+				d := Diagnostic{
+					Severity: Warning, Code: "style", Pos: a.Pos,
+					Msg: fmt.Sprintf("%q ignores the argument %q", phraseOf(s), a.Name),
+					Help: fmt.Sprintf("delete the `%s:` line — nothing reads it, so it has no effect",
+						a.Name),
+				}
+				if want, ok := suggestArgName(s, a.Name); ok {
+					d.Help = fmt.Sprintf("did you mean `%s:`? nothing reads `%s:`, so it has no effect",
+						want, a.Name)
+				}
+				add(d)
+			}
+			if len(s.Block) > 0 {
+				walk(s.Block)
+			}
+		}
+	}
+	walk(prog.Statements)
+}
+
+// suggestArgName offers the argument the line probably meant: the closest
+// argument name in the language, by edit distance, excluding the ones this
+// statement already supplies. The candidate set is deliberately the whole
+// language rather than one primitive's own — which arguments a primitive reads
+// is a property of its Build function, not a declared list, and a misspelling
+// is the case this suggestion exists for.
+func suggestArgName(s *ast.Statement, got string) (string, bool) {
+	var open []string
+	for _, c := range prims.ArgNames() {
+		taken := false
+		for _, a := range s.Args {
+			if a.Name == c {
+				taken = true
+			}
+		}
+		if !taken {
+			open = append(open, c)
+		}
+	}
+	best, dist := closest(got, open)
+	if best == "" || dist > len(got)/2+1 {
+		return "", false
+	}
+	return best, true
+}
+
+// lintPhraseExpressions warns about an expression written into an operation
+// phrase, which the phrase scanner silently takes apart: `Window length(xs) /
+// 2` parses to the words [Window length xs] and the int 2, and every primitive
+// reads only the int — so the line runs as `Window 2`.
+//
+// The test is deliberately narrow: a phrase word that both names an
+// expression-layer builtin *and* is immediately followed by `(` in the source
+// text. A channel or loop variable that happens to be called `cells` is not a
+// call, and does not fire.
+func lintPhraseExpressions(stmts []*ast.Statement, add func(Diagnostic)) {
+	for _, s := range stmts {
+		if s.Op == nil {
+			continue
+		}
+		for _, w := range s.Op.Words {
+			if !isBuiltinCall(s.Op.Raw, w) {
+				continue
+			}
+			add(Diagnostic{
+				Severity: Warning, Code: "style", Pos: s.Pos,
+				Msg: fmt.Sprintf("%q looks like an expression, but an operation phrase holds literals only", s.Op.Raw),
+				Help: "the phrase layer keeps only the literal words and numbers here, " +
+					"so the rest of this line is discarded",
+				Notes: []string{
+					"expressions live in an indented lambda argument: `Using: (xs) -> …`",
+				},
+			})
+			break // one warning per line, however many calls it contains
+		}
+	}
+}
+
+// isBuiltinCall reports whether w names an expression builtin and appears in
+// raw as a call, `w(`. Builtin names are lowercase and themed phrase words are
+// capitalized, so the comparison is case-sensitive on purpose: the phrase word
+// `Sum` is the reduction, and `sum` is the builtin.
+func isBuiltinCall(raw, w string) bool {
+	found := false
+	for _, b := range typecheck.Builtins {
+		if b == w {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	return strings.Contains(raw, w+"(")
+}
+
+// phraseOf names the operation on a statement, for a message that points at
+// the line the reader is looking at.
+func phraseOf(s *ast.Statement) string {
+	if s.Op == nil {
+		return s.Keyword
+	}
+	return strings.TrimSpace(s.Op.Raw)
 }
 
 // forEachSequence visits every straight-line statement sequence: the top

@@ -31,10 +31,11 @@ var convertToSparseGrid = &Primitive{
 	Keyword: "Channeled Energy",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "Convert") && hasWord(op, "Sparse") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
-		def, defType, err := literalArg(args, "Default", pos)
+		defM, err := literalArg(args, "Default", in, pos)
 		if err != nil {
 			return nil, err
 		}
+		defType := defM.Type
 		point := ir.Tuple(ir.Int(), ir.Int())
 		switch {
 		case in != nil && in.Kind == ir.KGrid:
@@ -42,24 +43,24 @@ var convertToSparseGrid = &Primitive{
 				return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
 					"Convert To Sparse Grid: Default: is %s but the grid cells are %s", defType, in.Elem)}
 			}
-			return sparseFromGridNode(in, def, pos), nil
+			return sparseFromGridNode(in, defM, pos), nil
 		case in != nil && in.Kind == ir.KMap && in.Key.Equal(point):
 			if !in.Elem.Equal(defType) {
 				return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
 					"Convert To Sparse Grid: Default: is %s but the map values are %s", defType, in.Elem)}
 			}
-			return sparseFromMapNode(in, def, pos), nil
+			return sparseFromMapNode(in, defM, pos), nil
 		case in != nil && in.Kind == ir.KList &&
 			(in.Elem.Equal(point) || in.Elem.Equal(ir.List(ir.Int()))):
-			mark, markType, err := literalArg(args, "Mark", pos)
+			markM, err := literalArg(args, "Mark", in, pos)
 			if err != nil {
 				return nil, err
 			}
-			if !markType.Equal(defType) {
+			if !markM.Type.Equal(defType) {
 				return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-					"Convert To Sparse Grid: Mark: is %s but Default: is %s (they must match)", markType, defType)}
+					"Convert To Sparse Grid: Mark: is %s but Default: is %s (they must match)", markM.Type, defType)}
 			}
-			return sparseFromPointsNode(in, def, mark, defType, pos), nil
+			return sparseFromPointsNode(in, defM, markM, defType, pos), nil
 		default:
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
 				"Convert To Sparse Grid expects Grid<T>, Map<(Int, Int), V>, List<(Int, Int)>, or List<List<Int>> (two per row), got %s", in)}
@@ -67,33 +68,45 @@ var convertToSparseGrid = &Primitive{
 	},
 }
 
-// literalArg reads a required Int or Text literal argument, returning the
-// runtime value and its type. Sparse element types are pinned by these
-// literals, which is why Sparse<T> built by this primitive has T ∈ {Int, Text}
-// (the expression layer's sparse(d) builtin can seed any element type).
-func literalArg(args ArgSet, name string, pos token.Position) (ir.Value, *ir.Type, error) {
-	if n, ok := args.Int(name); ok {
-		return n, ir.Int(), nil
+// literalArg reads a required Int or Text argument, returning the runtime value
+// and its type. Sparse element types are pinned by it, which is why Sparse<T>
+// built by this primitive has T ∈ {Int, Text} (the expression layer's
+// sparse(d) builtin can seed any element type).
+//
+// It is a measured argument: a lambda over the current value works wherever
+// the literal does, and answers with the type its body produces — still
+// checked against the cells it has to match, so the Int/Text restriction holds
+// either way.
+func literalArg(args ArgSet, name string, in *ir.Type, pos token.Position) (MeasuredValue, error) {
+	m, err := measuredValue(args, "Convert To Sparse Grid", name, in, pos)
+	if err != nil {
+		return MeasuredValue{}, err
 	}
-	if s, ok := args.Text(name); ok {
-		return s, ir.Text(), nil
+	if !m.Type.Equal(ir.Int()) && !m.Type.Equal(ir.Text()) {
+		return MeasuredValue{}, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"Convert To Sparse Grid: %s: must be Int or Text, got %s", name, m.Type)}
 	}
-	return nil, nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-		"Convert To Sparse Grid requires %s: with an Int or Text literal", name)}
+	return m, nil
 }
 
-func sparseFromGridNode(in *ir.Type, def ir.Value, pos token.Position) *ir.Node {
+func sparseFromGridNode(in *ir.Type, defM MeasuredValue, pos token.Position) *ir.Node {
+	meta := map[string]any{"source": "grid"}
+	defM.Meta(meta, "default")
 	return &ir.Node{
 		Prim:    "Convert To Sparse Grid",
 		In:      in,
 		Out:     ir.Sparse(in.Elem),
 		Display: "Convert To Sparse Grid",
-		Meta:    map[string]any{"source": "grid", "default": def},
+		Meta:    meta,
 		Pos:     pos,
 		Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 			g, ok := v.(*ir.GridValue)
 			if !ok {
 				return nil, runtimeErr("Convert To Sparse Grid", pos, "expected Grid, got %s", ir.DescribeValue(v))
+			}
+			def, err := defM.Resolve(v)
+			if err != nil {
+				return nil, err
 			}
 			out := ir.NewSparseValue(def)
 			for r := 0; r < g.Rows; r++ {
@@ -109,18 +122,24 @@ func sparseFromGridNode(in *ir.Type, def ir.Value, pos token.Position) *ir.Node 
 	}
 }
 
-func sparseFromMapNode(in *ir.Type, def ir.Value, pos token.Position) *ir.Node {
+func sparseFromMapNode(in *ir.Type, defM MeasuredValue, pos token.Position) *ir.Node {
+	meta := map[string]any{"source": "map"}
+	defM.Meta(meta, "default")
 	return &ir.Node{
 		Prim:    "Convert To Sparse Grid",
 		In:      in,
 		Out:     ir.Sparse(in.Elem),
 		Display: "Convert To Sparse Grid",
-		Meta:    map[string]any{"source": "map", "default": def},
+		Meta:    meta,
 		Pos:     pos,
 		Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 			m, ok := v.(*ir.MapValue)
 			if !ok {
 				return nil, runtimeErr("Convert To Sparse Grid", pos, "expected Map, got %s", ir.DescribeValue(v))
+			}
+			def, err := defM.Resolve(v)
+			if err != nil {
+				return nil, err
 			}
 			out := ir.NewSparseValue(def)
 			for _, k := range m.Keys() {
@@ -141,18 +160,29 @@ func sparseFromMapNode(in *ir.Type, def ir.Value, pos token.Position) *ir.Node {
 	}
 }
 
-func sparseFromPointsNode(in *ir.Type, def, mark ir.Value, elem *ir.Type, pos token.Position) *ir.Node {
+func sparseFromPointsNode(in *ir.Type, defM, markM MeasuredValue, elem *ir.Type, pos token.Position) *ir.Node {
+	meta := map[string]any{"source": "points"}
+	defM.Meta(meta, "default")
+	markM.Meta(meta, "mark")
 	return &ir.Node{
 		Prim:    "Convert To Sparse Grid",
 		In:      in,
 		Out:     ir.Sparse(elem),
 		Display: "Convert To Sparse Grid (points)",
-		Meta:    map[string]any{"source": "points", "default": def, "mark": mark},
+		Meta:    meta,
 		Pos:     pos,
 		Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 			xs, err := ir.AsList(v)
 			if err != nil {
 				return nil, runtimeErr("Convert To Sparse Grid", pos, "%v", err)
+			}
+			def, err := defM.Resolve(v)
+			if err != nil {
+				return nil, err
+			}
+			mark, err := markM.Resolve(v)
+			if err != nil {
+				return nil, err
 			}
 			out := ir.NewSparseValue(def)
 			for i, x := range xs {

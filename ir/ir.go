@@ -301,6 +301,18 @@ type Node struct {
 	Eval      func(ctx *Context, in Value) (Value, error)
 }
 
+// MeasureFn resolves a *measured* argument — one written as a lambda over the
+// current value rather than as a literal (see prims/measure.go) — against the
+// value flowing into its node, bound check included, so a caller gets the same
+// number and the same error the primitive itself would.
+//
+// A node carrying one keeps it in Meta beside the lambda: the lambda is what
+// the compiler compiles, and this is what the interpreter runs. It exists as a
+// closure rather than as a call back into prims because the optimizer must be
+// able to move a measured argument onto a fused node, and prims' own internal
+// tests import the optimizer — so the dependency can only point one way.
+type MeasureFn func(Value) (int64, error)
+
 // MetaForeign marks a node whose Pos belongs to a source other than the
 // program file — the embedded prelude, or an imported library. Inlining copies
 // a Shikigami's body into the caller's pipeline carrying the *definition's*

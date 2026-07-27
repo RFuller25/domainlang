@@ -107,12 +107,13 @@ var scan = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		seedVal, accType, seeded, err := optionalSeed(args, pos)
+		seedM, seeded, err := optionalSeed(args, in, pos)
 		if err != nil {
 			return nil, err
 		}
-		if !seeded {
-			accType = elem
+		accType := elem
+		if seeded {
+			accType = seedM.Type
 		}
 		lam, err := requireLambda(args, 2, "Scan", pos)
 		if err != nil {
@@ -129,8 +130,8 @@ var scan = &Primitive{
 		meta := map[string]any{"lambda": lam}
 		display := "Scan"
 		if seeded {
-			meta["seed"] = seedVal
-			display = fmt.Sprintf("Scan (Seed: %s)", ir.FormatValue(seedVal))
+			seedM.Meta(meta, "seed")
+			display = fmt.Sprintf("Scan (Seed: %s)", seedM.Describe())
 		}
 		params := []*ir.Type{accType, elem}
 		return &ir.Node{
@@ -150,7 +151,9 @@ var scan = &Primitive{
 				var acc ir.Value
 				switch {
 				case seeded:
-					acc = seedVal
+					if acc, err = seedM.Resolve(v); err != nil {
+						return nil, err
+					}
 				case len(items) == 0:
 					return out, nil
 				default:
@@ -171,17 +174,18 @@ var scan = &Primitive{
 	},
 }
 
-// optionalSeed reads the Seed: argument the way foldSeed does, but tolerates
-// its absence — Scan and Reduce both have a defined meaning without one.
-func optionalSeed(args ArgSet, pos token.Position) (ir.Value, *ir.Type, bool, error) {
+// optionalSeed reads the Seed: argument the way foldSeed does — measured or
+// literal — but tolerates its absence: Scan and Reduce both have a defined
+// meaning without one.
+func optionalSeed(args ArgSet, in *ir.Type, pos token.Position) (MeasuredValue, bool, error) {
 	if !args.Has("Seed") {
-		return nil, nil, false, nil
+		return MeasuredValue{}, false, nil
 	}
-	v, t, err := foldSeed(args, pos)
+	m, err := measuredValue(args, "Scan", "Seed", in, pos)
 	if err != nil {
-		return nil, nil, false, err
+		return MeasuredValue{}, false, err
 	}
-	return v, t, true, nil
+	return m, true, nil
 }
 
 // ---------------------------------------------------------------------------

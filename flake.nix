@@ -1,7 +1,7 @@
 {
   description = "Domain — a JJK-themed language for Advent of Code: tree-walking interpreter plus an optimizing Go compiler backend, in one `domain` binary";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
 
   outputs = { self, nixpkgs }:
     let
@@ -10,19 +10,15 @@
         f system nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAllSystems (system: pkgs: let
-        # go.mod requires go >= 1.25; nixos-25.05's default `go` is 1.24.10,
-        # so pin the toolchain via `.override` (buildGoModule's `go` is a
-        # callPackage-bound argument, not a settable field on the derivation
-        # attrset below — passing `go = ...;` there is silently ignored).
-        buildGoModule = pkgs.buildGoModule.override { go = pkgs.go_1_25; };
-      in rec {
-        domain = buildGoModule {
+      packages = forAllSystems (system: pkgs: rec {
+        domain = pkgs.buildGoModule {
           pname = "domain";
           version = "0.3.0";
           src = self;
 
-          vendorHash = "sha256-VdBnS/3z3PRMoZ4vbtl7YBZrQcpG1pNQhVqkDRMFZ1Q=";
+          # Vendor hash covers charm.land/bubbletea/v2, charm.land/bubbles/v2,
+          # and their transitive dependencies (the REPL's line editor).
+          vendorHash = "sha256-bpBDuLmmHnhzKdddYlctIWKr+UKm3/oEQn5VAMfcZf8=";
           subPackages = [ "cmd/domain" ];
 
           # `domain <file> <args...>` (the compiler path) shells out to the
@@ -36,7 +32,7 @@
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postInstall = ''
             wrapProgram $out/bin/domain \
-              --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go_1_25 ]}
+              --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go ]}
           '';
 
           # The repo's test suite is an interpreter-vs-binary oracle: it
@@ -47,7 +43,7 @@
 
           meta = {
             description = "Describe what, let the compiler choose how — AoC pipeline language with algorithm-substituting optimizer and Go codegen";
-            homepage = "https://github.com/RFuller25/domainlang";
+            homepage = "https://github.com/RFuller25/domain";
             license = pkgs.lib.licenses.mit;
             mainProgram = "domain";
           };
@@ -73,7 +69,7 @@
 
       devShells = forAllSystems (system: pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.go_1_25 pkgs.gopls pkgs.gotools ];
+          packages = [ pkgs.go pkgs.gopls pkgs.gotools ];
         };
       });
 

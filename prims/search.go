@@ -24,12 +24,51 @@ import (
 // an ir.PQ (min-heap), and Connected Components on an ir.UnionFind.
 
 // startCoords reads the required "from R C" coordinates of a search phrase.
-func startCoords(op *ast.Operation, prim string, pos token.Position) (int64, int64, error) {
-	if len(op.Ints) < 2 {
-		return 0, 0, &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("%s requires start coordinates, e.g. %s from 0 0", prim, prim)}
+// Both are measured arguments (`Row:`, `Col:`), so a search can start from a
+// cell the grid itself names — `Row: (g) -> rows(g) / 2`. Neither has a lower
+// bound of its own: an out-of-bounds start is the search's own error, with the
+// wording it has always had.
+func startCoords(op *ast.Operation, args ArgSet, prim string, in *ir.Type, pos token.Position) (Measured, Measured, error) {
+	missing := &ResolveError{Pos: pos,
+		Msg: fmt.Sprintf("%s requires start coordinates, e.g. %s from 0 0", prim, prim)}
+	rowM, hasRow, err := measuredInt(op, args, prim, "Row", 0, NoBound, in, pos)
+	if err != nil {
+		return Measured{}, Measured{}, err
 	}
-	return op.Ints[0], op.Ints[1], nil
+	colM, hasCol, err := measuredInt(op, args, prim, "Col", 1, NoBound, in, pos)
+	if err != nil {
+		return Measured{}, Measured{}, err
+	}
+	if !hasRow || !hasCol {
+		return Measured{}, Measured{}, missing
+	}
+	return rowM, colM, nil
+}
+
+// startMeta writes a search's start onto its node, in whichever form each
+// coordinate arrived in. The pair travels together: fuseSearchTarget reads
+// both literals to bake the start into its fused node, and hasMeasuredArg
+// stands it down when either is measured.
+func startMeta(rowM, colM Measured, meta map[string]any) map[string]any {
+	rowM.Meta(meta, "row")
+	colM.Meta(meta, "col")
+	return meta
+}
+
+// resolveStart measures a search's start against the grid flowing in. An
+// out-of-bounds result is checkStart's error, not a bound error here: where
+// the start has to be is a property of the grid, which is exactly what
+// checkStart already says.
+func resolveStart(rowM, colM Measured, v ir.Value) (int64, int64, error) {
+	r, err := rowM.Resolve(v)
+	if err != nil {
+		return 0, 0, err
+	}
+	c, err := colM.Resolve(v)
+	if err != nil {
+		return 0, 0, err
+	}
+	return r, c, nil
 }
 
 // walkableMask evaluates a cell predicate over every cell of a grid; elem is
@@ -109,7 +148,7 @@ var bfs = &Primitive{
 		if in == nil || in.Kind != ir.KGrid {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("BFS expects a Grid, got %s", in)}
 		}
-		r, c, err := startCoords(op, "BFS", pos)
+		rowM, colM, err := startCoords(op, args, "BFS", in, pos)
 		if err != nil {
 			return nil, err
 		}
@@ -128,9 +167,9 @@ var bfs = &Primitive{
 			Prim:      "BFS",
 			In:        in,
 			Out:       ir.Grid(ir.Int()),
-			Display:   fmt.Sprintf("BFS from (%d, %d)", r, c),
+			Display:   fmt.Sprintf("BFS from (%s, %s)", rowM.Describe(), colM.Describe()),
 			Swappable: true,
-			Meta:      map[string]any{"row": r, "col": c, "lambda": lam, "diagonal": diagonal},
+			Meta:      startMeta(rowM, colM, map[string]any{"lambda": lam, "diagonal": diagonal}),
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
@@ -138,6 +177,10 @@ var bfs = &Primitive{
 					return nil, runtimeErr("BFS", pos, "expected Grid, got %s", ir.DescribeValue(v))
 				}
 				mask, err := walkableMask(g, lam, in.Elem, "BFS", pos)
+				if err != nil {
+					return nil, err
+				}
+				r, c, err := resolveStart(rowM, colM, v)
 				if err != nil {
 					return nil, err
 				}
@@ -187,7 +230,7 @@ var dijkstra = &Primitive{
 			return nil, &ResolveError{Pos: pos,
 				Msg: fmt.Sprintf("Dijkstra expects Grid<Int> (cell entry costs), got %s", in)}
 		}
-		r, c, err := startCoords(op, "Dijkstra", pos)
+		rowM, colM, err := startCoords(op, args, "Dijkstra", in, pos)
 		if err != nil {
 			return nil, err
 		}
@@ -199,9 +242,9 @@ var dijkstra = &Primitive{
 			Prim:      "Dijkstra",
 			In:        want,
 			Out:       want,
-			Display:   fmt.Sprintf("Dijkstra from (%d, %d)", r, c),
+			Display:   fmt.Sprintf("Dijkstra from (%s, %s)", rowM.Describe(), colM.Describe()),
 			Swappable: true,
-			Meta:      map[string]any{"row": r, "col": c, "diagonal": diagonal},
+			Meta:      startMeta(rowM, colM, map[string]any{"diagonal": diagonal}),
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
@@ -213,6 +256,10 @@ var dijkstra = &Primitive{
 						return nil, runtimeErr("Dijkstra", pos,
 							"cell %d has a negative or non-Int cost (%s)", i, ir.FormatValue(cell))
 					}
+				}
+				r, c, err := resolveStart(rowM, colM, v)
+				if err != nil {
+					return nil, err
 				}
 				if err := checkStart(g, r, c, nil, "Dijkstra", "", pos); err != nil {
 					return nil, err
@@ -257,7 +304,7 @@ var floodFill = &Primitive{
 		if in == nil || in.Kind != ir.KGrid {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("Flood Fill expects a Grid, got %s", in)}
 		}
-		r, c, err := startCoords(op, "Flood Fill", pos)
+		rowM, colM, err := startCoords(op, args, "Flood Fill", in, pos)
 		if err != nil {
 			return nil, err
 		}
@@ -276,9 +323,9 @@ var floodFill = &Primitive{
 			Prim:      "Flood Fill",
 			In:        in,
 			Out:       ir.Grid(ir.Int()),
-			Display:   fmt.Sprintf("Flood Fill from (%d, %d)", r, c),
+			Display:   fmt.Sprintf("Flood Fill from (%s, %s)", rowM.Describe(), colM.Describe()),
 			Swappable: true,
-			Meta:      map[string]any{"row": r, "col": c, "lambda": lam, "diagonal": diagonal},
+			Meta:      startMeta(rowM, colM, map[string]any{"lambda": lam, "diagonal": diagonal}),
 			Pos:       pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
@@ -286,6 +333,10 @@ var floodFill = &Primitive{
 					return nil, runtimeErr("Flood Fill", pos, "expected Grid, got %s", ir.DescribeValue(v))
 				}
 				mask, err := walkableMask(g, lam, in.Elem, "Flood Fill", pos)
+				if err != nil {
+					return nil, err
+				}
+				r, c, err := resolveStart(rowM, colM, v)
 				if err != nil {
 					return nil, err
 				}

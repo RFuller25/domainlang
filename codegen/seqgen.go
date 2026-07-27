@@ -11,20 +11,26 @@ import (
 // prims/seq.go / prims/channel.go.
 
 func (g *gen) emitWindow(n *ir.Node, in string) (string, error) {
-	size, _ := n.Meta["size"].(int64)
-	step, _ := n.Meta["step"].(int64)
-	if size < 1 || step < 1 {
-		return "", unsupported(n, "missing window metadata")
-	}
 	elemGo, err := g.goType(n.In.Elem)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
+	// Both operands are read before the loop, in the order the interpreter
+	// measures them, so a program whose Size: fails and whose Step: would also
+	// fail reports the same one in both backends.
+	size, err := g.measuredOperand(n, in, "size", "Size", 1)
+	if err != nil {
+		return "", err
+	}
+	step, err := g.measuredOperand(n, in, "step", "Step", 1)
+	if err != nil {
+		return "", err
+	}
 	v, i := g.fresh("v"), g.fresh("i")
 	g.wl("%s := [][]%s{}", v, elemGo)
-	g.wl("for %s := int64(0); %s+%d <= int64(len(%s)); %s += %d {", i, i, size, in, i, step)
+	g.wl("for %s := int64(0); %s+%s <= int64(len(%s)); %s += %s {", i, i, size, in, i, step)
 	g.in()
-	g.wl("%s = append(%s, append([]%s(nil), %s[%s:%s+%d]...))", v, v, elemGo, in, i, i, size)
+	g.wl("%s = append(%s, append([]%s(nil), %s[%s:%s+%s]...))", v, v, elemGo, in, i, i, size)
 	g.out()
 	g.wl("}")
 	return v, nil
@@ -34,11 +40,14 @@ func (g *gen) emitWindow(n *ir.Node, in string) (string, error) {
 // streaming rewrite (optimizer.fuseWindowReduce): prefix sums inline for sum,
 // the shared monotonic-deque helper for max/min.
 func (g *gen) emitWindowedReduce(n *ir.Node, in string) (string, error) {
-	size, _ := n.Meta["size"].(int64)
-	step, _ := n.Meta["step"].(int64)
 	op, _ := n.Meta["op"].(string)
-	if size < 1 || step < 1 {
-		return "", unsupported(n, "missing window metadata")
+	size, err := g.measuredOperand(n, in, "size", "Size", 1)
+	if err != nil {
+		return "", err
+	}
+	step, err := g.measuredOperand(n, in, "step", "Step", 1)
+	if err != nil {
+		return "", err
 	}
 	v := g.fresh("v")
 	switch op {
@@ -51,25 +60,25 @@ func (g *gen) emitWindowedReduce(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 		g.wl("%s := []int64{}", v)
-		g.wl("for %s := int64(0); %s+%d <= int64(len(%s)); %s += %d {", i, i, size, in, i, step)
+		g.wl("for %s := int64(0); %s+%s <= int64(len(%s)); %s += %s {", i, i, size, in, i, step)
 		g.in()
-		g.wl("%s = append(%s, %s[%s+%d]-%s[%s])", v, v, pre, i, size, pre, i)
+		g.wl("%s = append(%s, %s[%s+%s]-%s[%s])", v, v, pre, i, size, pre, i)
 		g.out()
 		g.wl("}")
 		return v, nil
 	case "max", "min":
 		g.helper("dmSlidingExtremum", declSlidingExtremum)
-		g.wl("%s := dmSlidingExtremum(%s, %d, %d, %v)", v, in, size, step, op == "min")
+		g.wl("%s := dmSlidingExtremum(%s, %s, %s, %v)", v, in, size, step, op == "min")
 		return v, nil
 	case "product":
 		// No prefix trick survives a zero, so this is the honest per-window
 		// scan — it still never materializes the windows.
 		i, p, x := g.fresh("i"), g.fresh("p"), g.fresh("x")
 		g.wl("%s := []int64{}", v)
-		g.wl("for %s := int64(0); %s+%d <= int64(len(%s)); %s += %d {", i, i, size, in, i, step)
+		g.wl("for %s := int64(0); %s+%s <= int64(len(%s)); %s += %s {", i, i, size, in, i, step)
 		g.in()
 		g.wl("%s := int64(1)", p)
-		g.wl("for _, %s := range %s[%s : %s+%d] {", x, in, i, i, size)
+		g.wl("for _, %s := range %s[%s : %s+%s] {", x, in, i, i, size)
 		g.in()
 		g.wl("%s *= %s", p, x)
 		g.out()
@@ -601,11 +610,14 @@ func (g *gen) emitSplitIntsFold(sep byte, foldNode *ir.Node, in string) (string,
 // emitWindowedReduceSum lowers WindowedReduce immediately followed by Sum: the
 // per-window extremum/sum is accumulated into a scalar, never a []int64.
 func (g *gen) emitWindowedReduceSum(n *ir.Node, in string) (string, error) {
-	size, _ := n.Meta["size"].(int64)
-	step, _ := n.Meta["step"].(int64)
 	op, _ := n.Meta["op"].(string)
-	if size < 1 || step < 1 {
-		return "", unsupported(n, "missing window metadata")
+	size, err := g.measuredOperand(n, in, "size", "Size", 1)
+	if err != nil {
+		return "", err
+	}
+	step, err := g.measuredOperand(n, in, "step", "Step", 1)
+	if err != nil {
+		return "", err
 	}
 	v := g.fresh("v")
 	switch op {
@@ -618,23 +630,23 @@ func (g *gen) emitWindowedReduceSum(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 		g.wl("var %s int64", v)
-		g.wl("for %s := int64(0); %s+%d <= int64(len(%s)); %s += %d {", i, i, size, in, i, step)
+		g.wl("for %s := int64(0); %s+%s <= int64(len(%s)); %s += %s {", i, i, size, in, i, step)
 		g.in()
-		g.wl("%s += %s[%s+%d]-%s[%s]", v, pre, i, size, pre, i)
+		g.wl("%s += %s[%s+%s]-%s[%s]", v, pre, i, size, pre, i)
 		g.out()
 		g.wl("}")
 		return v, nil
 	case "max", "min":
 		g.helper("dmSlidingExtremumSum", declSlidingExtremumSum)
-		g.wl("%s := dmSlidingExtremumSum(%s, %d, %d, %v)", v, in, size, step, op == "min")
+		g.wl("%s := dmSlidingExtremumSum(%s, %s, %s, %v)", v, in, size, step, op == "min")
 		return v, nil
 	case "product":
 		i, p, x := g.fresh("i"), g.fresh("p"), g.fresh("x")
 		g.wl("var %s int64", v)
-		g.wl("for %s := int64(0); %s+%d <= int64(len(%s)); %s += %d {", i, i, size, in, i, step)
+		g.wl("for %s := int64(0); %s+%s <= int64(len(%s)); %s += %s {", i, i, size, in, i, step)
 		g.in()
 		g.wl("%s := int64(1)", p)
-		g.wl("for _, %s := range %s[%s : %s+%d] {", x, in, i, i, size)
+		g.wl("for _, %s := range %s[%s : %s+%s] {", x, in, i, i, size)
 		g.in()
 		g.wl("%s *= %s", p, x)
 		g.out()

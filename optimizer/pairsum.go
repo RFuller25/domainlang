@@ -19,6 +19,9 @@ func fuseAllPairsSum(p *ir.Pipeline) []Rewrite {
 		if n.Prim != "All Pairs" {
 			continue
 		}
+		if hasMeasuredArg(n) {
+			continue // the arity this rewrite assumes must be a constant
+		}
 		if k, _ := n.Meta["k"].(int); k != 2 {
 			continue
 		}

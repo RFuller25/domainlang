@@ -37,18 +37,20 @@ var slidingReduce = &Primitive{
 		if !in.Equal(want) {
 			return nil, typeErr(pos, "Sliding Reduce", want, in)
 		}
-		if len(op.Ints) == 0 {
-			return nil, &ResolveError{Pos: pos,
-				Msg: "Sliding Reduce requires a window size, e.g. Sliding Reduce 3"}
+		sizeM, err := requireMeasuredInt(op, args, "Sliding Reduce", "Size", 0, 1, in, pos,
+			"a window size", "Sliding Reduce 3")
+		if err != nil {
+			return nil, err
 		}
-		size := op.Ints[0]
-		step := int64(1)
-		if len(op.Ints) > 1 {
-			step = op.Ints[1]
+		stepM, ok, err := measuredInt(op, args, "Sliding Reduce", "Step", 1, 1, in, pos)
+		if err != nil {
+			return nil, err
 		}
-		if size < 1 || step < 1 {
-			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Sliding Reduce size and step must be >= 1, got size %d step %d", size, step)}
+		if !ok {
+			stepM = Measured{Lit: 1, Min: 1, Prim: "Sliding Reduce", Name: "Step", Pos: pos}
+		}
+		if err := checkLiteralBounds(sizeM, stepM); err != nil {
+			return nil, err
 		}
 		mode, _ := args.Ident("Mode")
 		if mode == "" {
@@ -60,8 +62,11 @@ var slidingReduce = &Primitive{
 				"Sliding Reduce Mode must be Sum, Max, Min, or Product (got %q)", mode)}
 		}
 
-		display := fmt.Sprintf("Cursed Sliding-Window %s (size %d, step %d)",
-			slidingDisplay[op2], size, step)
+		display := fmt.Sprintf("Cursed Sliding-Window %s (size %s, step %s)",
+			slidingDisplay[op2], sizeM.Describe(), stepM.Describe())
+		meta := map[string]any{"op": op2}
+		sizeM.Meta(meta, "size")
+		stepM.Meta(meta, "step")
 		return &ir.Node{
 			// The same Prim the optimizer's fusion produces, so the two share
 			// one Go lowering and one set of parity tests.
@@ -70,9 +75,9 @@ var slidingReduce = &Primitive{
 			Out:       want,
 			Display:   display,
 			Swappable: true,
-			Meta:      map[string]any{"size": size, "step": step, "op": op2},
+			Meta:      meta,
 			Pos:       pos,
-			Eval:      slidingEval(op2, size, step, pos),
+			Eval:      slidingEval(op2, sizeM, stepM, pos),
 		}, nil
 	},
 }
@@ -90,11 +95,19 @@ var slidingDisplay = map[string]string{
 	"sum": "Sum", "max": "Max", "min": "Min", "product": "Product",
 }
 
-func slidingEval(op string, size, step int64, pos token.Position) func(*ir.Context, ir.Value) (ir.Value, error) {
+func slidingEval(op string, sizeM, stepM Measured, pos token.Position) func(*ir.Context, ir.Value) (ir.Value, error) {
 	return func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 		xs, err := ir.AsIntSlice(v)
 		if err != nil {
 			return nil, runtimeErr("Sliding Reduce", pos, "%v", err)
+		}
+		size, err := sizeM.Resolve(v)
+		if err != nil {
+			return nil, err
+		}
+		step, err := stepM.Resolve(v)
+		if err != nil {
+			return nil, err
 		}
 		switch op {
 		case "sum":

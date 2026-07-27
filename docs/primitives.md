@@ -45,7 +45,14 @@ Cursed Technique: Split Text by "\n\n"
 ```
 
 Splits on the required separator string. An empty separator (`""`) splits
-into individual characters (runes).
+into individual characters (runes). The separator is a
+[measured argument](#measured-arguments) (`By:`), so a program that has to
+look at the text before it knows how to split it can:
+
+```domain
+Cursed Technique: Split
+    By: (t) -> if indexof(t, "\t") >= 0 then "\t" else ","
+```
 
 ### Split Each — `List<Text> -> List<List<Text>>`
 
@@ -148,6 +155,78 @@ Fully-contained sliding windows (a list shorter than the window yields
 none). Size and step must be ≥ 1. The 2021 D1 idiom is `Window 2` +
 `Count Matching (w) -> last(w) > first(w)`.
 
+Size and step are **measured arguments**: either the literal above, or
+`Size:`/`Step:` holding a lambda over the current list (see
+[below](#measured-arguments)).
+
+```domain
+Cursed Technique: Window
+    Size: (xs) -> length(xs) / 2     # windows half the list long
+```
+
+### Measured arguments
+
+An argument a phrase takes as a literal may instead be written as an indented
+named argument holding a **lambda over the current value**, so it can depend on
+the data flowing through the pipe rather than on the source:
+
+| Primitive | phrase form | measured form |
+|---|---|---|
+| `Window` | `Window SIZE [STEP]` | `Size:`, `Step:` |
+| `Chunk` | `Chunk SIZE` | `Size:` |
+| `Sliding Reduce` | `Sliding Reduce SIZE [STEP]` | `Size:`, `Step:` |
+| `Select Top K` | `Select Top K` | `Count:` |
+| `Take Item` | `Take Item I` | `Index:` |
+| `Iterate` | `Iterate N` | `Times:` |
+| `Repeat` (`Simple Domain`) | `Repeat N` | `Times:` |
+| `Range` | `Range [LO] HI` | `Low:`, `High:` |
+| `Binding Vow: Count Equals` | `Count Equals N` | `Count:` |
+| `Split` / `Split Each` | `Split Text by "SEP"` | `By:` (Text) |
+| `Join` | `Join "SEP"` | `With:` (Text) |
+| `Pad Grid` | — | `Fill:` (the cell type) |
+| `Convert To Sparse Grid` | — | `Default:`, `Mark:` (the cell type) |
+| `Fold` / `Scan` | — | `Seed:` (the accumulator type) |
+| `Subgrid` | `Subgrid R C H W` | `Row:`, `Col:`, `Height:`, `Width:` |
+| `Pad Grid` | `Pad Grid N` | `Thickness:` |
+| `BFS` / `Dijkstra` / `Flood Fill` | `… from R C` | `Row:`, `Col:` |
+
+The rules, which are the same for every measured argument:
+
+- the lambda takes **one parameter, the whole current value** — the binding
+  `Apply` gives its lambda — plus one trailing parameter per enclosing `For`
+  loop, exactly as a `Using:` lambda does there. It must return the slot's own
+  type — `Int` for a count, `Text` for a separator, the cell type for a fill or
+  a default (which is checked against the value it has to match, exactly as a
+  literal's type is);
+- the same named slot also accepts a plain literal (`Size: 3`). A slot written
+  **both** ways — `Window 3` with a `Size:` under it — is a resolve error
+  rather than a silent win for either spelling;
+- it is evaluated **once per execution of the statement**, before the
+  primitive runs. Inside a loop that means once per lap, which is the point: a
+  `Window` over a list that shrinks each lap re-measures each lap;
+- an argument with no bound of its own is checked where it always was: a
+  measured `Take Item` index is range-checked against the list (`index 99 out
+  of range (length 3)`), and a measured `Range` pair against each other;
+- bounds move with the value. `Window 0` is a resolve error as it always was;
+  a `Size:` that *measures* 0 can only fail once it has been measured, so it
+  is a runtime error naming what it measured and from what. It is an error and
+  not a clamp — a window silently widened to 1 is a wrong answer that looks
+  right. The guard is writable: `Size: (xs) -> max(1, length(xs) / 2)`;
+- a measured argument is invisible to the optimizer's constant folding. The
+  two rewrites whose fused nodes take the value as data (`Window` + a reduce,
+  `Sort` + `Select Top K`) carry it through and still fire; the rewrites that
+  are valid *because* of what the literal is stand down — see
+  [optimizer.md](optimizer.md#measured-arguments-and-the-passes-that-fold-literals).
+
+Arguments that *type* the program stay literal and always will: the `k` of
+`Combinations k` (it fixes the `Using:` lambda's arity) and a `Match Pattern`
+template (it fixes the output `Record`'s fields) are decisions the resolver
+makes, not data.
+
+A measured argument reaches a `Shikigami` through a lambda parameter — declare
+it as the function the slot takes and hand it over (see
+[language.md](language.md#parameters)).
+
 ### Flatten — `List<List<T>> -> List<T>`
 
 Concatenates the groups in order.
@@ -187,7 +266,8 @@ Cursed Technique: Chunk 3
 Consecutive non-overlapping blocks of the given size, **keeping a short final
 block**. That is the difference from `Window 3 3`, which drops a trailing
 partial window — usually a bug rather than the intent. Size must be ≥ 1; a
-list shorter than the size yields one block holding all of it.
+list shorter than the size yields one block holding all of it. Size is a
+[measured argument](#measured-arguments): `Size: (xs) -> length(xs) / 3`.
 
 ### Take While / Drop While — `List<T> × (T -> Bool) -> List<T>`
 
@@ -328,7 +408,11 @@ Cursed Technique: Range 1 16     # [1, …, 15]
 ```
 
 The half-open integer range `[lo, hi)`, replacing the current value (like
-`Combine` and `Zip`, which also ignore it). Half-open **deliberately**:
+`Combine` and `Zip`, which also ignore it). The bounds are
+[measured arguments](#measured-arguments) — `Low:` and `High:` — and this is
+where that matters most: `Range` discards its input, so
+`High: (xs) -> length(xs)` is a range sized from the data that no literal
+spelling can express. Half-open **deliberately**:
 `range(N)` in a `For` header already means `0..N-1`, and two meanings of
 "range" in one language would be worse than the occasional `Range 1 16`. It
 also matches `slice`, `take` and `drop`. An inverted range is a resolve error.
@@ -553,6 +637,10 @@ length; the `, Sum` modifier sums them. Directly after a `Sort`, the
 optimizer fuses the pair into a quickselect — see
 [optimizer.md](optimizer.md).
 
+The count is a [measured argument](#measured-arguments) (`Count:`), and the
+quickselect survives it: `TopK` takes the count as data, so the fused node
+measures it at run time like any other argument.
+
 ### Fold — `List<T> × Seed × (Acc, T -> Acc) -> Acc`
 
 ```domain
@@ -561,11 +649,22 @@ Maximum Technique: Fold
     Using: (acc, x) -> acc * 2 + x
 ```
 
-`Seed:` is an Int or Text literal and fixes the accumulator type; the lambda
-must return that same type. Two variations live nearby: [Reduce](#reduce) is
-the same left fold seeded by the first element instead (so the accumulator
-can be any type), and [Scan](#scan) keeps every intermediate accumulator
-rather than only the last.
+`Seed:` fixes the accumulator type and the lambda must return that same type.
+Written as a literal it is an Int or Text — the two a named argument can
+spell — but it is a [measured argument](#measured-arguments), and that is the
+one place measuring *widens* a primitive rather than only moving where its
+value comes from: a measured seed takes its type from the lambda body, so the
+accumulator can be a composite.
+
+```domain
+Maximum Technique: Fold
+    Seed: (xs) -> tuple(0, 0)                                  # (sum, count)
+    Using: (acc, x) -> tuple(prow(acc) + x, pcol(acc) + 1)
+```
+
+Two variations live nearby: [Reduce](#reduce) is the same left fold seeded by
+the first element instead, and [Scan](#scan) keeps every intermediate
+accumulator rather than only the last (its `Seed:` measures the same way).
 
 **Fold as a channel consumer.** With `From:` naming one channel, Fold runs
 over the *channel's* list and the **current pipeline value is the seed** —

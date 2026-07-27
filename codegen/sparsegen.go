@@ -28,9 +28,9 @@ func sparseLit(v any) (string, error) {
 
 func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) (string, error) {
 	source, _ := n.Meta["source"].(string)
-	def, err := sparseLit(n.Meta["default"])
+	def, err := g.measuredLit(n, in, "default", n.In, n.Out.Elem, sparseLit)
 	if err != nil {
-		return "", unsupported(n, "%v", err)
+		return "", err
 	}
 	elemGo, err := g.goType(n.Out.Elem)
 	if err != nil {
@@ -65,7 +65,7 @@ func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 	case "points":
-		mark, err := sparseLit(n.Meta["mark"])
+		mark, err := g.measuredLit(n, in, "mark", n.In, n.Out.Elem, sparseLit)
 		if err != nil {
 			return "", unsupported(n, "%v", err)
 		}

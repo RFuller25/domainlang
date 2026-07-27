@@ -26,6 +26,9 @@ func fuseSortTakeItem(p *ir.Pipeline) []Rewrite {
 		if a.Prim != "Sort" || b.Prim != "Take Item" || !isIntList(a.In) {
 			return nil, "", false
 		}
+		if hasMeasuredArg(b) {
+			return nil, "", false // the rewrite is only valid for a known index
+		}
 		desc, _ := a.Meta["desc"].(bool)
 		idx, ok := b.Meta["index"].(int)
 		if !ok {
@@ -79,6 +82,9 @@ func fuseTripleSum(p *ir.Pipeline) []Rewrite {
 		for _, n := range list {
 			if n.Prim != "Combinations" {
 				continue
+			}
+			if hasMeasuredArg(n) {
+				continue // the arity this rewrite assumes must be a constant
 			}
 			if k, _ := n.Meta["k"].(int); k != 3 {
 				continue
@@ -238,6 +244,9 @@ func fusePairDiff(p *ir.Pipeline) []Rewrite {
 		for _, n := range list {
 			if n.Prim != "All Pairs" {
 				continue
+			}
+			if hasMeasuredArg(n) {
+				continue // the arity this rewrite assumes must be a constant
 			}
 			if k, _ := n.Meta["k"].(int); k != 2 {
 				continue

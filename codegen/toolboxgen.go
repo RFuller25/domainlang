@@ -107,10 +107,13 @@ func (g *gen) emitRaggedColumns(n *ir.Node, in string) (string, error) {
 }
 
 func (g *gen) emitJoin(n *ir.Node, in string) (string, error) {
-	sep, _ := n.Meta["sep"].(string)
+	sep, err := g.measuredText(n, in, "sep", n.In)
+	if err != nil {
+		return "", err
+	}
 	g.imp("strings")
 	v := g.fresh("v")
-	g.wl("%s := strings.Join(%s, %s)", v, in, goStr(sep))
+	g.wl("%s := strings.Join(%s, %s)", v, in, sep)
 	return v, nil
 }
 

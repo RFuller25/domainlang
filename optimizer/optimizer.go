@@ -128,8 +128,16 @@ func fuseSortThenTopK(p *ir.Pipeline) []Rewrite {
 		n := p.Nodes[i]
 		if i+1 < len(p.Nodes) && n.Prim == "Sort" && p.Nodes[i+1].Prim == "SelectTopK" && isIntList(n.In) {
 			next := p.Nodes[i+1]
+			// TopK takes k as an ordinary value, so a measured count is carried
+			// onto the fused node rather than folded. Reading it through readArg
+			// is what makes that safe: a count in neither form stops the rewrite
+			// instead of arriving as a plausible zero.
+			k, ok := readArg(next, "k")
+			if !ok {
+				out = append(out, n)
+				continue
+			}
 			desc, _ := n.Meta["desc"].(bool)
-			k, _ := next.Meta["k"].(int64)
 			thenSum, _ := next.Meta["sum"].(bool)
 
 			fused := newPartialSelect(n, next, k, desc, thenSum)
@@ -141,8 +149,8 @@ func fuseSortThenTopK(p *ir.Pipeline) []Rewrite {
 			}
 			rewrites = append(rewrites, Rewrite{
 				Message: fmt.Sprintf(
-					"Domain rewrote Quicksort (%s) + Top %d → Cursed Quickselect. Guaranteed hit.",
-					order, k),
+					"Domain rewrote Quicksort (%s) + Top %s → Cursed Quickselect. Guaranteed hit.",
+					order, k.describe()),
 			})
 			i++ // consume the SelectTopK node too
 			continue
@@ -156,24 +164,30 @@ func fuseSortThenTopK(p *ir.Pipeline) []Rewrite {
 
 // newPartialSelect builds the fused node. Its output is guaranteed identical to
 // running Sort then SelectTopK, but it avoids a full sort of the input.
-func newPartialSelect(sortNode, topNode *ir.Node, k int64, desc, thenSum bool) *ir.Node {
-	display := fmt.Sprintf("Cursed Quickselect: Top %d", k)
+func newPartialSelect(sortNode, topNode *ir.Node, k arg, desc, thenSum bool) *ir.Node {
+	display := fmt.Sprintf("Cursed Quickselect: Top %s", k.describe())
 	if thenSum {
 		display += ", Sum"
 	}
+	meta := map[string]any{"desc": desc, "sum": thenSum}
+	k.writeMeta(meta, "k")
 	return &ir.Node{
 		Prim:    "PartialSelect",
 		In:      sortNode.In,
 		Out:     topNode.Out,
 		Display: display,
-		Meta:    map[string]any{"k": k, "desc": desc, "sum": thenSum},
+		Meta:    meta,
 		Pos:     sortNode.Pos,
 		Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 			xs, err := ir.AsIntSlice(v)
 			if err != nil {
 				return nil, &ir.RuntimeError{Prim: "PartialSelect", Pos: sortNode.Pos, Msg: err.Error()}
 			}
-			top := TopK(xs, int(k), desc)
+			kk, err := k.value(v)
+			if err != nil {
+				return nil, err
+			}
+			top := TopK(xs, int(kk), desc)
 			if thenSum {
 				var s int64
 				for _, x := range top {

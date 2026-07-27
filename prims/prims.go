@@ -35,9 +35,16 @@ type ArgSet struct {
 	args []*ast.Arg
 }
 
+// get finds a named argument and records that some primitive asked for it.
+// Every typed accessor goes through here, so "was this argument ever read?"
+// is answered by the resolver itself rather than by a table of accepted names
+// per primitive that could drift from what Build actually reads. The mark
+// lands on the AST node (ArgSet holds pointers), which is where diag's
+// unused-argument lint reads it back.
 func (a ArgSet) get(name string) (ast.ArgValue, bool) {
 	for _, arg := range a.args {
 		if arg.Name == name {
+			arg.Used = true
 			return arg.Value, true
 		}
 	}
@@ -116,6 +123,24 @@ func (a ArgSet) Idents(name string) ([]string, bool) {
 		}
 	}
 	return nil, false
+}
+
+// argNames is every named argument the vocabulary reads, for the linter's
+// "did you mean" on a misspelled one. It is documentation, not dispatch:
+// nothing consults it to decide whether an argument is valid (ArgSet records
+// the reads that actually happen), so a name missing here costs a suggestion
+// and nothing else. A test pins it against the names the registry looks up.
+var argNames = []string{
+	"By", "Col", "Count", "Default", "Fill", "From", "Height", "High", "Index",
+	"Low", "Mark", "Mode", "Row", "Seed", "Size", "Step", "Thickness", "Times",
+	"Until", "Using", "While", "Width", "With", "Zip",
+}
+
+// ArgNames returns the named arguments the vocabulary understands, sorted.
+func ArgNames() []string {
+	out := append([]string(nil), argNames...)
+	sort.Strings(out)
+	return out
 }
 
 // Registry is the ordered list of primitives. Order matters: more specific

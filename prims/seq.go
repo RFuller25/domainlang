@@ -31,33 +31,47 @@ var window = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if len(op.Ints) == 0 {
-			return nil, &ResolveError{Pos: pos, Msg: "Window requires a size, e.g. Window 3"}
+		sizeM, err := requireMeasuredInt(op, args, "Window", "Size", 0, 1, in, pos, "a size", "Window 3")
+		if err != nil {
+			return nil, err
 		}
-		size := op.Ints[0]
-		step := int64(1)
-		if len(op.Ints) > 1 {
-			step = op.Ints[1]
+		stepM, ok, err := measuredInt(op, args, "Window", "Step", 1, 1, in, pos)
+		if err != nil {
+			return nil, err
 		}
-		if size < 1 || step < 1 {
-			return nil, &ResolveError{Pos: pos,
-				Msg: fmt.Sprintf("Window size and step must be >= 1, got size %d step %d", size, step)}
+		if !ok {
+			stepM = Measured{Lit: 1, Min: 1, Prim: "Window", Name: "Step", Pos: pos}
 		}
-		display := fmt.Sprintf("Window %d", size)
-		if step != 1 {
-			display += fmt.Sprintf(" (step %d)", step)
+		if err := checkLiteralBounds(sizeM, stepM); err != nil {
+			return nil, err
 		}
+
+		display := "Window " + sizeM.Describe()
+		if stepM.IsMeasured() || stepM.Lit != 1 {
+			display += fmt.Sprintf(" (step %s)", stepM.Describe())
+		}
+		meta := map[string]any{}
+		sizeM.Meta(meta, "size")
+		stepM.Meta(meta, "step")
 		return &ir.Node{
 			Prim:    "Window",
 			In:      in,
 			Out:     ir.List(ir.List(elem)),
 			Display: display,
-			Meta:    map[string]any{"size": size, "step": step},
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				xs, err := ir.AsList(v)
 				if err != nil {
 					return nil, runtimeErr("Window", pos, "%v", err)
+				}
+				size, err := sizeM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				step, err := stepM.Resolve(v)
+				if err != nil {
+					return nil, err
 				}
 				out := []ir.Value{}
 				for i := int64(0); i+size <= int64(len(xs)); i += step {
@@ -67,6 +81,28 @@ var window = &Primitive{
 			},
 		}, nil
 	},
+}
+
+// checkLiteralBounds rejects a literal size or step below 1 at resolve time,
+// keeping the message Window and Sliding Reduce have always produced when both
+// are written in the phrase. A measured argument has no value yet, so its
+// bound is checked in measureWindow instead.
+func checkLiteralBounds(sizeM, stepM Measured) error {
+	if sizeM.IsMeasured() || stepM.IsMeasured() {
+		if !sizeM.IsMeasured() && sizeM.Lit < 1 {
+			return sizeM.atLeast(1, sizeM.Lit, "")
+		}
+		if !stepM.IsMeasured() && stepM.Lit < 1 {
+			return stepM.atLeast(1, stepM.Lit, "")
+		}
+		return nil
+	}
+	if sizeM.Lit < 1 || stepM.Lit < 1 {
+		return &ResolveError{Pos: sizeM.Pos, Msg: fmt.Sprintf(
+			"%s size and step must be >= 1, got size %d step %d",
+			sizeM.Prim, sizeM.Lit, stepM.Lit)}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

@@ -238,28 +238,60 @@ var rangePrim = &Primitive{
 	Keyword: "Cursed Technique",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "Range") && !hasWord(op, "Merge") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
-		var lo, hi int64
-		switch len(op.Ints) {
-		case 1:
-			hi = op.Ints[0]
-		case 2:
-			lo, hi = op.Ints[0], op.Ints[1]
-		default:
-			return nil, &ResolveError{Pos: pos,
-				Msg: "Range needs one or two Int bounds, e.g. Range 10 (0..9) or Range 1 16 (1..15)"}
+		// One phrase int is the high bound (`Range 10`), two are low and high.
+		// Measured, they are named: `Low:` and `High:`. Range replaces the
+		// current value rather than transforming it, but the measuring lambda
+		// still sees what flowed in — which is the whole point of
+		// `High: (xs) -> length(xs)`, unwritable in any literal spelling.
+		loSlot, hiSlot := -1, 0
+		if len(op.Ints) > 1 {
+			loSlot, hiSlot = 0, 1
 		}
-		if hi < lo {
+		loM, hasLo, err := measuredInt(op, args, "Range", "Low", loSlot, NoBound, in, pos)
+		if err != nil {
+			return nil, err
+		}
+		if !hasLo {
+			loM = Measured{Lit: 0, Min: NoBound, Prim: "Range", Name: "Low", Pos: pos}
+		}
+		hiM, err := requireMeasuredInt(op, args, "Range", "High", hiSlot, NoBound, in, pos,
+			"one or two Int bounds", "Range 10 (0..9) or Range 1 16 (1..15)")
+		if err != nil {
+			return nil, err
+		}
+		if !loM.IsMeasured() && !hiM.IsMeasured() && hiM.Lit < loM.Lit {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Range bounds are half-open [%d, %d), so the high bound may not be below the low one", lo, hi)}
+				"Range bounds are half-open [%d, %d), so the high bound may not be below the low one",
+				loM.Lit, hiM.Lit)}
 		}
+		display := fmt.Sprintf("Range %s..%s", loM.Describe(), hiM.Describe())
+		if !hiM.IsMeasured() {
+			display = fmt.Sprintf("Range %s..%d", loM.Describe(), hiM.Lit-1)
+		}
+		meta := map[string]any{}
+		loM.Meta(meta, "lo")
+		hiM.Meta(meta, "hi")
 		out := ir.List(ir.Int())
 		return &ir.Node{
 			// Replaces the current value rather than transforming it — like
 			// Combine and Zip, which also ignore the main pipeline value.
 			Prim: "Range", In: in, Out: out,
-			Display: fmt.Sprintf("Range %d..%d", lo, hi-1),
-			Meta:    map[string]any{"lo": lo, "hi": hi}, Pos: pos,
-			Eval: func(_ *ir.Context, _ ir.Value) (ir.Value, error) {
+			Display: display,
+			Meta:    meta, Pos: pos,
+			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+				lo, err := loM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				hi, err := hiM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				if hi < lo {
+					return nil, runtimeErr("Range", pos,
+						"bounds are half-open [%d, %d), so the high bound may not be below the low one",
+						lo, hi)
+				}
 				xs := make([]ir.Value, 0, hi-lo)
 				for n := lo; n < hi; n++ {
 					xs = append(xs, n)
@@ -282,22 +314,61 @@ var subgrid = &Primitive{
 		if in == nil || in.Kind != ir.KGrid {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("Subgrid expects a Grid, got %s", in)}
 		}
-		if len(op.Ints) != 4 {
+		if len(op.Ints) != 4 && len(op.Ints) != 0 {
 			return nil, &ResolveError{Pos: pos,
 				Msg: "Subgrid needs four Ints: Subgrid ROW COL HEIGHT WIDTH"}
 		}
-		r0, c0, h, w := op.Ints[0], op.Ints[1], op.Ints[2], op.Ints[3]
-		if h < 0 || w < 0 {
-			return nil, &ResolveError{Pos: pos, Msg: "Subgrid height and width must be >= 0"}
+		var ms [4]Measured
+		for i, name := range [4]string{"Row", "Col", "Height", "Width"} {
+			m, ok, err := measuredInt(op, args, "Subgrid", name, i, NoBound, in, pos)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, &ResolveError{Pos: pos,
+					Msg: "Subgrid needs four Ints: Subgrid ROW COL HEIGHT WIDTH (or Row:/Col:/Height:/Width:)"}
+			}
+			ms[i] = m
+		}
+		rowM, colM, heightM, widthM := ms[0], ms[1], ms[2], ms[3]
+		for _, m := range []Measured{heightM, widthM} {
+			if !m.IsMeasured() && m.Lit < 0 {
+				return nil, &ResolveError{Pos: pos, Msg: "Subgrid height and width must be >= 0"}
+			}
+		}
+		meta := map[string]any{}
+		for i, key := range [4]string{"row", "col", "height", "width"} {
+			ms[i].Meta(meta, key)
 		}
 		return &ir.Node{
 			Prim: "Subgrid", In: in, Out: in,
-			Display: fmt.Sprintf("Subgrid %d %d %d %d", r0, c0, h, w),
-			Meta:    map[string]any{"row": r0, "col": c0, "height": h, "width": w}, Pos: pos,
+			Display: fmt.Sprintf("Subgrid %s %s %s %s",
+				rowM.Describe(), colM.Describe(), heightM.Describe(), widthM.Describe()),
+			Meta: meta, Pos: pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
 				if !ok {
 					return nil, runtimeErr("Subgrid", pos, "expected a Grid, got %s", ir.DescribeValue(v))
+				}
+				r0, err := rowM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				c0, err := colM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				h, err := heightM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				w, err := widthM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				if h < 0 || w < 0 {
+					return nil, runtimeErr("Subgrid", pos,
+						"height and width must be >= 0, measured %dx%d", h, w)
 				}
 				// Out of bounds is an error rather than a clamp: a crop that
 				// silently returned fewer rows than asked for would give a
@@ -334,40 +405,46 @@ var padGrid = &Primitive{
 		if in == nil || in.Kind != ir.KGrid {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("Pad Grid expects a Grid, got %s", in)}
 		}
-		n := int64(1)
-		if len(op.Ints) > 0 {
-			n = op.Ints[0]
+		nM, ok, err := measuredInt(op, args, "Pad Grid", "Thickness", 0, 0, in, pos)
+		if err != nil {
+			return nil, err
 		}
-		if n < 0 {
+		if !ok {
+			nM = Measured{Lit: 1, Min: 0, Prim: "Pad Grid", Name: "Thickness", Pos: pos}
+		}
+		if !nM.IsMeasured() && nM.Lit < 0 {
 			return nil, &ResolveError{Pos: pos, Msg: "Pad Grid width must be >= 0"}
 		}
 		// The fill must match the element type, so it is spelled the way the
-		// Sparse default is: an Int or Text literal.
-		var fill ir.Value
-		if s, ok := args.Text("Fill"); ok {
-			fill = s
-		} else if i, ok := args.Int("Fill"); ok {
-			fill = i
-		} else {
-			return nil, &ResolveError{Pos: pos,
-				Msg: "Pad Grid needs a Fill: literal for the new cells (Int or Text)"}
+		// Sparse default is: an Int or Text literal — or a lambda over the grid
+		// that produces one.
+		fillM, err := measuredValue(args, "Pad Grid", "Fill", in, pos)
+		if err != nil {
+			return nil, err
 		}
-		fillT := ir.Text()
-		if _, isInt := fill.(int64); isInt {
-			fillT = ir.Int()
-		}
-		if !fillT.Equal(in.Elem) {
+		if !fillM.Type.Equal(in.Elem) {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Pad Grid: Fill: is %s but the grid holds %s", fillT, in.Elem)}
+				"Pad Grid: Fill: is %s but the grid holds %s", fillM.Type, in.Elem)}
 		}
+		meta := map[string]any{}
+		nM.Meta(meta, "n")
+		fillM.Meta(meta, "fill")
 		return &ir.Node{
 			Prim: "Pad Grid", In: in, Out: in,
-			Display: fmt.Sprintf("Pad Grid %d", n),
-			Meta:    map[string]any{"n": n, "fill": fill}, Pos: pos,
+			Display: "Pad Grid " + nM.Describe(),
+			Meta:    meta, Pos: pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				g, ok := v.(*ir.GridValue)
 				if !ok {
 					return nil, runtimeErr("Pad Grid", pos, "expected a Grid, got %s", ir.DescribeValue(v))
+				}
+				fill, err := fillM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
+				n, err := nM.Resolve(v)
+				if err != nil {
+					return nil, err
 				}
 				out := ir.NewGridValue(g.Rows+int(2*n), g.Cols+int(2*n))
 				for i := range out.Cells {

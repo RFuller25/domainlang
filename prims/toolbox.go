@@ -247,21 +247,27 @@ var join = &Primitive{
 		if !in.Equal(want) {
 			return nil, typeErr(pos, "Join", want, in)
 		}
-		sep := ""
-		if len(op.Strings) > 0 {
-			sep = op.Strings[0]
+		sepM, _, err := measuredText(op, args, "Join", "With", in, pos)
+		if err != nil {
+			return nil, err
 		}
+		meta := map[string]any{}
+		sepM.Meta(meta, "sep")
 		return &ir.Node{
 			Prim:    "Join",
 			In:      want,
 			Out:     ir.Text(),
-			Display: fmt.Sprintf("Join with %q", sep),
-			Meta:    map[string]any{"sep": sep},
+			Display: "Join with " + sepM.Describe(),
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				xs, err := ir.AsList(v)
 				if err != nil {
 					return nil, runtimeErr("Join", pos, "%v", err)
+				}
+				sep, err := sepM.Resolve(v)
+				if err != nil {
+					return nil, err
 				}
 				parts := make([]string, len(xs))
 				for i, x := range xs {

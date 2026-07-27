@@ -58,19 +58,26 @@ func (g *gen) emitPrefixWhile(n *ir.Node, in string) (string, error) {
 }
 
 func (g *gen) emitChunk(n *ir.Node, in string) (string, error) {
-	size, _ := n.Meta["size"].(int64)
-	if size < 1 {
-		return "", unsupported(n, "missing chunk metadata")
-	}
 	elemGo, err := g.goType(n.In.Elem)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
+	size, err := g.measuredOperand(n, in, "size", "Size", 1)
+	if err != nil {
+		return "", err
+	}
+	// The loop counts in int, so a measured size — an int64 variable rather
+	// than an untyped constant — needs one conversion, bound once beside it.
+	sizeI := size
+	if hasMeasured(n, "size") {
+		sizeI = g.fresh("sz")
+		g.wl("%s := int(%s)", sizeI, size)
+	}
 	v, i, end := g.fresh("v"), g.fresh("i"), g.fresh("end")
-	g.wl("%s := make([][]%s, 0, (len(%s)+%d)/%d)", v, elemGo, in, size-1, size)
-	g.wl("for %s := 0; %s < len(%s); %s += %d {", i, i, in, i, size)
+	g.wl("%s := make([][]%s, 0, (len(%s)+%s-1)/%s)", v, elemGo, in, sizeI, sizeI)
+	g.wl("for %s := 0; %s < len(%s); %s += %s {", i, i, in, i, sizeI)
 	g.in()
-	g.wl("%s := %s + %d", end, i, size)
+	g.wl("%s := %s + %s", end, i, sizeI)
 	g.wl("if %s > len(%s) {", end, in)
 	g.in()
 	g.wl("%s = len(%s)", end, in) // the short final block is kept, not dropped
@@ -123,9 +130,9 @@ func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	steps, _ := n.Meta["n"].(int64)
-	if steps < 0 {
-		return "", unsupported(n, "missing iterate metadata")
+	steps, err := g.measuredOperand(n, in, "n", "Times", 0)
+	if err != nil {
+		return "", err
 	}
 	elemGo, err := g.goType(n.In)
 	if err != nil {
@@ -136,9 +143,9 @@ func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.wl("%s := make([]%s, %d)", v, elemGo, steps)
+	g.wl("%s := make([]%s, %s)", v, elemGo, steps)
 	g.wl("%s := %s", cur, in)
-	g.wl("for %s := 0; %s < %d; %s++ {", i, i, steps, i)
+	g.wl("for %s := int64(0); %s < %s; %s++ {", i, i, steps, i)
 	g.in()
 	g.wl("%s = %s", cur, body)
 	g.wl("%s[%s] = %s", v, i, cur)

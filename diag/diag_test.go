@@ -637,3 +637,103 @@ func TestLintAdviceMatchesTheSourceStyle(t *testing.T) {
 		t.Errorf("keyworded advice should carry the keyword, got %q", d.Help)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Ignored arguments and expressions written into a phrase
+// ---------------------------------------------------------------------------
+
+// An argument no primitive reads is silently dropped at runtime, which makes
+// it the quietest way to write a program that does something other than what
+// it says. prims.ArgSet records every lookup; this reads those marks back.
+func TestLintIgnoredArgument(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Maximum Technique: Join
+    Sze: 3
+Reveal: stdout
+`
+	r := analyze(t, src)
+	d := diagWith(r, Warning, `ignores the argument "Sze"`)
+	if d == nil {
+		t.Fatalf("missing ignored-argument warning in %v", r.Diags)
+	}
+	if !strings.Contains(d.Help, "Size:") {
+		t.Errorf("expected a did-you-mean for the misspelling, got %q", d.Help)
+	}
+	if d.Pos.Line != 4 {
+		t.Errorf("the warning should point at the argument line, got line %d", d.Pos.Line)
+	}
+}
+
+// The arguments real programs write are all read by the primitives they sit
+// on; a lint that fires on those would be worse than no lint.
+func TestLintIgnoredArgumentIsQuietOnGoodPrograms(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Cursed Technique: Filter
+    Using: (x) -> x > 2
+Maximum Technique: Fold
+    Seed: 0
+    Using: (acc, x) -> acc + x
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, "ignores the argument"); d != nil {
+		t.Fatalf("unexpected ignored-argument warning: %v", *d)
+	}
+}
+
+// A Shikigami's body is resolved as a substituted copy, so the arguments in
+// the definition are marked at substitution rather than by the copy's reads.
+func TestLintIgnoredArgumentSkipsShikigamiBodies(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Shikigami "Big" (k: Int)
+    Cursed Technique: Filter
+        Using: (x) -> x > k
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Shikigami: Big
+    k: 2
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, "ignores the argument"); d != nil {
+		t.Fatalf("unexpected ignored-argument warning: %v", *d)
+	}
+}
+
+// `Window length(xs) / 2` parses to the words [Window length xs] and the int 2,
+// and runs as `Window 2`. The phrase layer takes literals only, and this is the
+// warning that says so.
+func TestLintExpressionInAPhrase(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Cursed Technique: Window length(xs) / 2
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if diagWith(r, Warning, "looks like an expression") == nil {
+		t.Fatalf("missing expression-in-phrase warning in %v", r.Diags)
+	}
+}
+
+// The test is a call shape, not a name: a channel or loop variable that
+// happens to share a builtin's name is not an expression.
+func TestLintExpressionInAPhraseIgnoresBareNames(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Channel "cells":
+    Maximum Technique: Sum
+Simple Domain: For x in cells
+    Cursed Technique: Apply
+        Using: (v, x) -> v + x
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, "looks like an expression"); d != nil {
+		t.Fatalf("unexpected expression-in-phrase warning: %v", *d)
+	}
+}

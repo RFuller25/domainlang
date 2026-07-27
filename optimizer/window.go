@@ -25,9 +25,16 @@ func fuseWindowReduce(p *ir.Pipeline) []Rewrite {
 		if a.In == nil || !a.In.Equal(ir.List(ir.Int())) {
 			return nil, "", false
 		}
-		size, _ := a.Meta["size"].(int64)
-		step, _ := a.Meta["step"].(int64)
-		if size < 1 || step < 1 {
+		// The streaming helpers take the size and step as ordinary runtime
+		// arguments, so a measured one rides along instead of standing the
+		// rewrite down — the naive pipeline it replaces measures the same two
+		// numbers from the same value, with the same bound checks.
+		size, sizeOK := readArg(a, "size")
+		step, stepOK := readArg(a, "step")
+		if !sizeOK || !stepOK {
+			return nil, "", false
+		}
+		if !size.measured() && size.lit < 1 || !step.measured() && step.lit < 1 {
 			return nil, "", false
 		}
 		lam := nodeLambda(b)
@@ -41,27 +48,41 @@ func fuseWindowReduce(p *ir.Pipeline) []Rewrite {
 
 		opName := map[string]string{"sum": "Sum", "max": "Max", "min": "Min"}[op]
 		pos := a.Pos
+		meta := map[string]any{"op": op}
+		size.writeMeta(meta, "size")
+		step.writeMeta(meta, "step")
 		fused := &ir.Node{
 			Prim:    "WindowedReduce",
 			In:      a.In,
 			Out:     b.Out,
-			Display: fmt.Sprintf("Cursed Sliding-Window %s (size %d, step %d)", opName, size, step),
-			Meta:    map[string]any{"size": size, "step": step, "op": op},
+			Display: fmt.Sprintf("Cursed Sliding-Window %s (size %s, step %s)", opName, size.describe(), step.describe()),
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				xs, err := ir.AsIntSlice(v)
 				if err != nil {
 					return nil, &ir.RuntimeError{Prim: "WindowedReduce", Pos: pos, Msg: err.Error()}
 				}
-				if op == "sum" {
-					return ir.IntsToValue(ir.WindowedSums(xs, size, step)), nil
+				// Measured in the order Window itself measures them, so a
+				// program whose size and step would both fail reports the same
+				// one either way.
+				sz, err := size.value(v)
+				if err != nil {
+					return nil, err
 				}
-				return ir.IntsToValue(ir.WindowedExtrema(xs, size, step, op == "min")), nil
+				st, err := step.value(v)
+				if err != nil {
+					return nil, err
+				}
+				if op == "sum" {
+					return ir.IntsToValue(ir.WindowedSums(xs, sz, st)), nil
+				}
+				return ir.IntsToValue(ir.WindowedExtrema(xs, sz, st, op == "min")), nil
 			},
 		}
 		return []*ir.Node{fused},
-			fmt.Sprintf("Domain rewrote Window %d + Map Each (%s) → Cursed Sliding-Window %s (one pass, no window lists). Guaranteed hit.",
-				size, op, opName),
+			fmt.Sprintf("Domain rewrote Window %s + Map Each (%s) → Cursed Sliding-Window %s (one pass, no window lists). Guaranteed hit.",
+				size.describe(), op, opName),
 			true
 	})
 }

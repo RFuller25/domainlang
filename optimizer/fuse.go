@@ -357,6 +357,9 @@ func fuseFoldSum(p *ir.Pipeline) []Rewrite {
 			if n.Prim != "Fold" {
 				continue
 			}
+			if hasMeasuredArg(n) {
+				continue // valid only because the seed is literally 0
+			}
 			if seed, ok := n.Meta["seed"].(int64); !ok || seed != 0 {
 				continue
 			}

@@ -201,6 +201,20 @@ func bindParams(def *ast.ShikigamiDef, args ArgSet, pos token.Position) (map[str
 	env := make(map[string]paramVal, len(def.Params))
 	for _, p := range def.Params {
 		missing := func(kind string) error {
+			// A lambda where a scalar was declared is the one confusion worth
+			// naming: it is what someone writes reaching for a *measured*
+			// argument through a Shikigami. That works — but the parameter has
+			// to be declared as the function it is, not as the Int it is not,
+			// because a scalar parameter substitutes into the body as a literal
+			// (including into lambda bodies) and a function has no literal form.
+			if _, isLam := args.Lambda(p.Name); isLam {
+				return &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+					"Shikigami %q: parameter %q is declared %s but was given a lambda — "+
+						"to pass a measured argument through a Shikigami, declare the "+
+						"parameter as a lambda type (e.g. %s: (List<Int>) -> Int) and hand "+
+						"it to the measured slot in the body",
+					def.Name, p.Name, kind, p.Name)}
+			}
 			return &ResolveError{Pos: pos, Msg: fmt.Sprintf(
 				"Shikigami %q requires %s parameter %q", def.Name, kind, p.Name)}
 		}
@@ -375,6 +389,11 @@ func dispatchSurvivesRemoval(keyword string, op *ast.Operation, idx int, want *P
 }
 
 func substituteArg(a *ast.Arg, env map[string]paramVal) *ast.Arg {
+	// The body a call resolves is a *copy*, so the copy is what records the
+	// primitive's reads. Mark the original here: an argument written in a
+	// Shikigami's definition is consumed by every call that inlines it, and
+	// without this the unused-argument lint would flag every one of them.
+	a.Used = true
 	na := *a
 	switch v := a.Value.(type) {
 	case ast.LambdaArg:

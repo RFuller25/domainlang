@@ -39,13 +39,14 @@ var iterate = &Primitive{
 		if in == nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Iterate has no input value to start from"}
 		}
-		if len(op.Ints) == 0 {
-			return nil, &ResolveError{Pos: pos, Msg: "Iterate requires a step count, e.g. Iterate 5"}
+		timesM, err := requireMeasuredInt(op, args, "Iterate", "Times", 0, 0, in, pos,
+			"a step count", "Iterate 5")
+		if err != nil {
+			return nil, err
 		}
-		n := op.Ints[0]
-		if n < 0 {
+		if !timesM.IsMeasured() && timesM.Lit < 0 {
 			return nil, &ResolveError{Pos: pos,
-				Msg: fmt.Sprintf("Iterate count must be >= 0, got %d", n)}
+				Msg: fmt.Sprintf("Iterate count must be >= 0, got %d", timesM.Lit)}
 		}
 		lam, err := requireLambda(args, 1, "Iterate", pos)
 		if err != nil {
@@ -61,14 +62,20 @@ var iterate = &Primitive{
 				in, stepType)}
 		}
 		params := []*ir.Type{in}
+		meta := map[string]any{"lambda": lam}
+		timesM.Meta(meta, "n")
 		return &ir.Node{
 			Prim:    "Iterate",
 			In:      in,
 			Out:     ir.List(in),
-			Display: fmt.Sprintf("Iterate %d", n),
-			Meta:    map[string]any{"lambda": lam, "n": n},
+			Display: "Iterate " + timesM.Describe(),
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+				n, err := timesM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
 				out := make([]ir.Value, n)
 				cur := v
 				for i := int64(0); i < n; i++ {

@@ -93,21 +93,27 @@ var split = &Primitive{
 		if !in.Equal(ir.Text()) {
 			return nil, typeErr(pos, "Split", ir.Text(), in)
 		}
-		sep, err := requireSeparator(op, pos, "Split")
+		sepM, err := requireSeparator(op, args, in, pos, "Split")
 		if err != nil {
 			return nil, err
 		}
+		meta := map[string]any{}
+		sepM.Meta(meta, "sep")
 		return &ir.Node{
 			Prim:    "Split",
 			In:      ir.Text(),
 			Out:     ir.List(ir.Text()),
-			Display: fmt.Sprintf("Split by %q", sep),
-			Meta:    map[string]any{"sep": sep},
+			Display: "Split by " + sepM.Describe(),
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				s, ok := v.(string)
 				if !ok {
 					return nil, runtimeErr("Split", pos, "expected Text, got %s", ir.DescribeValue(v))
+				}
+				sep, err := sepM.Resolve(v)
+				if err != nil {
+					return nil, err
 				}
 				parts := strings.Split(s, sep)
 				out := make([]ir.Value, len(parts))
@@ -133,21 +139,27 @@ var splitEach = &Primitive{
 		if !in.Equal(want) {
 			return nil, typeErr(pos, "Split Each", want, in)
 		}
-		sep, err := requireSeparator(op, pos, "Split Each")
+		sepM, err := requireSeparator(op, args, in, pos, "Split Each")
 		if err != nil {
 			return nil, err
 		}
+		meta := map[string]any{}
+		sepM.Meta(meta, "sep")
 		return &ir.Node{
 			Prim:    "Split Each",
 			In:      want,
 			Out:     ir.List(ir.List(ir.Text())),
-			Display: fmt.Sprintf("Split Each by %q", sep),
-			Meta:    map[string]any{"sep": sep},
+			Display: "Split Each by " + sepM.Describe(),
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				groups, err := ir.AsList(v)
 				if err != nil {
 					return nil, runtimeErr("Split Each", pos, "%v", err)
+				}
+				sep, err := sepM.Resolve(v)
+				if err != nil {
+					return nil, err
 				}
 				out := make([]ir.Value, len(groups))
 				for i, g := range groups {
@@ -169,12 +181,18 @@ var splitEach = &Primitive{
 	},
 }
 
-func requireSeparator(op *ast.Operation, pos token.Position, prim string) (string, error) {
-	if len(op.Strings) == 0 {
-		return "", &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("%s requires a separator string (e.g. by \"\\n\")", prim)}
+// requireSeparator reads the separator in either form: the phrase's string
+// literal, or a measured `By:` lambda over the text being split.
+func requireSeparator(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position, prim string) (MeasuredText, error) {
+	m, ok, err := measuredText(op, args, prim, "By", in, pos)
+	if err != nil {
+		return MeasuredText{}, err
 	}
-	return op.Strings[0], nil
+	if !ok {
+		return MeasuredText{}, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"%s requires a separator string (e.g. by \"\\n\"), or a measured `By:` lambda", prim)}
+	}
+	return m, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -379,31 +397,37 @@ var selectTopK = &Primitive{
 		if !in.Equal(want) {
 			return nil, typeErr(pos, "Select Top K", want, in)
 		}
-		if len(op.Ints) == 0 {
-			return nil, &ResolveError{Pos: pos, Msg: "Select Top K requires a count, e.g. Select Top 3"}
+		countM, err := requireMeasuredInt(op, args, "Select Top K", "Count", 0, 0, in, pos, "a count", "Select Top 3")
+		if err != nil {
+			return nil, err
 		}
-		if op.Ints[0] < 0 {
+		if !countM.IsMeasured() && countM.Lit < 0 {
 			return nil, &ResolveError{Pos: pos, Msg: "Select Top K requires a non-negative count"}
 		}
-		k := op.Ints[0]
 		thenSum := hasModifier(op, "Sum")
 		out := want
-		display := fmt.Sprintf("Select Top %d", k)
+		display := "Select Top " + countM.Describe()
 		if thenSum {
 			out = ir.Int()
 			display += ", Sum"
 		}
+		meta := map[string]any{"sum": thenSum}
+		countM.Meta(meta, "k")
 		return &ir.Node{
 			Prim:    "SelectTopK",
 			In:      want,
 			Out:     out,
 			Display: display,
-			Meta:    map[string]any{"k": k, "sum": thenSum},
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				xs, err := ir.AsIntSlice(v)
 				if err != nil {
 					return nil, runtimeErr("SelectTopK", pos, "%v", err)
+				}
+				k, err := countM.Resolve(v)
+				if err != nil {
+					return nil, err
 				}
 				n := int(k)
 				if n > len(xs) {

@@ -350,10 +350,11 @@ var fold = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		seedVal, seedType, err := foldSeed(args, pos)
+		seedM, err := foldSeed(args, in, pos)
 		if err != nil {
 			return nil, err
 		}
+		seedType := seedM.Type
 		lam, err := requireLambda(args, 2, "Fold", pos)
 		if err != nil {
 			return nil, err
@@ -366,19 +367,24 @@ var fold = &Primitive{
 			return nil, &ResolveError{Pos: pos,
 				Msg: fmt.Sprintf("Fold lambda must return the accumulator type %s, got %s", seedType, accType)}
 		}
+		meta := map[string]any{"lambda": lam}
+		seedM.Meta(meta, "seed")
 		return &ir.Node{
 			Prim:    "Fold",
 			In:      in,
 			Out:     seedType,
 			Display: "Fold",
-			Meta:    map[string]any{"lambda": lam, "seed": seedVal},
+			Meta:    meta,
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 				items, err := ir.AsList(v)
 				if err != nil {
 					return nil, runtimeErr("Fold", pos, "%v", err)
 				}
-				acc := seedVal
+				acc, err := seedM.Resolve(v)
+				if err != nil {
+					return nil, err
+				}
 				for i, e := range items {
 					acc, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{seedType, elem}, ambientTypes()...), append([]ir.Value{acc, e}, ambientArgs()...)...)
 					if err != nil {
@@ -391,14 +397,19 @@ var fold = &Primitive{
 	},
 }
 
-func foldSeed(args ArgSet, pos token.Position) (ir.Value, *ir.Type, error) {
-	if n, ok := args.Int("Seed"); ok {
-		return n, ir.Int(), nil
+// foldSeed reads the accumulator's starting value. It is a measured argument,
+// and the one where that widens what Fold can do rather than only where the
+// value may come from: a literal seed can only be Int or Text — the two a
+// named argument can spell — while a measured one takes its type from the
+// lambda body, so `Seed: (xs) -> tuple(0, first(xs))` gives a fold with a
+// tuple accumulator. The lambda's own return type is then checked against it
+// as before, so nothing else about Fold changes.
+func foldSeed(args ArgSet, in *ir.Type, pos token.Position) (MeasuredValue, error) {
+	if !args.Has("Seed") {
+		return MeasuredValue{}, &ResolveError{Pos: pos,
+			Msg: "Fold requires a Seed: (an Int or Text literal, or a lambda over the current value)"}
 	}
-	if s, ok := args.Text("Seed"); ok {
-		return s, ir.Text(), nil
-	}
-	return nil, nil, &ResolveError{Pos: pos, Msg: "Fold requires a Seed: (Int or Text)"}
+	return measuredValue(args, "Fold", "Seed", in, pos)
 }
 
 // ---------------------------------------------------------------------------

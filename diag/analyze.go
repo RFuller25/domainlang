@@ -88,6 +88,12 @@ func Analyze(path, src string) *Report {
 	if r.Program != nil {
 		r.Diags = append(r.Diags, Lint(r.Program, working)...)
 	}
+	// Only a program that resolved carries trustworthy resolve-time marks: a
+	// statement the resolver never reached never had the chance to read its
+	// arguments, and would report every one of them as ignored.
+	if r.Program != nil && r.Pipe != nil {
+		r.Diags = append(r.Diags, lintResolved(r.Program, working)...)
+	}
 	sortDiags(r.Diags)
 	return r
 }

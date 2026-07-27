@@ -25,6 +25,16 @@ import (
 //   Match Pattern(Each) + Count Matching               -> range the []string,
 //       parse + count inline (no []Record)
 func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
+	// Every rule below keys on nodes[0]'s separator, and reads it with a type
+	// assertion whose zero value — the empty string — is a *meaningful*
+	// separator here: three of the rules fire on `sep == ""` (the
+	// character-split fast paths). A measured separator has no literal to
+	// read, so without this guard those three would fire wrongly rather than
+	// merely fail to fire. Same rule as the optimizer's hasMeasuredArg: a pass
+	// that folds a literal stands down when there is none.
+	if len(nodes) > 0 && hasMeasured(nodes[0], "sep") {
+		return 0, "", false, nil
+	}
 	matchEach := func(n *ir.Node) bool {
 		if n.Prim != "Match Pattern" {
 			return false
@@ -86,7 +96,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 3 && nodes[0].Prim == "Split" && nodes[1].Prim == "Convert To Integers" &&
 		nodes[1].In != nil && nodes[1].In.Equal(ir.List(ir.Text())) && nodes[2].Prim == "Fold" {
 		sep, _ := nodes[0].Meta["sep"].(string)
-		if _, intSeed := nodes[2].Meta["seed"].(int64); len(sep) == 1 && intSeed {
+		_, intSeed := nodes[2].Meta["seed"].(int64)
+		if len(sep) == 1 && intSeed && !hasMeasured(nodes[2], "seed") {
 			out, err := g.emitSplitIntsFold(sep[0], nodes[2], in)
 			if err != nil {
 				return 0, "", false, err
