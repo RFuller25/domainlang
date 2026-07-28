@@ -18,7 +18,7 @@
 
           # Vendor hash covers charm.land/bubbletea/v2, charm.land/bubbles/v2,
           # and their transitive dependencies (the REPL's line editor).
-          vendorHash = "sha256-bpBDuLmmHnhzKdddYlctIWKr+UKm3/oEQn5VAMfcZf8=";
+          vendorHash = "sha256-BaaZD69s6Xmum7SRRUSK6YbiNWsg5w8ChtBxPirPINU=";
           subPackages = [ "cmd/domain" ];
 
           # `domain <file> <args...>` (the compiler path) shells out to the

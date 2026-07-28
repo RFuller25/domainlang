@@ -101,7 +101,9 @@ func newVisualModel(view *traceView) *visualModel {
 	return m
 }
 
-func (m *visualModel) Init() tea.Cmd { return nil }
+// Init asks the terminal for its background color so the palette can match it
+// (visualize_style.go); the dark default stands until an answer arrives.
+func (m *visualModel) Init() tea.Cmd { return tea.RequestBackgroundColor }
 
 // rebuild flattens the tree into the visible rows, honoring collapse state and
 // the active filter.
@@ -183,6 +185,10 @@ func (m *visualModel) matching() map[*interp.TraceNode]bool {
 
 func (m *visualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		useTheme(isLightColor(msg.Color))
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil

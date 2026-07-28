@@ -34,7 +34,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 			Msg: fmt.Sprintf("Part %q has no upstream value to branch from", label)}
 	}
 	if len(stmt.Block) == 0 {
-		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("Part %q has an empty body", label)}
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("Part %q has an empty body", label), NeedsBlock: true}
 	}
 
 	// scopePart: a Part may consume channels defined above it with From:, but

@@ -23,6 +23,13 @@ import (
 type Error struct {
 	Pos token.Position
 	Msg string
+	// NeedsBlock marks the errors that mean "this statement is fine so far,
+	// it is just missing its indented block". A file has nowhere to put the
+	// missing lines and reports the error as it stands; the REPL reads the
+	// flag and waits for them instead (continuation mode). It is a property
+	// of the error, not of its wording, so rephrasing a message can never
+	// silently change what the REPL does.
+	NeedsBlock bool
 }
 
 func (e *Error) Error() string {
@@ -85,6 +92,12 @@ func (p *parser) advance() token.Token {
 
 func (p *parser) errf(format string, args ...any) error {
 	return &Error{Pos: p.cur().Pos, Msg: fmt.Sprintf(format, args...)}
+}
+
+// errBlockf is errf for the "…must be followed by an indented body" family —
+// the errors an indented block would fix. See Error.NeedsBlock.
+func (p *parser) errBlockf(format string, args ...any) error {
+	return &Error{Pos: p.cur().Pos, Msg: fmt.Sprintf(format, args...), NeedsBlock: true}
 }
 
 func (p *parser) expect(k token.Kind) (token.Token, error) {
@@ -233,7 +246,7 @@ func (p *parser) parseShikigamiDef() (*ast.ShikigamiDef, error) {
 		return nil, err
 	}
 	if p.cur().Kind != token.INDENT {
-		return nil, p.errf("Shikigami %q must be followed by an indented body", nameTok.Literal)
+		return nil, p.errBlockf("Shikigami %q must be followed by an indented body", nameTok.Literal)
 	}
 	body, err := p.parseBody()
 	if err != nil {
@@ -363,7 +376,7 @@ func (p *parser) parseChannel(startPos token.Position) (*ast.Statement, error) {
 		return nil, err
 	}
 	if p.cur().Kind != token.INDENT {
-		return nil, p.errf("Channel %q must be followed by an indented sub-pipeline", nameTok.Literal)
+		return nil, p.errBlockf("Channel %q must be followed by an indented sub-pipeline", nameTok.Literal)
 	}
 	if err := p.parseBlock(stmt); err != nil {
 		return nil, err
@@ -387,7 +400,7 @@ func (p *parser) parsePart(startPos token.Position) (*ast.Statement, error) {
 		return nil, err
 	}
 	if p.cur().Kind != token.INDENT {
-		return nil, p.errf("Part %q must be followed by an indented sub-pipeline", nameTok.Literal)
+		return nil, p.errBlockf("Part %q must be followed by an indented sub-pipeline", nameTok.Literal)
 	}
 	if err := p.parseBlock(stmt); err != nil {
 		return nil, err

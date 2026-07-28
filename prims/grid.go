@@ -131,7 +131,7 @@ func buildGrid(rows []ir.Value, pos token.Position, conv func(ir.Value) (ir.Valu
 func cellLambda(args ArgSet, prim string, pos token.Position) (*ast.Lambda, bool, error) {
 	lam, ok := args.Lambda("Using")
 	if !ok {
-		return nil, false, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim)}
+		return nil, false, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim), NeedsBlock: true}
 	}
 	depth := ambientDepth()
 	switch len(lam.Params) {

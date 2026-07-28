@@ -32,7 +32,7 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 			Msg: fmt.Sprintf("channel %q has no upstream value to branch from", name)}
 	}
 	if len(stmt.Block) == 0 {
-		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("channel %q has an empty body", name)}
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("channel %q has an empty body", name), NeedsBlock: true}
 	}
 
 	subNodes, subType, err := r.resolveSequence(stmt.Block, cur, scopeChannel)
@@ -248,7 +248,7 @@ func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, 
 	}
 	lam, ok := args.Lambda("Using")
 	if !ok {
-		return nil, &ResolveError{Pos: pos, Msg: "Fold requires a Using: lambda"}
+		return nil, &ResolveError{Pos: pos, Msg: "Fold requires a Using: lambda", NeedsBlock: true}
 	}
 	wantArity := 2 + ambientDepth()
 	if len(lam.Params) != wantArity {
@@ -297,7 +297,7 @@ func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, 
 func buildCombine(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, pos token.Position) (*ir.Node, error) {
 	lam, ok := args.Lambda("Using")
 	if !ok {
-		return nil, &ResolveError{Pos: pos, Msg: "Combine requires a Using: lambda"}
+		return nil, &ResolveError{Pos: pos, Msg: "Combine requires a Using: lambda", NeedsBlock: true}
 	}
 	wantArity := len(froms) + ambientDepth()
 	if len(lam.Params) != wantArity {

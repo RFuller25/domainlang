@@ -248,7 +248,7 @@ func visModel(t *testing.T) *visualModel {
 	return newVisualModel(&traceView{path: prog, rec: rec, rewrites: rewrites})
 }
 
-func key(s string) tea.KeyPressMsg {
+func pressKey(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: firstRune(s), Text: s}
 }
 
@@ -283,28 +283,28 @@ func TestVisualModelStartsCollapsed(t *testing.T) {
 func TestVisualModelNavigation(t *testing.T) {
 	m := visModel(t)
 	n := len(m.rows)
-	m = send(m, key("j"), key("j"))
+	m = send(m, pressKey("j"), pressKey("j"))
 	if m.cursor != 2 {
 		t.Errorf("cursor after two j = %d, want 2", m.cursor)
 	}
-	m = send(m, key("k"))
+	m = send(m, pressKey("k"))
 	if m.cursor != 1 {
 		t.Errorf("cursor after k = %d, want 1", m.cursor)
 	}
-	m = send(m, key("G"))
+	m = send(m, pressKey("G"))
 	if m.cursor != n-1 {
 		t.Errorf("cursor after G = %d, want %d", m.cursor, n-1)
 	}
-	m = send(m, key("g"))
+	m = send(m, pressKey("g"))
 	if m.cursor != 0 {
 		t.Errorf("cursor after g = %d, want 0", m.cursor)
 	}
 	// Bounds hold: k at the top and j at the bottom do nothing.
-	m = send(m, key("k"))
+	m = send(m, pressKey("k"))
 	if m.cursor != 0 {
 		t.Errorf("k at the top moved the cursor to %d", m.cursor)
 	}
-	m = send(m, key("G"), key("j"))
+	m = send(m, pressKey("G"), pressKey("j"))
 	if m.cursor != n-1 {
 		t.Errorf("j at the bottom moved the cursor to %d", m.cursor)
 	}
@@ -326,7 +326,7 @@ func TestVisualModelExpandAndCollapse(t *testing.T) {
 	before := len(m.rows)
 
 	m.cursor = loop
-	m = send(m, key("l"))
+	m = send(m, pressKey("l"))
 	if len(m.rows) <= before {
 		t.Fatalf("expanding added no rows (%d -> %d)", before, len(m.rows))
 	}
@@ -335,18 +335,18 @@ func TestVisualModelExpandAndCollapse(t *testing.T) {
 	}
 
 	// Expanding again steps into the frame rather than doing nothing.
-	m = send(m, key("l"))
+	m = send(m, pressKey("l"))
 	if m.cursor != loop+1 {
 		t.Errorf("a second l should step into the frame, cursor = %d", m.cursor)
 	}
 
 	// h on a child with nothing to close jumps to the parent.
-	m = send(m, key("h"))
+	m = send(m, pressKey("h"))
 	if m.cursor != loop {
 		t.Errorf("h should move to the parent row, cursor = %d", m.cursor)
 	}
 	// h again collapses it.
-	m = send(m, key("h"))
+	m = send(m, pressKey("h"))
 	if len(m.rows) != before {
 		t.Errorf("collapsing did not restore the row count: %d, want %d", len(m.rows), before)
 	}
@@ -370,14 +370,14 @@ func TestVisualModelPaneToggles(t *testing.T) {
 			if m.pane != paneValue {
 				t.Fatal("the stepper should start on the value pane")
 			}
-			m = send(m, key(c.key))
+			m = send(m, pressKey(c.key))
 			if m.pane != c.pane {
 				t.Errorf("%q should open its pane, got %v", c.key, m.pane)
 			}
 			if got := m.View().Content; !strings.Contains(got, c.title) {
 				t.Errorf("the pane should be rendered with its heading %q:\n%s", c.title, got)
 			}
-			m = send(m, key(c.key))
+			m = send(m, pressKey(c.key))
 			if m.pane != paneValue {
 				t.Errorf("%q should close it again, got %v", c.key, m.pane)
 			}
@@ -388,7 +388,7 @@ func TestVisualModelPaneToggles(t *testing.T) {
 func TestVisualModelQuits(t *testing.T) {
 	m := visModel(t)
 	for _, k := range []string{"q", "esc"} {
-		_, cmd := m.Update(key(k))
+		_, cmd := m.Update(pressKey(k))
 		if cmd == nil {
 			t.Errorf("%q should quit", k)
 		}
@@ -586,7 +586,7 @@ func TestVisualModelFrameDetailShowsItsCost(t *testing.T) {
 			break
 		}
 	}
-	m = send(m, key("l"), key("l")) // open the loop and step into its first frame
+	m = send(m, pressKey("l"), pressKey("l")) // open the loop and step into its first frame
 	if !m.rows[m.cursor].node.IsFrame() {
 		t.Fatalf("expected a frame under the cursor, got %q", m.rows[m.cursor].node.Label())
 	}
@@ -604,7 +604,7 @@ func TestVisualModelFrameDetailShowsItsCost(t *testing.T) {
 // iterations, the body is invisible row by row and the whole run in aggregate.
 func TestVisualModelProfileRanksTheBody(t *testing.T) {
 	m := visModel(t)
-	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, key("t"))
+	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, pressKey("t"))
 	out := m.View().Content
 	if !strings.Contains(out, "Map Each ×2") {
 		t.Errorf("the loop body's two calls should be rolled into one ranked entry:\n%s", out)
@@ -624,7 +624,7 @@ func TestVisualModelJumpToHottest(t *testing.T) {
 	if want == nil {
 		t.Fatal("the recording should have a hottest row")
 	}
-	m = send(m, key("H"))
+	m = send(m, pressKey("H"))
 	if got := m.rows[m.cursor].node; got != want {
 		t.Errorf("cursor landed on %q, want %q", got.Label(), want.Label())
 	}
@@ -687,7 +687,7 @@ func TestVisualModelJumpToFailure(t *testing.T) {
 		t.Fatal("this program should fail")
 	}
 	m := newVisualModel(&traceView{path: prog, rec: rec, runErr: runErr})
-	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, key("!"))
+	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, pressKey("!"))
 
 	got := m.rows[m.cursor].node
 	if got.IsFrame() || got.Step.Err == nil {
@@ -703,7 +703,7 @@ func TestVisualModelJumpToFailure(t *testing.T) {
 func TestVisualModelJumpToFailureWithNoFailure(t *testing.T) {
 	m := visModel(t)
 	before := m.cursor
-	m = send(m, key("!"))
+	m = send(m, pressKey("!"))
 	if m.cursor != before {
 		t.Errorf("with nothing to find the cursor should stay put, moved to %d", m.cursor)
 	}
@@ -716,11 +716,11 @@ func TestVisualModelJumpToFailureWithNoFailure(t *testing.T) {
 // as the query is typed.
 func TestVisualModelSearch(t *testing.T) {
 	m := visModel(t)
-	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, key("/"))
+	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, pressKey("/"))
 	if !m.searching {
 		t.Fatal("/ should start a search")
 	}
-	m = send(m, key("m"), key("a"), key("p"))
+	m = send(m, pressKey("m"), pressKey("a"), pressKey("p"))
 	if m.filter != "map" {
 		t.Fatalf("filter = %q, want %q", m.filter, "map")
 	}
@@ -762,7 +762,7 @@ func TestVisualModelSearch(t *testing.T) {
 // A filter that matches nothing has to say so, not render a blank pane.
 func TestVisualModelSearchWithNoMatch(t *testing.T) {
 	m := visModel(t)
-	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, key("/"), key("z"), key("z"))
+	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, pressKey("/"), pressKey("z"), pressKey("z"))
 	if len(m.rows) != 0 {
 		t.Fatalf("nothing should match %q, got %d rows", m.filter, len(m.rows))
 	}
@@ -785,7 +785,7 @@ func TestVisualModelCollapsedRowsSayWhatTheyHide(t *testing.T) {
 			break
 		}
 	}
-	m = send(m, key("l"))
+	m = send(m, pressKey("l"))
 	if out := m.View().Content; strings.Contains(out, "(2 frames, 2 steps)") {
 		t.Errorf("an opened row should not still claim to be hiding its rows:\n%s", out)
 	}
@@ -795,7 +795,7 @@ func TestVisualModelCollapsedRowsSayWhatTheyHide(t *testing.T) {
 // is where a fix has to happen.
 func TestVisualModelSourcePane(t *testing.T) {
 	m := visModel(t)
-	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, key("s"))
+	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 24}, pressKey("s"))
 	out := m.View().Content
 	if !strings.Contains(out, "self time by line") {
 		t.Error("the source pane should say what the gutter holds")

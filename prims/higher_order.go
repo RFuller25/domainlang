@@ -34,7 +34,7 @@ func listElem(in *ir.Type, prim string, pos token.Position) (*ir.Type, error) {
 func requireLambda(args ArgSet, arity int, prim string, pos token.Position) (*ast.Lambda, error) {
 	lam, ok := args.Lambda("Using")
 	if !ok {
-		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim)}
+		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim), NeedsBlock: true}
 	}
 	wantArity := arity + ambientDepth()
 	if len(lam.Params) != wantArity {
@@ -407,7 +407,8 @@ var fold = &Primitive{
 func foldSeed(args ArgSet, in *ir.Type, pos token.Position) (MeasuredValue, error) {
 	if !args.Has("Seed") {
 		return MeasuredValue{}, &ResolveError{Pos: pos,
-			Msg: "Fold requires a Seed: (an Int or Text literal, or a lambda over the current value)"}
+			Msg:        "Fold requires a Seed: (an Int or Text literal, or a lambda over the current value)",
+			NeedsBlock: true}
 	}
 	return measuredValue(args, "Fold", "Seed", in, pos)
 }

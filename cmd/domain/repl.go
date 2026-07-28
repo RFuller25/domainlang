@@ -13,13 +13,18 @@
 // definitions) enter continuation mode: keep typing indented lines, and
 // finish with a blank line or the next top-level statement.
 //
-// A failing statement is reported and dropped — the session survives. Pipeline
-// Reveal output is suppressed during replays (the REPL prints the current
-// value after every statement anyway).
+// A failing statement is reported — through the same diagnostics engine
+// `domain check` uses — and dropped; the session survives. Pipeline Reveal
+// output is suppressed during replays (the REPL prints the current value after
+// every statement anyway).
+//
+// This file is the session core: it is what a piped script drives, and what
+// the interactive editor in repl_tty.go drives on a real terminal.
 package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,33 +40,81 @@ import (
 	"domain/prims"
 )
 
+// The session's fixed strings. The interactive editor prints its own prompts,
+// so they live here once rather than once per reader.
+const (
+	replBanner     = "Domain REPL — an interactive domain expansion. :help lists commands, :quit leaves."
+	promptTop      = "domain> "
+	promptContinue = "   ...> "
+)
+
 const replHelp = `Every line is a Domain pipeline statement; the value threads top to bottom.
 Indented argument/body lines continue the statement above; finish a block
 with a blank line. Commands:
   :help           this text
   :list           show the program built so far
   :type           show the current value's type
+  :stats          replay under the profiler and chart where the time goes
+  :visualize      step through a recorded run (a text trace when piped)
+  :replay         run the program again as it stands
+  :watch <file>   replay whenever that file changes (terminal only)
+  :doc [name]     a primitive's signature and summary (bare :doc browses)
+  :docs [port]    serve the documentation and link error codes into it
   :undo           drop the last statement
   :reset          drop everything
   :load <file>    replace the program with a file's statements
-  :save <file>    write the program to a file
-  :quit           leave the domain
+  :save <file>    write the program to a file (:save! overwrites)
+  :edit           open the program in $EDITOR and reload it (terminal only)
+  :copy           copy the program to the system clipboard (terminal only)
+  :paste          load a program from the system clipboard (terminal only)
+  :keys           show the editor's key bindings (terminal only)
+  :quit           leave the domain (:quit! discards unsaved statements)
 `
+
+// ttyOnlyCommands are handled by the interactive editor (repl_tty.go); the
+// core knows their names so a piped session explains itself instead of
+// reporting an unknown command.
+var ttyOnlyCommands = map[string]string{
+	":edit": "opens $EDITOR", ":copy": "uses the system clipboard",
+	":paste": "reads the system clipboard", ":keys": "lists key bindings",
+	":watch": "polls a file in the background",
+}
 
 // repl holds one interactive session.
 type repl struct {
-	in      *bufio.Scanner
-	out     io.Writer
-	stmts   []string // accepted statements, each possibly multi-line
-	pending []string // statement under construction (awaiting its block)
-	baseDir string   // resolution root for Cursed Energy file targets
+	in       *bufio.Scanner
+	out      io.Writer
+	stmts    []string // accepted statements, each possibly multi-line
+	pending  []string // statement under construction (awaiting its block)
+	lead     []string // comment/blank lines waiting to attach to the next statement
+	baseDir  string   // resolution root for Cursed Energy file targets
+	color    bool     // colorize values, diagnostics and charts
+	width    int      // terminal width, for charts (0 = a sensible default)
+	dirty    bool     // statements accepted since the last :save
+	lastType string   // the current value's type, for the terminal's title bar
+	// trace is installed on every run. The interactive editor sets an
+	// interrupter here so a runaway loop can be stopped (ir/interrupt.go);
+	// a piped session leaves it nil, since Ctrl+C still reaches the process.
+	trace ir.Tracer
+	// progress, when set, is told how many stages a resolved run has, so the
+	// editor can show how far along it is (repl_progress.go).
+	progress *progressCounter
+	// lastProfile is the profile `:stats` last took, kept so a reader over it
+	// can re-order it without running the program again.
+	lastProfile *interp.Stats
+	// lastTrace is the recording `:visualize` last made, waiting for the
+	// editor to open a stepper over it (repl_visualize.go).
+	lastTrace *traceView
+	// interactive marks the session driven by the editor rather than by a
+	// pipe: what it can hand to an overlay, a pipe has to be told in text.
+	interactive bool
 }
 
 // Repl runs the interactive loop until :quit or EOF. It returns the process
-// exit code. A real terminal gets arrow-key editing, session history, and
-// auto-indented continuation lines (repl_tty.go); anything else (piped
-// input, and every test below, which feeds a strings.Reader) gets the plain
-// line-at-a-time reader.
+// exit code. A real terminal gets the full editor — history, completion, live
+// types, interruptible evaluation (repl_tty.go); anything else (piped input,
+// and every test that feeds a strings.Reader) gets the plain line-at-a-time
+// reader.
 func Repl(stdin io.Reader, stdout io.Writer) int {
 	if f, ok := stdin.(*os.File); ok && term.IsTerminal(f.Fd()) {
 		return replTTY(f, stdout)
@@ -69,16 +122,12 @@ func Repl(stdin io.Reader, stdout io.Writer) int {
 	return replPlain(stdin, stdout)
 }
 
-// replPlain is today's REPL loop, unchanged in behavior.
+// replPlain is the line-at-a-time reader: no editing, no color, no escapes.
 func replPlain(stdin io.Reader, stdout io.Writer) int {
 	r := &repl{in: bufio.NewScanner(stdin), out: stdout, baseDir: "."}
-	fmt.Fprintln(r.out, "Domain REPL — an interactive domain expansion. :help lists commands, :quit leaves.")
+	fmt.Fprintln(r.out, replBanner)
 	for {
-		if len(r.pending) > 0 {
-			fmt.Fprint(r.out, "   ...> ")
-		} else {
-			fmt.Fprint(r.out, "domain> ")
-		}
+		fmt.Fprint(r.out, r.prompt())
 		if !r.in.Scan() {
 			fmt.Fprintln(r.out)
 			if err := r.in.Err(); err != nil {
@@ -94,22 +143,39 @@ func replPlain(stdin io.Reader, stdout io.Writer) int {
 	}
 }
 
+// prompt is the prompt for the session's current state.
+func (r *repl) prompt() string {
+	if len(r.pending) > 0 {
+		return promptContinue
+	}
+	return promptTop
+}
+
 // handleLine routes one already-read, right-trimmed input line: a :command,
-// a blank line (completes a pending block), an indented continuation line,
-// or a fresh top-level statement. It reports whether the session should end.
+// a comment, a blank line (completes a pending block), an indented
+// continuation line, or a fresh top-level statement. It reports whether the
+// session should end.
 func (r *repl) handleLine(line string) (quit bool) {
 	switch {
 	case strings.HasPrefix(strings.TrimSpace(line), ":"):
 		r.flushPending()
 		return r.command(strings.TrimSpace(line))
 	case line == "":
-		r.flushPending()
+		if len(r.pending) > 0 {
+			r.flushPending()
+		}
 	case line[0] == ' ' || line[0] == '\t':
 		if len(r.pending) == 0 {
 			fmt.Fprintln(r.out, "error: this indented line continues nothing — start with a top-level `Keyword: operation`")
 			return false
 		}
 		r.pending = append(r.pending, strings.ReplaceAll(line, "\t", "    "))
+	case strings.HasPrefix(line, "#"):
+		// A comment at the top level is not a statement: hold it and let it
+		// travel with the statement it introduces, the way :load keeps a
+		// file's comments attached to what they describe.
+		r.flushPending()
+		r.lead = append(r.lead, line)
 	default:
 		r.flushPending()
 		r.acceptTopLevel(line)
@@ -122,18 +188,29 @@ func (r *repl) handleLine(line string) (quit bool) {
 // indented block is still missing, the statement waits in continuation mode;
 // any other error is reported and the line dropped.
 func (r *repl) acceptTopLevel(line string) {
-	trial := append(append([]string{}, r.stmts...), line)
-	pipe, _, err := r.frontEnd(trial)
+	stmt := r.withLead(line)
+	trial := append(append([]string{}, r.stmts...), stmt)
+	pipe, src, err := r.frontEnd(trial)
 	if err != nil && needsBlock(err) {
-		r.pending = []string{line}
+		r.pending = []string{stmt}
 		return
 	}
 	if err != nil {
-		fmt.Fprintf(r.out, "error: %v\n", err)
+		r.reportError(src, err)
 		return
 	}
-	r.stmts = trial
-	r.evalAndShow(pipe)
+	r.commit(trial)
+	r.evalAndShow(pipe, true)
+}
+
+// withLead attaches any held comment lines to the statement they introduce.
+func (r *repl) withLead(line string) string {
+	if len(r.lead) == 0 {
+		return line
+	}
+	stmt := strings.Join(append(r.lead, line), "\n")
+	r.lead = nil
+	return stmt
 }
 
 // flushPending completes the statement under construction: evaluate it with
@@ -145,37 +222,53 @@ func (r *repl) flushPending() {
 	stmt := strings.Join(r.pending, "\n")
 	r.pending = nil
 	trial := append(append([]string{}, r.stmts...), stmt)
-	pipe, _, err := r.frontEnd(trial)
+	pipe, src, err := r.frontEnd(trial)
 	if err != nil {
-		fmt.Fprintf(r.out, "error: %v\n", err)
+		r.reportError(src, err)
 		return
 	}
-	r.stmts = trial
-	r.evalAndShow(pipe)
+	r.commit(trial)
+	r.evalAndShow(pipe, true)
 }
 
-// needsBlock recognizes front-end errors that mean "the statement is fine so
-// far, it just wants indented lines" — the continuation-mode triggers.
+// commit accepts a trial program as the session's new state.
+func (r *repl) commit(stmts []string) {
+	r.stmts = stmts
+	r.dirty = true
+}
+
+// needsBlock reports whether an error means "the statement is fine so far, it
+// just wants indented lines" — the continuation-mode trigger. The front end
+// says so structurally (parser.Error.NeedsBlock, prims.ResolveError.NeedsBlock)
+// rather than in prose, so rewording an error cannot change what the REPL does.
 func needsBlock(err error) bool {
-	msg := err.Error()
-	for _, frag := range []string{
-		"must be followed by an indented body",
-		"must be followed by an indented sub-pipeline",
-		"requires a Using: lambda",
-		"has an empty body",
-		"requires a seed",
-		"requires a Seed",
-		"From: consumers",
-	} {
-		if strings.Contains(msg, frag) {
-			return true
-		}
+	var pe *parser.Error
+	if errors.As(err, &pe) {
+		return pe.NeedsBlock
+	}
+	var re *prims.ResolveError
+	if errors.As(err, &re) {
+		return re.NeedsBlock
+	}
+	// Statement-boundary recovery reports a list. A single entry is the same
+	// situation as a lone error; more than one means something else is wrong
+	// too, and waiting for a block would only hide it.
+	var list parser.ErrorList
+	if errors.As(err, &list) && len(list) == 1 {
+		return list[0].NeedsBlock
 	}
 	return false
 }
 
 // frontEnd resolves the joined statements into a pipeline.
 func (r *repl) frontEnd(stmts []string) (*ir.Pipeline, string, error) {
+	return resolveStatements(stmts, r.baseDir)
+}
+
+// resolveStatements is the front end as a free function: it takes everything
+// it needs by value, so the interactive editor can resolve a copy of the
+// session (for the live type preview) without reaching into a live one.
+func resolveStatements(stmts []string, baseDir string) (*ir.Pipeline, string, error) {
 	src := strings.Join(stmts, "\n") + "\n"
 	toks, err := lexer.Lex(src)
 	if err != nil {
@@ -187,7 +280,7 @@ func (r *repl) frontEnd(stmts []string) (*ir.Pipeline, string, error) {
 	}
 	// Imports resolve against the REPL's base directory, the same root
 	// Cursed Energy file targets use.
-	opts := prims.ResolveOptions{BaseDir: r.baseDir, Search: prims.SearchPath()}
+	opts := prims.ResolveOptions{BaseDir: baseDir, Search: prims.SearchPath()}
 	pipe, err := prims.ResolveWith(prog, opts)
 	if err != nil {
 		return nil, src, err
@@ -195,33 +288,98 @@ func (r *repl) frontEnd(stmts []string) (*ir.Pipeline, string, error) {
 	return pipe, src, nil
 }
 
+// context is the execution context every replay runs in. There is no program
+// stdin — the terminal cannot double as one — so a `Cursed Energy:` target
+// that does not exist is an error here rather than silently reading nothing.
+func (r *repl) context() *ir.Context {
+	return &ir.Context{
+		Stdin:   nil,
+		Stdout:  io.Discard, // the REPL prints the value itself; Reveal replays stay quiet
+		BaseDir: r.baseDir,
+		Trace:   r.trace,
+	}
+}
+
 // evalAndShow replays the whole pipeline and prints the current value and its
 // type. The caller has already resolved pipe via frontEnd (no need to parse
-// again here). A runtime failure rolls the last statement back so the
-// session keeps the last-good program.
-func (r *repl) evalAndShow(pipe *ir.Pipeline) {
+// again here). With rollback set, a runtime failure drops the statement that
+// caused it so the session keeps its last-good program; :undo and :load pass
+// false, since their program is not a fresh trial to reject.
+func (r *repl) evalAndShow(pipe *ir.Pipeline, rollback bool) {
 	if len(pipe.Nodes) == 0 {
 		return // a lone Shikigami definition produces no value
 	}
-	ctx := &ir.Context{
-		Stdin:   strings.NewReader(""),
-		Stdout:  io.Discard, // the REPL prints the value itself; Reveal replays stay quiet
-		BaseDir: r.baseDir,
+	if r.progress != nil {
+		r.progress.SetTotal(len(pipe.Nodes))
 	}
-	v, err := interp.Run(pipe, ctx)
+	v, err := interp.Run(pipe, r.context())
 	if err != nil {
-		fmt.Fprintf(r.out, "runtime error: %v (statement dropped)\n", err)
-		r.stmts = r.stmts[:len(r.stmts)-1]
+		if errors.Is(err, ir.ErrInterrupted) {
+			fmt.Fprintln(r.out, "interrupted"+droppedSuffix(rollback))
+		} else {
+			fmt.Fprintf(r.out, "runtime error: %v%s\n", err, droppedSuffix(rollback))
+		}
+		if rollback && len(r.stmts) > 0 {
+			r.stmts = r.stmts[:len(r.stmts)-1]
+		}
 		return
 	}
-	fmt.Fprintf(r.out, "=> %s : %s\n", ir.FormatShort(v), pipe.Nodes[len(pipe.Nodes)-1].Out)
+	out := pipe.Nodes[len(pipe.Nodes)-1].Out
+	r.lastType = fmt.Sprint(out)
+	fmt.Fprintln(r.out, r.formatResult(v, out))
+}
+
+// adopt replaces the program with src — an edited copy of itself, from
+// :edit — keeping the base directory the session already resolves against. A
+// program that does not resolve is reported and the session left as it was.
+func (r *repl) adopt(src string) {
+	old := r.stmts
+	r.stmts = splitStatements(src)
+	if _, trial, err := r.frontEnd(r.stmts); err != nil {
+		r.reportError(trial, err)
+		r.stmts = old
+		return
+	}
+	r.pending, r.lead, r.dirty = nil, nil, true
+	if len(r.stmts) == 0 {
+		fmt.Fprintln(r.out, "(empty domain)")
+		return
+	}
+	r.replay()
+}
+
+func droppedSuffix(rollback bool) string {
+	if rollback {
+		return " (statement dropped)"
+	}
+	return ""
+}
+
+// formatResult renders the `=> value : Type` line.
+func (r *repl) formatResult(v ir.Value, typ *ir.Type) string {
+	value, typeName := ir.FormatShort(v), fmt.Sprint(typ)
+	if r.color {
+		return styDim.Render("=> ") + styValue.Render(value) + styDim.Render(" : ") + styType.Render(typeName)
+	}
+	return fmt.Sprintf("=> %s : %s", value, typeName)
+}
+
+// reportError prints a failed statement through the diagnostics engine — the
+// same carets, "did you mean" suggestions and repairs `domain check` prints —
+// falling back to the raw error when the analyzer has nothing to add.
+func (r *repl) reportError(src string, err error) {
+	if out := r.renderDiagnostics(src); out != "" {
+		fmt.Fprint(r.out, out)
+		return
+	}
+	fmt.Fprintf(r.out, "error: %v\n", err)
 }
 
 // command handles one :directive; it reports whether the session should end.
 func (r *repl) command(line string) bool {
-	fields := strings.Fields(line)
-	switch fields[0] {
-	case ":quit", ":q", ":exit":
+	name, arg := splitCommand(line)
+	switch name {
+	case ":quit", ":q", ":exit", ":quit!", ":q!":
 		return true
 	case ":help", ":h":
 		fmt.Fprint(r.out, replHelp)
@@ -230,7 +388,7 @@ func (r *repl) command(line string) bool {
 			fmt.Fprintln(r.out, "(empty domain)")
 			break
 		}
-		fmt.Fprintln(r.out, strings.Join(r.stmts, "\n"))
+		fmt.Fprintln(r.out, highlightSource(strings.Join(r.stmts, "\n"), r.color))
 	case ":type", ":t":
 		pipe, _, err := r.frontEnd(r.stmts)
 		if err != nil || len(pipe.Nodes) == 0 {
@@ -238,84 +396,145 @@ func (r *repl) command(line string) bool {
 			break
 		}
 		fmt.Fprintln(r.out, pipe.Nodes[len(pipe.Nodes)-1].Out)
+	case ":replay":
+		if len(r.stmts) == 0 {
+			fmt.Fprintln(r.out, "(empty domain)")
+			break
+		}
+		r.replay()
+	case ":stats":
+		r.stats()
+	case ":docs":
+		r.docs(arg)
+	case ":doc":
+		r.doc(arg)
+	case ":visualize", ":vis":
+		r.visualize()
 	case ":undo", ":u":
 		if len(r.stmts) == 0 {
 			fmt.Fprintln(r.out, "(nothing to undo)")
 			break
 		}
 		r.stmts = r.stmts[:len(r.stmts)-1]
+		r.dirty = true
 		if len(r.stmts) > 0 {
-			r.evalAndShowKeep()
+			r.replay()
 		} else {
+			r.lastType = ""
 			fmt.Fprintln(r.out, "(empty domain)")
 		}
 	case ":reset":
-		r.stmts = nil
+		r.stmts, r.lead, r.dirty, r.lastType = nil, nil, true, ""
 		fmt.Fprintln(r.out, "(empty domain)")
 	case ":load":
-		if len(fields) < 2 {
-			fmt.Fprintln(r.out, "usage: :load <file.domain>")
-			break
-		}
-		src, err := os.ReadFile(fields[1])
-		if err != nil {
-			fmt.Fprintf(r.out, "error: %v\n", err)
-			break
-		}
-		old := r.stmts
-		oldBaseDir := r.baseDir
-		r.stmts = splitStatements(string(src))
-		r.baseDir = filepath.Dir(fields[1])
-		if _, _, err := r.frontEnd(r.stmts); err != nil {
-			fmt.Fprintf(r.out, "error: %v\n", err)
-			r.stmts = old
-			r.baseDir = oldBaseDir
-			break
-		}
-		r.evalAndShowKeep()
-	case ":save":
-		if len(fields) < 2 {
-			fmt.Fprintln(r.out, "usage: :save <file.domain>")
-			break
-		}
-		src := strings.Join(r.stmts, "\n") + "\n"
-		if err := os.WriteFile(fields[1], []byte(src), 0o644); err != nil {
-			fmt.Fprintf(r.out, "error: %v\n", err)
-			break
-		}
-		fmt.Fprintf(r.out, "saved %d statement(s) to %s\n", len(r.stmts), fields[1])
+		r.load(arg)
+	case ":save", ":save!":
+		r.save(arg, name == ":save!")
 	default:
-		fmt.Fprintf(r.out, "unknown command %s (:help lists commands)\n", fields[0])
+		if why, ok := ttyOnlyCommands[name]; ok {
+			fmt.Fprintf(r.out, "%s is only available on an interactive terminal (it %s)\n", name, why)
+			break
+		}
+		fmt.Fprintf(r.out, "unknown command %s (:help lists commands)\n", name)
 	}
 	return false
 }
 
-// evalAndShowKeep replays and reports like evalAndShow but never rolls back —
-// used after :undo/:load where the program is not a fresh trial.
-func (r *repl) evalAndShowKeep() {
-	pipe, _, err := r.frontEnd(r.stmts)
+// splitCommand splits a :directive into its name and its argument — the rest
+// of the line, verbatim. The argument is not split on spaces: a file path may
+// contain them, and `:load my program.domain` should open that file rather
+// than one called "my".
+func splitCommand(line string) (name, arg string) {
+	name = line
+	if i := strings.IndexAny(line, " \t"); i >= 0 {
+		name, arg = line[:i], strings.TrimSpace(line[i+1:])
+	}
+	return name, unquotePath(arg)
+}
+
+// unquotePath accepts the shapes a path arrives in: bare, quoted (because it
+// has spaces), or starting with ~ for the home directory.
+func unquotePath(arg string) string {
+	if len(arg) >= 2 && (arg[0] == '"' && arg[len(arg)-1] == '"' || arg[0] == '\'' && arg[len(arg)-1] == '\'') {
+		arg = arg[1 : len(arg)-1]
+	}
+	if arg == "~" || strings.HasPrefix(arg, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			arg = filepath.Join(home, strings.TrimPrefix(arg[1:], "/"))
+		}
+	}
+	return arg
+}
+
+// load replaces the session with a file's statements, validated first: a
+// broken file leaves the session untouched.
+func (r *repl) load(path string) {
+	if path == "" {
+		fmt.Fprintln(r.out, "usage: :load <file.domain>")
+		return
+	}
+	src, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(r.out, "error: %v\n", err)
 		return
 	}
-	if len(pipe.Nodes) == 0 {
+	oldStmts, oldBase := r.stmts, r.baseDir
+	r.stmts = splitStatements(string(src))
+	r.baseDir = filepath.Dir(path)
+	if _, trial, err := r.frontEnd(r.stmts); err != nil {
+		r.reportError(trial, err)
+		r.stmts, r.baseDir = oldStmts, oldBase
 		return
 	}
-	ctx := &ir.Context{Stdin: strings.NewReader(""), Stdout: io.Discard, BaseDir: r.baseDir}
-	v, err := interp.Run(pipe, ctx)
+	r.lead, r.dirty = nil, false
+	r.replay()
+}
+
+// save writes the session's program to a file. An existing file is not
+// overwritten unless the command was spelled `:save!` — a REPL is exactly
+// where a mistyped path is likely, and a program is exactly what one should
+// not silently destroy.
+func (r *repl) save(path string, force bool) {
+	if path == "" {
+		fmt.Fprintln(r.out, "usage: :save <file.domain>")
+		return
+	}
+	if !force {
+		if _, err := os.Stat(path); err == nil {
+			fmt.Fprintf(r.out, "%s already exists — use `:save! %s` to overwrite it\n", path, path)
+			return
+		}
+	}
+	src := strings.Join(r.stmts, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		fmt.Fprintf(r.out, "error: %v\n", err)
+		return
+	}
+	r.dirty = false
+	fmt.Fprintf(r.out, "saved %d statement(s) to %s\n", statementCount(r.stmts), path)
+}
+
+// replay re-runs the current program and reports its value, without the
+// rollback a fresh statement gets — after :undo or :load the program is not a
+// trial to reject.
+func (r *repl) replay() {
+	pipe, src, err := r.frontEnd(r.stmts)
 	if err != nil {
-		fmt.Fprintf(r.out, "runtime error: %v\n", err)
+		r.reportError(src, err)
 		return
 	}
-	fmt.Fprintf(r.out, "=> %s : %s\n", ir.FormatShort(v), pipe.Nodes[len(pipe.Nodes)-1].Out)
+	r.evalAndShow(pipe, false)
 }
 
 // splitStatements cuts a program source into top-level statements: a new
-// statement starts at every non-blank column-0 line; indented lines belong to
-// the statement above.
+// statement starts at every non-blank, non-comment column-0 line; indented
+// lines belong to the statement above. Comments and the blank lines around
+// them are *trivia* — they travel with the statement they introduce rather
+// than counting as statements of their own, so `:undo` drops a statement with
+// its comment, and `:save` writes the file back the way it was read.
 func splitStatements(src string) []string {
 	var stmts []string
-	var cur []string
+	var cur, lead []string
 	flush := func() {
 		if len(cur) > 0 {
 			stmts = append(stmts, strings.Join(cur, "\n"))
@@ -324,16 +543,52 @@ func splitStatements(src string) []string {
 	}
 	for _, line := range strings.Split(src, "\n") {
 		trimmed := strings.TrimRight(line, " \t\r")
+		indented := trimmed != "" && (trimmed[0] == ' ' || trimmed[0] == '\t')
 		switch {
 		case strings.TrimSpace(trimmed) == "":
-			continue
-		case trimmed[0] == ' ' || trimmed[0] == '\t':
-			cur = append(cur, trimmed)
+			// A blank line before the first statement is leading padding, not
+			// something to preserve; anywhere else it is part of the layout.
+			if len(stmts) > 0 || len(cur) > 0 || len(lead) > 0 {
+				lead = append(lead, "")
+			}
+		case !indented && strings.HasPrefix(strings.TrimSpace(trimmed), "#"):
+			lead = append(lead, trimmed)
+		case indented:
+			cur = append(append(cur, lead...), trimmed)
+			lead = nil
 		default:
 			flush()
-			cur = []string{trimmed}
+			cur = append(lead, trimmed)
+			lead = nil
+		}
+	}
+	// Trailing trivia belongs to the last statement — it was written after it.
+	if len(lead) > 0 && strings.TrimSpace(strings.Join(lead, "")) != "" {
+		if len(cur) == 0 && len(stmts) > 0 {
+			stmts[len(stmts)-1] += "\n" + strings.Join(lead, "\n")
+		} else {
+			cur = append(cur, lead...)
 		}
 	}
 	flush()
 	return stmts
+}
+
+// statementCount counts the chunks that carry an actual statement, so a
+// program's comments are not reported as program.
+func statementCount(stmts []string) int {
+	n := 0
+	for _, chunk := range stmts {
+		for _, line := range strings.Split(chunk, "\n") {
+			t := strings.TrimSpace(line)
+			if t == "" || strings.HasPrefix(t, "#") {
+				continue
+			}
+			if line[0] != ' ' && line[0] != '\t' {
+				n++
+				break
+			}
+		}
+	}
+	return n
 }

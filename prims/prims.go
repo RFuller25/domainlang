@@ -242,6 +242,12 @@ var Registry = []*Primitive{
 type ResolveError struct {
 	Pos token.Position
 	Msg string
+	// NeedsBlock marks the errors an indented block would fix — a missing
+	// Using: lambda, a missing Seed:, a body that has not been typed yet.
+	// The REPL waits for those lines instead of dropping the statement; see
+	// parser.Error.NeedsBlock, which carries the same flag for the errors the
+	// parser raises first.
+	NeedsBlock bool
 }
 
 func (e *ResolveError) Error() string {

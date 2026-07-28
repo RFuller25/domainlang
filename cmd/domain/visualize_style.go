@@ -15,46 +15,129 @@
 package main
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
+// The palette is a set of package-level styles rather than a value threaded
+// through every renderer, because it is genuinely global: one terminal, one
+// background, one set of colors for as long as the program runs. It is
+// installed once — see useTheme — from the event loop, which is also the only
+// goroutine that renders, so the swap cannot race a paint.
+
 var (
 	// Chrome.
-	styTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("135")) // Hollow Purple
-	styHeading = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("69"))  // Limitless blue
-	styDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	styRule    = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
-	styKey     = lipgloss.NewStyle().Foreground(lipgloss.Color("220")) // the keys in the footer
+	styTitle   lipgloss.Style // Hollow Purple
+	styHeading lipgloss.Style // Limitless blue
+	styDim     lipgloss.Style
+	styRule    lipgloss.Style
+	styKey     lipgloss.Style // the keys in the footer
 
 	// Tree rows.
-	styCursor = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("60"))
-	styFrame  = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // structure, not data
-	styLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	styType   = lipgloss.NewStyle().Foreground(lipgloss.Color("51")) // Six Eyes cyan
-	styErr    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("197"))
-	styMatch  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("220"))
-	styMarker = lipgloss.NewStyle().Foreground(lipgloss.Color("135"))
+	styCursor lipgloss.Style
+	styFrame  lipgloss.Style // structure, not data
+	styLabel  lipgloss.Style
+	styType   lipgloss.Style // Six Eyes cyan
+	styErr    lipgloss.Style
+	styMatch  lipgloss.Style
+	styMarker lipgloss.Style
 
 	// Values.
-	styValue = lipgloss.NewStyle().Foreground(lipgloss.Color("84")) // Reverse Cursed Technique green
+	styValue lipgloss.Style
+
+	// Source, for the REPL's syntax highlighting.
+	styKeyword lipgloss.Style
+	styArgName lipgloss.Style
+	styNumber  lipgloss.Style
+	styString  lipgloss.Style
+	styPunct   lipgloss.Style
+	styComment lipgloss.Style
+	styFix     lipgloss.Style
+
+	// heatRamp maps a share of the run to a color, coolest first. A profile is
+	// read by scanning for the hot end, so the ramp has to be legible at a
+	// glance and monotonic — not merely distinct.
+	heatRamp []heatBand
 )
 
-// heatRamp maps a share of the run to a color, coolest first. A profile is read
-// by scanning for the hot end, so the ramp has to be legible at a glance and
-// monotonic — not merely distinct.
-var heatRamp = []struct {
+type heatBand struct {
 	upTo  float64
 	color string
-}{
-	{1, "244"},  // noise
-	{5, "84"},   // green
-	{15, "51"},  // cyan
-	{35, "220"}, // yellow
-	{60, "208"}, // orange
-	{101, "197"},
+}
+
+// lightTheme reports which palette is installed, so a caller can tell whether
+// a background report actually changes anything.
+var lightTheme bool
+
+func init() { useTheme(false) }
+
+// useTheme installs the dark or the light palette. The two differ in more than
+// brightness: on a light background the eye needs *darker* ink, so the same
+// roles move to the low end of the 256-color cube rather than being dimmed.
+//
+// Call it only from the goroutine that renders. The REPL asks the terminal for
+// its background color at startup (tea.RequestBackgroundColor) and installs
+// the answer; anything the terminal does not report leaves the dark default,
+// which is what a terminal that answers nothing has almost always got.
+func useTheme(light bool) {
+	lightTheme = light
+	fg := func(dark, lightC string) lipgloss.Style {
+		c := dark
+		if light {
+			c = lightC
+		}
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(c))
+	}
+	bold := func(dark, lightC string) lipgloss.Style { return fg(dark, lightC).Bold(true) }
+
+	styTitle = bold("135", "91")
+	styHeading = bold("69", "26")
+	styDim = fg("244", "241")
+	styRule = fg("238", "247")
+	styKey = fg("220", "130")
+
+	styCursor = lipgloss.NewStyle().Bold(true)
+	styMatch = lipgloss.NewStyle().Bold(true)
+	if light {
+		styCursor = styCursor.Foreground(lipgloss.Color("232")).Background(lipgloss.Color("189"))
+		styMatch = styMatch.Foreground(lipgloss.Color("232")).Background(lipgloss.Color("222"))
+	} else {
+		styCursor = styCursor.Foreground(lipgloss.Color("231")).Background(lipgloss.Color("60"))
+		styMatch = styMatch.Foreground(lipgloss.Color("232")).Background(lipgloss.Color("220"))
+	}
+
+	styFrame = fg("141", "92")
+	styLabel = fg("252", "238")
+	styType = fg("51", "30")
+	styErr = bold("197", "160")
+	styMarker = fg("135", "91")
+	styValue = fg("84", "28")
+
+	styKeyword = bold("135", "91")
+	styArgName = fg("69", "26")
+	styNumber = fg("51", "30")
+	styString = fg("84", "28")
+	styPunct = fg("244", "242")
+	styComment = fg("240", "245")
+	styFix = fg("84", "28")
+
+	if light {
+		heatRamp = []heatBand{
+			{1, "245"}, {5, "28"}, {15, "30"}, {35, "130"}, {60, "166"}, {101, "160"},
+		}
+		return
+	}
+	heatRamp = []heatBand{
+		{1, "244"},  // noise
+		{5, "84"},   // green
+		{15, "51"},  // cyan
+		{35, "220"}, // yellow
+		{60, "208"}, // orange
+		{101, "197"},
+	}
 }
 
 // heat styles a percentage by how large it is.
@@ -123,4 +206,17 @@ func wrapVis(s string, w int) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// isLightColor reports whether a terminal background is light enough to need
+// dark ink, by relative luminance (ITU-R BT.709). A terminal that reports no
+// background at all is treated as dark, which is what an unanswering terminal
+// has almost always got.
+func isLightColor(c color.Color) bool {
+	if c == nil {
+		return false
+	}
+	r, g, b, _ := c.RGBA()
+	lum := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 65535
+	return lum > 0.5
 }

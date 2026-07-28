@@ -156,6 +156,68 @@ func (s *Stats) Stages() int { return len(s.stages) }
 // Total reports the summed duration of every top-level stage (for tests).
 func (s *Stats) Total() time.Duration { return s.total }
 
+// StageRow is one stage's accumulated cost, in the form a renderer needs.
+// Report writes its own table below; Rows exists for the renderers that do not
+// want a table — the REPL's `:stats` draws bars from these numbers.
+type StageRow struct {
+	Name      string        // the stage's Display, or its primitive id
+	Type      string        // the stage's output type, "" when it has none
+	Calls     int           // how many times the stage itself ran
+	Frames    int           // sub-pipeline frames it opened (iterations, bodies)
+	Nested    int           // node evaluations inside those frames
+	Size      int           // the size of the last output value
+	SizeKnown bool          // whether Size means anything (scalars have no size)
+	Dur       time.Duration // inclusive: everything nested inside the stage
+	Pct       float64       // Dur as a percentage of the whole run
+	Failed    bool
+	Children  []StageRow // per-node detail from inside this stage's frames
+}
+
+// Rows returns the recorded stages in program order, with the percentages
+// Report prints already worked out.
+func (s *Stats) Rows() []StageRow {
+	sorted := append([]*stageStat(nil), s.stages...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].order < sorted[j].order })
+
+	rows := make([]StageRow, 0, len(sorted))
+	for _, st := range sorted {
+		row := StageRow{
+			Name:      stageName(st.node),
+			Type:      typeName(st.node),
+			Calls:     st.calls,
+			Frames:    st.frames,
+			Nested:    st.nested,
+			Size:      st.outSize,
+			SizeKnown: st.sizeKnwn,
+			Dur:       st.dur,
+			Pct:       s.share(st.dur),
+			Failed:    st.failed,
+		}
+		for _, c := range st.children {
+			row.Children = append(row.Children, StageRow{
+				Name:      stageName(c.node),
+				Type:      typeName(c.node),
+				Calls:     c.calls,
+				Size:      c.outSize,
+				SizeKnown: c.sizeKnwn,
+				Dur:       c.dur,
+				Pct:       s.share(c.dur),
+				Failed:    c.failed,
+			})
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// share expresses a duration as a percentage of the whole recorded run.
+func (s *Stats) share(d time.Duration) float64 {
+	if s.total == 0 {
+		return 0
+	}
+	return 100 * float64(d) / float64(s.total)
+}
+
 // Report writes the stats table.
 func (s *Stats) Report(w io.Writer, verbose bool) {
 	fmt.Fprintf(w, "[stats] interpreter, %d stages, %s total (tree-walking evaluator, not the compiled binary)\n",
@@ -173,10 +235,7 @@ func (s *Stats) Report(w io.Writer, verbose bool) {
 		if st.frames > 0 {
 			name = fmt.Sprintf("%s (%d frames, %d steps)", name, st.frames, st.nested)
 		}
-		pct := 0.0
-		if s.total > 0 {
-			pct = 100 * float64(st.dur) / float64(s.total)
-		}
+		pct := s.share(st.dur)
 		fmt.Fprintf(w, "  %3d  %-38s %-18s %9s %9s %5.1f\n",
 			i+1, truncate(name, 38), truncate(typeName(st.node), 18),
 			sizeText(st.sizeKnwn, st.outSize), FormatDuration(st.dur), pct)

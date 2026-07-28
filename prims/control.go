@@ -138,7 +138,7 @@ func (r *resolver) resolveLoop(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 			Msg: "Simple Domain needs a loop kind (Repeat N / Iterate Until Fixed Point / While / For)"}
 	}
 	if len(stmt.Block) == 0 {
-		return nil, &ResolveError{Pos: stmt.Pos, Msg: "Simple Domain loop has an empty body"}
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: "Simple Domain loop has an empty body", NeedsBlock: true}
 	}
 
 	op := stmt.Op

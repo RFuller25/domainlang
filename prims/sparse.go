@@ -248,7 +248,7 @@ func gridFromSparseNode(in *ir.Type, pos token.Position) *ir.Node {
 func sparseCellLambda(args ArgSet, prim string, pos token.Position) (*ast.Lambda, error) {
 	lam, ok := args.Lambda("Using")
 	if !ok {
-		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim)}
+		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim), NeedsBlock: true}
 	}
 	wantArity := 1 + ambientDepth()
 	if len(lam.Params) != wantArity {

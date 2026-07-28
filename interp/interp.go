@@ -13,8 +13,15 @@ import (
 // evaluated in place; on violation they surface as an *ir.RuntimeError.
 func Run(p *ir.Pipeline, ctx *ir.Context) (result ir.Value, err error) {
 	// Guard against any primitive panicking so users never see a raw stack.
+	// An interrupt (ir/interrupt.go) arrives the same way but is not a bug:
+	// it is the only way out of a half-finished loop iteration, so it is
+	// translated back into an ordinary error here.
 	defer func() {
 		if r := recover(); r != nil {
+			if ir.IsInterrupt(r) {
+				result, err = nil, ir.ErrInterrupted
+				return
+			}
 			err = fmt.Errorf("internal error during interpretation: %v", r)
 		}
 	}()
