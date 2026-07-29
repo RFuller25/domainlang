@@ -84,12 +84,12 @@ func TestRequireLambdaArityIncludesAmbientDepth(t *testing.T) {
 	defer popAmbient()
 	// A lambda written with 2 params: 1 base + 1 ambient satisfies "arity 1".
 	lam := &ast.Lambda{Params: []string{"v", "x"}}
-	args := ArgSet{[]*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lam}}}}
+	args := ArgSet{args: []*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lam}}}}
 	if _, err := requireLambda(args, 1, "Test", token.Position{}); err != nil {
 		t.Errorf("requireLambda with matching ambient-adjusted arity: %v", err)
 	}
 	lamTooFew := &ast.Lambda{Params: []string{"v"}}
-	argsTooFew := ArgSet{[]*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lamTooFew}}}}
+	argsTooFew := ArgSet{args: []*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lamTooFew}}}}
 	if _, err := requireLambda(argsTooFew, 1, "Test", token.Position{}); err == nil {
 		t.Error("requireLambda should still reject a lambda missing the ambient param")
 	}

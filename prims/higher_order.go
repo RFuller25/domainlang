@@ -30,11 +30,31 @@ func listElem(in *ir.Type, prim string, pos token.Position) (*ir.Type, error) {
 	return in.Elem, nil
 }
 
-// requireLambda fetches the Using: lambda and checks its arity.
+// requireLambda fetches the Using: lambda and checks its arity. An indented
+// pipeline body counts as one: it is the same signature written as stages
+// instead of an expression, so every primitive that calls this accepts both
+// spellings without knowing there are two (see prims/block.go).
 func requireLambda(args ArgSet, arity int, prim string, pos token.Position) (*ast.Lambda, error) {
 	lam, ok := args.Lambda("Using")
 	if !ok {
-		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s requires a Using: lambda", prim), NeedsBlock: true}
+		if args.hasBlock() {
+			blockLam, err := args.res.blockLambda(args.block, arity, prim, pos)
+			if err != nil {
+				return nil, err
+			}
+			*args.blockUse = true
+			return blockLam, nil
+		}
+		// NeedsBlock is now true in a second sense: an indented block does not
+		// merely *precede* the lambda, it can *be* the lambda. Either way the
+		// REPL should keep waiting for the following lines rather than drop the
+		// statement.
+		return nil, &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("%s requires a Using: lambda", prim), NeedsBlock: true}
+	}
+	if args.hasBlock() {
+		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"%s takes either a Using: lambda or an indented pipeline body, not both", prim)}
 	}
 	wantArity := arity + ambientDepth()
 	if len(lam.Params) != wantArity {

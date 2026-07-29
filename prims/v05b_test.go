@@ -224,7 +224,7 @@ func TestLoopBodyStillRefusesFromConsumers(t *testing.T) {
 		"Simple Domain: Repeat 2\n" +
 		"    Maximum Technique: Combine\n        From: c\n        Using: (x) -> x\n"
 	if _, err := resolveSrc(t, src); err == nil ||
-		!strings.Contains(err.Error(), "loop or Shikigami body") {
+		!strings.Contains(err.Error(), "not allowed inside a loop") {
 		t.Fatalf("expected a scope error naming loops, got %v", err)
 	}
 }

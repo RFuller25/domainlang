@@ -66,7 +66,7 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 
 // resolveConsumer lowers a From:-consumer (Combine or Difference).
 func (r *resolver) resolveConsumer(stmt *ast.Statement, cur *ir.Type) (*ir.Node, error) {
-	args := ArgSet{stmt.Args}
+	args := ArgSet{args: stmt.Args}
 	froms, _ := args.Idents("From")
 	if len(froms) == 0 {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: "From: must name at least one channel"}

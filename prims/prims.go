@@ -30,10 +30,25 @@ type Primitive struct {
 	Build func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error)
 }
 
-// ArgSet provides typed lookup over a statement's named arguments.
+// ArgSet provides typed lookup over a statement's named arguments, and over
+// the indented pipeline body a statement may carry in place of a `Using:`
+// lambda (see prims/block.go).
 type ArgSet struct {
 	args []*ast.Arg
+	// block is the statement's indented sub-pipeline, if it has one, together
+	// with the resolver that can lower it and a flag recording whether some
+	// primitive actually took it. The flag is the body's counterpart to
+	// ast.Arg.Used: a primitive that never asks for a lambda would otherwise
+	// ignore a body silently, and the resolver reports that rather than
+	// running a program that quietly drops a stage the user wrote.
+	block    []*ast.Statement
+	res      *resolver
+	blockUse *bool
 }
+
+// hasBlock reports whether an indented pipeline body is available to stand in
+// for a Using: lambda.
+func (a ArgSet) hasBlock() bool { return len(a.block) > 0 && a.res != nil }
 
 // get finds a named argument and records that some primitive asked for it.
 // Every typed accessor goes through here, so "was this argument ever read?"
@@ -363,8 +378,23 @@ const (
 	scopeTop     scope = iota // Channel definitions, Part blocks, From: consumers
 	scopePart                 // From: consumers only
 	scopeChannel              // From: consumers only — a Channel body
-	scopeNested               // neither: loop and Shikigami bodies
+	scopeNested               // neither: loop, Shikigami and Using: bodies
 )
+
+// describe names a scope for an error message, so a refusal says which body
+// the offending statement is actually in rather than assuming a Channel.
+func (s scope) describe() string {
+	switch s {
+	case scopePart:
+		return "a Part"
+	case scopeChannel:
+		return "a Channel body"
+	case scopeNested:
+		return "a loop, Shikigami, or Using: body"
+	default:
+		return "the top level"
+	}
+}
 
 // resolveSequence lowers a run of statements threading a current type. sc says
 // what structural statements are permitted here (see scope).
@@ -399,7 +429,7 @@ func (r *resolver) resolveSequence(stmts []*ast.Statement, in *ir.Type, sc scope
 			}
 			if sc != scopeTop {
 				return nodes, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "Channels cannot be nested inside a Channel body"}
+					Msg: "Channels cannot be nested inside " + sc.describe()}
 			}
 			node, err := r.resolveChannel(stmt, cur)
 			if err != nil {
@@ -423,7 +453,7 @@ func (r *resolver) resolveSequence(stmts []*ast.Statement, in *ir.Type, sc scope
 			// and declaration order gives the dependency DAG for free.
 			if sc == scopeNested {
 				return nodes, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "From: consumers are not allowed inside a loop or Shikigami body"}
+					Msg: "From: consumers are not allowed inside a loop, Shikigami, or Using: body"}
 			}
 			node, err := r.resolveConsumer(stmt, cur)
 			if err != nil {
@@ -449,15 +479,27 @@ func (r *resolver) resolveOne(stmt *ast.Statement, cur *ir.Type) (*ir.Node, erro
 		return nil, &ResolveError{Pos: stmt.Pos,
 			Msg: fmt.Sprintf("keyword %q has no operation", stmt.Keyword)}
 	}
-	if len(stmt.Block) > 0 {
-		return nil, &ResolveError{Pos: stmt.Pos,
-			Msg: "nested pipeline blocks are only allowed under Channel (v0.2)"}
-	}
 	prim := findPrimitive(stmt)
 	if prim == nil {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: unknownOpMessage(stmt)}
 	}
-	return prim.Build(stmt.Op, ArgSet{stmt.Args}, cur, stmt.Pos)
+	// An indented body rides along in the ArgSet, where requireLambda picks it
+	// up as the Using: lambda (prims/block.go). Whether it was picked up is the
+	// primitive's answer to "do I take a lambda at all?", so no list of which
+	// primitives accept a body has to be maintained here — or kept in sync.
+	used := false
+	args := ArgSet{args: stmt.Args, block: stmt.Block, res: r, blockUse: &used}
+	node, err := prim.Build(stmt.Op, args, cur, stmt.Pos)
+	if err != nil {
+		return nil, err
+	}
+	if len(stmt.Block) > 0 && !used {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(
+			"%s does not take an indented pipeline body: it has no Using: lambda for one to stand in for. "+
+				"The statements that take an indented body are Channel, Part, Simple Domain, and any stage with a 1-parameter Using: lambda",
+			prim.ID)}
+	}
+	return node, nil
 }
 
 // hasFrom reports whether a statement names channels via a From: argument.

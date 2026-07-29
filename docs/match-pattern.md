@@ -1,22 +1,23 @@
-# Design note: Match Pattern (v0.2)
+# Match Pattern: the typed-hole template language
 
-`Match Pattern` is the parsing workhorse — most of AoC's input handling flows
-through it, so it is designed deliberately here rather than improvised during
-implementation. This note pins the syntax, the output shapes, the lowering
-strategy, and the cases v0.2 must cover. Scope is intentionally bounded to the
-anchor problems plus a few near neighbors; anything beyond is a v0.3 concern.
+`Match Pattern` is the parsing workhorse — most input handling flows through
+it. This page is the full reference for the template syntax, the output shapes
+it produces, how it is typed, how it is lowered by each backend, and how it
+fails.
 
-> **Status: implemented.** Template parsing/typing lives in the `pattern`
-> package; the pipeline primitive lives in `prims/match.go`. `Mode:` is inferred
-> from the input type when omitted. Downstream predicates use the expression
-> layer's `and`/`or` connectives.
+Template parsing and typing live in the `pattern` package; the pipeline
+primitive lives in `prims/match.go`; the compiled lowering is
+`codegen/matchgen.go`. The primitive itself is summarized in
+[primitives.md](primitives.md#match-pattern--text---v-or-listtext---listv).
 
-## Decision recap
+## The shape of it
 
-- **Syntax:** typed-hole templates (not raw regex, sscanf, or a combinator DSL).
-- **Hole types (v0.2):** `{int}`, `{word}`, `{text}`.
+- **Syntax:** typed-hole templates — not raw regex, `sscanf`, or a combinator
+  DSL. The template is a literal, so the output type is known statically.
+- **Hole types:** `{int}`, `{word}`, `{text}`.
 - **Named holes → Record; positional holes → fixed-arity tuple/list.**
-- **`Mode:`** selects single-match vs match-all.
+- **`Mode:`** selects single-match vs match-all, and is inferred from the input
+  type when omitted.
 
 ## Syntax
 
@@ -85,22 +86,32 @@ fully determined statically — no inference needed. A pattern that fails to par
 at resolve time (malformed `{...}`, unknown hole type) is a resolve error with a
 position.
 
-## Lowering strategy
+## Lowering
 
-Translate the template to a matcher once, at lower-time:
+The template becomes a matcher once, at resolve time:
 
 1. Tokenize the template into a sequence of literals and holes.
 2. Compile to a regular expression with one capture group per hole
    (`{int}` → `(-?\d+)`, `{word}` → `(\S+)`, `{text}` → `(.*)`), anchored to the
-   whole field. Named holes map to named groups for clarity.
-3. At interpret time, run the regex on the current value (or each element under
-   `Mode: Each`), convert captures to their hole types, and assemble the
-   Record/tuple.
+   whole field. Named holes map to named groups.
+3. At run time, match the current value (or each element under `Mode: Each`),
+   convert captures to their hole types, and assemble the Record/tuple.
 
-Using Go's `regexp` keeps v0.2 small and correct. The template surface stays
-themed and friendly; the regex is an internal implementation detail the user
-never sees. If a future problem needs something regex can't express cleanly,
-revisit with a hand-written matcher — but not in v0.2.
+The regex is an implementation detail the user never sees; the template surface
+stays themed and friendly.
+
+**The compiler has a faster path.** `domain build` emits a
+`func dmParseN(s string) (T, bool)` per template. A template whose holes are
+all `{int}`, separated by literals that a greedy scan cannot mis-split,
+compiles to a **hand-rolled scanner with no regexp at run time**; anything else
+(a `{word}` or `{text}` hole, an ambiguous separator) falls back to a
+package-level compiled regexp with identical semantics.
+`TestMatchPatternPathSelection` pins which template takes which path, and the
+interpreter-vs-binary oracle tests pin that both agree.
+
+The compiler also fuses parse-then-reduce adjacencies — `Split` +
+`Match Pattern, Mode: Each` + `Count Matching` becomes one streaming loop that
+never materializes the `[]string` or the `[]Record`.
 
 ## Error behavior
 
@@ -111,9 +122,9 @@ revisit with a hand-written matcher — but not in v0.2.
 - **Conversion failure** (e.g. `{int}` capturing a value out of `int64` range):
   runtime error with the offending text.
 
-## Cases v0.2 must cover
+## Worked cases
 
-These are drawn from the survey; the first is the anchor.
+Each of these is covered by a test.
 
 | Input | Template | Result |
 |---|---|---|
@@ -123,9 +134,17 @@ These are drawn from the survey; the first is the anchor.
 | `1-3 a: abcde` (2020 D2) | `"{lo:int}-{hi:int} {ch:word}: {pw:text}"` | `{lo:1,hi:3,ch:"a",pw:"abcde"}` |
 | `2x3x4` (2015 D2) | `"{int}x{int}x{int}"` | `[2,3,4]` |
 
-## Explicitly out of scope for v0.2
+## Deliberate omissions
 
-- Alternation / optional holes / repetition inside a template.
+The template language stops here on purpose — past this point a regex would be
+the honest tool, and `Match Pattern` is meant to stay readable at a glance:
+
+- Alternation, optional holes, or repetition inside a template.
 - Recursive or nested patterns.
-- Custom hole types beyond `{int} {word} {text}`.
-- Whitespace-flexible matching (templates match literally; pre-split/trim first).
+- Custom hole types beyond `{int}`, `{word}`, `{text}`.
+- Whitespace-flexible matching — templates match literally, so pre-split with
+  `Split Fields` or trim first.
+
+For input that needs more than this, `Extract Integers` mines every integer out
+of a messy line without a template at all, and `Split Fields` handles
+whitespace-separated columns.

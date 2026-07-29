@@ -10,14 +10,17 @@ Domain is deliberately verbose and styled after *Jujutsu Kaisen*: functions are
 Vows." The theme is load-bearing — it maps JJK's power hierarchy onto compiler
 stages.
 
-This repository is a **tree-walking interpreter** (v0.1 → v0.2) plus the
-**v0.3 Go compiler backend (MVP)**. It has the full v0.2 vocabulary — parsing
-(`Match Pattern`), dense and sparse grids, pairs/combinations, sets/maps,
-higher-order lambda operations, named dataflow `Channel`s, loops,
+This repository is a **tree-walking interpreter** plus a **Go compiler
+backend**, both consuming the same optimized IR. The vocabulary is complete
+across both: parsing (`Match Pattern`), dense and sparse grids,
+pairs/combinations, sets/maps, higher-order lambda operations (with a `Using:`
+that may be an [indented pipeline](docs/expressions.md) rather than an
+expression), named dataflow `Channel`s, loops, measured arguments,
 user-defined `Shikigami` + a prelude, and a **30-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
-`domain build` compiles the same optimized IR the interpreter runs into a
-standalone, aggressively typed Go binary.
+`domain build` compiles that same IR into a standalone, aggressively typed Go
+binary — every primitive and all 92 expression builtins have a codegen case,
+each pinned by an interpreter-vs-binary oracle test.
 
 **New here? Start with [docs/getting-started.md](docs/getting-started.md)** —
 a ground-up tutorial from FizzBuzz to a Game of Life glider. The full
@@ -43,7 +46,7 @@ go run ./cmd/domain build testdata/day1.domain -o day1
 go run ./cmd/domain build testdata/day1.domain --emit-go -
 ```
 
-Eighteen ready-to-run programs with inputs and expected outputs live in
+Nineteen ready-to-run programs with inputs and expected outputs live in
 [`examples/`](examples/README.md) — each one shows off a different piece of
 the language — and thirteen classic programming challenges (FizzBuzz, Two
 Sum, Kadane, Conway's Game of Life, Minesweeper, …) live in
@@ -197,7 +200,11 @@ Every keyword below is optional — see
 - **Data model**: Int, Float, Text, Bool, List, Tuple, Record, Map, Set,
   Grid, and Sparse (the unbounded default-valued plane).
 - **Higher-order operations** driven by `Using:` lambdas — `Map Each`, `Filter`,
-  `Fold`, `Group By`, `Count Matching`, `All Pairs`/`Combinations`.
+  `Fold`, `Group By`, `Count Matching`, `All Pairs`/`Combinations` — and, where
+  a lambda cannot reach, **a `Using:` written as an indented pipeline**: it
+  stands in for the lambda at every stage that takes a 1-parameter one, so a
+  per-element job can use primitives (a pair search per row of a
+  `List<List<Int>>`, a sort key that is itself a reduction).
 - **The functional layer around Fold** — `Reduce` (seedless fold, so the
   accumulator can be any type), `Scan` (the running fold), `Unfold` (Fold's
   dual: grow a value into a list) and `Iterate n` (keep the trajectory a
@@ -348,7 +355,7 @@ anchor program in both modes and require byte-identical stdout. On a
 1M-line AoC 2022 Day 4 input the compiled binary is ~7× faster than the
 interpreter; binaries are self-contained (~1.5 MB, stdlib only).
 
-**Every v0.2 primitive compiles.** Map/Set values lower to insertion-ordered
+**Every primitive compiles.** Map/Set values lower to insertion-ordered
 generic runtime types so rendered output matches the interpreter exactly;
 `Simple Domain` loops thread one mutable variable through their emitted
 bodies; Fixed Point convergence and composite `=` share generated structural

@@ -36,6 +36,15 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 		return strconv.FormatBool(x.Value), ir.Bool(), nil
 	case *ast.StringLit:
 		return strconv.Quote(x.Value), ir.Text(), nil
+	case *ast.BlockBody:
+		// A lambda body written as a pipeline: lowered to a top-level function
+		// and called here, so every emitter that wanted an expression gets one
+		// (see blockgen.go).
+		b, ok := env[x.Param]
+		if !ok {
+			return "", nil, fmt.Errorf("block body has no input binding")
+		}
+		return g.emitBlockCall(x, b.expr, b.typ)
 	case *ast.Ident:
 		b, ok := env[x.Name]
 		if !ok {

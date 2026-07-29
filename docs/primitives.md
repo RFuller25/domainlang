@@ -21,7 +21,7 @@ included, each pinned by an interpreter-vs-binary oracle test. See
 
 ### Read Source — `(nothing) -> Text`
 
-```domain
+```domain ignore
 Cursed Energy: input.txt
 Cursed Energy: stdin
 ```
@@ -68,6 +68,24 @@ Cursed Technique: Split Each by "\n"
 Cursed Technique: Map Each
     Using: (m) -> m.n
 ```
+
+**The `Using:` may be written as an indented pipeline** instead of a lambda,
+which is how a per-element job reaches a *primitive* — the expression layer
+cannot iterate, so there is no lambda that searches an element which is itself
+a list:
+
+```domain
+Cursed Technique: Map Each          # List<List<Int>> -> List<Int>
+    Domain Expansion: All Pairs
+        Mode: First
+        Using: (a, b) -> a + b = 2020
+    Maximum Technique: Product
+```
+
+This is not a `Map Each` feature: a body stands in wherever a 1-parameter
+`Using:` lambda is accepted. See
+[pipeline bodies](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)
+for the rule, the primitives it reaches, and its limits.
 
 ### Filter — `List<T> × (T -> Bool) -> List<T>`
 
@@ -482,7 +500,7 @@ The lambda takes **two** parameters, key then value.
 
 ## Channeled Energy — coercions
 
-### Convert To Integers
+### Convert To Integers — `List<Text> -> List<Int>` | `List<List<Text>> -> List<List<Int>>`
 
 Two forms, chosen by input type:
 
@@ -492,7 +510,7 @@ Two forms, chosen by input type:
 Whitespace around each number is tolerated; a non-integer is a runtime error
 naming the offending item.
 
-### Convert To Floats
+### Convert To Floats — `List<Text|Int> -> List<Float>` (or nested)
 
 Four forms, chosen by input type:
 
@@ -506,7 +524,7 @@ the item); Int widens exactly. `Sum`, `Max`, `Min`, `Product`, and `Sort`
 all accept `List<Float>` afterward. Floats are not keyable — `Unique`,
 `Group By`, Sets, and Map keys reject them.
 
-### Convert To Grid
+### Convert To Grid — `List<List<T>> | List<Text> | Sparse<T> -> Grid<T>`
 
 Three forms, chosen by input type:
 
@@ -515,10 +533,12 @@ Three forms, chosen by input type:
 - `List<Text> -> Grid<Text>` — each character (rune) becomes a cell.
 - `Sparse<T> -> Grid<T>` — **densify**: materialize the bounding box,
   translated so `(minrow, mincol)` lands at `(0, 0)`, unset cells filled
-  with the default. The empty sparse grid becomes the 0×0 grid. Guarded at
-  4,000,000 cells (`ir.MaxSparseDense`) — a clear runtime error instead of
-  an OOM when two far-apart cells imply a huge box. This is how a sparse
-  plot becomes a printable picture.
+  with the default. The empty sparse grid becomes the 0×0 grid. This is how
+  a sparse plot becomes a printable picture. **Unbounded** — the old
+  4,000,000-cell ceiling refused plots a machine had room for, so two
+  far-apart cells now cost memory rather than earning a clean refusal
+  (`ir.MaxSparseDense` is a var and restores one). A box beyond what any
+  machine could allocate is still a clean error, not a panic.
 
 ### Convert To Sparse Grid — `… -> Sparse<T>`
 
@@ -662,8 +682,8 @@ Maximum Technique: Fold
     Using: (acc, x) -> tuple(prow(acc) + x, pcol(acc) + 1)
 ```
 
-Two variations live nearby: [Reduce](#reduce) is the same left fold seeded by
-the first element instead, and [Scan](#scan) keeps every intermediate
+Two variations live nearby: [Reduce](#reduce--listt--t-t---t---t) is the same left fold seeded by
+the first element instead, and [Scan](#scan--listt--seed--acc-t---acc---listacc) keeps every intermediate
 accumulator rather than only the last (its `Seed:` measures the same way).
 
 **Fold as a channel consumer.** With `From:` naming one channel, Fold runs
@@ -718,11 +738,11 @@ whole list.
 On the empty list each takes the identity of its connective: `Any` is `false`
 (nothing satisfies it), `All` is `true` (nothing violates it).
 
-Note that `All Pairs` is the [combination generator](#all-pairs--combinations-k)
+Note that `All Pairs` is the [combination generator](#all-pairs--combinations-k--listt--mode--lambda---)
 and `All Values > n` is a [Binding Vow](#simple-domain-channel-shikigami-binding-vow-reveal);
 neither is this reduction.
 
-### Find / Find Index — `List<T> × (T -> Bool) -> T` | `-> Int`
+### Find / Find Index — `List<T> × (T -> Bool) -> T` | `List<T> × (T -> Bool) -> Int`
 
 ```domain
 Maximum Technique: Find
@@ -806,13 +826,17 @@ Maximum Technique: Max By
 The element whose Int key is smallest/largest (the first wins ties; the
 empty list is a runtime error).
 
-### Intersect / Union — `List<List<T>> -> Set<T>` (T keyable)
+### Intersect / Union / Difference — `List<List<T>> -> Set<T>` (T keyable)
 
 Set reduction over the groups, seeded with the first group. `Intersect`
 keeps the accumulator's element order; `Union` appends left-to-right,
-deduplicated. The empty input produces the empty set.
+deduplicated; `Difference` keeps the elements of the first group that appear
+in no later group. The empty input produces the empty set.
 
-### Merge Ranges — coalesce inclusive integer intervals
+`Difference` is also a two-channel consumer — see
+[below](#difference--channel-consumer---sett-t-keyable) for that form.
+
+### Merge Ranges — `List<(Int, Int)> -> List<(Int, Int)>`
 
 ```domain
 Maximum Technique: Merge Ranges
@@ -936,6 +960,13 @@ order). The lambda takes k parameters. Modes:
 | `First` | Bool | `List<T>` — the first satisfying combo; **error if none** |
 | `Map` | U | `List<U>` — the lambda applied to every combo |
 
+The lambda's parameters are elements of the **current value**. Over a
+`List<List<T>>` that means whole inner lists, not the values inside them —
+`(a, b) -> a % b = 0` there is a type error naming `List<Int>` operands. To
+search each inner list instead, put the `All Pairs` in a
+[`Map Each` block](#map-each--listt--t---u---listu), whose body runs once per
+element.
+
 `All Pairs` with a sum-to-constant predicate (`Mode: First` or `Count`) is
 rewritten to an O(n) hash-set scan — see [optimizer.md](optimizer.md).
 
@@ -976,9 +1007,12 @@ Size and step must be ≥ 1; a list shorter than the window yields no windows.
 Domain Expansion: Permutations
 ```
 
-Every ordering of the list, in lexicographic index order. Bounded: more
-than 9 elements is a runtime error (n! explodes; state the search
-differently or wait for an optimizer pass that prunes it).
+Every ordering of the list, in lexicographic index order. **Unbounded** —
+Domain used to refuse more than 9 elements, which turned a 10-element input
+(3.6M orderings, comfortable on any machine) into a spurious failure. `n!`
+still explodes, so a large input is slow or memory-hungry rather than
+cleanly refused; `prims.MaxPermutationInput` is a var, so a caller that wants
+a ceiling back can set one, and both backends read the same value.
 
 ### Subsets — `List<T> -> List<List<T>>`
 
@@ -988,9 +1022,10 @@ Domain Expansion: Subsets
 
 The power set. Subset k includes element i iff bit i of k is set, so the
 empty set comes first and the full list last; each subset preserves element
-order. Bounded: more than 16 elements is a runtime error (2^n explodes).
+order. **Unbounded**, for the same reason as `Permutations` (`2^n` still
+explodes; `prims.MaxSubsetInput` restores a ceiling if you want one).
 
-### Explore — `S × (S -> List<S>) -> …` (S keyable)
+### Explore — `S × (S -> List<S>) -> List<S> | Int | Map<S,Int>` (S keyable)
 
 ```domain
 Domain Expansion: Explore

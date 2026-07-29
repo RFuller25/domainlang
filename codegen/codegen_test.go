@@ -1159,6 +1159,146 @@ Reveal: stdout
 `,
 			input: "1\n2\n3\n4",
 		},
+
+		// A Using: written as an indented pipeline body. The compiler lowers
+		// the body to a top-level function and calls it where the lambda
+		// expression would have gone; the interpreter runs the same node list
+		// per invocation. These pin the two together over the shapes that
+		// differ structurally — a per-element search, a reducing body, a
+		// nested body, an ambient loop variable reaching into one (which the
+		// emitted function takes as an extra parameter), a Set input, and the
+		// spread of primitives the form reaches beyond Map Each.
+		{
+			name: "using body: per-row pair search",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Domain Expansion: All Pairs
+        Mode: First
+        Using: (a, b) -> (ikke b = 0 and a % b = 0) or (ikke a = 0 and b % a = 0)
+    Maximum Technique: Reduce
+        Using: (x, y) -> max(x, y) / min(x, y)
+Maximum Technique: Sum
+Reveal: stdout
+`,
+			input: "5 9 2 8\n9 4 7 3\n3 8 6 5",
+		},
+		{
+			// The sum-to-constant rewrite fires inside the body in optimized
+			// mode and not in naive mode; both must agree with the interpreter.
+			name: "using body: optimizable pair sum per row",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Domain Expansion: All Pairs
+        Mode: First
+        Using: (a, b) -> a + b = 100
+    Maximum Technique: Product
+Reveal: stdout
+`,
+			input: "1 5 99 3\n50 50 2",
+		},
+		{
+			name: "using body: reducing body",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Cursed Technique: Map Each
+    Cursed Technique: Extract Integers
+    Maximum Technique: Sum
+Reveal: stdout
+`,
+			input: "1 2 3\n40 50",
+		},
+		{
+			name: "using body: nested bodies",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n\n"
+Cursed Technique: Split Each by "\n"
+Cursed Technique: Map Each
+    Cursed Technique: Map Each
+        Cursed Technique: Extract Integers
+        Maximum Technique: Sum
+    Maximum Technique: Max
+Reveal: stdout
+`,
+			input: "1 2 3\n4 5 6\n\n7 8\n9 10",
+		},
+		{
+			name: "using body: ambient For variable inside the body",
+			src: `Cursed Energy: stdin
+Shikigami: Ints
+Channel "deltas":
+    Cursed Technique: Apply
+        Using: (xs) -> list(10, 100)
+Cursed Technique: Map Each
+    Using: (n) -> list(n, n)
+Simple Domain: For d in deltas
+    Cursed Technique: Map Each
+        Cursed Technique: Map Each
+            Using: (n, d) -> n + d
+Reveal: stdout
+`,
+			input: "1\n2",
+		},
+		{
+			name: "using body: over a set",
+			src: `Cursed Energy: stdin
+Shikigami: Ints
+Channeled Energy: Convert To Set
+Cursed Technique: Map Each
+    Cursed Technique: Apply
+        Using: (n) -> n * 2
+Reveal: stdout
+`,
+			input: "3\n1\n3\n2",
+		},
+		{
+			// Beyond Map Each: a predicate body, a sort-key body, a grouping
+			// body and a whole-value body, in one program so the emitted
+			// functions also have to coexist.
+			name: "using body: across primitives",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Cursed Technique: Extract Integers
+Cursed Technique: Filter
+    Maximum Technique: Sum
+    Cursed Technique: Apply
+        Using: (s) -> s > 15
+Domain Expansion: Sort By
+    Maximum Technique: Max
+Part "grouped":
+    Maximum Technique: Group By
+        Maximum Technique: Count
+    Reveal: stdout
+Part "total":
+    Maximum Technique: Sum By
+        Maximum Technique: Max
+    Reveal: stdout
+Part "size":
+    Cursed Technique: Apply
+        Maximum Technique: Count
+    Reveal: stdout
+`,
+			input: "5 9 2 8\n9 4 7 3\n1 3 5",
+		},
+		{
+			// A Reveal inside a body prints per invocation — the compiled
+			// backend bakes the Part label in, the interpreter carries it on
+			// the Context, and both have to agree on the interleaving.
+			name: "using body: reveal from inside the body",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Cursed Technique: Map Each
+    Cursed Technique: Extract Integers
+    Maximum Technique: Sum
+    Reveal: stdout
+Maximum Technique: Sum
+Reveal: stdout
+`,
+			input: "1 2\n3 4",
+		},
 	}
 	for _, p := range progs {
 		for _, optimize := range []bool{true, false} {

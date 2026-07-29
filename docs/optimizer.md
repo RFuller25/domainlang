@@ -134,7 +134,9 @@ folding `1 = 2` to `false` is what arms passes 24 and 27.
    `DivisorPairScan`, `WindowedReduce`, `SearchTarget`).
 4. **Sub-pipelines are respected.** Passes that rewrite a node in place
    (the scans, `Fold → Sum`, lambda simplification) also fire inside
-   `Channel` bodies and `Simple Domain` loop bodies. Passes that change the
+   `Channel` bodies, `Simple Domain` loop bodies, and a `Using:` written as
+   an [indented pipeline](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)
+   — which is where a `List<List<Int>>` puts its pair scans. Passes that change the
    node list's length run only at the top level, because nested lists are
    captured by their parents' closures.
 

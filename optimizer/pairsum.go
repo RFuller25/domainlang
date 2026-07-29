@@ -15,37 +15,44 @@ import (
 // algorithm was a request; the optimizer honors the result, not the method.
 func fuseAllPairsSum(p *ir.Pipeline) []Rewrite {
 	var rewrites []Rewrite
-	for _, n := range p.Nodes {
-		if n.Prim != "All Pairs" {
-			continue
-		}
-		if hasMeasuredArg(n) {
-			continue // the arity this rewrite assumes must be a constant
-		}
-		if k, _ := n.Meta["k"].(int); k != 2 {
-			continue
-		}
-		mode, _ := n.Meta["mode"].(string)
-		if mode != "First" && mode != "Count" {
-			continue
-		}
-		if n.In == nil || !n.In.Equal(ir.List(ir.Int())) {
-			continue
-		}
-		lam, _ := n.Meta["lambda"].(*ast.Lambda)
-		if lam == nil {
-			continue
-		}
-		target, ok := matchSumPair(lam)
-		if !ok {
-			continue
-		}
+	// Every node list, not just the top level: the same pair scan inside a
+	// Channel body, a loop body, or a per-element Map Each body is the same
+	// O(n²) request and deserves the same substitution. The swap is in place
+	// (Prim/Display/Meta/Eval on an existing node), which is what nodeLists
+	// permits — its sibling passes in scans.go and product.go already do this.
+	for _, list := range nodeLists(p) {
+		for _, n := range list {
+			if n.Prim != "All Pairs" {
+				continue
+			}
+			if hasMeasuredArg(n) {
+				continue // the arity this rewrite assumes must be a constant
+			}
+			if k, _ := n.Meta["k"].(int); k != 2 {
+				continue
+			}
+			mode, _ := n.Meta["mode"].(string)
+			if mode != "First" && mode != "Count" {
+				continue
+			}
+			if n.In == nil || !n.In.Equal(ir.List(ir.Int())) {
+				continue
+			}
+			lam, _ := n.Meta["lambda"].(*ast.Lambda)
+			if lam == nil {
+				continue
+			}
+			target, ok := matchSumPair(lam)
+			if !ok {
+				continue
+			}
 
-		rewriteAllPairsNode(n, mode, target)
-		rewrites = append(rewrites, Rewrite{
-			Message: fmt.Sprintf(
-				"Domain rewrote All Pairs (sum = %d) → Cursed Hash-Set Scan. Guaranteed hit.", target),
-		})
+			rewriteAllPairsNode(n, mode, target)
+			rewrites = append(rewrites, Rewrite{
+				Message: fmt.Sprintf(
+					"Domain rewrote All Pairs (sum = %d) → Cursed Hash-Set Scan. Guaranteed hit.", target),
+			})
+		}
 	}
 	return rewrites
 }

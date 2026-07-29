@@ -20,6 +20,58 @@ the pipeline's current type, and the body's result type is inferred — a
 predicate position requires `Bool`, `Map Each` produces `List<body type>`,
 and so on.
 
+## Pipeline bodies — a `Using:` that needs a primitive
+
+The expression layer has no higher-order builtins: nothing here maps, filters,
+or searches. So once a lambda's parameter is itself a list, a job that needs a
+*primitive* has no expression spelling at all — `All Pairs` over each row of a
+`List<List<Int>>` cannot be written as `(row) -> ...` because there is no
+expression that searches `row`.
+
+**Indent a pipeline where the lambda would go** and it runs in the lambda's
+place, with the value the parameter would have bound as its current value:
+
+```domain
+Cursed Technique: Map Each          # List<List<Int>> -> List<Int>
+    Domain Expansion: All Pairs
+        Mode: First
+        Using: (a, b) -> a + b = 2020
+    Maximum Technique: Product
+```
+
+This is not a `Map Each` feature. A lambda `(x) -> e` and a sub-pipeline both
+turn one value into one value, so a body stands in **wherever a 1-parameter
+`Using:` lambda is accepted** — `Filter` and the other predicates, `Sort By`,
+`Group By`, `Count By`, `Sum By`, `Min By`/`Max By`, `Any`/`All`, `Find`,
+`Partition`, `Take While`/`Drop While`, `Map Values`, `Apply`, `Iterate`,
+`Explore`, the grid searches, and `Map Each`:
+
+```domain
+Cursed Technique: Filter            # keep the rows summing over 15
+    Maximum Technique: Sum
+    Cursed Technique: Apply
+        Using: (s) -> s > 15
+
+Domain Expansion: Sort By           # order rows by their total
+    Maximum Technique: Sum
+```
+
+The body's result type is the lambda's result type, so the usual rule applies
+unchanged: a predicate position needs a body ending in `Bool`, `Map Each`
+produces `List<body type>`.
+
+**What it cannot do.** A body computes one value from one value, so it cannot
+stand in for a lambda that takes two or more parameters — `Fold`, `Reduce`,
+`Scan` and `All Pairs`/`Combinations k` need the lambda written out, and say
+so with the arity named. A stage with no `Using:` lambda at all refuses a body
+rather than ignoring it. Supplying both a lambda and a body is an error.
+
+A body is a nested scope like a loop's: bodies nest, an enclosing `For` loop's
+ambient variable is in scope inside one, and `Channel` definitions and `From:`
+consumers are refused. The optimizer treats it like any other sub-pipeline —
+in-place rewrites, algorithm substitution included, fire inside it (see
+[optimizer.md](optimizer.md)).
+
 ## Grammar
 
 Primary expressions: integer literals, double-quoted string literals,

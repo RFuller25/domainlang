@@ -2,6 +2,7 @@ package optimizer
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 
 	"domain/ast"
@@ -209,5 +210,54 @@ func TestFuseAllPairsFiresAndDisabled(t *testing.T) {
 	}
 	if pipe2.Nodes[0].Prim != "All Pairs" {
 		t.Fatalf("disabled optimizer must not rewrite the node")
+	}
+}
+
+// The sum-to-constant rewrite reaches nested node lists, not just the top
+// level: an All Pairs inside a per-element Map Each body — the shape a
+// List<List<Int>> forces — is the same O(n²) request and gets the same
+// substitution. Its siblings in scans.go and product.go already walked
+// nodeLists; this one did not, so a Channel or loop body missed it too.
+func TestPairSumRewriteReachesNestedBodies(t *testing.T) {
+	src := `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Domain Expansion: All Pairs
+        Mode: First
+        Using: (a, b) -> a + b = 100
+    Maximum Technique: Product
+Reveal: stdout
+`
+	const input = "1 5 99 3\n50 50 2"
+
+	pipe, rewrites := resolveProgram(t, src, true)
+	if len(rewrites) != 1 || !strings.Contains(rewrites[0].Message, "Hash-Set Scan") {
+		t.Fatalf("expected the pair-sum rewrite to fire inside the body, got %v", rewrites)
+	}
+	var scans int
+	for _, list := range nodeLists(pipe) {
+		for _, n := range list {
+			if n.Prim == "HashSetPairScan" {
+				scans++
+			}
+		}
+	}
+	if scans != 1 {
+		t.Fatalf("expected one rewritten node in the body, found %d", scans)
+	}
+
+	// The naive pipeline is the oracle, as everywhere else in the optimizer.
+	got, err := interpret(pipe, input)
+	if err != nil {
+		t.Fatalf("optimized run: %v", err)
+	}
+	naive, _ := resolveProgram(t, src, false)
+	want, err := interpret(naive, input)
+	if err != nil {
+		t.Fatalf("naive run: %v", err)
+	}
+	if got != want {
+		t.Fatalf("optimized output %q diverges from naive %q", got, want)
 	}
 }

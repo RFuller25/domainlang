@@ -43,10 +43,32 @@ type Tracer interface {
 	PopFrame()
 }
 
+// currentCtx is the Context of the evaluation currently in progress, so code
+// reached through a lambda body — which has no Context parameter of its own —
+// can still find it. A nested pipeline standing in for a lambda body needs one
+// (a `Reveal:` inside it prints, a `Binding Vow` inside it reads Release), and
+// threading a Context through the whole expression evaluator to serve those two
+// would change every lambda-running primitive's call.
+//
+// It is package level for the same reason prims' ambient stack is, and under
+// the same standing assumption: interp.Run is never called concurrently within
+// one process. EvalNode saves and restores rather than assigning, so a nested
+// run (a loop body, a block body) leaves the outer Context intact on the way
+// out — and a pipeline run from inside another one cannot strand the wrong one.
+var currentCtx *Context
+
+// CurrentContext is the Context of the node evaluation in progress, or nil
+// outside one.
+func CurrentContext() *Context { return currentCtx }
+
 // EvalNode runs one node, reporting it to the Context's tracer when there is
 // one. Every evaluation site goes through this, so tracing can never miss a
-// construct that was added later.
+// construct that was added later — and neither can the current-Context record.
 func EvalNode(ctx *Context, n *Node, in Value) (Value, error) {
+	prev := currentCtx
+	currentCtx = ctx
+	defer func() { currentCtx = prev }()
+
 	if ctx == nil || ctx.Trace == nil {
 		return n.Eval(ctx, in)
 	}

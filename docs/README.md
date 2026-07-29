@@ -19,7 +19,7 @@ relies on.
 first program, the two layers, grids, Channels, loops, sparse grids, and
 compiling to a binary. Then come back to the reference below.
 
-Runnable material: fifteen annotated programs in
+Runnable material: nineteen annotated programs in
 [../examples/](../examples/README.md) and thirteen classic challenges
 (FizzBuzz → Game of Life) in [../challenges/](../challenges/README.md),
 all golden-tested in both backends.
@@ -32,8 +32,8 @@ all golden-tested in both backends.
 | [primitives.md](primitives.md) | Every pipeline primitive: signature, arguments, errors, examples |
 | [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, typing, and all 92 builtin functions |
 | [aoc-toolbox.md](aoc-toolbox.md) | The classic AoC helper library (parsing, grids, searches, math, ranges, combinatorics) mapped onto Domain, item by item |
-| [data-model.md](data-model.md) | The value/type model design notes (Int, Float, Text, Bool, List, Tuple, Record, Map, Set, Grid, Sparse) |
-| [match-pattern.md](match-pattern.md) | The `Match Pattern` typed-hole template language design notes |
+| [data-model.md](data-model.md) | The value and type model (Int, Float, Text, Bool, List, Tuple, Record, Map, Set, Grid, Sparse): representation, construction, equality, rendering |
+| [match-pattern.md](match-pattern.md) | The `Match Pattern` typed-hole template language: syntax, output shapes, lowering, and failure modes |
 | [cli.md](cli.md) | The `domain` binary: implicit modes, subcommands, every flag, exit codes |
 | [diagnostics.md](diagnostics.md) | The error engine: rich diagnostics, "did you mean" suggestions, auto-fix, the linter, and the `domain expansion:` command family |
 | [tooling.md](tooling.md) | The REPL (`domain repl`) and the language server (`domain lsp`), with editor wiring |

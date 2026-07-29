@@ -471,7 +471,7 @@ func TestBuildFoldOverUsesAmbient(t *testing.T) {
 	defer popAmbient()
 
 	lam := &ast.Lambda{Params: []string{"acc", "item", "x"}, Body: &ast.Ident{Name: "x"}}
-	args := ArgSet{[]*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lam}}}}
+	args := ArgSet{args: []*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lam}}}}
 
 	node, err := buildFoldOver(args, []string{"vals"}, []*ir.Type{ir.List(ir.Int())}, ir.Int(), token.Position{})
 	if err != nil {
@@ -497,7 +497,7 @@ func TestBuildCombineUsesAmbient(t *testing.T) {
 	defer popAmbient()
 
 	lam := &ast.Lambda{Params: []string{"s", "x"}, Body: &ast.Ident{Name: "x"}}
-	args := ArgSet{[]*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lam}}}}
+	args := ArgSet{args: []*ast.Arg{{Name: "Using", Value: ast.LambdaArg{Lambda: lam}}}}
 
 	node, err := buildCombine(args, []string{"sum"}, []*ir.Type{ir.Int()}, ir.Int(), token.Position{})
 	if err != nil {

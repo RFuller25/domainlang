@@ -28,7 +28,7 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 		return nil, nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("unknown Shikigami %q", name)}
 	}
 
-	env, err := bindParams(def, ArgSet{stmt.Args}, stmt.Pos)
+	env, err := bindParams(def, ArgSet{args: stmt.Args}, stmt.Pos)
 	if err != nil {
 		return nil, nil, err
 	}

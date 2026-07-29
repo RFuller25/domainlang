@@ -38,6 +38,7 @@ mistyped pipeline fails with a positioned error, never mid-run.
 | `Reverse Cursed Technique:` | inversions |
 | `Simple Domain:` | control flow (loops) |
 | `Channel "name":` | a named sub-pipeline branching from the current value |
+| an indented body under a `Using:`-taking stage | a sub-pipeline standing in for the lambda ([expressions.md](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)) |
 | `Part "label":` | a labelled output block branching from the current value |
 | `Shikigami "name" (params) : In -> Out` / `Shikigami: Name` | user-defined operation definition / call |
 | `Binding Vow:` | debug-time assertion over the current value |
@@ -52,7 +53,7 @@ resolved to the same statement — the compiler recovers the keyword from the
 phrase — so these two programs are identical, down to the optimizer rewrite
 they trigger:
 
-```domain
+```domain ignore
 Cursed Energy: input.txt                    input.txt
 Cursed Technique: Split Text by "\n\n"      Split Text by "\n\n"
 Channeled Energy: Convert To Integers       Convert To Integers
@@ -296,7 +297,7 @@ Shikigami "Top K Sum" (k: Int) : List<Int> -> Int
 Calls use the block form; parameters are passed as named arguments, and the
 `Shikigami:` keyword is optional like any other:
 
-```domain
+```domain ignore
 Shikigami: Top K Sum        Top K Sum
     k: 3                        k: 3
 ```
@@ -431,7 +432,7 @@ iteratively and terminates on its visited set.
 `Innate Domain: <library>` loads a file of Shikigami definitions before the
 program, so its operations are callable by name exactly like the prelude's:
 
-```domain
+```domain ignore
 Innate Domain: aoc
 Innate Domain: grids/hex
 
@@ -506,7 +507,7 @@ User definitions with the same name shadow the prelude.
 The body is an indented sub-pipeline that must **preserve the value type**
 (its output type equals its input type). Three kinds:
 
-```domain
+```domain ignore
 Simple Domain: Repeat 3
     <body>
 

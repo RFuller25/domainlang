@@ -139,6 +139,39 @@ Things to notice:
 Lambda arity is fixed by the consuming primitive: 1 for `Map Each`/`Filter`,
 2 for `Fold` (`(acc, x) -> …`), k for `Combinations k`.
 
+### When a lambda cannot reach
+
+The expression layer has no `map` or `filter` of its own, so once the value a
+lambda binds is *itself a list*, some jobs have no expression spelling at all.
+Say each line holds several numbers and you want the two that divide evenly,
+per line — that needs `All Pairs`, a primitive, not an expression.
+
+**Indent a pipeline where the lambda would go** and it runs in the lambda's
+place, once per value, with that value as its current value:
+
+```domain
+Cursed Energy: stdin
+Shikigami: Lines
+Cursed Technique: Extract Integers      # List<List<Int>>
+Cursed Technique: Map Each
+    Domain Expansion: All Pairs         # runs once per line
+        Mode: First
+        Using: (a, b) -> (a % b = 0) or (b % a = 0)
+Reveal: stdout
+```
+
+The body's result is the lambda's result, so this is
+`List<List<Int>> -> List<List<Int>>` — one pair per line. It works at any
+stage taking a one-parameter `Using:`, so `Filter` can test a row by reducing
+it and `Sort By` can key on one:
+
+```domain
+Domain Expansion: Sort By               # order rows by their total
+    Maximum Technique: Sum
+```
+
+Run `examples/19_row_pairs.domain` to see the whole thing.
+
 ## 4. Name an algorithm, get a better one
 
 This is the language's signature move. Ask for a sort and the top three:
@@ -310,7 +343,7 @@ file; both fall back to stdin when the file is absent.
 
 ## 9. Where to go next
 
-- **[../examples/](../examples/README.md)** — fifteen small programs, each
+- **[../examples/](../examples/README.md)** — nineteen small programs, each
   showing off one feature, with inputs and expected outputs.
 - **[../challenges/](../challenges/README.md)** — thirteen classics
   (FizzBuzz → Game of Life) solved in Domain; great for seeing idioms

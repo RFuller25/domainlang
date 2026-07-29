@@ -1,0 +1,26 @@
+# A `Using:` written as an indented pipeline instead of a lambda.
+#
+# `All Pairs` searches the *current value*, so over a List<List<Int>> it would
+# pair whole rows against each other. Writing Map Each's `Using:` as a pipeline
+# runs that pipeline in the lambda's place, once per row with the row as its
+# current value — the only way to reach a primitive per element, since the
+# expression layer has no way to iterate. A body stands in for any 1-parameter
+# `Using:` lambda, not just Map Each's: `Filter`, `Sort By`, `Group By` and the
+# rest take one too.
+#
+# Each row here holds exactly one evenly-divisible pair (AoC 2017 day 2 part
+# 2). The body finds it and divides it; the outer pipeline sums the results.
+#
+#   domain examples/19_row_pairs.domain
+#   Expected output: 9
+Cursed Energy: 19_row_pairs.input
+Shikigami: Lines
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Domain Expansion: All Pairs
+        Mode: First
+        Using: (a, b) -> (a % b = 0) or (b % a = 0)
+    Maximum Technique: Reduce
+        Using: (x, y) -> max(x, y) / min(x, y)
+Maximum Technique: Sum
+Reveal: stdout

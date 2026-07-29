@@ -51,6 +51,10 @@ type gen struct {
 	fmtFns  map[string]string
 	eqFns   map[string]string
 	chans   map[string]chanVar
+	// blocks interns the top-level function emitted for each indented `Using:`
+	// body (see blockgen.go), so a body compiles once however many times the
+	// lambda holding it is visited.
+	blocks  map[*ast.BlockBody]string
 	varn    int
 	parsen  int
 	release bool // strip Binding Vows (Options.Release)

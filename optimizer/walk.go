@@ -22,9 +22,39 @@ func nodeLists(p *ir.Pipeline) [][]*ir.Node {
 			if sub, _ := n.Meta["nodes"].([]*ir.Node); sub != nil {
 				lists = append(lists, sub)
 			}
+			if sub := lambdaBodyNodes(n); sub != nil {
+				lists = append(lists, sub)
+			}
 		}
 	}
 	return lists
+}
+
+// lambdaBodyNodes is the resolved sub-pipeline behind a `Using:` written as an
+// indented body rather than an expression (ast.BlockBody). Such a body is a
+// node list like a Channel's or a loop's and gets the same in-place rewrites —
+// the pair scan inside a per-element `Map Each` body is exactly the O(n²)
+// request those passes exist for. It hangs off the lambda instead of
+// Meta["nodes"], so nodeLists has to look for it separately.
+//
+// Every Meta value is checked rather than the "lambda" key alone: a primitive
+// that starts taking a second lambda gets this for free instead of silently
+// hiding a body from the optimizer.
+func lambdaBodyNodes(n *ir.Node) []*ir.Node {
+	for _, v := range n.Meta {
+		// A typed nil satisfies the assertion: primitives with optional lambdas
+		// (Explore's Until:, say) store one whether or not it was written.
+		lam, ok := v.(*ast.Lambda)
+		if !ok || lam == nil {
+			continue
+		}
+		if bb, ok := lam.Body.(*ast.BlockBody); ok {
+			if sub := bb.Pipe.BlockNodes(); sub != nil {
+				return sub
+			}
+		}
+	}
+	return nil
 }
 
 // substIdent returns e with every free occurrence of the identifier name

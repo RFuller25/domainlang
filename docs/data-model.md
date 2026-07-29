@@ -1,21 +1,24 @@
-# Design note: Data model (v0.2)
+# The data model
 
-v0.2 extends the v0.1 type system (`Int`, `Text`, `List<T>`) with the value
-kinds the survey problems demand: **Tuple**, **Record**, **Map**, **Set**, and
-**Grid**. This note pins how each is represented in the type checker
-(`ir.Type`), at runtime (`ir.Value`), how it is constructed and accessed, and
-how it renders.
+Every value Domain can hold, how it is represented in the type checker
+(`ir.Type`), how it looks at runtime (`ir.Value`), how it is constructed and
+accessed, and how it renders. The scalar core is `Int`, `Float`, `Text` and
+`Bool`; the composites are **List**, **Tuple**, **Record**, **Map**, **Set**,
+**Grid** and **Sparse**.
+
+Everything described here is implemented in both backends. For what each
+primitive does with these types see [primitives.md](primitives.md); for the
+builtins that read them see [expressions.md](expressions.md).
 
 ## Type representation (`ir.Type`)
 
-Add new `TypeKind`s. Structural equality and printing extend the v0.1 pattern.
-
 | Kind | Carries | Prints as |
 |---|---|---|
-| `KInt` (v0.1) | — | `Int` |
+| `KInt` | — | `Int` |
 | `KFloat` | — | `Float` |
-| `KText` (v0.1) | — | `Text` |
-| `KList` (v0.1) | `Elem *Type` | `List<T>` |
+| `KText` | — | `Text` |
+| `KBool` | — | `Bool` |
+| `KList` | `Elem *Type` | `List<T>` |
 | `KTuple` | `Elems []*Type` (fixed arity) | `(T1, T2, …)` |
 | `KRecord` | ordered `Fields []Field{Name, Type}` | `{a:Int, b:Int}` |
 | `KMap` | `Key *Type` (keyable), `Val *Type` | `Map<K,V>` |
@@ -32,10 +35,9 @@ Equality rules:
 
 ## Runtime representation (`ir.Value`)
 
-`ir.Value` stays `any`. New dynamic types:
-
-Runtime structs are suffixed `*Value` to avoid colliding with the same-named
-static type constructors (`ir.Record(...)`, `ir.Map(...)`, etc.).
+`ir.Value` is `any`. Runtime structs are suffixed `*Value` to avoid colliding
+with the same-named static type constructors (`ir.Record(...)`, `ir.Map(...)`,
+etc.).
 
 | Type | Go runtime value |
 |---|---|
@@ -53,11 +55,11 @@ and `Grid` neighbor walks.
 
 ## Records
 
-- **Produced by** `Match Pattern` with named holes (see `docs/match-pattern.md`).
-- **Accessed by** `x.field` in the expression layer — `FieldAccess` already
-  exists in the AST; the evaluator adds a `*RecordValue` case that looks up the
-  field and errors (with position) on an unknown field. The static typer
-  (`typecheck` package) already resolves `x.field` to the field's type.
+- **Produced by** `Match Pattern` with named holes (see
+  [match-pattern.md](match-pattern.md)).
+- **Accessed by** `x.field` in the expression layer. An unknown field is a
+  positioned error; the static typer resolves `x.field` to the field's type at
+  resolve time, so a typo never survives to run time.
 - **Structurally typed:** a `{a:Int, b:Int}` flows wherever that record type is
   expected; the type checker compares field sets.
 
@@ -77,8 +79,9 @@ and `Grid` neighbor walks.
   a dedicated `Count By` returning `Map<K, Int>`.
 - **Set** is a dedup'd, insertion-ordered collection with three primitives:
   `Intersect`, `Union`, `Difference` (`Maximum Technique`). A `Set<T>` is built
-  from a `List<T>` via a `Unique`/`To Set` step. Modeling as an ordered set
-  (not a list-to-unit map) keeps rendering and set-ops simple.
+  from a `List<T>` with `Channeled Energy: Convert To Set`, and `tolist` in the
+  expression layer converts back. Modeling as an ordered set (not a
+  list-to-unit map) keeps rendering and set-ops simple.
 
 Access/rendering is via primitives, not literals — v0.2 has no Map/Set literal
 syntax (deferred; AoC builds these from inputs, not from literals).
@@ -89,13 +92,24 @@ syntax (deferred; AoC builds these from inputs, not from literals).
   - from `List<Text>` → `Grid<Text>` of single characters (char grid), or
   - from `List<List<T>>` → `Grid<T>` (e.g. the digit grid of 2022 D8).
 - **Indexing** is 0-based `(row, col)`.
-- **Out-of-bounds is safe:** access returns a none/empty sentinel rather than
-  throwing, so neighbor walks near edges need no manual bounds checks.
-- **Neighbor count** (`4` orthogonal vs `8` with diagonals) is supplied per call
-  via `Mode:` on the neighbor primitive — it is not a property of the grid.
+- **Out-of-bounds is an error, not a sentinel.** `at(g, r, c)` on a dense grid
+  outside its extent is a clean positioned runtime error
+  (`at: position (5, 5) out of range (grid 2x2)`). Guard with `inbounds(g, r,
+  c)` — it pairs with `at` under short-circuit `and` — or use the
+  `neighbors4`/`neighbors8` builtins, which only ever return in-bounds
+  coordinates. (`Sparse<T>` is the total one: `at` over a sparse grid reads
+  the default rather than failing.)
+- **Neighbor count** (`4` orthogonal vs `8` with diagonals) is chosen by which
+  builtin you call — `neighbors4`/`neighbors8` for a dense grid,
+  `around4`/`around8` for a bare point — not by a `Mode:` argument.
 
-Grid primitives (v0.2): `Cell (row, col)`, `Neighbors (Mode: 4|8)`, `Rows`,
-`Cols`, `Transpose`. Pathfinding/flood-fill over grids stays in v0.3.
+Grids are reached through the `Cursed Technique` primitives `Map Cells`,
+`Find Cells`, `Transpose`, `Subgrid`, `Pad Grid`, `Rotate Grid` and
+`Flip Grid`, the `Maximum Technique: Count Cells` reduction, and the
+expression-layer builtins `at`, `inbounds`, `row`, `col`, `rows`, `cols`.
+Pathfinding and flood fill are `Domain Expansion` primitives in their own
+right — `BFS`, `Dijkstra`, `Flood Fill` and `Connected Components`; see
+[primitives.md](primitives.md).
 
 ## Sparse grids
 
@@ -142,9 +156,11 @@ functional update.
 materializes the bounding box as a dense `Grid<T>`, translated so
 `(minrow, mincol)` lands at `(0, 0)` and default-filled — the standard way
 to *print the picture* (origami letters, Life boards). The empty sparse
-grid densifies to the 0×0 grid. Guarded by `ir.MaxSparseDense` (4,000,000
-cells): two far-apart cells imply a huge box, and a clear runtime error
-beats an OOM.
+grid densifies to the 0×0 grid. **Unbounded**: `ir.MaxSparseDense` is zero by
+default, because the old 4,000,000-cell ceiling refused plots a machine had
+room for. Two far-apart cells still imply a huge dense box, so the failure
+mode there is memory pressure rather than a clean refusal; a box past what any
+machine could allocate is still a clean error rather than a panic.
 
 **Rendering** — the raw `Sparse<T>` renders as a map-style listing of set
 cells in sorted row-major order with point keys (`{[0, 0]: #, [1, 2]: #}`),
@@ -162,20 +178,26 @@ the infinite plane), `12_origami.domain` (fold-and-plot), and
 
 ## Type inference interaction
 
-Per the resolved lambda-typing decision: a primitive's output type can depend on
-its `Using:` lambda. For the new kinds:
+A primitive's output type can depend on its `Using:` lambda, which the
+`typecheck` package computes from the lambda body against the parameter types
+the primitive binds. There are no type annotations on primitives: a body that
+cannot be typed is a positioned resolve error, not a request for a hint.
 
 - `Match Pattern` output is fully determined by the (literal) template — no
   inference.
-- `Group By` output `Map<K, List<V>>`: `V` is the input element type; `K` is the
-  key-lambda's result type, inferred from its body where feasible, otherwise
-  required as an annotation.
-- `Map Each` over a grid/list: element type from the lambda body, with the same
-  inference-or-annotation fallback.
+- `Group By` output `Map<K, List<V>>`: `V` is the input element type, `K` the
+  key lambda's result type.
+- `Map Each` output `List<U>`: `U` is the lambda's result type.
+
+A `Using:` may also be written as an
+[indented pipeline](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)
+rather than an expression; the body's output type is then the lambda's result
+type, and everything above reads the same.
 
 ## Rendering
 
-Extend `FormatValue` / `FormatShort`:
+`FormatValue` renders a value in full, `FormatShort` the summary the REPL and
+tracing use:
 
 - Tuple → `(v1, v2, …)`
 - Record → `{a: v1, b: v2}` (declared field order)
@@ -213,12 +235,15 @@ Extend `FormatValue` / `FormatShort`:
 - **Rendering**: shortest round-trip form (`strconv.FormatFloat('g', -1)`),
   byte-identical between the interpreter and compiled binaries.
 
-## Out of scope
+## Deliberate omissions
 
-- Map/Set/tuple **literal** syntax (AoC builds these from inputs, not
-  literals).
-- Big integers (deferred by decision: int64 covers every anchor; arbitrary
-  precision would box all arithmetic).
+Two things the model does not have, by decision rather than by backlog:
 
-(Composite Map keys and sparse/infinite grids — `Sparse<T>` — have since
-shipped; see §Maps and Sets and §Sparse grids above.)
+- **Map/Set/tuple literal syntax.** These are built from inputs, not written
+  out — `tuple(...)` and `list(...)` cover the cases where a literal would
+  have been wanted, and a Map or Set comes from `Group By`, `Count By`, or
+  `Convert To Set`.
+- **Big integers.** `Int` is int64 throughout. Arbitrary precision would box
+  every arithmetic operation in both backends, and no anchor problem needs it;
+  the operations that *can* overflow say so instead (`factorial` errors past
+  `20!`, `choose` is computed multiplicatively to stay in range).

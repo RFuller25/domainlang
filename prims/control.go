@@ -157,7 +157,7 @@ func (r *resolver) resolveLoop(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 
 	switch {
 	case hasWord(op, "Repeat"):
-		timesM, err := requireMeasuredInt(op, ArgSet{stmt.Args}, "Repeat", "Times", 0, 0, cur,
+		timesM, err := requireMeasuredInt(op, ArgSet{args: stmt.Args}, "Repeat", "Times", 0, 0, cur,
 			stmt.Pos, "a count", "Repeat 3")
 		if err != nil {
 			return nil, err
@@ -168,7 +168,7 @@ func (r *resolver) resolveLoop(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 		return repeatNode(subNodes, timesM, cur, stmt.Pos), nil
 
 	case hasWord(op, "While"):
-		lam, ok := ArgSet{stmt.Args}.Lambda("Using")
+		lam, ok := ArgSet{args: stmt.Args}.Lambda("Using")
 		if !ok {
 			return nil, &ResolveError{Pos: stmt.Pos, Msg: "While needs a Using: predicate"}
 		}

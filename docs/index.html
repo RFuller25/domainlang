@@ -22,7 +22,7 @@
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #14161c;
       --bg-alt: #1b1e26;
       --bg-code: #1e2129;
@@ -39,6 +39,21 @@
     }
   }
   * { box-sizing: border-box; }
+  :root[data-theme="dark"] {
+    --bg: #14161c;
+    --bg-alt: #1b1e26;
+    --bg-code: #1e2129;
+    --sidebar-bg: #17191f;
+    --text: #dfe3ea;
+    --text-muted: #9aa3b2;
+    --border: #2a2e38;
+    --accent: #a78bfa;
+    --accent-soft: #2a2440;
+    --accent-text: #c4b5fd;
+    --mark: #6b5a12;
+    --mark-text: #fdf3c8;
+    --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: var(--sans);
@@ -180,6 +195,49 @@
     display: block; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--text-muted); margin-bottom: 8px; font-family: var(--sans);
   }
+  article pre { position: relative; }
+  article pre .copy-btn {
+    position: absolute; top: 8px; right: 8px; padding: 3px 9px;
+    font: 600 0.68rem/1.5 var(--sans); color: var(--text-muted);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    cursor: pointer; opacity: 0; transition: opacity 0.12s ease, color 0.12s ease;
+  }
+  article pre:hover .copy-btn, article pre .copy-btn:focus-visible { opacity: 1; }
+  article pre .copy-btn:hover { color: var(--accent-text); border-color: var(--accent); }
+  article pre .copy-btn.copied { color: var(--accent-text); border-color: var(--accent); opacity: 1; }
+
+  /* Domain syntax highlighting (see highlightDomain in render.js). Tuned to
+     stay legible in both themes: these are the only colours in the article
+     body, so they carry meaning rather than decoration. */
+  .tok-kw      { color: var(--accent-text); font-weight: 600; }
+  .tok-arg     { color: #0e7490; }
+  .tok-str     { color: #b45309; }
+  .tok-num     { color: #a21caf; }
+  .tok-op      { color: var(--text-muted); }
+  .tok-comment { color: var(--text-muted); font-style: italic; }
+  :root[data-theme="dark"] .tok-arg { color: #67e8f9; }
+  :root[data-theme="dark"] .tok-str { color: #fcd34d; }
+  :root[data-theme="dark"] .tok-num { color: #f0abfc; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .tok-arg { color: #67e8f9; }
+    :root:not([data-theme="light"]) .tok-str { color: #fcd34d; }
+    :root:not([data-theme="light"]) .tok-num { color: #f0abfc; }
+  }
+
+  /* A heading's stable short anchor: an empty target placed just above it, so
+     "#window" keeps working when the signature in the heading changes. */
+  article a.heading-alias { display: block; height: 0; scroll-margin-top: 20px; }
+
+  .brand #theme-toggle {
+    margin-left: auto; width: 28px; height: 28px; padding: 0; line-height: 1;
+    font-size: 0.95rem; color: var(--text-muted); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+  }
+  .brand #theme-toggle:hover { color: var(--accent-text); border-color: var(--accent); }
+  .page-edit { margin: 2.5em 0 0; padding-top: 1.2em; border-top: 1px solid var(--border); }
+  .page-edit a { font-size: 0.85rem; color: var(--text-muted); }
+  .page-edit a:hover { color: var(--accent-text); }
+
   article table {
     border-collapse: collapse; width: 100%; margin: 0 0 1.4em; font-size: 0.9rem; display: block; overflow-x: auto;
   }
@@ -482,6 +540,7 @@
     <div class="brand">
       <h1>Domain</h1>
       <span class="badge">docs</span>
+      <button id="theme-toggle" type="button" title="Switch theme" aria-label="Switch theme">☾</button>
     </div>
     <p class="tagline">A pipeline language for Advent of Code — you describe <em>what</em>, the compiler decides <em>how</em>.</p>
     <div class="search-box">
@@ -521,6 +580,17 @@
 </div>
 
 <script>
+// Applied before first paint: reading the stored choice here avoids the flash
+// of the wrong theme that a toggle applied after boot would cause.
+(function () {
+  try {
+    const t = localStorage.getItem("domain-docs-theme");
+    if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) { /* private mode: fall back to the OS preference */ }
+})();
+</script>
+<script src="render.js"></script>
+<script>
 "use strict";
 
 // ---- Document manifest (ordered) ----
@@ -531,15 +601,19 @@ const DOCS = [
   { id: "primitives",      file: "primitives.md",      title: "Primitives",          desc: "Every pipeline primitive", group: "Reference" },
   { id: "expressions",     file: "expressions.md",     title: "Expressions",         desc: "The expression layer", group: "Reference" },
   { id: "aoc-toolbox",     file: "aoc-toolbox.md",     title: "AoC toolbox",         desc: "Classic helpers, mapped", group: "Reference" },
-  { id: "data-model",      file: "data-model.md",      title: "Data model",          desc: "Value & type model", group: "Design notes" },
-  { id: "match-pattern",   file: "match-pattern.md",   title: "Match Pattern",       desc: "Typed-hole templates", group: "Design notes" },
+  { id: "data-model",      file: "data-model.md",      title: "Data model",          desc: "Value & type model", group: "Reference" },
+  { id: "match-pattern",   file: "match-pattern.md",   title: "Match Pattern",       desc: "Typed-hole templates", group: "Reference" },
   { id: "cli",             file: "cli.md",             title: "CLI",                 desc: "The domain binary", group: "Tooling" },
   { id: "diagnostics",     file: "diagnostics.md",     title: "Diagnostics",         desc: "Errors, fixes & linter", group: "Tooling" },
   { id: "tooling",         file: "tooling.md",         title: "REPL & LSP",          desc: "Editor tooling", group: "Tooling" },
-  { id: "optimizer",       file: "optimizer.md",       title: "Optimizer",           desc: "The 26-pass catalog", group: "Internals" },
+  { id: "optimizer",       file: "optimizer.md",       title: "Optimizer",           desc: "The 30-pass catalog", group: "Internals" },
   { id: "compiler",        file: "compiler.md",        title: "Compiler backend",    desc: "Emitting native Go", group: "Internals" },
 ];
 const DOC_BY_ID = Object.fromEntries(DOCS.map(d => [d.id, d]));
+
+// Where "Edit this page" points. Every page is a file in docs/, so one base is
+// enough — a wrong sentence is then two clicks from a pull request.
+const REPO_EDIT_BASE = "https://github.com/RFuller25/domain/edit/main/docs/";
 
 // ============================================================
 //  JJK technique banners — one per doc, all different
@@ -556,7 +630,7 @@ const DOC_ANIM = {
   "cli":             { fx: "streak",    color: "#38bdf8", kanji: "遊雲",       name: "Playful Cloud",             tag: "one command, dispatched at full speed." },
   "diagnostics":     { fx: "pulse",     color: "#34d399", kanji: "反転術式",   name: "Reverse Cursed Technique",  tag: "negative turned positive — every error, closed." },
   "tooling":         { fx: "cross",     color: "#94a3b8", kanji: "神犬",       name: "Divine Dogs",               tag: "two familiars, always covering your blind spot." },
-  "optimizer":       { fx: "skewers",   color: "#f43f5e", kanji: "伏魔御厨子", name: "Malevolent Shrine",         tag: "twenty-six passes. nowhere left to hide." },
+  "optimizer":       { fx: "skewers",   color: "#f43f5e", kanji: "伏魔御厨子", name: "Malevolent Shrine",         tag: "thirty passes. nowhere left to hide." },
   "compiler":        { fx: "expand",    color: "#c084fc", kanji: "領域展開",   name: "Domain Expansion",          tag: "guaranteed hit — your program, manifested." },
 };
 
@@ -595,196 +669,14 @@ function renderDocBanner(docId) {
 // ============================================================
 //  Minimal, dependency-free Markdown -> HTML renderer
 // ============================================================
-function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function slugify(text) {
-  return text.toLowerCase().trim()
-    .replace(/[`*_~]/g, "")
-    .replace(/[^\w\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-// Inline rendering: `code`, links, images, bold, italic, strikethrough.
-function renderInline(text) {
-  const codeSpans = [];
-  // Protect inline code first.
-  text = text.replace(/`([^`]+)`/g, (m, c) => {
-    codeSpans.push("<code>" + escapeHtml(c) + "</code>");
-    return " " + (codeSpans.length - 1) + " ";
-  });
-  text = escapeHtml(text);
-  // Images ![alt](src)
-  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g,
-    (m, alt, src) => `<img src="${src}" alt="${alt}">`);
-  // Links [text](url)
-  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, label, url) => {
-    return makeLink(label, url);
-  });
-  // Bold + italic
-  text = text.replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>");
-  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  text = text.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  text = text.replace(/(^|[\s(])_([^_]+)_(?=[\s).,;!?]|$)/g, "$1<em>$2</em>");
-  text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
-  // Restore code spans
-  text = text.replace(/ (\d+) /g, (m, i) => codeSpans[+i]);
-  return text;
-}
-
-// Turn a markdown link URL into an in-app route where it points at a sibling doc.
-function makeLink(label, url) {
-  // Anchor-only link within current page
-  if (url.startsWith("#")) return `<a href="${url}">${label}</a>`;
-  // External
-  if (/^https?:\/\//.test(url) || url.startsWith("mailto:")) {
-    return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`;
-  }
-  // Sibling .md doc, optionally with an anchor
-  const mdMatch = url.match(/^([\w.-]+)\.md(#.*)?$/);
-  if (mdMatch && DOC_BY_ID[mdMatch[1]]) {
-    const anchor = mdMatch[2] ? mdMatch[2] : "";
-    return `<a href="#/${mdMatch[1]}${anchor}" data-route>${label}</a>`;
-  }
-  // Links that escape the docs folder (../examples, ../README.md, etc.) — leave as plain relative links.
-  return `<a href="${url}">${label}</a>`;
-}
-
-function renderMarkdown(md) {
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
-  let html = "";
-  const headings = [];   // {level, text, slug}
-  let i = 0;
-
-  function flushParagraph(buf) {
-    if (buf.length) html += "<p>" + renderInline(buf.join(" ")) + "</p>\n";
-    return [];
-  }
-
-  let para = [];
-  while (i < lines.length) {
-    let line = lines[i];
-
-    // Fenced code block
-    const fence = line.match(/^(\s*)```(.*)$/);
-    if (fence) {
-      para = flushParagraph(para);
-      const lang = fence[2].trim();
-      const code = [];
-      i++;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { code.push(lines[i]); i++; }
-      i++; // closing fence
-      const tag = lang ? `<span class="lang-tag">${escapeHtml(lang)}</span>` : "";
-      html += `<pre>${tag}<code>${escapeHtml(code.join("\n"))}</code></pre>\n`;
-      continue;
-    }
-
-    // Heading
-    const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) {
-      para = flushParagraph(para);
-      const level = h[1].length;
-      const raw = h[2].replace(/\s+#+\s*$/, "");
-      const slug = slugify(raw);
-      if (level <= 3) headings.push({ level, text: raw.replace(/[`*_~]/g, ""), slug });
-      html += `<h${level} id="${slug}">${renderInline(raw)}` +
-              `<a class="heading-anchor" href="#/${"__DOCID__"}#${slug}" aria-label="Link to this section">#</a></h${level}>\n`;
-      i++;
-      continue;
-    }
-
-    // Horizontal rule
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
-      para = flushParagraph(para);
-      html += "<hr>\n"; i++; continue;
-    }
-
-    // Table (header row followed by |---| separator)
-    if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1]) && /-/.test(lines[i+1])) {
-      para = flushParagraph(para);
-      const parseRow = r => r.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(c => c.trim());
-      const header = parseRow(line);
-      i += 2;
-      let t = "<table><thead><tr>" + header.map(c => `<th>${renderInline(c)}</th>`).join("") + "</tr></thead><tbody>";
-      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim() !== "") {
-        const cells = parseRow(lines[i]);
-        t += "<tr>" + header.map((_, idx) => `<td>${renderInline(cells[idx] || "")}</td>`).join("") + "</tr>";
-        i++;
-      }
-      t += "</tbody></table>\n";
-      html += t;
-      continue;
-    }
-
-    // Blockquote
-    if (/^\s*>\s?/.test(line)) {
-      para = flushParagraph(para);
-      const quote = [];
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { quote.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
-      html += "<blockquote>" + renderMarkdown(quote.join("\n")).html + "</blockquote>\n";
-      continue;
-    }
-
-    // Lists (unordered / ordered), supports simple nesting by indentation
-    if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
-      para = flushParagraph(para);
-      const { htmlOut, next } = renderList(lines, i, 0);
-      html += htmlOut; i = next; continue;
-    }
-
-    // Blank line
-    if (line.trim() === "") { para = flushParagraph(para); i++; continue; }
-
-    // Paragraph text
-    para.push(line.trim());
-    i++;
-  }
-  flushParagraph(para);
-  return { html, headings };
-}
-
-function renderList(lines, start, baseIndent) {
-  const first = lines[start];
-  const ordered = /^\s*\d+\.\s+/.test(first);
-  const tag = ordered ? "ol" : "ul";
-  let out = `<${tag}>`;
-  let i = start;
-  const itemRe = /^(\s*)([-*+]|\d+\.)\s+(.*)$/;
-  while (i < lines.length) {
-    const m = lines[i].match(itemRe);
-    if (!m) {
-      if (lines[i].trim() === "") { // possible list continuation or end
-        // peek: if next non-blank is a list item, keep going; else stop
-        let j = i + 1;
-        if (j < lines.length && itemRe.test(lines[j])) { i++; continue; }
-        break;
-      }
-      break;
-    }
-    const indent = m[1].length;
-    if (indent < baseIndent) break;
-    if (indent > baseIndent) {
-      // nested list belongs to previous item
-      const nested = renderList(lines, i, indent);
-      out = out.replace(/<\/li>$/, "") + nested.htmlOut + "</li>";
-      i = nested.next;
-      continue;
-    }
-    const isOrdered = /^\d+\.$/.test(m[2]);
-    if (isOrdered !== ordered && indent === baseIndent) break;
-    out += "<li>" + renderInline(m[3]) + "</li>";
-    i++;
-  }
-  out += `</${tag}>`;
-  return { htmlOut: out, next: i };
-}
-
-// ============================================================
-//  Search index
-// ============================================================
-const searchIndex = []; // { docId, docTitle, heading, headingSlug, text, lower }
+// The Markdown renderer lives in render.js so it can be unit-tested; see
+// docs/render_test.go. Pull its functions into this scope under the names the
+// rest of the page already uses.
+const {
+  escapeHtml, slugify, shortSlug, renderInline, makeLink, renderMarkdown,
+  renderList, highlightDomain,
+} = DomainRender;
+DomainRender.setDocIndex(DOC_BY_ID);
 
 function buildSearchEntries(docId, docTitle, md) {
   // Split the document into sections keyed by the nearest heading.
@@ -909,7 +801,12 @@ function renderPageToc(headings, docId) {
   let html = '<div class="label">On this page</div>';
   for (const h of headings) {
     if (h.level > 3) continue;
-    html += `<a class="${h.level === 3 ? "h3" : ""}" href="#/${docId}#${h.slug}" data-route data-slug="${h.slug}">${escapeHtml(h.text)}</a>`;
+    // Entries are the heading text, which in the primitive reference carries
+    // the full signature ("Map Each — List<T> × (T -> U) -> List<U>") and wrapped
+    // to three lines each, making the column unscannable. The name before the
+    // em dash is what someone scans for; the signature is one click away.
+    const label = h.text.split("\u2014")[0].trim() || h.text;
+    html += `<a class="${h.level === 3 ? "h3" : ""}" href="#/${docId}#${h.slug}" data-route data-slug="${h.slug}" title="${escapeHtml(h.text)}">${escapeHtml(label)}</a>`;
   }
   pageTocEl.innerHTML = html;
 }
@@ -957,7 +854,9 @@ npx serve                      # Node alternative</code></pre>`
 
   const rendered = renderMarkdown(md);
   const htmlWithIds = rendered.html.replace(/__DOCID__/g, docId);
-  contentEl.innerHTML = renderDocBanner(docId) + `<article>${htmlWithIds}</article>`;
+  const editUrl = REPO_EDIT_BASE + doc.file;
+  const editLink = `<div class="page-edit"><a href="${editUrl}" target="_blank" rel="noopener">Edit this page on GitHub</a></div>`;
+  contentEl.innerHTML = renderDocBanner(docId) + `<article>${htmlWithIds}${editLink}</article>`;
   renderPageToc(rendered.headings, docId);
 
   // Scroll to anchor or top
@@ -1097,7 +996,49 @@ document.addEventListener("click", e => {
 window.addEventListener("hashchange", route);
 
 // ---- Boot ----
+// ---- Theme -------------------------------------------------------------
+// The OS preference is the default; an explicit choice overrides it in either
+// direction and is remembered. Applied before first paint (see the inline
+// bootstrap in <head>) so a dark-theme reader never gets a white flash.
+const THEME_KEY = "domain-docs-theme";
+function currentTheme() {
+  const set = document.documentElement.getAttribute("data-theme");
+  if (set) return set;
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* private mode */ }
+  const btn = document.getElementById("theme-toggle");
+  if (btn) {
+    btn.textContent = t === "dark" ? "☀" : "☾";
+    btn.setAttribute("aria-label", t === "dark" ? "Switch to light theme" : "Switch to dark theme");
+    btn.setAttribute("title", btn.getAttribute("aria-label"));
+  }
+}
+document.addEventListener("click", e => {
+  if (e.target.closest("#theme-toggle")) applyTheme(currentTheme() === "dark" ? "light" : "dark");
+});
+
+// ---- Copy buttons ------------------------------------------------------
+// Delegated, so blocks rendered after navigation are covered without rebinding.
+document.addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-copy]");
+  if (!btn) return;
+  const code = btn.parentElement.querySelector("code");
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code.innerText);
+    btn.textContent = "Copied";
+  } catch (err) {
+    btn.textContent = "Press ⌘C";
+  }
+  btn.classList.add("copied");
+  setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1400);
+});
+
 (async function boot() {
+  applyTheme(currentTheme());
   route();
   await loadAllForIndex();
   indexReady = true;

@@ -38,6 +38,16 @@ func ExprType(e ast.Expr, env Env) (*ir.Type, error) {
 			return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
 		}
 		return t, nil
+	case *ast.BlockBody:
+		// A sub-pipeline standing in for an expression: its result type is
+		// whatever the body resolves to against the type bound to the
+		// parameter it reads. Which parameter that is comes from the node
+		// itself, so a block works in whichever slot the primitive binds.
+		in, ok := env[x.Param]
+		if !ok {
+			return nil, fmt.Errorf("%s: block body has no input binding", x.Pos)
+		}
+		return x.Pipe.BindBlock(in)
 	case *ast.UnaryExpr:
 		return unaryType(x, env)
 	case *ast.BinaryExpr:

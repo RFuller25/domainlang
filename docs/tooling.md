@@ -263,7 +263,7 @@ in lock-step with the primitives themselves by a test.
 
 ### Inlay hints
 
-```domain
+```domain ignore
 Cursed Energy: input.txt                    : Text
 Cursed Technique: Split Text by "\n\n"      : List<Text>
 Channeled Energy: Convert Each List to…     : List<List<Int>>

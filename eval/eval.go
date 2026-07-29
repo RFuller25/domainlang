@@ -49,6 +49,14 @@ func evalExpr(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 			return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
 		}
 		return v, nil
+	case *ast.BlockBody:
+		// The sub-pipeline form of a lambda body: run the resolved body over
+		// the value bound to the parameter it reads.
+		v, ok := env[x.Param]
+		if !ok {
+			return nil, fmt.Errorf("%s: block body has no input binding", x.Pos)
+		}
+		return x.Pipe.RunBlock(v)
 	case *ast.UnaryExpr:
 		v, err := evalExpr(x.X, env, types)
 		if err != nil {

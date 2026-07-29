@@ -26,6 +26,26 @@ quicksort or pair loop — the thesis survives compilation intact.
   bare `if (r.a <= r.c && r.b >= r.d) || ...`. No closures, no per-element
   evaluator walks. Division routes through a guarded helper so `/ 0` stays a
   clean error instead of a Go panic.
+- **Pipeline bodies become functions.** A `Using:` written as an
+  [indented pipeline](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)
+  is emitted once as a top-level `func dmBlockN(...)`, and the expression that
+  stands in for the lambda body is a call to it:
+
+  ```go
+  func dmBlock7(bv8 []int64) bool {
+      var v9 int64
+      for _, x10 := range bv8 { v9 += x10 }
+      return v9 > 15
+  }
+  ```
+
+  A body is statements, and the emitters that compile a lambda want an
+  *expression* — most build it before opening the loop it goes inside, so
+  emitting the statements there would land them in the wrong scope. A function
+  gives every one of those sites something it already handles. Enclosing `For`
+  loop variables are locals of `main`, so they are passed in as extra
+  parameters rather than referenced freely. The cost is a call per invocation,
+  which Go largely inlines back.
 - **Match Pattern compiles to scanners.** A template whose holes are all
   ints (with literal separators a greedy scan provably cannot mis-split)
   becomes a hand-rolled string scanner — no regexp at runtime. Word/text
@@ -129,9 +149,13 @@ differences remain:
 - `=` between two Record types that share fields but declare them in
   different orders is rejected with a positioned error (they intern to
   distinct Go structs) rather than miscompiled.
-- The `While` / `Iterate Until Fixed Point` iteration cap is fixed at the
-  default 1,000,000 in compiled binaries (interpreter tests can lower the
-  cap; binaries cannot).
+- `While` / `Iterate Until Fixed Point` are **unbounded** in a compiled
+  binary, matching the interpreter: `dmMaxLoopIterations` mirrors
+  `prims.maxLoopIterations`, and both default to zero (no counter is emitted
+  at all). A non-terminating loop therefore spins in a binary exactly as it
+  does under the interpreter. The interpreter's bound is a `var` a test can
+  lower; the compiled one is a build-time constant, so a binary cannot be
+  asked for a ceiling after the fact.
 - A primitive added to the language without a codegen case fails
   `domain build` with a positioned error naming it and pointing back at
   `domain run`.
@@ -146,9 +170,10 @@ The full AoC toolbox surface is compiled:
   mask/filter loops as usual, and the traversals are self-contained `dm*`
   helpers (slice queue/stack, a hand-rolled binary min-heap, union-find)
   mirroring `prims/search.go`, including the bad-start and negative-cost
-  failure wording. The Permutations/Subsets bounds are shared constants
-  with the interpreter (`prims.MaxPermutationInput` / `MaxSubsetInput`),
-  so both backends refuse identically.
+  failure wording. The Permutations/Subsets bounds are read from the same
+  vars as the interpreter (`prims.MaxPermutationInput` / `MaxSubsetInput`),
+  both zero by default — so neither backend refuses a large input, and if a
+  ceiling is set back both refuse identically.
 - **Expression builtins:** all 92 compile. Points lower to the interned
   `(Int, Int)` tuple struct; `padd`/`manhattan`/`rotl`/`rotr`/`dirs4`/
   `neighbors4`/`neighbors8`/`solve2x2` become concrete `dm*` helpers over

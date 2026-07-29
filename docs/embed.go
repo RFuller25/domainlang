@@ -7,9 +7,10 @@ package docs
 
 import "embed"
 
-// FS holds the documentation site: the single-page index.html and all the
-// Markdown pages it renders. Paths are flat (e.g. "index.html", "README.md"),
-// which is exactly what index.html fetches at runtime.
+// FS holds the documentation site: index.html, the Markdown renderer it
+// loads (render.js, split out so it can be unit-tested — see render_test.go),
+// and all the Markdown pages it renders. Paths are flat (e.g. "index.html",
+// "README.md"), which is exactly what index.html fetches at runtime.
 //
-//go:embed index.html *.md
+//go:embed index.html render.js *.md
 var FS embed.FS
