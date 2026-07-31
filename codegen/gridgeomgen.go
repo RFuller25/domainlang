@@ -49,11 +49,11 @@ func (g *gen) emitSubgrid(n *ir.Node, in string) (string, error) {
 		name := [4]string{"Row", "Col", "Height", "Width"}[i]
 		// Height and width may not be negative; the origin's only constraint
 		// is the fit check below, which covers it.
-		min := int64(math.MinInt64)
+		lower := int64(math.MinInt64)
 		if i >= 2 {
-			min = 0
+			lower = 0
 		}
-		s, err := g.measuredOperand(n, in, k, name, min)
+		s, err := g.measuredOperand(n, in, k, name, lower)
 		if err != nil {
 			return "", err
 		}
@@ -280,7 +280,10 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 			g.out()
 			g.wl("}")
 		}
-		g.wl("%s.put(%s, append(%s.vals[%s], %s))", m, from, m, from, to)
+		// Keyed by the function it declares (as in emitGroupBy): two different
+		// keys for one declaration would emit dmAppend twice.
+		g.helper("dmAppend", declMapAppend)
+		g.wl("dmAppend(&%s, %s, %s)", m, from, to)
 		g.wl("if _, ok := %s.vals[%s]; !ok { %s.put(%s, nil) }", m, to, m, to)
 		g.out()
 		g.wl("}")
@@ -318,12 +321,20 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 	for _, k := range m.keys {
 		add(k)
 	}
-	adj := map[int][]int{}
-	indeg := map[int]int{}
+	// Number every node first — successors need not be keys — so the two
+	// working structures below can be slices indexed by node number rather
+	// than maps hashing one.
 	for _, k := range m.keys {
-		from := add(k)
 		for _, s := range m.vals[k] {
-			to := add(s)
+			add(s)
+		}
+	}
+	adj := make([][]int, len(order))
+	indeg := make([]int, len(order))
+	for _, k := range m.keys {
+		from := index[k]
+		for _, s := range m.vals[k] {
+			to := index[s]
 			adj[from] = append(adj[from], to)
 			indeg[to]++
 		}
@@ -356,6 +367,5 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 }`))
 	v := g.fresh("v")
 	g.wl("%s := dmTopoSort(%s, %s)", v, in, fmtFn)
-	_ = keyGo
 	return v, nil
 }

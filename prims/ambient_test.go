@@ -72,9 +72,11 @@ func TestAmbientTypesReturnsFreshSlice(t *testing.T) {
 	pushAmbient("x", ir.Int())
 	defer popAmbient()
 	a := ambientTypes()
-	a = append(a, ir.Bool()) // must not corrupt the internal stack
+	grown := append(a, ir.Bool()) // must not corrupt the internal stack
 	b := ambientTypes()
-	if len(b) != 1 {
+	// grown is asserted only so the append above is not a dead store: the point
+	// of the append is its effect on the stack's backing array, which b sees.
+	if len(b) != 1 || len(grown) != 2 {
 		t.Fatalf("ambientTypes() = %v, want exactly 1 (append on a returned slice leaked into the stack)", b)
 	}
 }

@@ -1,0 +1,9 @@
+# Explore: breadth-first search over an implicit graph — the state space is
+# described by a successor lambda, not stored anywhere.
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> toint(s)
+Domain Expansion: Explore
+    Mode: Count
+    Using: (n) -> if n > 2000000 then list(n) else list(n * 2, n + 3)
+Reveal: stdout

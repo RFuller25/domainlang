@@ -1,0 +1,14 @@
+# The grid geometry family: transpose, quarter turn, mirror, and a
+# positional Map Cells that reads its own grid through at().
+Cursed Energy: stdin
+Shikigami: Digit Grid
+Cursed Technique: Transpose
+Cursed Technique: Rotate Grid
+    Mode: Right
+Cursed Technique: Flip Grid
+    Mode: Horizontal
+Cursed Technique: Map Cells
+    Using: (g, r, c) -> if r = c then 0 else at(g, r, c)
+Maximum Technique: Count Cells
+    Using: (v) -> v > 4
+Reveal: stdout

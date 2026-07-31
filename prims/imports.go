@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -168,12 +169,10 @@ func (l *importLoader) load(baseDir string, imp *ast.Import, rootPos token.Posit
 		return err
 	}
 
-	for i, on := range l.stack {
-		if on == abs {
-			chain := append(append([]string{}, l.stack[i:]...), abs)
-			return &ResolveError{Pos: imp.Pos, Msg: fmt.Sprintf(
-				"import cycle: %s", strings.Join(displayChain(chain), " → "))}
-		}
+	if i := slices.Index(l.stack, abs); i >= 0 {
+		chain := append(slices.Clone(l.stack[i:]), abs)
+		return &ResolveError{Pos: imp.Pos, Msg: fmt.Sprintf(
+			"import cycle: %s", strings.Join(displayChain(chain), " → "))}
 	}
 	if l.loaded[abs] {
 		return nil // a diamond: already loaded, and loading twice would shadow

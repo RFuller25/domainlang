@@ -1,0 +1,8 @@
+# The set vocabulary: Intersect reduces the groups to a Set, and a Set is
+# accepted wherever a list-shaped primitive takes a List.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by ""
+Maximum Technique: Intersect
+Maximum Technique: Count
+Reveal: stdout

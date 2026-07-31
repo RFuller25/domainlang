@@ -826,9 +826,7 @@ func TestReplTTYPasteIsReportedAsOneBlock(t *testing.T) {
 	var printouts []string
 	next, cmd := m.Update(tea.PasteMsg{Content: program})
 	m = next.(replModel)
-	for _, msg := range collectPrintlns(cmd, &m, t) {
-		printouts = append(printouts, msg)
-	}
+	printouts = append(printouts, collectPrintlns(cmd, &m, t)...)
 
 	joined := ansi.Strip(strings.Join(printouts, "\n"))
 	if strings.Count(joined, "=> ") != 1 {

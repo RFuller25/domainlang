@@ -8,9 +8,11 @@ import (
 	"domain/token"
 )
 
-func intL(v int64) *ast.IntLit                        { return &ast.IntLit{Value: v} }
-func ident(n string) *ast.Ident                       { return &ast.Ident{Name: n} }
-func bin(op token.Kind, l, r ast.Expr) *ast.BinaryExpr { return &ast.BinaryExpr{Op: op, Left: l, Right: r} }
+func intL(v int64) *ast.IntLit  { return &ast.IntLit{Value: v} }
+func ident(n string) *ast.Ident { return &ast.Ident{Name: n} }
+func bin(op token.Kind, l, r ast.Expr) *ast.BinaryExpr {
+	return &ast.BinaryExpr{Op: op, Left: l, Right: r}
+}
 
 // simplifyOnce runs the rewriter over an expression tree.
 func simplifyOnce(e ast.Expr) (ast.Expr, bool) {

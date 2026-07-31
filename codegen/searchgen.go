@@ -27,7 +27,7 @@ func gridSearchFusable(n *ir.Node) bool {
 // Components": it builds the []bool mask and the row/col dimensions directly
 // from the lines, applying the search predicate to a zero-alloc one-rune
 // substring, so the intermediate dmGrid[string] is never materialized.
-func (g *gen) emitGridSearchFromLines(gridNode, searchNode *ir.Node, lines string) (string, error) {
+func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) (string, error) {
 	lam, err := g.nodeLambda(searchNode)
 	if err != nil {
 		return "", err
@@ -46,7 +46,8 @@ func (g *gen) emitGridSearchFromLines(gridNode, searchNode *ir.Node, lines strin
 	g.imp("unicode/utf8")
 	g.wl("%s := len(%s)", rows, lines)
 	g.wl("%s := 0", cols)
-	g.wl("%s := make([]bool, 0, %s*%s)", mask, rows, cols) // grows; cap is a hint
+	g.helper("dmCellHint", declCellHint)
+	g.wl("%s := make([]bool, 0, dmCellHint(%s))", mask, lines)
 	g.wl("for %s, %s := range %s {", r, line, lines)
 	g.in()
 	g.wl("%s := 0", rc)
@@ -162,15 +163,29 @@ const declCheckStart = `func dmCheckStart(rows, cols int, sr, sc int64) {
 	}
 }`
 
+// declCellHint sizes a cell slice from the rows before any of them is read:
+// the grid has to be rectangular to survive the loop below, so the first row's
+// length times the row count is exact.
+const declCellHint = `func dmCellHint(rows []string) int {
+	if len(rows) == 0 {
+		return 0
+	}
+	return len(rows) * len(rows[0])
+}`
+
 // dmSearchDirs is the neighbour table the grid searches walk. Mode: 4 takes
 // the orthogonal prefix, Mode: 8 the whole thing — the same per-call choice
 // the interpreter makes via ir.GridValue.Neighbors.
-const declSearchDirs = `func dmSearchDirs(diag bool) [][2]int64 {
-	d := [][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}}
+// The table is a package-level array rather than a composite literal inside
+// the function: returning a fresh slice escaped to the heap, so every search
+// allocated 128 bytes per cell it visited just to look at its neighbours.
+const declSearchDirs = `var dmDirs = [8][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}}
+
+func dmSearchDirs(diag bool) [][2]int64 {
 	if diag {
-		return d
+		return dmDirs[:]
 	}
-	return d[:4]
+	return dmDirs[:4]
 }`
 
 const declDistGrid = `func dmDistGrid(rows, cols int) dmGrid[int64] {
@@ -188,10 +203,10 @@ const declBFS = `func dmBFS(rows, cols int, mask []bool, sr, sc int64, diag bool
 	}
 	out := dmDistGrid(rows, cols)
 	out.cells[sr*int64(cols)+sc] = 0
-	queue := [][2]int64{{sr, sc}}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
+	queue := make([][2]int64, 1, len(mask)+1)
+	queue[0] = [2]int64{sr, sc}
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
 		d := out.cells[cur[0]*int64(cols)+cur[1]]
 		for _, dl := range dmSearchDirs(diag) {
 			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
@@ -393,10 +408,10 @@ const declBFSTarget = `func dmBFSTarget(rows, cols int, mask []bool, sr, sc, tr,
 		dist[i] = -1
 	}
 	dist[sr*w+sc] = 0
-	queue := [][2]int64{{sr, sc}}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
+	queue := make([][2]int64, 1, len(mask)+1)
+	queue[0] = [2]int64{sr, sc}
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
 		d := dist[cur[0]*w+cur[1]]
 		for _, dl := range dmSearchDirs(diag) {
 			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
@@ -537,20 +552,23 @@ func (g *gen) emitSearchTarget(n *ir.Node, in string) (string, error) {
 }
 
 const declComponents = `func dmComponents(rows, cols int, mask []bool, diag bool) int64 {
-	parent := make([]int, rows*cols)
-	size := make([]int, rows*cols)
+	// int32 indices: a grid big enough to overflow them (2^31 cells) could not
+	// be read into memory in the first place, and the halved arrays are the
+	// difference between fitting the working set in cache and not.
+	parent := make([]int32, rows*cols)
+	size := make([]int32, rows*cols)
 	for i := range parent {
-		parent[i] = i
+		parent[i] = int32(i)
 		size[i] = 1
 	}
-	find := func(x int) int {
+	find := func(x int32) int32 {
 		for parent[x] != x {
 			parent[x] = parent[parent[x]]
 			x = parent[x]
 		}
 		return x
 	}
-	union := func(a, b int) {
+	union := func(a, b int32) {
 		ra, rb := find(a), find(b)
 		if ra == rb {
 			return
@@ -568,27 +586,27 @@ const declComponents = `func dmComponents(rows, cols int, mask []bool, diag bool
 				continue
 			}
 			if c+1 < cols && mask[i+1] {
-				union(i, i+1)
+				union(int32(i), int32(i+1))
 			}
 			if r+1 < rows && mask[i+cols] {
-				union(i, i+cols)
+				union(int32(i), int32(i+cols))
 			}
 			// Under Mode: 8 the two downward diagonals complete the
 			// neighbourhood; the upward ones are covered by the cell above
 			// having already unioned toward this one.
 			if diag && r+1 < rows {
 				if c+1 < cols && mask[i+cols+1] {
-					union(i, i+cols+1)
+					union(int32(i), int32(i+cols+1))
 				}
 				if c > 0 && mask[i+cols-1] {
-					union(i, i+cols-1)
+					union(int32(i), int32(i+cols-1))
 				}
 			}
 		}
 	}
 	var n int64
 	for i, m := range mask {
-		if m && find(i) == i {
+		if m && find(int32(i)) == int32(i) {
 			n++
 		}
 	}

@@ -178,12 +178,15 @@ func (g *GridValue) SetAt(r, c int, v Value) {
 // diagonal=false it returns the 4 orthogonal neighbors; with diagonal=true the
 // 8 surrounding cells.
 func (g *GridValue) Neighbors(r, c int, diagonal bool) [][2]int {
-	deltas := [][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
+	// A fixed array sliced to length keeps the delta table off the heap: this
+	// runs once per cell of every grid traversal.
+	deltas := [8][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}}
+	n := 4
 	if diagonal {
-		deltas = append(deltas, [2]int{-1, -1}, [2]int{-1, 1}, [2]int{1, -1}, [2]int{1, 1})
+		n = 8
 	}
 	var out [][2]int
-	for _, d := range deltas {
+	for _, d := range deltas[:n] {
 		nr, nc := r+d[0], c+d[1]
 		if g.InBounds(nr, nc) {
 			out = append(out, [2]int{nr, nc})

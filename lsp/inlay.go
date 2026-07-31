@@ -163,7 +163,7 @@ func channelResultType(st *ast.Statement, outByLine map[int]*ir.Type) *ir.Type {
 // hint is anchored.
 func lineLength(text string, line int) int {
 	cur, start := 1, 0
-	for i := 0; i < len(text); i++ {
+	for i := range len(text) {
 		if text[i] != '\n' {
 			continue
 		}

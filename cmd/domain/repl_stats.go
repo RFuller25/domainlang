@@ -14,8 +14,9 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"domain/interp"
@@ -87,8 +88,8 @@ func (r *repl) sortableStats() func(bySelf bool) string {
 func renderStats(prof *interp.Stats, width int, color bool, bySelf bool) string {
 	rows := prof.Rows()
 	if bySelf {
-		rows = append([]interp.StageRow(nil), rows...)
-		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Dur > rows[j].Dur })
+		rows = slices.Clone(rows)
+		slices.SortStableFunc(rows, func(a, b interp.StageRow) int { return cmp.Compare(b.Dur, a.Dur) })
 	}
 	total := prof.Total()
 	head := fmt.Sprintf("[stats] %d stage(s) · %s total · tree-walking interpreter, not the compiled binary",
@@ -143,8 +144,8 @@ func hottest(children []interp.StageRow) []interp.StageRow {
 	if len(children) == 0 {
 		return nil
 	}
-	sorted := append([]interp.StageRow(nil), children...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Dur > sorted[j].Dur })
+	sorted := slices.Clone(children)
+	slices.SortStableFunc(sorted, func(a, b interp.StageRow) int { return cmp.Compare(b.Dur, a.Dur) })
 	if len(sorted) > maxChildRows {
 		sorted = sorted[:maxChildRows]
 	}
@@ -152,13 +153,9 @@ func hottest(children []interp.StageRow) []interp.StageRow {
 }
 
 // bars draws a share of the run as a bar of w cells. A stage that took a
-// non-zero but tiny share still gets one cell, so "ran" and "did not run"
-// never look alike.
+// non-zero but tiny share still gets one cell (see barCells), so "ran" and
+// "did not run" never look alike.
 func bars(pct float64, w int) string {
-	filled := int(pct/100*float64(w) + 0.5)
-	if filled == 0 && pct > 0 {
-		filled = 1
-	}
-	filled = max(min(filled, w), 0)
+	filled := barCells(pct, w)
 	return strings.Repeat("█", filled) + strings.Repeat("░", w-filled)
 }

@@ -1,0 +1,10 @@
+# BFS over a grid: distances from the corner, then a reduction over the
+# cells the search reached.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Grid
+Domain Expansion: BFS from 0 0
+    Using: (c) -> c = "."
+Maximum Technique: Count Cells
+    Using: (d) -> d > 0
+Reveal: stdout

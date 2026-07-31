@@ -20,24 +20,8 @@ func fuseAllPairsProduct(p *ir.Pipeline) []Rewrite {
 	var rewrites []Rewrite
 	for _, list := range nodeLists(p) {
 		for _, n := range list {
-			if n.Prim != "All Pairs" {
-				continue
-			}
-			if hasMeasuredArg(n) {
-				continue // the arity this rewrite assumes must be a constant
-			}
-			if k, _ := n.Meta["k"].(int); k != 2 {
-				continue
-			}
-			mode, _ := n.Meta["mode"].(string)
-			if mode != "First" && mode != "Count" {
-				continue
-			}
-			if n.In == nil || !n.In.Equal(ir.List(ir.Int())) {
-				continue
-			}
-			lam := nodeLambda(n)
-			if lam == nil {
+			mode, lam, ok := combinatorialScan(n, "All Pairs", 2)
+			if !ok {
 				continue
 			}
 			target, ok := matchProductPair(lam)
@@ -144,8 +128,7 @@ func FindPairProduct(xs []int64, target int64) ([]int64, bool) {
 	for _, x := range xs {
 		remaining[x]++
 	}
-	for i := 0; i < len(xs); i++ {
-		x := xs[i]
+	for i, x := range xs {
 		remaining[x]-- // now reflects indices > i
 		if x == 0 {
 			if target == 0 && i+1 < len(xs) {

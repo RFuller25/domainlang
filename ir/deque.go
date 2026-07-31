@@ -40,7 +40,7 @@ func (q *Queue[T]) Len() int { return q.count }
 
 func (q *Queue[T]) grow() {
 	next := make([]T, max(4, len(q.buf)*2))
-	for i := 0; i < q.count; i++ {
+	for i := range q.count {
 		next[i] = q.buf[(q.head+i)%len(q.buf)]
 	}
 	q.buf = next

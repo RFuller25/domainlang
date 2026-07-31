@@ -51,15 +51,15 @@ func (p *progressCounter) Step(e ir.StepEvent) {
 	}
 }
 
-func (p *progressCounter) PushFrame(label string) {
+func (p *progressCounter) PushFrame(label string, out *ir.Type) {
 	if p.Inner != nil {
-		p.Inner.PushFrame(label)
+		p.Inner.PushFrame(label, out)
 	}
 }
 
-func (p *progressCounter) PopFrame() {
+func (p *progressCounter) PopFrame(out ir.Value) {
 	if p.Inner != nil {
-		p.Inner.PopFrame()
+		p.Inner.PopFrame(out)
 	}
 }
 

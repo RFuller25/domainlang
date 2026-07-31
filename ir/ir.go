@@ -230,7 +230,7 @@ type Context struct {
 	// or its golden test. Nil discards, exactly as a nil Stdout does: a
 	// caller that captures only stdout must not find stderr output mixed into
 	// it, or the two backends would disagree about what a program printed.
-	Stderr io.Writer
+	Stderr   io.Writer
 	BaseDir  string           // directory used to resolve relative input file paths
 	Channels map[string]Value // values produced by Channel sub-pipelines
 	// Release disables Binding Vows (they become passthroughs). It lives on
@@ -269,7 +269,7 @@ func LabelledOutput(label, rendered string) string {
 	return "Part " + label + ": " + rendered
 }
 
-// Channel stores a named channel value, lazily creating the map.
+// SetChannel stores a named channel value, lazily creating the map.
 func (c *Context) SetChannel(name string, v Value) {
 	if c.Channels == nil {
 		c.Channels = map[string]Value{}

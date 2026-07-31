@@ -216,7 +216,7 @@ func parseRunArgs(args []string) (string, Options, error) {
 		case "--verbose":
 			opts.Verbose = true
 		default:
-			if len(a) > 0 && a[0] == '-' {
+			if strings.HasPrefix(a, "-") {
 				return "", opts, fmt.Errorf("unknown flag %q", a)
 			}
 			if path != "" {
@@ -236,7 +236,7 @@ func parseRunArgs(args []string) (string, Options, error) {
 func parseCheckArgs(args []string) (string, error) {
 	var path string
 	for _, a := range args {
-		if len(a) > 0 && a[0] == '-' {
+		if strings.HasPrefix(a, "-") {
 			return "", fmt.Errorf("check takes no flags (got %q)", a)
 		}
 		if path != "" {
@@ -288,7 +288,7 @@ func parseBuildArgs(args []string) (string, BuildOptions, error) {
 			}
 			opts.EmitGo = args[i]
 		default:
-			if len(a) > 0 && a[0] == '-' {
+			if strings.HasPrefix(a, "-") {
 				return "", opts, fmt.Errorf("unknown flag %q", a)
 			}
 			if path != "" {
@@ -402,7 +402,7 @@ func Build(path string, opts BuildOptions, stdin io.Reader, stdout, stderr io.Wr
 			if err != nil {
 				return err
 			}
-			defer os.RemoveAll(dir)
+			defer func() { _ = os.RemoveAll(dir) }()
 			out = filepath.Join(dir, defaultBinaryName(path))
 		} else {
 			out = defaultBinaryName(path)

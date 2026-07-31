@@ -1,0 +1,4 @@
+# Build artifacts from build.sh — see README.md. Deliberately not committed:
+# a stale copy would run different code from the docs describing it.
+domain.wasm
+wasm_exec.js

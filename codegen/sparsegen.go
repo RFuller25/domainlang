@@ -36,7 +36,7 @@ func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmSparse", declSparse, "sort")
+	g.helper("dmSparse", declSparse, "slices")
 	v := g.fresh("v")
 	g.wl("%s := dmNewSparse[%s](%s)", v, elemGo, def)
 
@@ -120,14 +120,12 @@ func (g *gen) emitSparseDensify(n *ir.Node, in string) (string, error) {
 	// The tunable ceiling is gone, but a box Go cannot represent still gets a
 	// clean message instead of a makeslice panic — DensifyLimit answers with
 	// the configured ceiling when there is one and the physical cap otherwise.
-	{
-		g.wl("if %s > %s || %s > %s || %s/1 > %s/%s {", rows, lim, cols, lim, rows, lim, cols)
-		g.in()
-		g.wl(`dmFail("sparse grid too large to densify (%%dx%%d, limit %%d cells)", %s, %s, int64(%s))`,
-			rows, cols, lim)
-		g.out()
-		g.wl("}")
-	}
+	g.wl("if %s > %s || %s > %s || %s/1 > %s/%s {", rows, lim, cols, lim, rows, lim, cols)
+	g.in()
+	g.wl(`dmFail("sparse grid too large to densify (%%dx%%d, limit %%d cells)", %s, %s, int64(%s))`,
+		rows, cols, lim)
+	g.out()
+	g.wl("}")
 	g.wl("%s.rows, %s.cols = int(%s), int(%s)", v, v, rows, cols)
 	g.wl("%s.cells = make([]%s, %s*%s)", v, elemGo, rows, cols)
 	g.wl("for %s := range %s.cells {", i, v)
@@ -161,7 +159,7 @@ func (g *gen) emitMapCellsSparse(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmSparse", declSparse, "sort")
+	g.helper("dmSparse", declSparse, "slices")
 	v, p := g.fresh("v"), g.fresh("p")
 	g.wl("%s := %s.def", e, in)
 	g.wl("%s := dmNewSparse[%s](%s)", v, outElemGo, body)
@@ -214,7 +212,7 @@ func (g *gen) emitFindCellsSparse(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "lambda: %v", err)
 	}
 	v, p := g.fresh("v"), g.fresh("p")
-	g.wl("%s := []%s{}", v, pt)
+	g.wl("%s := make([]%s, 0, len(%s.cells))", v, pt, in)
 	g.wl("for _, %s := range %s.pts() {", p, in)
 	g.in()
 	g.wl("%s := %s.cells[%s]", e, in, p)

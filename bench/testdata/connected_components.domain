@@ -1,0 +1,7 @@
+# Connected Components: union-find under a named algorithm, over a dense grid.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Grid
+Domain Expansion: Connected Components
+    Using: (c) -> c = "#"
+Reveal: stdout

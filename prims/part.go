@@ -39,7 +39,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 
 	// scopePart: a Part may consume channels defined above it with From:, but
 	// may not define channels of its own (they cannot nest) or hold Parts.
-	subNodes, _, err := r.resolveSequence(stmt.Block, cur, scopePart)
+	subNodes, subType, err := r.resolveSequence(stmt.Block, cur, scopePart)
 	if err != nil {
 		return nil, err
 	}
@@ -61,16 +61,18 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 			prev := ctx.PartLabel
 			ctx.PartLabel = label
 			defer func() { ctx.PartLabel = prev }()
-			ctx.PushFrame(fmt.Sprintf("Part %q", label))
-			defer ctx.PopFrame()
 
-			v := in
-			var err error
-			for _, n := range subNodes {
-				if v, err = ir.EvalNode(ctx, n, v); err != nil {
-					return nil, err
-				}
+			// The body's result is what the Part actually computed; the node
+			// itself passes its input through. A body that failed reports nil.
+			var body ir.Value
+			ctx.PushFrame(fmt.Sprintf("Part %q", label), subType)
+			defer func() { ctx.PopFrame(body) }()
+
+			v, err := runBody(ctx, subNodes, in)
+			if err != nil {
+				return nil, err
 			}
+			body = v
 			return in, nil
 		},
 	}, nil

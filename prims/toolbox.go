@@ -1,10 +1,11 @@
 package prims
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -213,12 +214,10 @@ var raggedColumns = &Primitive{
 						runes = append(runes, string(r))
 					}
 					rows[i] = runes
-					if len(runes) > width {
-						width = len(runes)
-					}
+					width = max(width, len(runes))
 				}
 				out := make([]ir.Value, width)
-				for c := 0; c < width; c++ {
+				for c := range width {
 					col := []ir.Value{}
 					for _, runes := range rows {
 						if c < len(runes) {
@@ -369,11 +368,11 @@ var mergeRanges = &Primitive{
 					}
 					spans[i] = span{lo, hi}
 				}
-				sort.Slice(spans, func(i, j int) bool {
-					if spans[i].lo != spans[j].lo {
-						return spans[i].lo < spans[j].lo
+				slices.SortFunc(spans, func(a, b span) int {
+					if c := cmp.Compare(a.lo, b.lo); c != 0 {
+						return c
 					}
-					return spans[i].hi < spans[j].hi
+					return cmp.Compare(a.hi, b.hi)
 				})
 				var merged []span
 				for _, s := range spans {
@@ -383,9 +382,7 @@ var mergeRanges = &Primitive{
 					// s.lo is MinInt64.
 					if n := len(merged); n > 0 &&
 						(merged[n-1].hi == math.MaxInt64 || s.lo == math.MinInt64 || s.lo-1 <= merged[n-1].hi) {
-						if s.hi > merged[n-1].hi {
-							merged[n-1].hi = s.hi
-						}
+						merged[n-1].hi = max(merged[n-1].hi, s.hi)
 						continue
 					}
 					merged = append(merged, s)
@@ -544,7 +541,7 @@ var subsets = &Primitive{
 				}
 				total := 1 << len(xs)
 				out := make([]ir.Value, 0, total)
-				for mask := 0; mask < total; mask++ {
+				for mask := range total {
 					sub := []ir.Value{}
 					for i, x := range xs {
 						if mask&(1<<i) != 0 {

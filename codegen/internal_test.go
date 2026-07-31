@@ -21,16 +21,16 @@ func TestFastEligible(t *testing.T) {
 	}{
 		// The canonical fast path: int holes separated by non-digit literals.
 		{"{a:int}-{b:int},{c:int}-{d:int}", true},
-		{"{a:int}", true},           // hole at end of template
-		{"x={a:int}", true},         // leading literal is irrelevant
-		{"{a:int} {b:int}", true},   // space separator cannot be stolen
-		{"{a:int}{b:int}", false},   // adjacent holes need backtracking
+		{"{a:int}", true},                // hole at end of template
+		{"x={a:int}", true},              // leading literal is irrelevant
+		{"{a:int} {b:int}", true},        // space separator cannot be stolen
+		{"{a:int}{b:int}", false},        // adjacent holes need backtracking
 		{"{w:word} grade {n:int}", true}, // word hole delimited by whitespace literal
-		{"{w:word} {n:int}", true},  // word hole stops at the space separator
-		{"{w:word}x{n:int}", false}, // word followed by non-whitespace needs backtracking
-		{"{s:text}:{n:int}", false}, // text (.*) needs the regex engine
-		{"{a:int}5x{b:int}", false}, // literal starts with a digit a greedy scan would steal
-		{"{a:int}9", false},         // trailing digit literal, same theft
+		{"{w:word} {n:int}", true},       // word hole stops at the space separator
+		{"{w:word}x{n:int}", false},      // word followed by non-whitespace needs backtracking
+		{"{s:text}:{n:int}", false},      // text (.*) needs the regex engine
+		{"{a:int}5x{b:int}", false},      // literal starts with a digit a greedy scan would steal
+		{"{a:int}9", false},              // trailing digit literal, same theft
 	}
 	for _, c := range cases {
 		tmpl, err := pattern.ParseTemplate(c.tmpl)

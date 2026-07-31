@@ -16,9 +16,11 @@ import "time"
 // A nil Tracer costs one nil check per node, which is why an untraced
 // `domain run` is unaffected (BenchmarkTracedVsUntraced pins that).
 //
-// There are exactly four places nodes are evaluated — interp.Run,
-// prims.runBody (shared by all three loop kinds), the Channel node's Eval, and
-// the Part node's Eval — and instrumenting them covers the language.
+// There are exactly two places nodes are evaluated — interp.Run for the top
+// level, and prims.runBody, which every nested construct goes through: the
+// three loop kinds, the Channel and Part node Evals, and one application of a
+// nested `Using:` body. Instrumenting those two covers the language, and a
+// construct added later cannot slip past them.
 
 // StepEvent is one node evaluation.
 type StepEvent struct {
@@ -38,9 +40,11 @@ type Tracer interface {
 	// Step is called after each node evaluation, including a failing one.
 	Step(StepEvent)
 	// PushFrame and PopFrame bracket a nested sub-pipeline: one loop
-	// iteration, a Channel body, or a Part body.
-	PushFrame(label string)
-	PopFrame()
+	// iteration, a Channel body, a Part body, or one application of a nested
+	// `Using:` body. PushFrame carries the type the body produces and PopFrame
+	// the value it produced — see Context.PushFrame and Context.PopFrame.
+	PushFrame(label string, out *Type)
+	PopFrame(out Value)
 }
 
 // currentCtx is the Context of the evaluation currently in progress, so code
@@ -86,23 +90,45 @@ func EvalNode(ctx *Context, n *Node, in Value) (Value, error) {
 	return out, err
 }
 
-// PushFrame enters a nested sub-pipeline. It is a no-op without a tracer, so
-// loop bodies pay nothing for the labels in an ordinary run.
-func (c *Context) PushFrame(label string) {
+// Tracing reports whether anything is watching this run. It exists for the one
+// caller that cannot make its frame free otherwise: a `Using:` body runs once
+// per element, and the bookkeeping that brackets it — a deferred call, to close
+// the frame even if the run is interrupted — costs something per element even
+// when the frame goes nowhere. Everywhere else, PushFrame's own nil check is
+// the whole cost.
+func (c *Context) Tracing() bool { return c != nil && c.Trace != nil }
+
+// PushFrame enters a nested sub-pipeline, naming the type its body produces.
+//
+// The type comes from the caller because only the caller knows it: a loop's lap
+// produces the loop's own type, a Channel or Part body produces whatever its
+// last stage does, and a `Using:` body produces one element's worth of result.
+// Nothing downstream can work it out from the value alone.
+//
+// It is a no-op without a tracer, so loop bodies pay nothing for the labels in
+// an ordinary run.
+func (c *Context) PushFrame(label string, out *Type) {
 	if c == nil || c.Trace == nil {
 		return
 	}
 	c.frames = append(c.frames, label)
-	c.Trace.PushFrame(label)
+	c.Trace.PushFrame(label, out)
 }
 
-// PopFrame leaves the innermost sub-pipeline.
-func (c *Context) PopFrame() {
+// PopFrame leaves the innermost sub-pipeline, reporting what it produced.
+//
+// The result is the frame's own answer, which is not always the value its
+// enclosing node returns: a Channel and a Part are passthroughs — the pipeline
+// carries on with the value that entered them — so the body's result is
+// visible nowhere else, and a visualizer showing only the node's output would
+// report the block's input as its output. A body that did not finish (it
+// failed, or the run was interrupted) reports nil.
+func (c *Context) PopFrame(out Value) {
 	if c == nil || c.Trace == nil || len(c.frames) == 0 {
 		return
 	}
 	c.frames = c.frames[:len(c.frames)-1]
-	c.Trace.PopFrame()
+	c.Trace.PopFrame(out)
 }
 
 func (c *Context) currentFrame() string {

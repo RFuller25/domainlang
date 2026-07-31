@@ -1,0 +1,10 @@
+# Topological Sort over an edge list, parsed by a Match Pattern with word
+# holes (the regexp path, not the integer scanner).
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Domain Expansion: Topological Sort
+Cursed Technique: Take Item 0
+Reveal: stdout

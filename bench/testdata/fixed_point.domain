@@ -1,0 +1,10 @@
+# Iterate Until Fixed Point converges by structural equality, so every lap
+# compares the whole list against the one before it.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Simple Domain: Iterate Until Fixed Point
+    Cursed Technique: Map Each
+        Using: (x) -> if x > 1 then x / 2 else x
+Maximum Technique: Sum
+Reveal: stdout

@@ -127,7 +127,7 @@ func CompletionItems(prefix string) []map[string]any {
 
 	// Indented continuation line → named arguments (and, after Mode:, its values).
 	if indented {
-		if key, _, ok := splitKeyword(trimmed); ok && strings.EqualFold(key, "Mode") {
+		if key, ok := splitKeyword(trimmed); ok && strings.EqualFold(key, "Mode") {
 			out := make([]map[string]any, 0, len(modeValues))
 			for _, v := range modeValues {
 				out = append(out, map[string]any{"label": v, "kind": kindValue,
@@ -140,7 +140,7 @@ func CompletionItems(prefix string) []map[string]any {
 
 	// Non-indented line with a keyword and a colon → offer that keyword's
 	// primitives (the operation phrase).
-	if key, _, ok := splitKeyword(trimmed); ok {
+	if key, ok := splitKeyword(trimmed); ok {
 		if canon, matched := canonicalKeyword(key); matched && keywordsWithPrimitives[canon] {
 			return primitiveItems(canon)
 		}
@@ -152,14 +152,14 @@ func CompletionItems(prefix string) []map[string]any {
 	return append(keywordItems(), bareOperationItems()...)
 }
 
-// splitKeyword splits a trimmed line into the text before the first ':' and
-// after it. ok is false when there is no colon yet.
-func splitKeyword(trimmed string) (key, rest string, ok bool) {
+// splitKeyword returns the text of a trimmed line before its first ':'. ok is
+// false when there is no colon yet.
+func splitKeyword(trimmed string) (key string, ok bool) {
 	i := strings.IndexByte(trimmed, ':')
 	if i < 0 {
-		return "", "", false
+		return "", false
 	}
-	return strings.TrimSpace(trimmed[:i]), strings.TrimSpace(trimmed[i+1:]), true
+	return strings.TrimSpace(trimmed[:i]), true
 }
 
 // canonicalKeyword resolves a (possibly differently-cased) keyword to its

@@ -11,6 +11,7 @@ package typecheck
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"domain/ast"
@@ -74,9 +75,7 @@ func letType(x *ast.LetExpr, env Env) (*ir.Type, error) {
 		return nil, err
 	}
 	inner := make(Env, len(env)+1)
-	for k, v := range env {
-		inner[k] = v
-	}
+	maps.Copy(inner, env)
 	inner[x.Name] = vt
 	return ExprType(x.Body, inner)
 }
@@ -130,6 +129,51 @@ var Builtins = []string{
 // (Int, Int) tuple of (row, col), matching the grid coordinate system.
 func PointType() *ir.Type { return ir.Tuple(ir.Int(), ir.Int()) }
 
+// builtinArity is each builtin's argument count; -1 means variadic, with the
+// permitted range in variadicArity.
+var builtinArity = map[string]int{
+	"length": 1, "item": 2, "take": 2, "drop": 2, "reverse": 1,
+	"concat": 2, "first": 1, "last": 1, "sum": 1,
+	"min": -1, "max": -1, // 1 = list reduction, 2 = scalar form
+	"contains": 2, "get": 2, "at": 3,
+	// math / number theory
+	"abs": 1, "sign": 1, "gcd": 2, "lcm": 2, "modpow": 3, "modinv": 2,
+	"solve2x2": 6,
+	"mod":      2, "divmod": 2, "pow": 2, "isqrt": 1, "clamp": 3,
+	"factorial": 1, "choose": 2,
+	// heterogeneous tuple construction
+	"tuple": -1, // variadic, >= 2
+	// text
+	"toint": 1, "occurrences": 2, "repeats": 1, "totext": 1,
+	"slice": 3, "charat": 2, "chars": 1, "indexof": 2,
+	"startswith": 2, "endswith": 2, "replace": 3, "trim": 1,
+	"upper": 1, "lower": 1, "textjoin": 2,
+	// floats (H)
+	"tofloat": 1, "floor": 1, "ceil": 1, "round": 1, "sqrt": 1,
+	// points (tuples of (row, col)) and grid geometry
+	"point": 2, "prow": 1, "pcol": 1, "padd": 2, "manhattan": 2,
+	"rotl": 1, "rotr": 1, "dirs4": 0, "dirs8": 0,
+	"psub": 2, "pscale": 2, "chebyshev": 2, "around4": 1, "around8": 1,
+	// map / set escape hatches
+	"haskey": 2, "getor": 3, "keys": 1, "values": 1, "size": 1, "tolist": 1,
+	"inbounds": 3, "neighbors4": 3, "neighbors8": 3,
+	// list/grid construction and access (A.2)
+	"set": 3, "row": 2, "col": 2, "rows": 1, "cols": 1,
+	"list": -1, // variadic, >= 1
+	// sparse grids (H)
+	"sparse": 1, "put": 4, "has": 3, "cells": 1,
+	"minrow": 1, "maxrow": 1, "mincol": 1, "maxcol": 1,
+	// bit operations (2021 D3 and friends)
+	"band": 2, "bor": 2, "bxor": 2, "shl": 2, "shr": 2, "frombin": 1,
+}
+
+// variadicArity bounds the builtins whose builtinArity is -1, as {min, max}
+// with -1 for unbounded. `tuple` needs two (a 1-tuple is just the value);
+// `min`/`max` are either the list reduction (1) or the two-scalar form.
+var variadicArity = map[string][2]int{
+	"list": {1, -1}, "tuple": {2, -1}, "min": {1, 2}, "max": {1, 2},
+}
+
 // callType types a builtin call. Several builtins are polymorphic in the
 // list element type, so the rules pattern-match on the argument types.
 func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
@@ -139,53 +183,13 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	}
 	name := id.Name
 
-	arity := map[string]int{
-		"length": 1, "item": 2, "take": 2, "drop": 2, "reverse": 1,
-		"concat": 2, "first": 1, "last": 1, "sum": 1,
-		"min": -1, "max": -1, // 1 = list reduction, 2 = scalar form
-		"contains": 2, "get": 2, "at": 3,
-		// math / number theory
-		"abs": 1, "sign": 1, "gcd": 2, "lcm": 2, "modpow": 3, "modinv": 2,
-		"solve2x2": 6,
-		"mod":      2, "divmod": 2, "pow": 2, "isqrt": 1, "clamp": 3,
-		"factorial": 1, "choose": 2,
-		// heterogeneous tuple construction
-		"tuple": -1, // variadic, >= 2
-		// text
-		"toint": 1, "occurrences": 2, "repeats": 1, "totext": 1,
-		"slice": 3, "charat": 2, "chars": 1, "indexof": 2,
-		"startswith": 2, "endswith": 2, "replace": 3, "trim": 1,
-		"upper": 1, "lower": 1, "textjoin": 2,
-		// floats (H)
-		"tofloat": 1, "floor": 1, "ceil": 1, "round": 1, "sqrt": 1,
-		// points (tuples of (row, col)) and grid geometry
-		"point": 2, "prow": 1, "pcol": 1, "padd": 2, "manhattan": 2,
-		"rotl": 1, "rotr": 1, "dirs4": 0, "dirs8": 0,
-		"psub": 2, "pscale": 2, "chebyshev": 2, "around4": 1, "around8": 1,
-		// map / set escape hatches
-		"haskey": 2, "getor": 3, "keys": 1, "values": 1, "size": 1, "tolist": 1,
-		"inbounds": 3, "neighbors4": 3, "neighbors8": 3,
-		// list/grid construction and access (A.2)
-		"set": 3, "row": 2, "col": 2, "rows": 1, "cols": 1,
-		"list": -1, // variadic, >= 1
-		// sparse grids (H)
-		"sparse": 1, "put": 4, "has": 3, "cells": 1,
-		"minrow": 1, "maxrow": 1, "mincol": 1, "maxcol": 1,
-		// bit operations (2021 D3 and friends)
-		"band": 2, "bor": 2, "bxor": 2, "shl": 2, "shr": 2, "frombin": 1,
-	}
-	want, known := arity[name]
+	want, known := builtinArity[name]
 	if !known {
 		return nil, fmt.Errorf("%s: unknown function %q (builtins: %s)",
 			x.Pos, name, strings.Join(Builtins, ", "))
 	}
 	if want == -1 {
-		// Variadic, with a per-name range. `tuple` needs two (a 1-tuple is
-		// just the value); `min`/`max` are either the list reduction (1) or
-		// the two-scalar form.
-		rng := map[string][2]int{
-			"list": {1, -1}, "tuple": {2, -1}, "min": {1, 2}, "max": {1, 2},
-		}[name]
+		rng := variadicArity[name]
 		if len(x.Args) < rng[0] || (rng[1] != -1 && len(x.Args) > rng[1]) {
 			if rng[1] == -1 {
 				return nil, fmt.Errorf("%s: %s takes at least %d argument(s), got %d",
@@ -376,14 +380,14 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Int(), nil
 	case "gcd", "lcm", "modinv", "mod", "pow", "choose":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
 		}
 		return ir.Int(), nil
 	case "divmod":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
@@ -397,21 +401,21 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	case "clamp":
 		// Polymorphic over the numeric tower, like the arithmetic operators:
 		// all three arguments promote together.
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if !numeric(args[i]) {
 				return nil, fmt.Errorf("%s: clamp needs Int or Float arguments, got %s", x.Pos, args[i])
 			}
 		}
 		return promote(promote(args[0], args[1]), args[2]), nil
 	case "modpow":
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
 		}
 		return ir.Int(), nil
 	case "solve2x2":
-		for i := 0; i < 6; i++ {
+		for i := range 6 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
@@ -447,7 +451,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Text(), nil
 	case "occurrences":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if !args[i].Equal(ir.Text()) {
 				return nil, fmt.Errorf("%s: occurrences argument %d must be Text, got %s", x.Pos, i+1, args[i])
 			}
@@ -467,7 +471,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Text(), nil
 	case "startswith", "endswith":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if !args[i].Equal(ir.Text()) {
 				return nil, fmt.Errorf("%s: %s argument %d must be Text, got %s", x.Pos, name, i+1, args[i])
 			}
@@ -485,14 +489,14 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			}
 			return ir.Int(), nil
 		}
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if !args[i].Equal(ir.Text()) {
 				return nil, fmt.Errorf("%s: indexof needs Text arguments or a List and an element, got %s", x.Pos, args[i])
 			}
 		}
 		return ir.Int(), nil
 	case "replace":
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			if !args[i].Equal(ir.Text()) {
 				return nil, fmt.Errorf("%s: replace argument %d must be Text, got %s", x.Pos, i+1, args[i])
 			}
@@ -536,7 +540,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 
 	// -- points and grid geometry ---------------------------------------------
 	case "point":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
@@ -548,7 +552,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Int(), nil
 	case "padd", "psub":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if err := needPoint(x, name, args, i); err != nil {
 				return nil, err
 			}
@@ -572,7 +576,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	case "dirs8":
 		return ir.List(PointType()), nil
 	case "chebyshev":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if err := needPoint(x, name, args, i); err != nil {
 				return nil, err
 			}
@@ -621,7 +625,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Int(), nil
 	case "manhattan":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if err := needPoint(x, name, args, i); err != nil {
 				return nil, err
 			}
@@ -690,7 +694,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 
 	// -- bit operations ----------------------------------------------------------
 	case "band", "bor", "bxor", "shl", "shr":
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}

@@ -1,0 +1,9 @@
+# Merge Ranges over the tuple list a positional Match Pattern produces.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{int}-{int}"
+Maximum Technique: Merge Ranges
+Maximum Technique: Count
+Reveal: stdout

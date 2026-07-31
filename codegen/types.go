@@ -63,7 +63,7 @@ func (g *gen) goType(t *ir.Type) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		g.helper("dmSparse", declSparse, "sort")
+		g.helper("dmSparse", declSparse, "slices")
 		return "dmSparse[" + elem + "]", nil
 	default:
 		return "", fmt.Errorf("type %s has no compiled representation yet", t)

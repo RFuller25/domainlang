@@ -5,6 +5,7 @@
 package ast
 
 import (
+	"slices"
 	"strings"
 
 	"domain/token"
@@ -44,14 +45,7 @@ func KeywordPrefix(words []string) (keyword string, n int, ok bool) {
 		if len(kwWords) <= n || len(words) < len(kwWords) {
 			continue
 		}
-		match := true
-		for i, w := range kwWords {
-			if !strings.EqualFold(words[i], w) {
-				match = false
-				break
-			}
-		}
-		if match {
+		if slices.EqualFunc(kwWords, words[:len(kwWords)], strings.EqualFold) {
 			keyword, n, ok = kw, len(kwWords), true
 		}
 	}
@@ -253,9 +247,9 @@ type BinaryExpr struct {
 }
 
 type UnaryExpr struct {
-	Op   token.Kind
-	X    Expr
-	Pos  token.Position
+	Op  token.Kind
+	X   Expr
+	Pos token.Position
 }
 
 type FieldAccess struct {

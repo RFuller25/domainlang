@@ -209,9 +209,9 @@ func TestRecordFailureInsideALoop(t *testing.T) {
 func TestRecordOrphanedFramesAreSurfaced(t *testing.T) {
 	rec := NewRecorder(0)
 	inner := node("Inner", nil)
-	rec.PushFrame("Repeat 2 iter 1/2")
+	rec.PushFrame("Repeat 2 iter 1/2", nil)
 	rec.Step(ir.StepEvent{Node: inner, Depth: 1, Frame: "Repeat 2 iter 1/2"})
-	rec.PopFrame()
+	rec.PopFrame(nil)
 	// The enclosing loop's Step never arrives.
 
 	roots := rec.Roots()
@@ -299,5 +299,235 @@ func TestRecordEmptyRun(t *testing.T) {
 	}
 	if strings.Contains(rec.Summary(), "capped") {
 		t.Errorf("summary = %q, want no cap mention", rec.Summary())
+	}
+}
+
+// --- what a block produced, and the fold that keeps its laps out of the way ---
+
+// find returns the first row whose label matches, anywhere in the recording.
+func find(rec *Recorder, label string) *TraceNode {
+	var hit *TraceNode
+	var walk func(nodes []*TraceNode)
+	walk = func(nodes []*TraceNode) {
+		for _, n := range nodes {
+			if hit == nil && n.Label() == label {
+				hit = n
+			}
+			walk(n.Children)
+		}
+	}
+	walk(rec.Roots())
+	return hit
+}
+
+// A Channel is a passthrough: the pipeline carries on with the value that went
+// in, so the row's own output says nothing about what the channel computed. The
+// body's result is recorded separately, which is the answer a reader wants.
+func TestRecordChannelReportsWhatItsBodyProduced(t *testing.T) {
+	src := listPrefix + "Channel \"total\":\n    Maximum Technique: Sum\n" +
+		"Maximum Technique: Combine\n    From: total\n    Using: (t) -> t\nReveal: stdout\n"
+	rec := record(t, src, "1,2,3", 0)
+
+	ch := find(rec, `Channel "total"`)
+	if ch == nil {
+		t.Fatalf("no channel row:\n%s", tree(rec))
+	}
+	if ch.Block == nil {
+		t.Fatal("the channel row should carry its body's result")
+	}
+	if ch.Block.Short != "6" {
+		t.Errorf("block result = %q, want the sum 6", ch.Block.Short)
+	}
+	if ch.Block.Type != "Int" {
+		t.Errorf("block type = %q, want Int", ch.Block.Type)
+	}
+	// The step's own output is still the value handed to the next stage.
+	if ch.Step.Short == "6" {
+		t.Error("a Channel passes its input on; its own output is not the body's")
+	}
+}
+
+func TestRecordPartReportsWhatItsBodyProduced(t *testing.T) {
+	src := listPrefix + "Part \"1\":\n    Maximum Technique: Sum\n    Reveal: stdout\n"
+	rec := record(t, src, "4,5", 0)
+	part := find(rec, `Part "1"`)
+	if part == nil || part.Block == nil {
+		t.Fatalf("the Part row should carry its body's result:\n%s", tree(rec))
+	}
+	if part.Block.Short != "9" {
+		t.Errorf("block result = %q, want 9", part.Block.Short)
+	}
+}
+
+// One lap of a loop reports what it made of what it was given, so a folded loop
+// can be read without opening it.
+func TestRecordIterationsCarryTheirResult(t *testing.T) {
+	src := listPrefix + "Maximum Technique: Sum\nSimple Domain: Repeat 2\n" +
+		"    Cursed Technique: Apply\n        Using: (v) -> v * 2\n"
+	rec := record(t, src, "1,2", 0) // sum 3, doubled twice: 6 then 12
+	for i, want := range []string{"6", "12"} {
+		lap := find(rec, fmt.Sprintf("Repeat 2 iter %d/2", i+1))
+		if lap == nil || lap.Block == nil {
+			t.Fatalf("lap %d should carry its result:\n%s", i+1, tree(rec))
+		}
+		if lap.Block.Short != want {
+			t.Errorf("lap %d result = %q, want %q", i+1, lap.Block.Short, want)
+		}
+		if lap.Block.Type != "Int" {
+			t.Errorf("lap %d type = %q, want Int", i+1, lap.Block.Type)
+		}
+	}
+}
+
+// A body that failed has no result, and says so by having none: a lap that
+// reported the value it was handed would be claiming work it never did.
+func TestRecordUnfinishedBodyHasNoResult(t *testing.T) {
+	src := listPrefix + "Simple Domain: Repeat 3\n    Cursed Technique: Map Each\n        Using: (x) -> 10 / x\n"
+	rec := record(t, src, "5,0", 0)
+	lap := find(rec, "Repeat 3 iter 1/3")
+	if lap == nil {
+		t.Fatalf("the failing lap should be recorded:\n%s", tree(rec))
+	}
+	if lap.Block != nil {
+		t.Errorf("a lap that failed has no result, got %q", lap.Block.Short)
+	}
+}
+
+// Past a handful, a loop's laps are gathered into one row that opens onto all
+// of them: the point is that the stages around the loop stay visible.
+func TestRecordFoldsRepeatedIterations(t *testing.T) {
+	src := listPrefix + "Simple Domain: Repeat 4\n    Cursed Technique: Map Each\n        Using: (x) -> x + 1\n"
+	rec := record(t, src, "1,2", 0)
+	loop := find(rec, "Repeat 4")
+	if loop == nil {
+		t.Fatalf("no loop row:\n%s", tree(rec))
+	}
+	if len(loop.Children) != 1 {
+		t.Fatalf("the loop should hold one folded row, got %d:\n%s", len(loop.Children), tree(rec))
+	}
+	fold := loop.Children[0]
+	laps, folded := fold.Iterations()
+	if !folded || laps != 4 {
+		t.Errorf("fold = (%d laps, folded=%v), want 4 laps folded", laps, folded)
+	}
+	if fold.Label() != "4 iterations" {
+		t.Errorf("fold label = %q", fold.Label())
+	}
+	// Nothing is summarized away: every lap is still there, under the fold.
+	for i := range 4 {
+		if want := fmt.Sprintf("Repeat 4 iter %d/4", i+1); find(rec, want) == nil {
+			t.Errorf("lap %q should still be in the tree:\n%s", want, tree(rec))
+		}
+	}
+	// And the fold answers for the loop, which is the last lap's value.
+	if fold.Block == nil || fold.Block.Short != fold.Children[3].Block.Short {
+		t.Error("the fold should report what the last lap produced")
+	}
+}
+
+// Two laps read better in place than behind a row that has to be opened.
+func TestRecordDoesNotFoldAShortLoop(t *testing.T) {
+	src := listPrefix + "Simple Domain: Repeat 2\n    Cursed Technique: Map Each\n        Using: (x) -> x + 1\n"
+	rec := record(t, src, "1,2", 0)
+	if find(rec, "2 iterations") != nil {
+		t.Errorf("a two-lap loop should not be folded:\n%s", tree(rec))
+	}
+}
+
+// A loop inside a loop body owns its own laps. They are opened from inside the
+// enclosing body, so without this they would land beside the nested loop's row
+// rather than under it — and collapsing that row would hide nothing.
+func TestRecordNestedLoopOwnsItsIterations(t *testing.T) {
+	src := listPrefix + "Maximum Technique: Sum\nSimple Domain: Repeat 2\n" +
+		"    Cursed Technique: Apply\n        Using: (v) -> v + 1\n" +
+		"    Simple Domain: Repeat 3\n        Cursed Technique: Apply\n            Using: (v) -> v * 2\n"
+	rec := record(t, src, "1,2", 0)
+	outer := find(rec, "Repeat 2 iter 1/2")
+	if outer == nil {
+		t.Fatalf("no outer lap:\n%s", tree(rec))
+	}
+	var inner *TraceNode
+	for _, c := range outer.Children {
+		if c.Label() == "Repeat 3" {
+			inner = c
+		}
+		if c.IsFrame() && strings.HasPrefix(c.Label(), "Repeat 3 iter") {
+			t.Errorf("the inner loop's laps belong under its own row:\n%s", tree(rec))
+		}
+	}
+	if inner == nil {
+		t.Fatalf("the nested loop should be a row of the outer lap:\n%s", tree(rec))
+	}
+	if laps, folded := inner.Children[0].Iterations(); !folded || laps != 3 {
+		t.Errorf("the nested loop should hold its own folded laps, got (%d, %v)", laps, folded)
+	}
+}
+
+// A `Using:` body runs once per element, so its steps used to land beside the
+// stage that ran them — a hundred elements of a three-stage body reading as
+// three hundred rows, with the stage that produced them last. Each application
+// is a frame, and they fold.
+func TestRecordFramesNestedUsingBodies(t *testing.T) {
+	src := "Cursed Energy: stdin\nCursed Technique: Split Text by \"\\n\"\n" +
+		"Cursed Technique: Split Each by \",\"\n" +
+		"Cursed Technique: Map Each\n" +
+		"    Channeled Energy: Convert List to Integers\n" +
+		"    Maximum Technique: Sum\n"
+	rec := record(t, src, "1,2\n3,4\n5,6", 0)
+
+	mapEach := find(rec, "Map Each")
+	if mapEach == nil {
+		t.Fatalf("no Map Each row:\n%s", tree(rec))
+	}
+	if len(mapEach.Children) != 1 {
+		t.Fatalf("the body's applications belong under Map Each, folded, got %d rows:\n%s",
+			len(mapEach.Children), tree(rec))
+	}
+	laps, folded := mapEach.Children[0].Iterations()
+	if !folded || laps != 3 {
+		t.Errorf("fold = (%d, %v), want the 3 elements folded", laps, folded)
+	}
+	// Each application is numbered, since the primitive that ran it cannot say
+	// which element it was.
+	body := find(rec, "Map Each body 2/3")
+	if body == nil {
+		t.Fatalf("body applications should be numbered:\n%s", tree(rec))
+	}
+	if body.Block == nil || body.Block.Type != "Int" {
+		t.Errorf("a body's result is one element's worth, got %+v", body.Block)
+	}
+	// And the body's own steps are under it, not beside the stage.
+	if len(body.Children) != 2 {
+		t.Errorf("the body's steps belong to the application:\n%s", tree(rec))
+	}
+}
+
+// A For loop's laps are frames like every other loop's.
+func TestRecordFramesForLoops(t *testing.T) {
+	src := listPrefix + "Channel \"xs\":\n    Cursed Technique: Take Item 0\n" +
+		"Maximum Technique: Sum\nSimple Domain: For i in range(3)\n" +
+		"    Cursed Technique: Apply\n        Using: (v, i) -> v + i\n"
+	rec := record(t, src, "1,2", 0)
+	loop := find(rec, "For i in range(3)")
+	if loop == nil {
+		t.Fatalf("no For row:\n%s", tree(rec))
+	}
+	if laps, folded := loop.Children[0].Iterations(); !folded || laps != 3 {
+		t.Errorf("a For loop's laps should fold like any other, got (%d, %v):\n%s", laps, folded, tree(rec))
+	}
+	if find(rec, "For i iter 2/3") == nil {
+		t.Errorf("the laps should name the loop variable:\n%s", tree(rec))
+	}
+}
+
+// A fold stands in for its laps; counting it as a frame as well would report a
+// loop of four laps as five frames.
+func TestRecordCountsSkipTheFoldItself(t *testing.T) {
+	src := listPrefix + "Simple Domain: Repeat 4\n    Cursed Technique: Map Each\n        Using: (x) -> x + 1\n"
+	rec := record(t, src, "1,2", 0)
+	loop := find(rec, "Repeat 4")
+	steps, frames := loop.Counts()
+	if frames != 4 || steps != 4 {
+		t.Errorf("counts = (%d steps, %d frames), want 4 and 4", steps, frames)
 	}
 }

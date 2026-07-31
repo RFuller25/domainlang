@@ -159,3 +159,56 @@ func TestExportMarksForeignSourceLines(t *testing.T) {
 		t.Errorf("the inlined prelude Shikigami's steps should name their source: %+v", out.Rows)
 	}
 }
+
+// A block's row carries both answers: what it passed on, and what its body
+// produced. A reader asking what a Channel computed wants the second one, and
+// nothing else in the document holds it.
+func TestExportCarriesBlockResults(t *testing.T) {
+	src := listPrefix + "Channel \"total\":\n    Maximum Technique: Sum\n" +
+		"Maximum Technique: Combine\n    From: total\n    Using: (t) -> t\nReveal: stdout\n"
+	out, doc := exported(t, src, "1,2,3", 0)
+
+	var ch *Row
+	for i, r := range out.Rows {
+		if strings.HasPrefix(r.Label, "Channel") {
+			ch = &out.Rows[i]
+		}
+	}
+	if ch == nil {
+		t.Fatal("no channel row in the document")
+	}
+	if ch.Result != "6" || ch.ResultType != "Int" {
+		t.Errorf("channel result = %q (%q), want 6 (Int)", ch.Result, ch.ResultType)
+	}
+	if ch.Out == ch.Result {
+		t.Error("a Channel's out is the value it passed on, not its body's result")
+	}
+	// A row with no body of its own leaves the field out entirely.
+	for _, r := range doc["rows"].([]any) {
+		row := r.(map[string]any)
+		if row["label"] == "Split by \",\"" {
+			if _, present := row["result"]; present {
+				t.Error("a step with no body should not carry a result")
+			}
+		}
+	}
+}
+
+// The fold is in the document too, marked as what it is: a reader walking the
+// tree can either treat it as a row or skip straight through to the laps.
+func TestExportMarksFoldedIterations(t *testing.T) {
+	src := listPrefix + "Simple Domain: Repeat 4\n    Cursed Technique: Map Each\n        Using: (x) -> x + 1\n"
+	out, _ := exported(t, src, "1,2", 0)
+
+	loop := out.Rows[len(out.Rows)-1]
+	if len(loop.Children) != 1 {
+		t.Fatalf("the loop should hold one folded row, got %d", len(loop.Children))
+	}
+	fold := loop.Children[0]
+	if !fold.Folded || fold.Kind != "frame" || fold.Label != "4 iterations" {
+		t.Errorf("fold row = %+v", fold)
+	}
+	if len(fold.Children) != 4 {
+		t.Errorf("the laps are kept in full, got %d", len(fold.Children))
+	}
+}

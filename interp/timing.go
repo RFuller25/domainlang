@@ -81,17 +81,16 @@ func (r *Recorder) Timing() *Timing {
 		t.overall += t.measure(n)
 	}
 	// A second pass, because the percentages need the denominator that the
-	// first pass is still computing.
-	for n, nt := range t.nodes {
-		if t.overall > 0 {
+	// first pass is still computing. Without a denominator every share stays
+	// zero and Known stays false, which is what a renderer checks.
+	if t.overall > 0 {
+		for n, nt := range t.nodes {
 			nt.TotalPct = 100 * float64(nt.Total) / float64(t.overall)
 			nt.SelfPct = 100 * float64(nt.Self) / float64(t.overall)
 			nt.Known = true
+			t.nodes[n] = nt
 		}
-		t.nodes[n] = nt
-	}
-	for _, h := range t.hot {
-		if t.overall > 0 {
+		for _, h := range t.hot {
 			h.SelfPct = 100 * float64(h.Self) / float64(t.overall)
 			h.TotalPct = 100 * float64(h.Total) / float64(t.overall)
 		}
@@ -112,13 +111,10 @@ func (t *Timing) measure(n *TraceNode) time.Duration {
 	if !n.IsFrame() {
 		total = n.Step.Dur
 	}
-	self := total - nested
 	// Clock granularity, and a recording that hit --max-steps partway through a
 	// body, can both leave a row's children summing past the row itself. Zero is
 	// the honest floor; a negative self time would only ever be noise.
-	if self < 0 {
-		self = 0
-	}
+	self := max(total-nested, 0)
 	t.nodes[n] = NodeTiming{
 		Total:  total,
 		Self:   self,

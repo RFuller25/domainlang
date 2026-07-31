@@ -24,6 +24,15 @@ Runnable material: nineteen annotated programs in
 (FizzBuzz → Game of Life) in [../challenges/](../challenges/README.md),
 all golden-tested in both backends.
 
+Reading this on the documentation site (`domain expansion: documentation`)?
+Every one of those programs is on it with a **Run** button, and so is a
+playground — the language compiled to WebAssembly, running in your own tab.
+**Explain** shows the optimizer answering a named-algorithm request with a
+different algorithm, which is the one claim in these documents worth watching
+happen rather than taking on trust. The playground is a separate build step
+(`./docs/wasm/build.sh`); without it the site works exactly as before, minus
+the buttons.
+
 ## Reference
 
 | Document | Covers |

@@ -7,7 +7,9 @@ package eval
 
 import (
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -109,16 +111,12 @@ func evalExpr(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 			return nil, err
 		}
 		inner := make(Env, len(env)+1)
-		for k, val := range env {
-			inner[k] = val
-		}
+		maps.Copy(inner, env)
 		inner[x.Name] = v
 		var innerTypes typecheck.Env
 		if types != nil {
 			innerTypes = make(typecheck.Env, len(types)+1)
-			for k, t := range types {
-				innerTypes[k] = t
-			}
+			maps.Copy(innerTypes, types)
 			if vt, err := typecheck.ExprType(x.Value, types); err == nil {
 				innerTypes[x.Name] = vt
 			}
@@ -185,12 +183,7 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if err != nil {
 			return fail("%s: %v", name, err)
 		}
-		if n < 0 {
-			n = 0
-		}
-		if n > int64(len(xs)) {
-			n = int64(len(xs))
-		}
+		n = min(max(n, 0), int64(len(xs)))
 		if name == "take" {
 			return xs[:n], nil
 		}
@@ -199,9 +192,7 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		// By rune, like every other text position in the language.
 		if s, ok := args[0].(string); ok {
 			rs := []rune(s)
-			for i, j := 0, len(rs)-1; i < j; i, j = i+1, j-1 {
-				rs[i], rs[j] = rs[j], rs[i]
-			}
+			slices.Reverse(rs)
 			return string(rs), nil
 		}
 		xs, err := ir.AsList(args[0])
@@ -844,14 +835,10 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		ac, _ := ir.AsInt(a[1])
 		br, _ := ir.AsInt(b[0])
 		bc, _ := ir.AsInt(b[1])
-		dr, dc := absInt(ar-br), absInt(ac-bc)
-		if dr > dc {
-			return dr, nil
-		}
-		return dc, nil
+		return max(absInt(ar-br), absInt(ac-bc)), nil
 	case "dirs8":
-		out := make([]ir.Value, 0, 8)
-		for _, d := range [][2]int64{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}} {
+		out := make([]ir.Value, 0, len(dirs8Deltas))
+		for _, d := range dirs8Deltas {
 			out = append(out, []ir.Value{d[0], d[1]})
 		}
 		return out, nil
@@ -864,9 +851,9 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		pr, _ := ir.AsInt(p[0])
 		pc, _ := ir.AsInt(p[1])
-		deltas := [][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
+		deltas := dirs4Deltas[:]
 		if name == "around8" {
-			deltas = [][2]int64{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}}
+			deltas = dirs8Deltas[:]
 		}
 		out := make([]ir.Value, 0, len(deltas))
 		for _, d := range deltas {
@@ -936,7 +923,7 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		return []ir.Value{c, -r}, nil
 	case "dirs4":
-		out := make([]ir.Value, 0, 4)
+		out := make([]ir.Value, 0, len(dirs4Deltas))
 		for _, d := range dirs4Deltas {
 			out = append(out, []ir.Value{d[0], d[1]})
 		}
@@ -993,7 +980,7 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 				return fail("row: row %d out of range (grid %dx%d)", i, grid.Rows, grid.Cols)
 			}
 			out := make([]ir.Value, grid.Cols)
-			for c := 0; c < grid.Cols; c++ {
+			for c := range grid.Cols {
 				out[c], _ = grid.At(int(i), c)
 			}
 			return out, nil
@@ -1002,7 +989,7 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("col: column %d out of range (grid %dx%d)", i, grid.Rows, grid.Cols)
 		}
 		out := make([]ir.Value, grid.Rows)
-		for r := 0; r < grid.Rows; r++ {
+		for r := range grid.Rows {
 			out[r], _ = grid.At(r, int(i))
 		}
 		return out, nil
@@ -1060,6 +1047,10 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 // right), in the same order GridValue.Neighbors visits them.
 var dirs4Deltas = [4][2]int64{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
 
+// dirs8Deltas adds the diagonals, in reading order. dirs8 and around8 both
+// emit exactly this order, so it lives in one place.
+var dirs8Deltas = [8][2]int64{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}}
+
 // twoInts unpacks two Int arguments for a builtin.
 func twoInts(args []ir.Value, name string) (int64, int64, error) {
 	a, err := ir.AsInt(args[0])
@@ -1100,20 +1091,8 @@ func firstErr(errs ...error) error {
 // and drop clamp their counts: out-of-range bounds narrow to the collection
 // instead of erroring, and an inverted range yields empty.
 func clampRange(lo, hi, n int64) (int64, int64) {
-	if lo < 0 {
-		lo = 0
-	}
-	if hi > n {
-		hi = n
-	}
-	if hi < lo {
-		hi = lo
-	}
-	if lo > n {
-		lo = n
-		hi = n
-	}
-	return lo, hi
+	lo = min(max(lo, 0), n)
+	return lo, min(max(hi, lo), n)
 }
 
 func absInt(n int64) int64 {

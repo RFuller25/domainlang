@@ -80,24 +80,8 @@ func fuseTripleSum(p *ir.Pipeline) []Rewrite {
 	var rewrites []Rewrite
 	for _, list := range nodeLists(p) {
 		for _, n := range list {
-			if n.Prim != "Combinations" {
-				continue
-			}
-			if hasMeasuredArg(n) {
-				continue // the arity this rewrite assumes must be a constant
-			}
-			if k, _ := n.Meta["k"].(int); k != 3 {
-				continue
-			}
-			mode, _ := n.Meta["mode"].(string)
-			if mode != "First" && mode != "Count" {
-				continue
-			}
-			if n.In == nil || !n.In.Equal(ir.List(ir.Int())) {
-				continue
-			}
-			lam := nodeLambda(n)
-			if lam == nil {
+			mode, lam, ok := combinatorialScan(n, "Combinations", 3)
+			if !ok {
 				continue
 			}
 			target, ok := matchSumTriple(lam)
@@ -201,10 +185,10 @@ func collectSumLeaves(e ast.Expr, out *[]string) bool {
 func CountTripleSum(xs []int64, target int64) int64 {
 	pairSums := make(map[int64]int64)
 	var count int64
-	for k := 0; k < len(xs); k++ {
-		count += pairSums[target-xs[k]]
-		for i := 0; i < k; i++ {
-			pairSums[xs[i]+xs[k]]++
+	for k, xk := range xs {
+		count += pairSums[target-xk]
+		for _, xi := range xs[:k] {
+			pairSums[xi+xk]++
 		}
 	}
 	return count
@@ -214,17 +198,18 @@ func CountTripleSum(xs []int64, target int64) int64 {
 // triple i<j<k with xs[i]+xs[j]+xs[k] == target — identical to the naive
 // scan's First result — in O(n²) using complement multisets.
 func FindTripleSum(xs []int64, target int64) ([]int64, bool) {
-	for i := 0; i < len(xs); i++ {
+	for i, xi := range xs {
 		// remaining[v] = count of v among indices > j (starts as indices > i).
-		remaining := make(map[int64]int, len(xs)-i)
-		for _, x := range xs[i+1:] {
+		rest := xs[i+1:]
+		remaining := make(map[int64]int, len(rest))
+		for _, x := range rest {
 			remaining[x]++
 		}
-		for j := i + 1; j < len(xs); j++ {
-			remaining[xs[j]]--
-			need := target - xs[i] - xs[j]
+		for _, xj := range rest {
+			remaining[xj]--
+			need := target - xi - xj
 			if remaining[need] > 0 {
-				return []int64{xs[i], xs[j], need}, true
+				return []int64{xi, xj, need}, true
 			}
 		}
 	}
@@ -242,24 +227,8 @@ func fusePairDiff(p *ir.Pipeline) []Rewrite {
 	var rewrites []Rewrite
 	for _, list := range nodeLists(p) {
 		for _, n := range list {
-			if n.Prim != "All Pairs" {
-				continue
-			}
-			if hasMeasuredArg(n) {
-				continue // the arity this rewrite assumes must be a constant
-			}
-			if k, _ := n.Meta["k"].(int); k != 2 {
-				continue
-			}
-			mode, _ := n.Meta["mode"].(string)
-			if mode != "First" && mode != "Count" {
-				continue
-			}
-			if n.In == nil || !n.In.Equal(ir.List(ir.Int())) {
-				continue
-			}
-			lam := nodeLambda(n)
-			if lam == nil {
+			mode, lam, ok := combinatorialScan(n, "All Pairs", 2)
+			if !ok {
 				continue
 			}
 			target, flipped, ok := matchDiffPair(lam)
@@ -368,14 +337,14 @@ func FindPairDiff(xs []int64, target int64, flipped bool) ([]int64, bool) {
 	for _, x := range xs {
 		remaining[x]++
 	}
-	for i := 0; i < len(xs); i++ {
-		remaining[xs[i]]-- // now reflects indices > i
-		need := xs[i] - target // xs[i] - xs[j] = target
+	for _, x := range xs {
+		remaining[x]--     // now reflects indices > i
+		need := x - target // xs[i] - xs[j] = target
 		if flipped {
-			need = xs[i] + target // xs[j] - xs[i] = target
+			need = x + target // xs[j] - xs[i] = target
 		}
 		if remaining[need] > 0 {
-			return []int64{xs[i], need}, true
+			return []int64{x, need}, true
 		}
 	}
 	return nil, false

@@ -30,16 +30,16 @@ const (
 	RPAREN // )
 	ARROW  // ->
 
-	PLUS  // +
-	MINUS // -
+	PLUS    // +
+	MINUS   // -
 	STAR    // *
 	SLASH   // /
 	PERCENT // %   (Euclidean modulo; see the `mod` builtin)
 	EQ      // =   (equality; there is no assignment in Domain)
-	LT    // <
-	GT    // >
-	LE    // <=
-	GE    // >=
+	LT      // <
+	GT      // >
+	LE      // <=
+	GE      // >=
 
 	// Logical connectives. The lexer emits these as IDENT ("and"/"or"); the
 	// expression parser recognizes them in infix position and rewrites to
@@ -53,7 +53,7 @@ const (
 	NOT // ikke
 )
 
-var kindNames = map[Kind]string{
+var kindNames = [...]string{
 	ILLEGAL: "ILLEGAL",
 	EOF:     "EOF",
 	NEWLINE: "NEWLINE",
@@ -86,8 +86,8 @@ var kindNames = map[Kind]string{
 
 // String returns the symbolic name of a token kind, for diagnostics.
 func (k Kind) String() string {
-	if n, ok := kindNames[k]; ok {
-		return n
+	if k >= 0 && int(k) < len(kindNames) {
+		return kindNames[k]
 	}
 	return fmt.Sprintf("Kind(%d)", int(k))
 }

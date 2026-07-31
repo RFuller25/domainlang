@@ -34,7 +34,7 @@ const maxSourceRewrites = 25
 // result stops resolving is rolled back and ends the loop.
 func OptimizeSource(path, src string) (string, []SourceRewrite) {
 	var all []SourceRewrite
-	for round := 0; round < maxSourceRewrites; round++ {
+	for range maxSourceRewrites {
 		prog := parseClean(path, src)
 		if prog == nil {
 			break
@@ -107,10 +107,10 @@ func findRewrite(prog *ast.Program, src string) *rewriteOp {
 	if found != nil {
 		return found
 	}
-	if op := deadCodeRewrite(prog, src); op != nil {
+	if op := deadCodeRewrite(prog); op != nil {
 		return op
 	}
-	return unusedChannelRewrite(prog, src)
+	return unusedChannelRewrite(prog)
 }
 
 func rewriteInSequence(stmts []*ast.Statement, src string) *rewriteOp {
@@ -166,7 +166,7 @@ func flipSortLine(line string, desc bool) (string, bool) {
 
 // deadCodeRewrite deletes top-level statements after the last Reveal whose
 // results are never observed.
-func deadCodeRewrite(prog *ast.Program, src string) *rewriteOp {
+func deadCodeRewrite(prog *ast.Program) *rewriteOp {
 	lastReveal := -1
 	for i, s := range prog.Statements {
 		if s.Keyword == "Reveal" {
@@ -190,7 +190,7 @@ func deadCodeRewrite(prog *ast.Program, src string) *rewriteOp {
 }
 
 // unusedChannelRewrite deletes a Channel definition nothing consumes.
-func unusedChannelRewrite(prog *ast.Program, src string) *rewriteOp {
+func unusedChannelRewrite(prog *ast.Program) *rewriteOp {
 	used := map[string]bool{}
 	forEachSequence(prog, func(stmts []*ast.Statement) {
 		for _, s := range stmts {
@@ -228,13 +228,9 @@ func stmtExtent(s *ast.Statement) (int, int) {
 	start, end := s.Pos.Line, s.Pos.Line
 	var visit func(s *ast.Statement)
 	visit = func(s *ast.Statement) {
-		if s.Pos.Line > end {
-			end = s.Pos.Line
-		}
+		end = max(end, s.Pos.Line)
 		for _, a := range s.Args {
-			if a.Pos.Line > end {
-				end = a.Pos.Line
-			}
+			end = max(end, a.Pos.Line)
 		}
 		for _, c := range s.Block {
 			visit(c)

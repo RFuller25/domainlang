@@ -2,7 +2,7 @@ package optimizer
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"domain/ast"
 	"domain/eval"
@@ -513,11 +513,10 @@ func newSortNode(orig *ir.Node, desc bool) *ir.Node {
 			if err != nil {
 				return nil, &ir.RuntimeError{Prim: "Sort", Pos: pos, Msg: err.Error()}
 			}
-			out := append([]int64(nil), xs...)
+			out := slices.Clone(xs)
+			slices.Sort(out)
 			if desc {
-				sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
-			} else {
-				sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+				slices.Reverse(out)
 			}
 			return ir.IntsToValue(out), nil
 		},

@@ -1,0 +1,14 @@
+# The list-shaping battery: blocks, a boundary split, deduplication and an
+# inversion, one after another.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Chunk 8
+Cursed Technique: Map Each
+    Using: (c) -> sum(c)
+Cursed Technique: Take While
+    Using: (x) -> x < 500000
+Cursed Technique: Unique
+Reverse Cursed Technique: Reverse
+Maximum Technique: Count
+Reveal: stdout

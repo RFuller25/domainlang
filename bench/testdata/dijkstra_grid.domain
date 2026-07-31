@@ -1,0 +1,8 @@
+# A grid search as a named algorithm: Dijkstra floods entry costs from the
+# corner, and rows()/cols() size the read of the far corner.
+Cursed Energy: stdin
+Shikigami: Digit Grid
+Domain Expansion: Dijkstra from 0 0
+Cursed Technique: Apply
+    Using: (g) -> at(g, rows(g) - 1, cols(g) - 1)
+Reveal: stdout

@@ -2,7 +2,7 @@ package ir
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -168,9 +168,9 @@ func FormatValue(v Value) string {
 
 func formatGrid(g *GridValue) string {
 	rows := make([]string, g.Rows)
-	for r := 0; r < g.Rows; r++ {
+	for r := range g.Rows {
 		var sb strings.Builder
-		for c := 0; c < g.Cols; c++ {
+		for c := range g.Cols {
 			cell := g.Cells[r*g.Cols+c]
 			if c > 0 {
 				if _, isStr := cell.(string); !isStr {
@@ -189,16 +189,16 @@ func formatGrid(g *GridValue) string {
 func FormatShort(v Value) string {
 	switch x := v.(type) {
 	case int64:
-		return fmt.Sprintf("%d", x)
+		return strconv.FormatInt(x, 10)
 	case float64:
 		return FormatFloat(x)
 	case string:
 		if len(x) > 40 {
-			return fmt.Sprintf("%q…", x[:40])
+			return strconv.Quote(x[:40]) + "…"
 		}
-		return fmt.Sprintf("%q", x)
+		return strconv.Quote(x)
 	case bool:
-		return fmt.Sprintf("%v", x)
+		return strconv.FormatBool(x)
 	case []Value:
 		return shortSeq("[", "]", len(x), func(i int) string { return FormatShort(x[i]) })
 	case *RecordValue:
@@ -231,34 +231,18 @@ func FormatShort(v Value) string {
 // shortSeq renders up to 8 entries of a sequence, eliding the rest.
 func shortSeq(open, close string, n int, at func(i int) string) string {
 	const maxShown = 8
-	shown := n
-	if shown > maxShown {
-		shown = maxShown
+	shown := min(n, maxShown)
+	parts := make([]string, shown)
+	for i := range shown {
+		parts[i] = at(i)
 	}
-	parts := make([]string, 0, shown)
-	for i := 0; i < shown; i++ {
-		parts = append(parts, at(i))
-	}
-	s := open + join(parts, ", ")
+	s := open + strings.Join(parts, ", ")
 	if n > shown {
 		s += fmt.Sprintf(", …(%d more)", n-shown)
 	}
 	return s + close
 }
 
-func join(parts []string, sep string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += sep
-		}
-		out += p
-	}
-	return out
-}
-
-// DeepEqual reports whether two runtime values are structurally equal. Used by
-// the Iterate Until Fixed Point loop to detect convergence.
 // compositeKey is the canonical comparable key for tuple/record values. It is
 // a distinct type so an encoded composite can never collide with a user Text
 // key that happens to contain the same characters.
@@ -304,8 +288,8 @@ func encodeKey(sb *strings.Builder, v Value) {
 		}
 		sb.WriteByte(';')
 	case *RecordValue:
-		names := append([]string(nil), x.Fields...)
-		sort.Strings(names)
+		names := slices.Clone(x.Fields)
+		slices.Sort(names)
 		fmt.Fprintf(sb, "r%d:", len(names))
 		for _, name := range names {
 			fmt.Fprintf(sb, "t%d:%s;", len(name), name)
@@ -320,6 +304,8 @@ func encodeKey(sb *strings.Builder, v Value) {
 	}
 }
 
+// DeepEqual reports whether two runtime values are structurally equal. Used by
+// the Iterate Until Fixed Point loop to detect convergence.
 func DeepEqual(a, b Value) bool {
 	switch x := a.(type) {
 	case int64:

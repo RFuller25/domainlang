@@ -1,0 +1,8 @@
+# The output path: a per-line transform and a Join that has to render
+# megabytes to stdout.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Map Each
+    Using: (s) -> upper(s) + "!"
+Maximum Technique: Join with "\n"
+Reveal: stdout

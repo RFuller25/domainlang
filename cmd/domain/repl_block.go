@@ -17,6 +17,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -60,7 +61,7 @@ func newBlockEditor(head string, body []string, current string, width, height in
 	ta.SetHeight(max(min(height-6, 12), 3))
 	ta.CharLimit = 0
 
-	lines := append([]string(nil), body...)
+	lines := slices.Clone(body)
 	if strings.TrimSpace(current) != "" {
 		lines = append(lines, current)
 	}

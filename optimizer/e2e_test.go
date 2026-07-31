@@ -234,7 +234,7 @@ func diffCases() []diffCase {
 			src: "Cursed Energy: stdin\nShikigami: Digit Grid\n" +
 				"Domain Expansion: Dijkstra from 0 0\n" +
 				"Cursed Technique: Apply\n    Using: (g) -> at(g, 1, 2)\nReveal: stdout\n",
-			explain: "early-exit search",
+			explain:     "early-exit search",
 			extraInputs: []string{"123\n145\n110", "19\n21"}},
 		{name: "bfs with arithmetic on at NOT rewritten",
 			src: "Cursed Energy: stdin\nShikigami: Digit Grid\n" +

@@ -30,7 +30,7 @@ package prims
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -307,7 +307,7 @@ func namesPrimitive(p *Primitive, words []string) bool {
 		return false
 	}
 	for i := range words {
-		trial := append(append([]string{}, words[:i]...), words[i+1:]...)
+		trial := slices.Concat(words[:i], words[i+1:])
 		if p.Match(&ast.Operation{Words: trial}) {
 			return false // this word is decoration, not part of the built-in's name
 		}
@@ -336,6 +336,6 @@ func ReservedNames() []string {
 	for _, b := range typecheck.Builtins {
 		add(b)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

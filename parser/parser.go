@@ -11,6 +11,7 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -150,8 +151,8 @@ func (p *parser) parseProgram() (*ast.Program, error) {
 			}
 		}
 		if err != nil {
-			pe, ok := err.(*Error)
-			if !ok {
+			var pe *Error
+			if !errors.As(err, &pe) {
 				pe = &Error{Pos: p.cur().Pos, Msg: err.Error()}
 			}
 			errs = append(errs, pe)
@@ -746,11 +747,4 @@ func parseFloat(t token.Token) (float64, error) {
 		return 0, &Error{Pos: t.Pos, Msg: fmt.Sprintf("invalid decimal literal %q", t.Literal)}
 	}
 	return f, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

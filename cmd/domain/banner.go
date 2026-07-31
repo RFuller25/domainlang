@@ -17,7 +17,6 @@ const (
 	jjkBlue    = "\x1b[38;5;69m"  // Gojo — Limitless / Infinity
 	jjkCyan    = "\x1b[38;5;51m"  // Six Eyes
 	jjkPurple  = "\x1b[38;5;135m" // Hollow Purple (blue + red)
-	jjkMagenta = "\x1b[38;5;201m"
 	jjkCrimson = "\x1b[38;5;197m" // Sukuna — Malevolent Shrine
 	jjkGreen   = "\x1b[38;5;84m"  // Reverse Cursed Technique
 	jjkYellow  = "\x1b[38;5;220m" // cursed energy sensing

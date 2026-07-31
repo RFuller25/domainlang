@@ -131,7 +131,7 @@ var convertToFloats = &Primitive{
 	Keyword: "Channeled Energy",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "Convert") && hasWord(op, "Floats") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
-		conv := func(kind string, items []ir.Value, where string) ([]ir.Value, error) {
+		conv := func(items []ir.Value, where string) ([]ir.Value, error) {
 			out := make([]ir.Value, len(items))
 			for i, e := range items {
 				f, err := parseFloatValue(e)
@@ -140,7 +140,6 @@ var convertToFloats = &Primitive{
 				}
 				out[i] = f
 			}
-			_ = kind
 			return out, nil
 		}
 		flatIn := func(elem *ir.Type) bool {
@@ -162,7 +161,7 @@ var convertToFloats = &Primitive{
 					if err != nil {
 						return nil, runtimeErr("Convert To Floats", pos, "%v", err)
 					}
-					return conv("flat", items, "")
+					return conv(items, "")
 				},
 			}, nil
 		case nestedIn(ir.Text()), nestedIn(ir.Int()):
@@ -183,7 +182,7 @@ var convertToFloats = &Primitive{
 						if err != nil {
 							return nil, runtimeErr("Convert To Floats", pos, "group %d: %v", i, err)
 						}
-						fs, err := conv("nested", inner, fmt.Sprintf("group %d, ", i))
+						fs, err := conv(inner, fmt.Sprintf("group %d, ", i))
 						if err != nil {
 							return nil, err
 						}

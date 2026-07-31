@@ -272,9 +272,6 @@ type MeasuredText struct {
 	Pos    token.Position
 }
 
-// IsMeasured reports whether the value is only known at runtime.
-func (m MeasuredText) IsMeasured() bool { return m.Lambda != nil }
-
 // Resolve returns the argument's value for the value flowing into the node.
 func (m MeasuredText) Resolve(v ir.Value) (string, error) {
 	if m.Lambda == nil {
@@ -361,9 +358,6 @@ type MeasuredValue struct {
 	Name   string
 	Pos    token.Position
 }
-
-// IsMeasured reports whether the value is only known at runtime.
-func (m MeasuredValue) IsMeasured() bool { return m.Lambda != nil }
 
 // Resolve returns the argument's value for the value flowing into the node.
 func (m MeasuredValue) Resolve(v ir.Value) (ir.Value, error) {

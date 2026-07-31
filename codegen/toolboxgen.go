@@ -186,7 +186,7 @@ func (g *gen) emitFindCells(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.wl("%s := []%s{}", v, pt)
+	g.wl("%s := make([]%s, 0, len(%s.cells))", v, pt, in)
 	g.wl("for %s := int64(0); %s < int64(%s.rows); %s++ {", r, r, in, r)
 	g.in()
 	g.wl("for %s := int64(0); %s < int64(%s.cols); %s++ {", c, c, in, c)
@@ -222,10 +222,10 @@ func (g *gen) emitMergeRanges(n *ir.Node, in string) (string, error) {
 	g.wl("%s := make([][2]int64, len(%s))", spans, in)
 	g.wl("for %s, %s := range %s {", i, x, in)
 	g.in()
-	switch {
-	case elem.Kind == ir.KTuple:
+	switch elem.Kind {
+	case ir.KTuple:
 		g.wl("%s, %s := %s.f0, %s.f1", lo, hi, x, x)
-	case elem.Kind == ir.KList:
+	case ir.KList:
 		g.wl("if len(%s) != 2 {", x)
 		g.in()
 		g.wl(`dmFail("range %%d: expected an (Int, Int) pair", %s)`, i)
@@ -282,10 +282,10 @@ func (g *gen) emitMergeRanges(n *ir.Node, in string) (string, error) {
 	g.wl("%s := make([]%s, len(%s))", v, elemGo, merged)
 	g.wl("for %s, %s := range %s {", i, s, merged)
 	g.in()
-	switch {
-	case elem.Kind == ir.KTuple:
+	switch elem.Kind {
+	case ir.KTuple:
 		g.wl("%s[%s] = %s{%s[0], %s[1]}", v, i, elemGo, s, s)
-	case elem.Kind == ir.KList:
+	case ir.KList:
 		g.wl("%s[%s] = []int64{%s[0], %s[1]}", v, i, s, s)
 	default:
 		g.wl("%s[%s] = %s{%s: %s[0], %s: %s[1]}", v, i, elemGo,

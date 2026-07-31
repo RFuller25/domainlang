@@ -1,0 +1,10 @@
+# A For loop binds each element of its source as an ambient extra parameter
+# on every Using: lambda inside the body.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Simple Domain: For k in range(8)
+    Cursed Technique: Map Each
+        Using: (v, k) -> v + k
+Maximum Technique: Sum
+Reveal: stdout

@@ -14,8 +14,9 @@
 package diag
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"domain/token"
@@ -111,24 +112,18 @@ func Render(d *Diagnostic, path string, color bool) string {
 // diagnostic set one, else the length of the word starting at the position,
 // clamped to the line.
 func underlineWidth(d *Diagnostic) int {
-	max := len(d.LineText) - (d.Pos.Col - 1)
-	if max < 1 {
+	limit := len(d.LineText) - (d.Pos.Col - 1)
+	if limit < 1 {
 		return 1
 	}
-	w := 1
+	var w int
 	if d.EndCol > d.Pos.Col {
 		w = d.EndCol - d.Pos.Col
 	} else {
 		rest := d.LineText[d.Pos.Col-1:]
-		w = len(rest) - len(strings.TrimLeft(rest, wordChars(rest)))
-		if w < 1 {
-			w = 1
-		}
+		w = max(len(rest)-len(strings.TrimLeft(rest, wordChars(rest))), 1)
 	}
-	if w > max {
-		w = max
-	}
-	return w
+	return min(w, limit)
 }
 
 // wordChars returns the cutset that extends the underlined word: identifier
@@ -171,14 +166,12 @@ func paint(color bool, code, s string) string {
 
 // sortDiags orders diagnostics by source position, errors first within a line.
 func sortDiags(ds []Diagnostic) {
-	sort.SliceStable(ds, func(i, j int) bool {
-		if ds[i].Pos.Line != ds[j].Pos.Line {
-			return ds[i].Pos.Line < ds[j].Pos.Line
-		}
-		if ds[i].Pos.Col != ds[j].Pos.Col {
-			return ds[i].Pos.Col < ds[j].Pos.Col
-		}
-		return ds[i].Severity < ds[j].Severity
+	slices.SortStableFunc(ds, func(a, b Diagnostic) int {
+		return cmp.Or(
+			cmp.Compare(a.Pos.Line, b.Pos.Line),
+			cmp.Compare(a.Pos.Col, b.Pos.Col),
+			cmp.Compare(a.Severity, b.Severity),
+		)
 	})
 }
 

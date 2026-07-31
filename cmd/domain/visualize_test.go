@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,6 +38,9 @@ func TestParseVisualizeArgs(t *testing.T) {
 		{"max steps equals", []string{"p.domain", "--max-steps=50"}, "p.domain",
 			visualizeOptions{Optimize: true, MaxSteps: 50}, false},
 		{"no optimize", []string{"p.domain", "--no-optimize"}, "p.domain", visualizeOptions{}, false},
+		{"expand loops", []string{"p.domain", "--expand-loops"}, "p.domain",
+			visualizeOptions{Optimize: true, Expand: true}, false},
+		{"go", []string{"p.domain", "--go"}, "p.domain", visualizeOptions{Optimize: true, Go: true}, false},
 		{"no file", []string{"--plain"}, "", visualizeOptions{}, true},
 		{"two files", []string{"a.domain", "b.domain"}, "", visualizeOptions{}, true},
 		{"unknown flag", []string{"p.domain", "--wat"}, "", visualizeOptions{}, true},
@@ -245,7 +249,7 @@ func visModel(t *testing.T) *visualModel {
 	if _, err := interp.Run(pipe, ctx); err != nil {
 		t.Fatal(err)
 	}
-	return newVisualModel(&traceView{path: prog, rec: rec, rewrites: rewrites})
+	return newVisualModel(&traceView{path: prog, pipe: pipe, rec: rec, rewrites: rewrites})
 }
 
 func pressKey(s string) tea.KeyPressMsg {
@@ -988,6 +992,20 @@ func TestVisualModelTinyTerminal(t *testing.T) {
 	if out := m.View().Content; out == "" {
 		t.Error("a tiny terminal should still render something")
 	}
+	// The full-screen views have their own arithmetic to get wrong on a screen
+	// with no room for a header, a body and a footer.
+	for _, key := range []string{"c", "?"} {
+		m = send(m, pressKey(key))
+		if out := m.View().Content; out == "" {
+			t.Errorf("%s should render something on a tiny terminal", key)
+		}
+		for _, line := range strings.Split(strings.TrimRight(m.View().Content, "\n"), "\n") {
+			if n := ansi.StringWidth(line); n > 20 {
+				t.Errorf("%s: line is %d columns wide, want <= 20: %q", key, n, line)
+			}
+		}
+		m = send(m, pressKey("esc"), pressKey("esc"))
+	}
 }
 
 func TestWrapVis(t *testing.T) {
@@ -1087,5 +1105,396 @@ func TestVisualizeRefusesWhenTheNamedInputIsMissing(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "--input") {
 		t.Errorf("the error should name the fix, got %q", errBuf.String())
+	}
+}
+
+// --- what a block produced, folded loops, and the emitted Go ---
+
+// A program with two Channels and a Part, all of which are passthroughs: the
+// value they hand on is the one that entered them, and what they *computed* is
+// visible nowhere else in the trace.
+const visBlockProgram = `Cursed Energy: in.txt
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert List to Integers
+
+Channel "total":
+    Maximum Technique: Sum
+
+Part "1":
+    Maximum Technique: Count
+    Reveal: stdout
+`
+
+// The row for a block reports what the code inside it came to, not the value it
+// was handed — the whole reason to open a block in a debugger.
+func TestVisualizePlainShowsWhatABlockProduced(t *testing.T) {
+	_, prog := writeVisProgram(t, visBlockProgram, "1,2,3")
+	var out, errBuf bytes.Buffer
+	if code := Visualize(prog, visualizeOptions{Optimize: true, Plain: true}, strings.NewReader(""), &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errBuf.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		`Channel "total"`,
+		`Part "1"`,
+		// Both bodies produce an Int; the value flowing past them is List<Int>.
+		"Int",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plain output missing %q:\n%s", want, got)
+		}
+	}
+	// The block's row carries the body's type in the out-type column rather
+	// than the List<Int> it passes through.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, `Channel "total"`) && !strings.Contains(line, "Int") {
+			t.Errorf("the channel row should report its body's Int result:\n%s", line)
+		}
+		if strings.HasPrefix(line, `Channel "total"`) && strings.Contains(line, "List<Int>") {
+			t.Errorf("the channel row should not report the value it passes on:\n%s", line)
+		}
+	}
+}
+
+const visLoopProgram = `Cursed Energy: in.txt
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert List to Integers
+Maximum Technique: Sum
+Simple Domain: Repeat 5
+    Cursed Technique: Apply
+        Using: (v) -> v + 1
+Reveal: stdout
+`
+
+// A loop's laps are folded: the first is shown, the rest are behind one line
+// that says what it is standing in for, so the stages around the loop survive.
+func TestVisualizePlainFoldsLoopIterations(t *testing.T) {
+	_, prog := writeVisProgram(t, visLoopProgram, "1,2")
+	var out, errBuf bytes.Buffer
+	if code := Visualize(prog, visualizeOptions{Optimize: true, Plain: true}, strings.NewReader(""), &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errBuf.String())
+	}
+	got := out.String()
+	for _, want := range []string{"5 iterations", "Repeat 5 iter 1/5", "4 more iterations", "--expand-loops"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plain output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Repeat 5 iter 3/5") {
+		t.Errorf("the folded laps should not be printed:\n%s", got)
+	}
+	// The stage after the loop is still on screen, which is the point.
+	if !strings.Contains(got, "Reveal -> stdout") {
+		t.Errorf("the rest of the program should still be visible:\n%s", got)
+	}
+}
+
+func TestVisualizeExpandLoopsPrintsEveryLap(t *testing.T) {
+	_, prog := writeVisProgram(t, visLoopProgram, "1,2")
+	var out, errBuf bytes.Buffer
+	opts := visualizeOptions{Optimize: true, Plain: true, Expand: true}
+	if code := Visualize(prog, opts, strings.NewReader(""), &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errBuf.String())
+	}
+	got := out.String()
+	for i := range 5 {
+		if want := fmt.Sprintf("Repeat 5 iter %d/5", i+1); !strings.Contains(got, want) {
+			t.Errorf("--expand-loops should print %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "more iterations") {
+		t.Errorf("nothing is hidden with --expand-loops:\n%s", got)
+	}
+}
+
+// --go answers "what does this compile to" from the same command that answers
+// "what did this do".
+func TestVisualizeGoFlagPrintsTheEmittedSource(t *testing.T) {
+	_, prog := writeVisProgram(t, visProgram, "1,2,3")
+	var out, errBuf bytes.Buffer
+	if code := Visualize(prog, visualizeOptions{Optimize: true, Plain: true, Go: true}, strings.NewReader(""), &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errBuf.String())
+	}
+	got := out.String()
+	for _, want := range []string{"generated go", "package main", "func main() {"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("--go output missing %q:\n%s", want, got)
+		}
+	}
+	// The trace is still there: --go adds the code, it does not replace the run.
+	if !strings.Contains(got, "revealed:") {
+		t.Errorf("--go should not swallow the trace:\n%s", got)
+	}
+}
+
+func TestVisualizeJSONCarriesTheEmittedGo(t *testing.T) {
+	_, prog := writeVisProgram(t, visProgram, "1,2,3")
+	var out, errBuf bytes.Buffer
+	if code := Visualize(prog, visualizeOptions{Optimize: true, JSON: true, Go: true}, strings.NewReader(""), &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errBuf.String())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("the document should be JSON: %v", err)
+	}
+	src, _ := doc["go"].(string)
+	if !strings.Contains(src, "package main") {
+		t.Errorf("the go field should hold the emitted source, got %q", src)
+	}
+}
+
+// Without --go the field is absent rather than empty: a document that carried
+// an empty "go" would read as a program that compiled to nothing.
+func TestVisualizeJSONOmitsGoUnlessAsked(t *testing.T) {
+	_, prog := writeVisProgram(t, visProgram, "1,2,3")
+	var out, errBuf bytes.Buffer
+	if code := Visualize(prog, visualizeOptions{Optimize: true, JSON: true}, strings.NewReader(""), &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := doc["go"]; present {
+		t.Error("the go field should be absent without --go")
+	}
+}
+
+// visBlockModel builds a model over a run of a program with a Channel and a Part.
+func visBlockModel(t *testing.T) *visualModel {
+	t.Helper()
+	_, prog := writeVisProgram(t, visBlockProgram, "1,2,3")
+	pipe, rewrites, err := loadForVisualize(prog, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := interp.NewRecorder(0)
+	var revealed strings.Builder
+	if _, err := interp.Run(pipe, newVisCtx(t, prog, rec, &revealed)); err != nil {
+		t.Fatal(err)
+	}
+	return newVisualModel(&traceView{path: prog, pipe: pipe, rec: rec, rewrites: rewrites})
+}
+
+// select_ puts the cursor on the first row whose label contains s.
+func select_(t *testing.T, m *visualModel, s string) *visualModel {
+	t.Helper()
+	for i, r := range m.rows {
+		if strings.Contains(r.node.Label(), s) {
+			m.cursor = i
+			return m
+		}
+	}
+	t.Fatalf("no visible row matching %q", s)
+	return m
+}
+
+// The detail pane gives a block both answers, and names them: what the body
+// produced, and what the next stage receives.
+func TestVisualModelBlockRowShowsItsResultAndItsPassthrough(t *testing.T) {
+	m := visBlockModel(t)
+	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = select_(t, m, `Channel "total"`)
+	out := m.View().Content
+	for _, want := range []string{"result", "what the body produced", "passes on"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the value pane should show %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "6") {
+		t.Errorf("the channel's body summed to 6:\n%s", out)
+	}
+}
+
+// A folded row says how many laps it stands for, and opens onto all of them.
+func TestVisualModelFoldedLoopOpens(t *testing.T) {
+	_, prog := writeVisProgram(t, visLoopProgram, "1,2")
+	pipe, rewrites, err := loadForVisualize(prog, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := interp.NewRecorder(0)
+	var revealed strings.Builder
+	if _, err := interp.Run(pipe, newVisCtx(t, prog, rec, &revealed)); err != nil {
+		t.Fatal(err)
+	}
+	m := newVisualModel(&traceView{path: prog, pipe: pipe, rec: rec, rewrites: rewrites})
+	m = send(m, tea.WindowSizeMsg{Width: 120, Height: 30})
+
+	// Closed, the loop counts its laps rather than the row standing in for them.
+	if out := m.View().Content; !strings.Contains(out, "5 iterations") {
+		t.Errorf("the collapsed loop should count its laps:\n%s", out)
+	}
+	m = select_(t, m, "Repeat 5")
+	m = send(m, pressKey("l"))
+	// Opening the loop shows one row, not five.
+	if strings.Contains(m.View().Content, "Repeat 5 iter 1/5") {
+		t.Errorf("the laps stay behind the fold until it is opened:\n%s", m.View().Content)
+	}
+	m = select_(t, m, "5 iterations")
+	m = send(m, pressKey("l"))
+	out := m.View().Content
+	for _, want := range []string{"Repeat 5 iter 1/5", "Repeat 5 iter 5/5"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("opening the fold should show %q:\n%s", want, out)
+		}
+	}
+	// And the fold row itself describes what it holds.
+	m = select_(t, m, "5 iterations")
+	if out := m.View().Content; !strings.Contains(out, "laps of one loop, folded") {
+		t.Errorf("the fold's detail should say what it is:\n%s", out)
+	}
+}
+
+// The Go screen opens at the selected row's code, and is the whole program:
+// the code around a stage is most of what makes it legible.
+func TestVisualModelGoScreen(t *testing.T) {
+	m := visModel(t)
+	m = send(m, tea.WindowSizeMsg{Width: 130, Height: 30}, pressKey("c"))
+	out := m.View().Content
+	if !strings.Contains(out, "emitted go") {
+		t.Fatalf("c should open the emitted program:\n%s", out)
+	}
+	if !strings.Contains(out, "→ lines") {
+		t.Errorf("the screen should say which lines the row became:\n%s", out)
+	}
+	// It is a screen, not a pane: the two-pane layout is gone with its divider.
+	if strings.Contains(out, "│") {
+		t.Errorf("the Go screen takes the whole terminal:\n%s", out)
+	}
+	// The whole program is reachable, wherever the selected row's code sits.
+	m = send(m, pressKey("G"))
+	bottom := m.View().Content
+	if !strings.Contains(bottom, "func main()") && !strings.Contains(bottom, "}") {
+		t.Errorf("G should scroll to the end of the program:\n%s", bottom)
+	}
+	m = send(m, pressKey("g"))
+	if !strings.Contains(m.View().Content, "package main") {
+		t.Errorf("g should scroll to the top:\n%s", m.View().Content)
+	}
+	// And it comes back to where the reader was.
+	m = send(m, pressKey("z"))
+	if m.View().Content != out {
+		t.Error("z should return to the selected row's code")
+	}
+	m = send(m, pressKey("esc"))
+	if strings.Contains(m.View().Content, "emitted go") {
+		t.Error("esc should return to the tree")
+	}
+}
+
+func TestVisualModelGoScreenScrolls(t *testing.T) {
+	m := visModel(t)
+	m = send(m, tea.WindowSizeMsg{Width: 130, Height: 30}, pressKey("c"), pressKey("g"))
+	top := m.goTop
+	m = send(m, pressKey("j"), pressKey("j"))
+	if m.goTop != top+2 {
+		t.Errorf("j should scroll a line at a time, got %d want %d", m.goTop, top+2)
+	}
+	m = send(m, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if m.goTop <= top+2 {
+		t.Errorf("ctrl+d should page down, got %d", m.goTop)
+	}
+	// Scrolling stops at the ends rather than running off them.
+	for range 500 {
+		m = send(m, pressKey("j"))
+	}
+	if m.goTop >= len(m.goSrc()) {
+		t.Errorf("scrolled past the end: %d of %d lines", m.goTop, len(m.goSrc()))
+	}
+	for range 500 {
+		m = send(m, pressKey("k"))
+	}
+	if m.goTop != 0 {
+		t.Errorf("scrolled past the start: %d", m.goTop)
+	}
+}
+
+// A frame is a label around a sub-pipeline, so it has no code of its own — the
+// screen says that rather than pointing somewhere arbitrary.
+func TestVisualModelGoScreenOnAFrame(t *testing.T) {
+	m := visModel(t)
+	m = send(m, tea.WindowSizeMsg{Width: 130, Height: 30})
+	m = select_(t, m, "Repeat 2")
+	m = send(m, pressKey("l"))
+	m = select_(t, m, "iter 1/2")
+	m = send(m, pressKey("c"))
+	if out := m.View().Content; !strings.Contains(out, "compiles to nothing of its own") {
+		t.Errorf("a frame should say why it has no code:\n%s", out)
+	}
+}
+
+// A program the compiler backend cannot lower yet is still a perfectly good
+// recording; the screen reports why there is no code instead of failing.
+func TestVisualModelGoScreenWithoutAPipeline(t *testing.T) {
+	m := visModel(t)
+	m.view.pipe = nil
+	m.view.goOnce = false
+	m = send(m, tea.WindowSizeMsg{Width: 130, Height: 30}, pressKey("c"))
+	if out := m.View().Content; !strings.Contains(out, "emitted go") || !strings.Contains(out, "no program") {
+		t.Errorf("the screen should explain itself:\n%s", out)
+	}
+}
+
+// The keys live behind `?` now, so the footer can be one quiet line.
+func TestVisualModelHelpScreen(t *testing.T) {
+	m := visModel(t)
+	m = send(m, tea.WindowSizeMsg{Width: 130, Height: 30})
+	foot := m.View().Content
+	if !strings.Contains(foot, "keys") || !strings.Contains(foot, "quit") {
+		t.Errorf("the footer should point at the key list:\n%s", foot)
+	}
+	// The legend itself is gone: it was the loudest thing on screen.
+	for _, gone := range []string{"hottest", "open/close", "profile"} {
+		if strings.Contains(foot, gone) {
+			t.Errorf("the footer should no longer carry the legend (%q):\n%s", gone, foot)
+		}
+	}
+	m = send(m, pressKey("?"))
+	help := m.View().Content
+	for _, want := range []string{"keys", "hottest", "the emitted Go", "N iterations", "search"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("the key list should mention %q:\n%s", want, help)
+		}
+	}
+	// Any key returns — it is a reference, not a mode.
+	m = send(m, pressKey("j"))
+	if strings.Contains(m.View().Content, "any key returns") {
+		t.Error("a keystroke should leave the key list")
+	}
+}
+
+// A `Using:` body runs once per element. Its steps belong to the stage that ran
+// them, folded — the repetition the trace used to spell out in full.
+const visBodyProgram = `Cursed Energy: in.txt
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by ","
+Cursed Technique: Map Each
+    Channeled Energy: Convert List to Integers
+    Maximum Technique: Sum
+Reveal: stdout
+`
+
+func TestVisualizePlainFoldsUsingBodies(t *testing.T) {
+	_, prog := writeVisProgram(t, visBodyProgram, "1,2\n3,4\n5,6\n7,8")
+	var out, errBuf bytes.Buffer
+	if code := Visualize(prog, visualizeOptions{Optimize: true, Plain: true}, strings.NewReader(""), &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, errBuf.String())
+	}
+	got := out.String()
+	for _, want := range []string{"Map Each", "4 iterations", "Map Each body 1/4", "3 more iterations"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plain output missing %q:\n%s", want, got)
+		}
+	}
+	// The repetition is behind the fold, not spelled out four times over.
+	if n := strings.Count(got, "Convert List to Integers"); n != 1 {
+		t.Errorf("the body's steps should appear once, folded, got %d:\n%s", n, got)
+	}
+	// And the body's rows are under the stage that ran them, not beside it.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "Convert List to Integers") || strings.HasPrefix(line, "Sum ") {
+			t.Errorf("a body's step should not be a top-level row:\n%s", line)
+		}
 	}
 }

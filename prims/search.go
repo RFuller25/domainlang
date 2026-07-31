@@ -104,15 +104,15 @@ func checkStart(g *ir.GridValue, r, c int64, mask []bool, prim, role string, pos
 func connectivity(args ArgSet, prim string, pos token.Position) (bool, error) {
 	m, ok := args.Ident("Mode")
 	if !ok {
-		if n, isInt := args.Int("Mode"); isInt {
-			switch n {
-			case 4:
-				return false, nil
-			case 8:
-				return true, nil
-			}
-		} else {
+		n, isInt := args.Int("Mode")
+		if !isInt {
 			return false, nil
+		}
+		switch n {
+		case 4:
+			return false, nil
+		case 8:
+			return true, nil
 		}
 		return false, &ResolveError{Pos: pos,
 			Msg: fmt.Sprintf("%s: Mode must be 4 or 8", prim)}
@@ -414,8 +414,8 @@ var connectedComponents = &Primitive{
 					return nil, err
 				}
 				uf := ir.NewUnionFind(len(g.Cells))
-				for r := 0; r < g.Rows; r++ {
-					for c := 0; c < g.Cols; c++ {
+				for r := range g.Rows {
+					for c := range g.Cols {
 						i := r*g.Cols + c
 						if !mask[i] {
 							continue

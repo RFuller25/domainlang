@@ -1,0 +1,19 @@
+# Channels and a channel consumer: two named sub-pipelines branch from the
+# same upstream value, and Zip pairs them element-wise.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+
+Channel "evens":
+    Cursed Technique: Filter
+        Using: (x) -> x % 2 = 0
+
+Channel "odds":
+    Cursed Technique: Filter
+        Using: (x) -> x % 2 = 1
+
+Maximum Technique: Zip
+    From: evens, odds
+Maximum Technique: Sum By
+    Using: (p) -> prow(p) * pcol(p)
+Reveal: stdout

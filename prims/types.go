@@ -58,12 +58,12 @@ func lowerTypeExpr(te *ast.TypeExpr, pos token.Position) (*ir.Type, error) {
 		return ir.Tuple(elems...), nil
 	}
 
-	if make, ok := scalarTypes[te.Name]; ok {
+	if mk, ok := scalarTypes[te.Name]; ok {
 		if len(te.Args) > 0 {
 			return nil, &ResolveError{Pos: at,
 				Msg: fmt.Sprintf("%s takes no type arguments", te.Name)}
 		}
-		return make(), nil
+		return mk(), nil
 	}
 
 	arity, ok := genericArity[te.Name]

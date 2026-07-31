@@ -8,6 +8,34 @@ import (
 
 // This file holds the shared AST/IR walking utilities the passes are built on.
 
+// combinatorialScan is the guard the four hash/divisor scan rewrites share: n
+// must be the named combinatorial primitive at the expected arity, over
+// List<Int>, in a Mode whose result the substituted algorithm can reproduce,
+// with a Using: lambda to match against. It returns that mode and lambda.
+//
+// The arity is read as a literal, so a measured argument stands the rewrite
+// down (see hasMeasuredArg): the substituted algorithm is written for one
+// specific k, not for whatever the program measures at runtime.
+func combinatorialScan(n *ir.Node, prim string, k int) (mode string, lam *ast.Lambda, ok bool) {
+	if n.Prim != prim || hasMeasuredArg(n) {
+		return "", nil, false
+	}
+	if got, _ := n.Meta["k"].(int); got != k {
+		return "", nil, false
+	}
+	mode, _ = n.Meta["mode"].(string)
+	if mode != "First" && mode != "Count" {
+		return "", nil, false
+	}
+	if n.In == nil || !n.In.Equal(ir.List(ir.Int())) {
+		return "", nil, false
+	}
+	if lam = nodeLambda(n); lam == nil {
+		return "", nil, false
+	}
+	return mode, lam, true
+}
+
 // nodeLists returns every node list in the pipeline: the top-level list plus,
 // recursively, the sub-pipelines stashed in Meta["nodes"] (Channel bodies,
 // Simple Domain loop bodies). Passes that rewrite nodes *in place* (swapping

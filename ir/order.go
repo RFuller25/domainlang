@@ -1,5 +1,10 @@
 package ir
 
+import (
+	"cmp"
+	"strings"
+)
+
 // Ordering over values, for the sorting primitives. v0.4 could only sort by an
 // Int key, which left `List<Text>` unsortable and made a two-level sort (sort
 // by group, tiebreak by score) inexpressible. An *ordered* type is Int, Float,
@@ -41,13 +46,7 @@ func Compare(a, b Value) int {
 	switch x := a.(type) {
 	case int64:
 		if y, ok := b.(int64); ok {
-			switch {
-			case x < y:
-				return -1
-			case x > y:
-				return 1
-			}
-			return 0
+			return cmp.Compare(x, y)
 		}
 		// Mixed Int/Float compares through the numeric tower's promotion.
 		if y, ok := b.(float64); ok {
@@ -62,13 +61,7 @@ func Compare(a, b Value) int {
 		}
 	case string:
 		if y, ok := b.(string); ok {
-			switch {
-			case x < y:
-				return -1
-			case x > y:
-				return 1
-			}
-			return 0
+			return strings.Compare(x, y)
 		}
 	case []Value:
 		// Tuples: lexicographic, first differing element decides. A shorter
@@ -78,18 +71,12 @@ func Compare(a, b Value) int {
 		if !ok {
 			return 0
 		}
-		for i := 0; i < len(x) && i < len(y); i++ {
+		for i := range min(len(x), len(y)) {
 			if c := Compare(x[i], y[i]); c != 0 {
 				return c
 			}
 		}
-		switch {
-		case len(x) < len(y):
-			return -1
-		case len(x) > len(y):
-			return 1
-		}
-		return 0
+		return cmp.Compare(len(x), len(y))
 	}
 	return 0
 }

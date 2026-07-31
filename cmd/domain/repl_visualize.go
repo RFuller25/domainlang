@@ -68,7 +68,10 @@ func (r *repl) visualize() {
 	_, runErr := interp.Run(pipe, ctx)
 
 	r.lastTrace = &traceView{
-		path:     "repl",
+		path: "repl",
+		// The session's own pipeline, so the code pane can compile it: the
+		// program being built is exactly the one worth asking that about.
+		pipe:     pipe,
 		rec:      rec,
 		rewrites: r.rewritesFor(),
 		revealed: strings.TrimRight(revealed.String(), "\n"),

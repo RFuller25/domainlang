@@ -3,7 +3,7 @@ package interp
 import (
 	"fmt"
 	"io"
-	"sort"
+	"strconv"
 	"time"
 
 	"domain/ir"
@@ -37,7 +37,6 @@ type Stats struct {
 // stageStat is one top-level stage's accumulated cost.
 type stageStat struct {
 	node     *ir.Node
-	order    int
 	calls    int
 	dur      time.Duration
 	frames   int // sub-pipeline frames entered (loop iterations, bodies)
@@ -61,7 +60,6 @@ type nestedStep struct {
 // nestedStat aggregates one node's cost across every iteration it ran in.
 type nestedStat struct {
 	node     *ir.Node
-	order    int
 	calls    int
 	dur      time.Duration
 	outSize  int
@@ -87,7 +85,7 @@ func (s *Stats) Step(e ir.StepEvent) {
 
 	st, ok := s.index[e.Node]
 	if !ok {
-		st = &stageStat{node: e.Node, order: len(s.stages)}
+		st = &stageStat{node: e.Node}
 		s.index[e.Node] = st
 		s.stages = append(s.stages, st)
 	}
@@ -120,7 +118,7 @@ func (s *Stats) flushInto(st *stageStat) {
 	for _, ns := range s.buf {
 		c, ok := byNode[ns.node]
 		if !ok {
-			c = &nestedStat{node: ns.node, order: len(st.children)}
+			c = &nestedStat{node: ns.node}
 			byNode[ns.node] = c
 			st.children = append(st.children, c)
 		}
@@ -138,13 +136,14 @@ func (s *Stats) flushInto(st *stageStat) {
 }
 
 // PushFrame opens a sub-pipeline.
-func (s *Stats) PushFrame(string) {
+func (s *Stats) PushFrame(string, *ir.Type) {
 	s.depth++
 	s.frames++
 }
 
-// PopFrame closes the innermost sub-pipeline.
-func (s *Stats) PopFrame() {
+// PopFrame closes the innermost sub-pipeline. The value it produced is the
+// visualizer's business; a profile counts time, not data.
+func (s *Stats) PopFrame(ir.Value) {
 	if s.depth > 0 {
 		s.depth--
 	}
@@ -173,14 +172,12 @@ type StageRow struct {
 	Children  []StageRow // per-node detail from inside this stage's frames
 }
 
-// Rows returns the recorded stages in program order, with the percentages
-// Report prints already worked out.
+// Rows returns the recorded stages in program order — the order they were
+// first seen, which is the order s.stages already holds them in — with the
+// percentages Report prints already worked out.
 func (s *Stats) Rows() []StageRow {
-	sorted := append([]*stageStat(nil), s.stages...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].order < sorted[j].order })
-
-	rows := make([]StageRow, 0, len(sorted))
-	for _, st := range sorted {
+	rows := make([]StageRow, 0, len(s.stages))
+	for _, st := range s.stages {
 		row := StageRow{
 			Name:      stageName(st.node),
 			Type:      typeName(st.node),
@@ -220,29 +217,25 @@ func (s *Stats) share(d time.Duration) float64 {
 
 // Report writes the stats table.
 func (s *Stats) Report(w io.Writer, verbose bool) {
-	fmt.Fprintf(w, "[stats] interpreter, %d stages, %s total (tree-walking evaluator, not the compiled binary)\n",
+	_, _ = fmt.Fprintf(w, "[stats] interpreter, %d stages, %s total (tree-walking evaluator, not the compiled binary)\n",
 		len(s.stages), FormatDuration(s.total))
 	if len(s.stages) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "  %3s  %-38s %-18s %9s %9s %6s\n", "#", "stage", "out type", "size", "time", "%")
+	_, _ = fmt.Fprintf(w, "  %3s  %-38s %-18s %9s %9s %6s\n", "#", "stage", "out type", "size", "time", "%")
 
-	sorted := append([]*stageStat(nil), s.stages...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].order < sorted[j].order })
-
-	for i, st := range sorted {
+	for i, st := range s.stages {
 		name := stageName(st.node)
 		if st.frames > 0 {
 			name = fmt.Sprintf("%s (%d frames, %d steps)", name, st.frames, st.nested)
 		}
-		pct := s.share(st.dur)
-		fmt.Fprintf(w, "  %3d  %-38s %-18s %9s %9s %5.1f\n",
+		_, _ = fmt.Fprintf(w, "  %3d  %-38s %-18s %9s %9s %5.1f\n",
 			i+1, truncate(name, 38), truncate(typeName(st.node), 18),
-			sizeText(st.sizeKnwn, st.outSize), FormatDuration(st.dur), pct)
+			sizeText(st.sizeKnwn, st.outSize), FormatDuration(st.dur), s.share(st.dur))
 
 		if verbose {
 			for _, c := range st.children {
-				fmt.Fprintf(w, "       ↳ %-36s %-18s %9s %9s  ×%d\n",
+				_, _ = fmt.Fprintf(w, "       ↳ %-36s %-18s %9s %9s  ×%d\n",
 					truncate(stageName(c.node), 36), truncate(typeName(c.node), 18),
 					sizeText(c.sizeKnwn, c.outSize), FormatDuration(c.dur), c.calls)
 			}
@@ -270,7 +263,7 @@ func sizeText(known bool, n int) string {
 	if !known {
 		return "—"
 	}
-	return fmt.Sprintf("%d", n)
+	return strconv.Itoa(n)
 }
 
 func truncate(s string, n int) string {

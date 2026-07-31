@@ -109,8 +109,8 @@ func sparseFromGridNode(in *ir.Type, defM MeasuredValue, pos token.Position) *ir
 				return nil, err
 			}
 			out := ir.NewSparseValue(def)
-			for r := 0; r < g.Rows; r++ {
-				for c := 0; c < g.Cols; c++ {
+			for r := range g.Rows {
+				for c := range g.Cols {
 					cell, _ := g.At(r, c)
 					if !ir.DeepEqual(cell, def) {
 						out.Put(int64(r), int64(c), cell)

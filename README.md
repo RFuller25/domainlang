@@ -355,6 +355,15 @@ anchor program in both modes and require byte-identical stdout. On a
 1M-line AoC 2022 Day 4 input the compiled binary is ~7× faster than the
 interpreter; binaries are self-contained (~1.5 MB, stdlib only).
 
+The benchmark that matters is against Go rather than against the
+interpreter: [`bench/`](bench/README.md) pairs each Domain program in it
+with a hand-written Go counterpart answering the same question about the
+same input, and requires byte-identical output from both. Every case is
+inside
+2× of the hand-written Go and five are faster than it — a quickselect the
+Go program never asked for, a read sized before the first byte arrives, a
+`Match Pattern` scanner with the predicate inlined into the loop.
+
 **Every primitive compiles.** Map/Set values lower to insertion-ordered
 generic runtime types so rendered output matches the interpreter exactly;
 `Simple Domain` loops thread one mutable variable through their emitted

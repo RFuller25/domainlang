@@ -19,6 +19,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -109,7 +110,7 @@ func (h *history) next() (string, bool) {
 // trim keeps the newest maxHistory entries.
 func (h *history) trim() {
 	if len(h.entries) > maxHistory {
-		h.entries = append([]string(nil), h.entries[len(h.entries)-maxHistory:]...)
+		h.entries = slices.Clone(h.entries[len(h.entries)-maxHistory:])
 	}
 }
 

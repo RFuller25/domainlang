@@ -29,19 +29,17 @@ func (g *gen) emitGroupBy(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "lambda: %v", err)
 	}
 	g.helper("dmMap", declMap)
+	g.helper("dmAppend", declMapAppend)
 	g.wl("%s := dmNewMap[%s, %s]()", m, keyGo, valGo)
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.wl("%s := %s", k, body)
-	g.wl("%s.put(%s, append(%s.vals[%s], %s))", m, k, m, k, e)
+	g.wl("dmAppend(&%s, %s, %s)", m, k, e)
 	g.out()
 	g.wl("}")
 	return m, nil
 }
 
-// emitSetReduce lowers Intersect/Union: List<List<T>> -> Set<T>, seeded with
-// the first group and combined pairwise, exactly like the interpreter's fold
-// over ir.SetIntersect / ir.SetUnion.
 // emitSplitEachIntersect lowers Split Each("") + Intersect over []string lines
 // into a running character-set intersection that never builds the [][]string of
 // one-rune substrings nor a per-line hash set. The accumulator is seeded from
@@ -128,6 +126,9 @@ func (g *gen) emitSplitEachIntersect(in string) string {
 	return out
 }
 
+// emitSetReduce lowers Intersect/Union: List<List<T>> -> Set<T>, seeded with
+// the first group and combined pairwise, exactly like the interpreter's fold
+// over ir.SetIntersect / ir.SetUnion.
 func (g *gen) emitSetReduce(n *ir.Node, in string) (string, error) {
 	elemGo, err := g.goType(n.Out.Elem)
 	if err != nil {

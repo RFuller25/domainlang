@@ -1,0 +1,12 @@
+# Pipeline bodies: the Using: of Map Each is an indented pipeline rather than
+# a lambda, so a per-row job can use primitives (here Sum By, the fused
+# key-lambda fold) that the expression layer has no spelling for.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert Each List to Integers
+Cursed Technique: Map Each
+    Maximum Technique: Sum By
+        Using: (x) -> x * x
+Maximum Technique: Max
+Reveal: stdout

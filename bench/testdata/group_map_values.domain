@@ -1,0 +1,14 @@
+# Grouped aggregation in two lines: Group By buckets, Map Values folds each
+# bucket, and Convert To Entries drops the Map back into the list layer.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Maximum Technique: Group By
+    Using: (n) -> n % 1000
+Cursed Technique: Map Values
+    Using: (b) -> sum(b)
+Channeled Energy: Convert To Entries
+Cursed Technique: Map Each
+    Using: (e) -> item(e, 1)
+Maximum Technique: Max
+Reveal: stdout

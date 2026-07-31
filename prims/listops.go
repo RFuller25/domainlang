@@ -129,10 +129,7 @@ var chunk = &Primitive{
 				n := int64(len(xs))
 				out := make([]ir.Value, 0, (n+size-1)/size)
 				for i := int64(0); i < n; i += size {
-					end := i + size
-					if end > n {
-						end = n // the short final block is kept, not dropped
-					}
+					end := min(i+size, n) // the short final block is kept, not dropped
 					out = append(out, append([]ir.Value{}, xs[i:end]...))
 				}
 				return out, nil

@@ -240,8 +240,8 @@ var findCells = &Primitive{
 					return nil, runtimeErr("Find Cells", pos, "expected Grid, got %s", ir.DescribeValue(v))
 				}
 				out := []ir.Value{}
-				for r := 0; r < g.Rows; r++ {
-					for c := 0; c < g.Cols; c++ {
+				for r := range g.Rows {
+					for c := range g.Cols {
 						cell, _ := g.At(r, c)
 						keep, err := evalPredicate(lam, in.Elem, cell)
 						if err != nil {
@@ -282,8 +282,8 @@ var transpose = &Primitive{
 					return nil, runtimeErr("Transpose", pos, "expected Grid, got %s", ir.DescribeValue(v))
 				}
 				out := ir.NewGridValue(g.Cols, g.Rows)
-				for r := 0; r < g.Rows; r++ {
-					for c := 0; c < g.Cols; c++ {
+				for r := range g.Rows {
+					for c := range g.Cols {
 						cell, _ := g.At(r, c)
 						out.SetAt(c, r, cell)
 					}
@@ -316,7 +316,6 @@ var countCells = &Primitive{
 		if positional {
 			bodyType, err := typecheck.LambdaType(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...)...)
 			if err != nil {
-
 				return nil, &ResolveError{Pos: pos, Msg: "Count Cells: " + err.Error()}
 			}
 			if !bodyType.Equal(ir.Bool()) {

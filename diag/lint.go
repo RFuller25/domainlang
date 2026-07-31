@@ -4,6 +4,7 @@ package diag
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -93,13 +94,7 @@ func lintUnusedArgs(prog *ast.Program, add func(Diagnostic)) {
 func suggestArgName(s *ast.Statement, got string) (string, bool) {
 	var open []string
 	for _, c := range prims.ArgNames() {
-		taken := false
-		for _, a := range s.Args {
-			if a.Name == c {
-				taken = true
-			}
-		}
-		if !taken {
+		if !slices.ContainsFunc(s.Args, func(a *ast.Arg) bool { return a.Name == c }) {
 			open = append(open, c)
 		}
 	}
@@ -147,17 +142,7 @@ func lintPhraseExpressions(stmts []*ast.Statement, add func(Diagnostic)) {
 // capitalized, so the comparison is case-sensitive on purpose: the phrase word
 // `Sum` is the reduction, and `sum` is the builtin.
 func isBuiltinCall(raw, w string) bool {
-	found := false
-	for _, b := range typecheck.Builtins {
-		if b == w {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return false
-	}
-	return strings.Contains(raw, w+"(")
+	return slices.Contains(typecheck.Builtins, w) && strings.Contains(raw, w+"(")
 }
 
 // phraseOf names the operation on a statement, for a message that points at

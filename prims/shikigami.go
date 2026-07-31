@@ -3,6 +3,8 @@ package prims
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -67,7 +69,7 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 				"Shikigami %q is recursive (%s): a Shikigami is inlined at its "+
 					"call site, so it has no finite expansion — use "+
 					"`Domain Expansion: Explore` for a search over states",
-				name, strings.Join(append(append([]string{}, r.inlining[i:]...), name), " -> "))}
+				name, strings.Join(append(slices.Clone(r.inlining[i:]), name), " -> "))}
 		}
 	}
 	r.inlining = append(r.inlining, name)
@@ -344,9 +346,9 @@ func substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Stat
 // instead of `Count Matching`) with no error anywhere in the pipeline.
 func substituteOp(keyword string, op *ast.Operation, env map[string]paramVal) *ast.Operation {
 	no := *op
-	no.Ints = append([]int64(nil), op.Ints...)
-	no.Strings = append([]string(nil), op.Strings...)
-	no.Modifiers = append([]string(nil), op.Modifiers...)
+	no.Ints = slices.Clone(op.Ints)
+	no.Strings = slices.Clone(op.Strings)
+	no.Modifiers = slices.Clone(op.Modifiers)
 	no.Words = nil
 
 	wantPrim := findPrimitive(&ast.Statement{Keyword: keyword, Op: op})
@@ -471,10 +473,7 @@ func substExpr(e ast.Expr, env map[string]paramVal, shadowed map[string]bool) as
 		// still in the outer scope and substitutes normally.
 		inner := shadowed
 		if !shadowed[x.Name] {
-			inner = make(map[string]bool, len(shadowed)+1)
-			for k, v := range shadowed {
-				inner[k] = v
-			}
+			inner = maps.Clone(shadowed)
 			inner[x.Name] = true
 		}
 		return &ast.LetExpr{

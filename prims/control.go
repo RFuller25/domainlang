@@ -2,6 +2,7 @@ package prims
 
 import (
 	"fmt"
+	"slices"
 
 	"domain/ast"
 	"domain/eval"
@@ -85,9 +86,7 @@ var reverse = &Primitive{
 						return nil, runtimeErr("Reverse", pos, "expected Text, got %s", ir.DescribeValue(v))
 					}
 					rs := []rune(s)
-					for i, j := 0, len(rs)-1; i < j; i, j = i+1, j-1 {
-						rs[i], rs[j] = rs[j], rs[i]
-					}
+					slices.Reverse(rs)
 					return string(rs), nil
 				},
 			}, nil
@@ -270,10 +269,11 @@ func (r *resolver) resolveForLoop(stmt *ast.Statement, op *ast.Operation, cur *i
 				}
 				xs = items
 			}
-			for _, x := range xs {
+			for i, x := range xs {
 				pushAmbientValue(x, elemType)
 				var err error
-				v, err = runBody(ctx, subNodes, v)
+				label := fmt.Sprintf("For %s iter %d/%d", varName, i+1, len(xs))
+				v, err = runIteration(ctx, subNodes, v, label, cur)
 				popAmbientValue()
 				if err != nil {
 					return nil, err
@@ -297,11 +297,6 @@ func parseForHeader(op *ast.Operation, pos token.Position) (varName, source stri
 			Msg: "For needs a variable and source, e.g. For x in y or For x in range(5)"}
 	}
 	varName = op.Words[1]
-	// range's own literal Int argument (op.Ints[0]) never lands in op.Words
-	// (only IDENT tokens do — see the operation-phrase scanner in
-	// parser/parser.go), so "For x in range(5)" and "For x in y" both parse
-	// to exactly 4 Words; "range" appearing as the fourth word is what
-	// distinguishes the two, not word count.
 	if op.Words[3] == "range" {
 		return varName, "range", true, nil
 	}
@@ -338,10 +333,19 @@ func runBody(ctx *ir.Context, nodes []*ir.Node, v ir.Value) (ir.Value, error) {
 // runIteration runs one loop iteration inside a labelled trace frame, so a
 // visualizer can step into `Repeat 4 iter 2/4` and --stats can attribute nested
 // work to its loop. Without a tracer the frame calls are no-ops.
-func runIteration(ctx *ir.Context, nodes []*ir.Node, v ir.Value, label string) (ir.Value, error) {
-	ctx.PushFrame(label)
-	defer ctx.PopFrame()
-	return runBody(ctx, nodes, v)
+func runIteration(ctx *ir.Context, nodes []*ir.Node, v ir.Value, label string, t *ir.Type) (ir.Value, error) {
+	// The lap's own result closes its frame, so a stepper can show what one
+	// iteration made of what it was given without opening it. A lap that failed
+	// reports nil, which is what marks the frame unfinished.
+	var out ir.Value
+	ctx.PushFrame(label, t)
+	defer func() { ctx.PopFrame(out) }()
+
+	out, err := runBody(ctx, nodes, v)
+	if err != nil {
+		out = nil
+	}
+	return out, err
 }
 
 func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position) *ir.Node {
@@ -360,7 +364,7 @@ func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position
 			}
 			for i := int64(0); i < n; i++ {
 				label := fmt.Sprintf("Repeat %d iter %d/%d", n, i+1, n)
-				if v, err = runIteration(ctx, body, v, label); err != nil {
+				if v, err = runIteration(ctx, body, v, label, t); err != nil {
 					return nil, err
 				}
 			}
@@ -391,7 +395,7 @@ func whileNode(body []*ir.Node, lam *ast.Lambda, t *ir.Type, pos token.Position)
 					return nil, runtimeErr("Simple Domain (While)", pos,
 						"loop exceeded %d iterations (non-terminating?)", maxLoopIterations)
 				}
-				if v, err = runIteration(ctx, body, v, fmt.Sprintf("While iter %d", iters+1)); err != nil {
+				if v, err = runIteration(ctx, body, v, fmt.Sprintf("While iter %d", iters+1), t); err != nil {
 					return nil, err
 				}
 			}
@@ -406,7 +410,7 @@ func fixedPointNode(body []*ir.Node, t *ir.Type, pos token.Position) *ir.Node {
 		Meta: map[string]any{"kind": "fixedpoint", "nodes": body},
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
 			for iters := 0; ; iters++ {
-				nv, err := runIteration(ctx, body, v, fmt.Sprintf("Fixed Point iter %d", iters+1))
+				nv, err := runIteration(ctx, body, v, fmt.Sprintf("Fixed Point iter %d", iters+1), t)
 				if err != nil {
 					return nil, err
 				}

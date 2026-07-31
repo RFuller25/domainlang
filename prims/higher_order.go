@@ -15,7 +15,6 @@ import (
 // (the M1 inference foundation), and their interpreters run lambda bodies via
 // the eval package.
 
-// listElem requires that in is a List and returns its element type.
 // listElem is the element type a list-shaped primitive consumes. A Set is
 // accepted wherever a List is: its insertion order is already the order it
 // renders and iterates in, so reading one as a sequence is unambiguous. The
@@ -295,21 +294,11 @@ var count = &Primitive{
 
 var maxPrim = reduceIntPrim("Max", func(op *ast.Operation) bool {
 	return hasWord(op, "Max") || hasWord(op, "Maximum")
-}, func(acc, x int64) int64 {
-	if x > acc {
-		return x
-	}
-	return acc
-})
+}, func(acc, x int64) int64 { return max(acc, x) })
 
 var minPrim = reduceIntPrim("Min", func(op *ast.Operation) bool {
 	return hasWord(op, "Min") || hasWord(op, "Minimum")
-}, func(acc, x int64) int64 {
-	if x < acc {
-		return x
-	}
-	return acc
-})
+}, func(acc, x int64) int64 { return min(acc, x) })
 
 var product = reduceIntPrim("Product", func(op *ast.Operation) bool {
 	return hasWord(op, "Product")

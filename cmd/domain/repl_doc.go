@@ -16,8 +16,9 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -165,11 +166,11 @@ func sortedCatalog() []prims.PrimDoc {
 	for _, d := range prims.Catalog {
 		docs = append(docs, d)
 	}
-	sort.Slice(docs, func(i, j int) bool {
-		if docs[i].Keyword != docs[j].Keyword {
-			return docs[i].Keyword < docs[j].Keyword
+	slices.SortFunc(docs, func(a, b prims.PrimDoc) int {
+		if c := cmp.Compare(a.Keyword, b.Keyword); c != 0 {
+			return c
 		}
-		return docs[i].ID < docs[j].ID
+		return cmp.Compare(a.ID, b.ID)
 	})
 	return docs
 }

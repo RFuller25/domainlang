@@ -10,7 +10,8 @@ package prims
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -153,9 +154,7 @@ var argNames = []string{
 
 // ArgNames returns the named arguments the vocabulary understands, sorted.
 func ArgNames() []string {
-	out := append([]string(nil), argNames...)
-	sort.Strings(out)
-	return out
+	return slices.Sorted(slices.Values(argNames))
 }
 
 // Registry is the ordered list of primitives. Order matters: more specific
@@ -179,7 +178,7 @@ var Registry = []*Primitive{
 	partition,
 	iterate, // matcher excludes the Iterate Until Fixed Point loop head
 	unfold,
-	mapValues,   // before Map Each: "Map Values" is the more specific phrase
+	mapValues,     // before Map Each: "Map Values" is the more specific phrase
 	filterEntries, // before Filter, likewise
 	mapEach,
 	filter,
@@ -360,12 +359,7 @@ func ResolveWith(prog *ast.Program, opts ResolveOptions) (*ir.Pipeline, error) {
 
 // callableNames is the set of Shikigami names a bare phrase may resolve to.
 func callableNames(defs map[string]*ast.ShikigamiDef) []string {
-	names := make([]string, 0, len(defs))
-	for name := range defs {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(defs))
 }
 
 // scope says which structural statements a run of statements may contain.
@@ -535,7 +529,7 @@ func unknownOpMessage(stmt *ast.Statement) string {
 	if len(known) == 0 {
 		return fmt.Sprintf("unknown keyword %q (no primitives registered for it in v0.1)", stmt.Keyword)
 	}
-	sort.Strings(known)
+	slices.Sort(known)
 	return fmt.Sprintf("unknown operation %q under %q; known operations: %s",
 		raw, stmt.Keyword, strings.Join(known, ", "))
 }

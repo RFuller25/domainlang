@@ -1,0 +1,8 @@
+# The number-theory builtins inside a hot lambda: each compiles to a call
+# into the generated runtime, once per element.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Maximum Technique: Sum By
+    Using: (x) -> gcd(x, 360) + isqrt(x) + modpow(x, 3, 1000007)
+Reveal: stdout

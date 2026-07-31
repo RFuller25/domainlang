@@ -3,11 +3,15 @@
 // where the trace coverage lives; this file is layout and key handling, tested
 // the way repl_tty.go is, by driving the model with injected messages.
 //
-// The screen is two panes. The left is always the recorded tree; the right
+// The stepper is two panes: the left is always the recorded tree, and the right
 // switches between the selected row's value, the optimizer's rewrites, the
-// timing profile, and the program source with a per-line share of the run. All
-// four answer a different question about the same recording, and only one of
-// them fits on screen at a time.
+// timing profile, and the program source with a per-line share of the run. Each
+// answers a different question about the same recording, and only one of them
+// fits beside the tree at a time.
+//
+// Two views take the whole terminal instead, because half of one would not do:
+// the Go the compiler backend emits (a program in its own right, read by
+// scrolling) and the key list, which is why the footer does not carry one.
 package main
 
 import (
@@ -20,6 +24,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"domain/codegen"
 	"domain/interp"
 )
 
@@ -48,6 +53,17 @@ const (
 	paneSource                    // the program, with each line's share of the run
 )
 
+// screen is what fills the terminal: the two-pane stepper, or one of the views
+// that earn the whole width — the emitted Go, which is a program in its own
+// right and unreadable in half a pane, and the key list.
+type screen int
+
+const (
+	screenTree screen = iota
+	screenGo
+	screenHelp
+)
+
 // visRow is one visible line of the tree: a node plus its indentation depth.
 type visRow struct {
 	node  *interp.TraceNode
@@ -65,6 +81,16 @@ type visualModel struct {
 	width    int
 	height   int
 	pane     detailPane
+	screen   screen
+
+	// goTop is the first line of the emitted program on screen. The Go view
+	// scrolls freely — it opens at the selected row's code and goes wherever
+	// the reader takes it from there.
+	goTop int
+
+	// helpFrom is the screen `?` was pressed on, so the key list returns the
+	// reader to what they were reading rather than to the tree.
+	helpFrom screen
 
 	// Search narrows the tree to matching rows and the paths that reach them.
 	filter    string
@@ -197,6 +223,9 @@ func (m *visualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSearch(msg)
 		}
 		m.status = ""
+		if m.screen != screenTree {
+			return m.updateScreen(msg)
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -234,6 +263,10 @@ func (m *visualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.togglePane(paneHot)
 		case "s":
 			m.togglePane(paneSource)
+		case "c":
+			m.openGo()
+		case "?":
+			m.openHelp()
 		case "H":
 			m.jumpToHottest()
 		case "!":
@@ -243,6 +276,92 @@ func (m *visualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// updateScreen handles keys while a full-screen view is up. Both close the same
+// way — the key that opened them, esc, or q — because a view you are *in* is
+// somewhere to come back from, not a program to quit. ctrl+c still quits.
+func (m *visualModel) updateScreen(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if m.screen == screenHelp {
+		// Any key leaves the key list: it is a reference, not a mode, and a
+		// reader who presses something is done reading.
+		m.screen = m.helpFrom
+		return m, nil
+	}
+	page := max(1, (m.height-4)/2)
+	last := max(0, len(m.goSrc())-1)
+	switch key {
+	case "esc", "q", "c":
+		m.screen = screenTree
+	case "?":
+		m.openHelp()
+	case "down", "j":
+		m.goTop = min(m.goTop+1, last)
+	case "up", "k":
+		m.goTop = max(m.goTop-1, 0)
+	case "ctrl+d", "pgdown", " ":
+		m.goTop = min(m.goTop+page, last)
+	case "ctrl+u", "pgup":
+		m.goTop = max(m.goTop-page, 0)
+	case "g":
+		m.goTop = 0
+	case "G":
+		m.goTop = last
+	case "z":
+		// Back to the selected row's code, for a reader who scrolled away and
+		// wants the stage they came in on.
+		m.goTop = m.goStart()
+	}
+	return m, nil
+}
+
+// goSrc is the emitted program's lines, or nothing when it could not be
+// compiled — the view says why in that case.
+func (m *visualModel) goSrc() []string {
+	src, _, _ := m.view.emitted()
+	return src
+}
+
+// goSpan is the emitted lines the selected row became, if it became any.
+func (m *visualModel) goSpan() (codegen.Span, bool) {
+	_, spans, err := m.view.emitted()
+	if err != nil {
+		return codegen.Span{}, false
+	}
+	s := m.selected()
+	if s == nil {
+		return codegen.Span{}, false
+	}
+	span, ok := spans[s.Node]
+	return span, ok
+}
+
+// goStart is where the Go view opens: at the selected row's code, roughly
+// centered, so the answer to "what did this stage become" is on screen without
+// hunting for it. A row with no code of its own starts at the top.
+func (m *visualModel) goStart() int {
+	span, ok := m.goSpan()
+	if !ok {
+		return 0
+	}
+	body := max(1, m.height-4)
+	return min(max(span.Start-body/3-1, 0), max(0, len(m.goSrc())-body))
+}
+
+// openGo switches to the emitted program, at the selected row's code.
+func (m *visualModel) openGo() {
+	m.screen = screenGo
+	m.goTop = m.goStart()
+}
+
+// openHelp shows the key list over whatever is on screen.
+func (m *visualModel) openHelp() {
+	m.helpFrom = m.screen
+	m.screen = screenHelp
 }
 
 // updateSearch handles keys while the filter is being typed. The tree updates
@@ -349,7 +468,7 @@ func (m *visualModel) jumpToFailure() {
 			break
 		}
 	}
-	for i := 0; i < len(m.flat); i++ {
+	for i := range m.flat {
 		n := m.flat[(start+i)%len(m.flat)]
 		if n.IsFrame() || n.Step.Err == nil {
 			continue
@@ -398,18 +517,15 @@ func (m *visualModel) selected() *interp.Step {
 }
 
 func (m *visualModel) View() tea.View {
-	treeW := m.width * 55 / 100
-	if treeW < 30 {
-		treeW = 30
+	switch m.screen {
+	case screenGo:
+		return fullScreen(m.goView())
+	case screenHelp:
+		return fullScreen(m.helpView())
 	}
-	detailW := m.width - treeW - 3
-	if detailW < 20 {
-		detailW = 20
-	}
-	bodyH := m.height - 3
-	if bodyH < 3 {
-		bodyH = 3
-	}
+	treeW := max(m.width*55/100, 30)
+	detailW := max(m.width-treeW-3, 20)
+	bodyH := max(m.height-3, 3)
 
 	left := m.treeLines(treeW, bodyH)
 	right := m.detailLines(detailW, bodyH)
@@ -417,7 +533,7 @@ func (m *visualModel) View() tea.View {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", pad(m.title(), m.width))
 	divider := styRule.Render("│")
-	for i := 0; i < bodyH; i++ {
+	for i := range bodyH {
 		l, r := "", ""
 		if i < len(left) {
 			l = left[i]
@@ -428,11 +544,152 @@ func (m *visualModel) View() tea.View {
 		fmt.Fprintf(&b, "%s %s %s\n", pad(l, treeW), divider, pad(r, detailW))
 	}
 	b.WriteString(pad(m.footer(), m.width))
-	// In bubbletea v2 the alternate screen is a property of the view, not a
-	// program option: the stepper takes the whole screen and restores it on exit.
-	v := tea.NewView(b.String())
+	return fullScreen(b.String())
+}
+
+// fullScreen wraps rendered content as the view. In bubbletea v2 the alternate
+// screen is a property of the view, not a program option: the stepper takes the
+// whole terminal and restores it on exit.
+func fullScreen(content string) tea.View {
+	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
+}
+
+// goView renders the emitted program across the whole terminal: a title, the
+// code, and a footer of its own keys.
+//
+// It answers the question the source pane cannot — a Domain stage is one line,
+// and what it *is*, the loop and the allocation and the scan, is twenty lines
+// of Go — and it answers it about the *program*, not only the selected row: the
+// view opens at that row's code and scrolls anywhere from there, because the
+// code around a stage is most of what makes it legible.
+func (m *visualModel) goView() string {
+	src, _, err := m.view.emitted()
+	body := max(m.height-3, 1)
+
+	var b strings.Builder
+	if err != nil {
+		fmt.Fprintf(&b, "%s\n", pad(styTitle.Render("  emitted go "), m.width))
+		for _, line := range wrapVis(err.Error(), m.width-4) {
+			fmt.Fprintf(&b, "%s\n", pad("  "+styErr.Render(line), m.width))
+		}
+		fmt.Fprintf(&b, "%s\n", pad(styDim.Render(
+			"  the interpreter ran this program; the compiler backend cannot lower it yet"), m.width))
+		b.WriteString(pad(styDim.Render("  esc back · ")+styKey.Render("?")+styDim.Render(" keys"), m.width))
+		return b.String()
+	}
+
+	head := styTitle.Render("  emitted go ") + styDim.Render(fmt.Sprintf("%s · %s",
+		m.view.path, plural(len(src), "line")))
+	fmt.Fprintf(&b, "%s\n", pad(head, m.width))
+	fmt.Fprintf(&b, "%s\n", pad("  "+styDim.Render(m.goWhere()), m.width))
+
+	span, marked := m.goSpan()
+	for i := m.goTop; i < m.goTop+body-1; i++ {
+		if i >= len(src) {
+			b.WriteString(pad("", m.width) + "\n")
+			continue
+		}
+		line := i + 1
+		text := truncateVis(src[i], max(4, m.width-7))
+		// The selected row's own lines are lit and marked in the gutter, so the
+		// stage stays findable however far the reader has scrolled from it.
+		if marked && line >= span.Start && line < span.End {
+			fmt.Fprintf(&b, "%s\n", pad(styKey.Render("▌")+styDim.Render(fmt.Sprintf("%4d ", line))+
+				styValue.Render(text), m.width))
+			continue
+		}
+		fmt.Fprintf(&b, "%s\n", pad(" "+styDim.Render(fmt.Sprintf("%4d ", line))+styLabel.Render(text), m.width))
+	}
+	b.WriteString(pad(m.goFooter(len(src)), m.width))
+	return b.String()
+}
+
+// goWhere is the line under the title: which lines belong to the row the view
+// was opened on, or why none do.
+func (m *visualModel) goWhere() string {
+	if span, ok := m.goSpan(); ok {
+		return fmt.Sprintf("%s → lines %d–%d", m.rowLabel(), span.Start, span.End-1)
+	}
+	if m.selected() == nil {
+		return "a frame is a label around a sub-pipeline, and compiles to nothing of its own"
+	}
+	return m.rowLabel() + " left no code of its own — the backend fused it into its neighbour"
+}
+
+// rowLabel names the row the cursor is on, for a view that is not showing it.
+func (m *visualModel) rowLabel() string {
+	if n := m.selectedNode(); n != nil {
+		return n.Label()
+	}
+	return "(no row)"
+}
+
+func (m *visualModel) goFooter(lines int) string {
+	pos := fmt.Sprintf("  %d–%d/%d · ", m.goTop+1, min(m.goTop+max(m.height-4, 1), lines), lines)
+	keys := []string{"j/k scroll", "ctrl+d/u page", "g/G ends", "z back to the step", "esc back"}
+	return styDim.Render(pos + strings.Join(keys, " · "))
+}
+
+// helpView is the key list, opened with ? — where the keys live now that the
+// footer does not carry them. A stepper has more keys than a footer can hold
+// without becoming the loudest thing on screen.
+func (m *visualModel) helpView() string {
+	sections := []struct {
+		name  string
+		pairs [][2]string
+	}{
+		{"moving", [][2]string{
+			{"j / k", "down and up (arrows too)"},
+			{"l / h", "open and close a row; enter steps into an open one"},
+			{"g / G", "first and last row"},
+			{"H", "jump to the hottest row — the most self time"},
+			{"!", "jump to the next failing step, wrapping"},
+			{"/", "search: narrows the tree as you type, enter accepts, esc clears"},
+		}},
+		{"panes", [][2]string{
+			{"t", "the timing profile — call sites ranked by self time"},
+			{"s", "the program source, with each line's share of the run"},
+			{"e", "the optimizer's rewrites"},
+			{"esc", "back to the value pane, then out of a filter, then quit"},
+		}},
+		{"screens", [][2]string{
+			{"c", "the emitted Go, opened at the selected row's code"},
+			{"?", "this list"},
+			{"q", "quit"},
+		}},
+		{"reading a row", [][2]string{
+			{"%", "the row's share of the run; self% excludes its frames"},
+			{"result", "what a block's body produced — a Channel, Part or lap"},
+			{"N iterations", "a folded run of laps; open it for all of them"},
+		}},
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", pad(styTitle.Render("  keys ")+styDim.Render("any key returns"), m.width))
+	lines := 1
+	for _, sec := range sections {
+		if lines >= m.height-1 {
+			break
+		}
+		fmt.Fprintf(&b, "%s\n", pad("  "+styHeading.Render(sec.name), m.width))
+		lines++
+		for _, p := range sec.pairs {
+			if lines >= m.height-1 {
+				break
+			}
+			fmt.Fprintf(&b, "%s\n", pad("    "+styKey.Render(pad(p[0], 14))+
+				styDim.Render(truncateVis(p[1], max(10, m.width-20))), m.width))
+			lines++
+		}
+	}
+	for ; lines < m.height-1; lines++ {
+		b.WriteString(pad("", m.width) + "\n")
+	}
+	b.WriteString(pad(styDim.Render("  the same keys are in ")+
+		styKey.Render("docs/cli.md")+styDim.Render(" · any key returns"), m.width))
+	return b.String()
 }
 
 // title is the header line: the program, how much of it was recorded, and the
@@ -501,14 +758,28 @@ func (m *visualModel) treeLine(r visRow, selected bool, w, barW int, t *interp.T
 			label += " ✗"
 		}
 	}
+	// A block reports what its body produced, for the reason valueLines gives:
+	// its own output is the value it passes through, not the one it computed.
+	if b := r.node.Block; b != nil {
+		size = recSize(b)
+	}
 	// A closed row says what it is hiding, so a `Repeat 500` is not a mystery
 	// until it is opened — and so the row that is 98% of the run explains, on
 	// its face, that the 98% is 500 iterations of something.
 	if steps, frames := r.node.Counts(); !open && steps+frames > 0 {
-		if frames > 0 {
-			label += fmt.Sprintf(" (%d frames, %d steps)", frames, steps)
-		} else {
-			label += fmt.Sprintf(" (%d steps)", steps)
+		switch laps, folded := foldedChild(r.node); {
+		case r.node.Folded:
+			// The label already counts the laps. What it does not say is how
+			// much work they came to.
+			label += fmt.Sprintf(" (%s)", plural(steps, "step"))
+		case folded:
+			// The fold is an implementation detail of the display, so a loop
+			// counts its laps rather than the one row standing in for them.
+			label += fmt.Sprintf(" (%s, %s)", plural(laps, "iteration"), plural(steps, "step"))
+		case frames > 0:
+			label += fmt.Sprintf(" (%s, %s)", plural(frames, "frame"), plural(steps, "step"))
+		default:
+			label += fmt.Sprintf(" (%s)", plural(steps, "step"))
 		}
 	}
 
@@ -544,6 +815,23 @@ func (m *visualModel) treeLine(r visRow, selected bool, w, barW int, t *interp.T
 		cursor, styMarker.Render(marker), labelStyle.Render(label),
 		styDim.Render(fmt.Sprintf("%6s", size)), hot.Render(pct), hot.Render(bar))
 	return pad(line, w)
+}
+
+// foldedChild reports the laps of the fold a row holds, for a row whose whole
+// content is one — a loop, whose children the recorder gathered.
+func foldedChild(n *interp.TraceNode) (laps int, ok bool) {
+	if len(n.Children) != 1 {
+		return 0, false
+	}
+	return n.Children[0].Iterations()
+}
+
+// plural renders a count with its noun, so a row does not say "1 steps".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // highlightStyle picks out rows the filter actually matched, as opposed to the
@@ -605,13 +893,18 @@ func (m *visualModel) valueLines(w, h int) []string {
 	}
 	nt := m.view.times().Of(node)
 	if node.IsFrame() {
-		return m.frameLines(node, nt)
+		return m.frameLines(node, nt, w, h)
 	}
 	s := node.Step
-	out := []string{
-		styHeading.Render(s.Node.Prim),
-		field("type", styType.Render(typeOf(s))),
-		field("size", sizeOf(s)),
+	// A block — a Channel, a Part — hands its input back to the pipeline, so
+	// the type and size that describe it are its *body's*, not its own. The
+	// passthrough is still shown below, as the value the next stage receives.
+	block := node.Block
+	out := []string{styHeading.Render(s.Node.Prim)}
+	if block != nil {
+		out = append(out, field("type", styType.Render(block.Type)), field("size", recSize(block)))
+	} else {
+		out = append(out, field("type", styType.Render(typeOf(s))), field("size", sizeOf(s)))
 	}
 	if where := m.view.where(s.Node); where != "" {
 		out = append(out, field("source", styDim.Render(where)))
@@ -623,21 +916,37 @@ func (m *visualModel) valueLines(w, h int) []string {
 	if s.Node.In != nil {
 		out = append(out, field("in", truncateVis(s.InShort, w-7)), "")
 	}
-	out = append(out, styHeading.Render("out"))
 	if s.Err != nil {
-		out = append(out, "", styErr.Render("error: "+s.Err.Error()))
+		out = append(out, styErr.Render("error: "+s.Err.Error()), "")
 	}
-	body := s.Full
+	if block != nil {
+		out = append(out, styHeading.Render("result"),
+			styDim.Render("  what the body produced, after every step in it"))
+		out = append(out, valueBody(block.Short, block.Full, block.FullOK, w, h-len(out))...)
+		out = append(out, "", styHeading.Render("passes on"),
+			styDim.Render("  the value the next stage receives, unchanged"),
+			"  "+styValue.Render(truncateVis(s.Short, w-2)))
+		return out
+	}
+	out = append(out, styHeading.Render("out"))
+	return append(out, valueBody(s.Short, s.Full, s.FullOK, w, h-len(out))...)
+}
+
+// valueBody renders a captured value: the full rendering where one was kept,
+// the short one otherwise, clipped to the space left in the pane.
+func valueBody(short, full string, fullOK bool, w, h int) []string {
+	body := full
 	if body == "" {
-		body = s.Short
+		body = short
 	}
+	var out []string
 	for _, line := range strings.Split(body, "\n") {
 		if len(out) >= h {
 			break
 		}
 		out = append(out, "  "+styValue.Render(truncateVis(line, w-2)))
 	}
-	if !s.FullOK {
+	if !fullOK {
 		out = append(out, styDim.Render("  … (value truncated for display)"))
 	}
 	return out
@@ -664,20 +973,29 @@ func timeLines(nt interp.NodeTiming) []string {
 	return out
 }
 
-// frameLines describes a frame row. A frame holds no value, but it does hold a
-// cost — one iteration of a loop is exactly the thing you want to compare
-// against its siblings.
-func (m *visualModel) frameLines(node *interp.TraceNode, nt interp.NodeTiming) []string {
-	out := []string{
-		styFrame.Render(node.Frame),
-		styDim.Render("(a frame — the rows underneath are its steps)"),
-		"",
+// frameLines describes a frame row: what it cost — one iteration of a loop is
+// exactly the thing you want to compare against its siblings — and what its
+// body came to, which is the only place that value appears.
+func (m *visualModel) frameLines(node *interp.TraceNode, nt interp.NodeTiming, w, h int) []string {
+	what := "(a frame — the rows underneath are its steps)"
+	if laps, folded := node.Iterations(); folded {
+		what = fmt.Sprintf("(%d laps of one loop, folded — l opens them)", laps)
 	}
+	out := []string{styFrame.Render(node.Frame), styDim.Render(what), ""}
 	out = append(out, timeLines(nt)...)
 	steps, frames := node.Counts()
 	out = append(out, field("steps", fmt.Sprintf("%d", steps)))
 	if frames > 0 {
 		out = append(out, field("frames", fmt.Sprintf("%d", frames)))
+	}
+	// A frame does hold one value: what its body came to. On a fold that is the
+	// last lap's value, which is what the loop as a whole produced.
+	if b := node.Block; b != nil {
+		out = append(out, "", styHeading.Render("result"))
+		if b.Type != "" {
+			out = append(out, field("type", styType.Render(b.Type)), field("size", recSize(b)))
+		}
+		out = append(out, valueBody(b.Short, b.Full, b.FullOK, w, h-len(out))...)
 	}
 	return out
 }
@@ -786,6 +1104,9 @@ func (m *visualModel) explainLines(w, h int) []string {
 	return out
 }
 
+// footer is one quiet line: where the cursor is, whatever the last key did, and
+// the way to the keys. The legend it used to carry was the loudest thing on
+// screen and still could not hold every key — `?` holds all of them.
 func (m *visualModel) footer() string {
 	if m.searching {
 		return "  " + styKey.Render("/") + styMatch.Render(m.filter+" ") +
@@ -795,26 +1116,14 @@ func (m *visualModel) footer() string {
 	if m.filter != "" {
 		pos += fmt.Sprintf(" · /%s", m.filter)
 	}
+	keys := styKey.Render("?") + styDim.Render(" keys · ") + styKey.Render("q") + styDim.Render(" quit")
 	switch {
 	case m.status != "":
+		// A status message is what the reader just asked for, so it gets the
+		// width; the keys are one keystroke away regardless.
 		return styDim.Render(pos+" · ") + styKey.Render(truncateVis(m.status, m.width-len([]rune(pos))-6))
 	case m.view.runErr != nil:
-		return styDim.Render(pos+" · ") + styErr.Render("run failed") +
-			styDim.Render(" · ") + m.keyHelp()
+		return styDim.Render(pos+" · ") + styErr.Render("run failed") + styDim.Render(" · ") + keys
 	}
-	return styDim.Render(pos+" · ") + m.keyHelp()
-}
-
-// keyHelp is the footer's key legend, with the keys themselves picked out.
-func (m *visualModel) keyHelp() string {
-	pairs := [][2]string{
-		{"j/k", "move"}, {"l/h", "open/close"}, {"/", "search"},
-		{"H", "hottest"}, {"!", "failure"},
-		{"t", "profile"}, {"s", "source"}, {"e", "explain"}, {"q", "quit"},
-	}
-	var parts []string
-	for _, p := range pairs {
-		parts = append(parts, styKey.Render(p[0])+" "+styDim.Render(p[1]))
-	}
-	return strings.Join(parts, styDim.Render(" · "))
+	return styDim.Render(pos+" · ") + keys
 }

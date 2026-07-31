@@ -3,6 +3,7 @@ package codegen
 import (
 	"domain/ast"
 	"domain/ir"
+	"fmt"
 )
 
 // Lowerings for the section-D remainder: Window, Flatten, Enumerate, the
@@ -111,6 +112,7 @@ func (g *gen) emitFlatMapCountBy(mapNode, countNode *ir.Node, listArgs []ast.Exp
 	}
 	elemT := countNode.In.Elem
 	g.helper("dmMap", declMap)
+	g.helper("dmBump", declMapBump)
 	v, e := g.fresh("v"), g.fresh("e")
 	g.wl("%s := dmNewMap[%s, int64]()", v, keyGo)
 	g.wl("for _, %s := range %s {", e, in)
@@ -129,7 +131,7 @@ func (g *gen) emitFlatMapCountBy(mapNode, countNode *ir.Node, listArgs []ast.Exp
 		}
 		k := g.fresh("k")
 		g.wl("%s := %s", k, kBody)
-		g.wl("%s.put(%s, %s.vals[%s]+1)", v, k, v, k)
+		g.wl("dmBump(&%s, %s, 1)", v, k)
 	}
 	g.out()
 	g.wl("}")
@@ -184,6 +186,7 @@ func (g *gen) emitDigitGridToGrid(in string) string {
 func (g *gen) emitDigitGrid(in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
+	g.helper("dmParseIntSeg", declParseIntSeg)
 	g.imp("strings")
 	v := g.fresh("v")
 	i, line := g.fresh("i"), g.fresh("line")
@@ -210,13 +213,44 @@ func (g *gen) emitDigitGrid(in string) string {
 	g.in()
 	g.wl("%s := strings.Split(%s, \"\")", parts, line)
 	g.wl("%s := make([]int64, len(%s))", row, parts)
-	g.wl("for %s, %s := range %s { %s[%s] = dmParseInt(%s) }", j, s, parts, row, j, s)
+	g.wl("for %s, %s := range %s { %s[%s] = dmParseIntSeg(%s) }", j, s, parts, row, j, s)
 	g.wl("%s[%s] = %s", v, i, row)
 	g.out()
 	g.wl("}")
 	g.out()
 	g.wl("}")
 	return v
+}
+
+// emitSplitScan walks a string's segments for a single-byte separator, calling
+// body once per segment with the expression naming it. Four emitters shared
+// this loop by copy; they share it by call now.
+//
+// The index stays strictly inside the string. The shape this replaced —
+// `for i := 0; i <= len(s); i++ { if i == len(s) || s[i] == sep }` — reads
+// s[i] under a condition the prover cannot combine with the loop bound, so the
+// byte load kept a bounds check it did not need; `-d=ssa/check_bce/debug=1`
+// reports IsInBounds on that line before and not after. Emitting the final
+// segment after the loop rather than on a phantom last lap produces exactly
+// the same segments, including the lone empty one for the empty string.
+//
+// Measured, the elimination is worth nothing on the benchmarks (±1%, inside
+// the noise): the loop is memory-bound and the removed compare predicts
+// perfectly. It is kept for the shared shape, not for a speedup.
+func (g *gen) emitSplitScan(sep byte, in string, body func(seg string)) {
+	start, i := g.fresh("start"), g.fresh("i")
+	g.wl("%s := 0", start)
+	g.wl("for %s := 0; %s < len(%s); %s++ {", i, i, in, i)
+	g.in()
+	g.wl("if %s[%s] == %s {", in, i, goByte(sep))
+	g.in()
+	body(fmt.Sprintf("%s[%s:%s]", in, start, i))
+	g.wl("%s = %s + 1", start, i)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+	body(fmt.Sprintf("%s[%s:]", in, start))
 }
 
 // emitSplitInts lowers Split(single-byte sep) + Convert To Integers over a
@@ -229,28 +263,15 @@ func (g *gen) emitSplitInts(sep byte, in string) string {
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	g.helper("dmParseIntSeg", declParseIntSeg)
 	v := g.fresh("v")
-	start, i := g.fresh("start"), g.fresh("i")
 	g.wl("%s := make([]int64, 0, len(%s)/2+1)", v, in)
-	g.wl("%s := 0", start)
-	g.wl("for %s := 0; %s <= len(%s); %s++ {", i, i, in, i)
-	g.in()
-	g.wl("if %s == len(%s) || %s[%s] == %s {", i, in, in, i, goByte(sep))
-	g.in()
 	// Fast inline parse of the clean segment; dmParseIntSeg handles surrounding
 	// whitespace / overflow exactly as dmParseInt(TrimSpace) would.
-	g.wl("%s = append(%s, dmParseIntSeg(%s[%s:%s]))", v, v, in, start, i)
-	g.wl("%s = %s + 1", start, i)
-	g.out()
-	g.wl("}")
-	g.out()
-	g.wl("}")
+	g.emitSplitScan(sep, in, func(seg string) {
+		g.wl("%s = append(%s, dmParseIntSeg(%s))", v, v, seg)
+	})
 	return v
 }
 
-// emitFieldsMapSum streams Split Fields + Convert To Integers + Map Each + Sum:
-// each line's integers are parsed into a single reused buffer, the map lambda
-// is applied to that buffer, and its scalar result is accumulated — no
-// intermediate lists and no per-line allocation on the fast path.
 // emitFieldsUnionCount streams Split Fields + Convert To Integers + Union +
 // Count into a distinct-integer count over one map — no [][]int64, no per-group
 // set, no ordered elems slice. Union+Count is exactly the number of distinct
@@ -258,6 +279,7 @@ func (g *gen) emitSplitInts(sep byte, in string) string {
 func (g *gen) emitFieldsUnionCount(sep, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
+	g.helper("dmParseIntSeg", declParseIntSeg)
 	g.helper("dmParseFieldsInt", declParseFieldsInt)
 	g.imp("strings")
 	seen, buf, x := g.fresh("seen"), g.fresh("buf"), g.fresh("x")
@@ -271,7 +293,7 @@ func (g *gen) emitFieldsUnionCount(sep, in string) string {
 		g.in()
 		g.wl("%s := strings.Fields(%s)", fields, line)
 		g.wl("%s = %s[:0]", buf, buf)
-		g.wl("for _, %s := range %s { %s = append(%s, dmParseInt(%s)) }", s, fields, buf, buf, s)
+		g.wl("for _, %s := range %s { %s = append(%s, dmParseIntSeg(%s)) }", s, fields, buf, buf, s)
 		g.out()
 		g.wl("}")
 		g.wl("for _, %s := range %s { %s[%s] = struct{}{} }", x, buf, seen, x)
@@ -315,6 +337,7 @@ func (g *gen) emitFieldsUnionCount(sep, in string) string {
 func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (string, error) {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
+	g.helper("dmParseIntSeg", declParseIntSeg)
 	g.helper("dmParseFieldsInt", declParseFieldsInt)
 	g.imp("strings")
 	lam, err := g.nodeLambda(extNode)
@@ -341,7 +364,7 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 		g.in()
 		g.wl("%s := strings.Fields(%s)", fields, line)
 		g.wl("%s = %s[:0]", buf, buf)
-		g.wl("for _, %s := range %s { %s = append(%s, dmParseInt(%s)) }", s, fields, buf, buf, s)
+		g.wl("for _, %s := range %s { %s = append(%s, dmParseIntSeg(%s)) }", s, fields, buf, buf, s)
 		g.out()
 		g.wl("}")
 		g.wl("%s := %s", k, kbody)
@@ -397,6 +420,7 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 func (g *gen) emitFieldsMapSum(sep string, mapNode, sumNode *ir.Node, in string) (string, error) {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
+	g.helper("dmParseIntSeg", declParseIntSeg)
 	g.helper("dmParseFieldsInt", declParseFieldsInt)
 	g.imp("strings")
 	lam, err := g.nodeLambda(mapNode)
@@ -426,7 +450,7 @@ func (g *gen) emitFieldsMapSum(sep string, mapNode, sumNode *ir.Node, in string)
 		g.in()
 		g.wl("%s := strings.Fields(%s)", fields, line)
 		g.wl("%s = %s[:0]", buf, buf)
-		g.wl("for _, %s := range %s { %s = append(%s, dmParseInt(%s)) }", s, fields, buf, buf, s)
+		g.wl("for _, %s := range %s { %s = append(%s, dmParseIntSeg(%s)) }", s, fields, buf, buf, s)
 		g.out()
 		g.wl("}")
 		g.wl("%s += %s", v, body)
@@ -466,6 +490,7 @@ func (g *gen) emitFieldsMapSum(sep string, mapNode, sumNode *ir.Node, in string)
 func (g *gen) emitFieldsInts(in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
+	g.helper("dmParseIntSeg", declParseIntSeg)
 	g.helper("dmParseFieldsInt", declParseFieldsInt)
 	g.imp("strings")
 	v := g.fresh("v")
@@ -513,7 +538,7 @@ func (g *gen) emitSplitIntsEnumerateMapSum(sep byte, enumNode, mapNode, sumNode 
 	if err != nil {
 		return "", err
 	}
-	v, n, start, i := g.fresh("v"), g.fresh("n"), g.fresh("start"), g.fresh("i")
+	v, n := g.fresh("v"), g.fresh("n")
 	e, p := g.fresh("e"), g.fresh("p")
 	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: p, typ: mapNode.In.Elem}})
 	if err != nil {
@@ -521,20 +546,12 @@ func (g *gen) emitSplitIntsEnumerateMapSum(sep byte, enumNode, mapNode, sumNode 
 	}
 	g.wl("var %s %s", v, acc)
 	g.wl("%s := 0", n) // running Enumerate index
-	g.wl("%s := 0", start)
-	g.wl("for %s := 0; %s <= len(%s); %s++ {", i, i, in, i)
-	g.in()
-	g.wl("if %s == len(%s) || %s[%s] == %s {", i, in, in, i, goByte(sep))
-	g.in()
-	g.wl("%s := dmParseIntSeg(%s[%s:%s])", e, in, start, i)
-	g.wl("%s := %s{int64(%s), %s}", p, tupGo, n, e)
-	g.wl("%s += %s", v, body)
-	g.wl("%s++", n)
-	g.wl("%s = %s + 1", start, i)
-	g.out()
-	g.wl("}")
-	g.out()
-	g.wl("}")
+	g.emitSplitScan(sep, in, func(seg string) {
+		g.wl("%s := dmParseIntSeg(%s)", e, seg)
+		g.wl("%s := %s{int64(%s), %s}", p, tupGo, n, e)
+		g.wl("%s += %s", v, body)
+		g.wl("%s++", n)
+	})
 	return v, nil
 }
 
@@ -550,23 +567,14 @@ func (g *gen) emitSplitIntsPairCount(sep byte, scanNode *ir.Node, in string) (st
 	if !ok {
 		return "", unsupported(scanNode, "missing target metadata")
 	}
-	v, seen := g.fresh("v"), g.fresh("seen")
-	start, i, x := g.fresh("start"), g.fresh("i"), g.fresh("x")
+	v, seen, x := g.fresh("v"), g.fresh("seen"), g.fresh("x")
 	g.wl("%s := make(map[int64]int64)", seen)
 	g.wl("var %s int64", v)
-	g.wl("%s := 0", start)
-	g.wl("for %s := 0; %s <= len(%s); %s++ {", i, i, in, i)
-	g.in()
-	g.wl("if %s == len(%s) || %s[%s] == %s {", i, in, in, i, goByte(sep))
-	g.in()
-	g.wl("%s := dmParseIntSeg(%s[%s:%s])", x, in, start, i)
-	g.wl("%s += %s[%d-%s]", v, seen, target, x)
-	g.wl("%s[%s]++", seen, x)
-	g.wl("%s = %s + 1", start, i)
-	g.out()
-	g.wl("}")
-	g.out()
-	g.wl("}")
+	g.emitSplitScan(sep, in, func(seg string) {
+		g.wl("%s := dmParseIntSeg(%s)", x, seg)
+		g.wl("%s += %s[%d-%s]", v, seen, target, x)
+		g.wl("%s[%s]++", seen, x)
+	})
 	return v, nil
 }
 
@@ -583,7 +591,7 @@ func (g *gen) emitSplitIntsFold(sep byte, foldNode *ir.Node, in string) (string,
 		return "", err
 	}
 	seed, _ := foldNode.Meta["seed"].(int64)
-	acc, start, i, e := g.fresh("acc"), g.fresh("start"), g.fresh("i"), g.fresh("e")
+	acc, e := g.fresh("acc"), g.fresh("e")
 	g.wl("%s := int64(%d)", acc, seed)
 	body, _, err := g.compileExpr(lam.Body, exprEnv{
 		lam.Params[0]: {expr: acc, typ: foldNode.Out},
@@ -592,18 +600,10 @@ func (g *gen) emitSplitIntsFold(sep byte, foldNode *ir.Node, in string) (string,
 	if err != nil {
 		return "", unsupported(foldNode, "lambda: %v", err)
 	}
-	g.wl("%s := 0", start)
-	g.wl("for %s := 0; %s <= len(%s); %s++ {", i, i, in, i)
-	g.in()
-	g.wl("if %s == len(%s) || %s[%s] == %s {", i, in, in, i, goByte(sep))
-	g.in()
-	g.wl("%s := dmParseIntSeg(%s[%s:%s])", e, in, start, i)
-	g.wl("%s = %s", acc, body)
-	g.wl("%s = %s + 1", start, i)
-	g.out()
-	g.wl("}")
-	g.out()
-	g.wl("}")
+	g.emitSplitScan(sep, in, func(seg string) {
+		g.wl("%s := dmParseIntSeg(%s)", e, seg)
+		g.wl("%s = %s", acc, body)
+	})
 	return acc, nil
 }
 
@@ -664,8 +664,12 @@ func (g *gen) emitFlatten(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	v, grp := g.fresh("v"), g.fresh("grp")
-	g.wl("%s := []%s{}", v, elemGo)
+	v, grp, total := g.fresh("v"), g.fresh("grp"), g.fresh("total")
+	// The exact length is one pass over the outer list away, and the outer
+	// list is orders of magnitude shorter than what it flattens to.
+	g.wl("%s := 0", total)
+	g.wl("for _, %s := range %s { %s += len(%s) }", grp, in, total, grp)
+	g.wl("%s := make([]%s, 0, %s)", v, elemGo, total)
 	g.wl("for _, %s := range %s {", grp, in)
 	g.in()
 	g.wl("%s = append(%s, %s...)", v, v, grp)
@@ -735,12 +739,13 @@ func (g *gen) emitCountBy(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "lambda: %v", err)
 	}
 	g.helper("dmMap", declMap)
+	g.helper("dmBump", declMapBump)
 	v, k := g.fresh("v"), g.fresh("k")
 	g.wl("%s := dmNewMap[%s, int64]()", v, keyGo)
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.wl("%s := %s", k, body)
-	g.wl("%s.put(%s, %s.vals[%s]+1)", v, k, v, k)
+	g.wl("dmBump(&%s, %s, 1)", v, k)
 	g.out()
 	g.wl("}")
 	return v, nil

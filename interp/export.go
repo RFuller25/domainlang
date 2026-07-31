@@ -39,6 +39,18 @@ type Row struct {
 	Out  string `json:"out,omitempty"`  // short rendering of the output
 	Err  string `json:"error,omitempty"`
 
+	// What the row's own body produced, on a row that has one: a Channel or
+	// Part's block value, or one lap of a loop. Those stages hand their input
+	// back to the pipeline, so Out and Result are different answers and a
+	// reader asking what the block computed wants this one.
+	Result     string `json:"result,omitempty"`
+	ResultType string `json:"result_type,omitempty"`
+	ResultSize *int   `json:"result_size,omitempty"`
+
+	// Folded marks the synthetic row standing in for a run of loop laps. Its
+	// children are those laps, unabridged.
+	Folded bool `json:"folded,omitempty"`
+
 	TimeNs  int64   `json:"time_ns"`
 	Time    string  `json:"time"`
 	Pct     float64 `json:"pct"`
@@ -93,10 +105,17 @@ func exportRows(nodes []*TraceNode, t *Timing) []Row {
 	for _, n := range nodes {
 		nt := t.Of(n)
 		row := Row{
-			Kind: "frame", Label: n.Label(),
+			Kind: "frame", Label: n.Label(), Folded: n.Folded,
 			TimeNs: nt.Total.Nanoseconds(), Time: FormatDuration(nt.Total),
 			Pct: round1(nt.TotalPct), SelfNs: nt.Self.Nanoseconds(), SelfPct: round1(nt.SelfPct),
 			Children: exportRows(n.Children, t),
+		}
+		if b := n.Block; b != nil {
+			row.Result, row.ResultType = b.Short, b.Type
+			if b.SizeOK {
+				size := b.Size
+				row.ResultSize = &size
+			}
 		}
 		if !n.IsFrame() {
 			s := n.Step

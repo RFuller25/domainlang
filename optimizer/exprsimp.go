@@ -2,7 +2,8 @@ package optimizer
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -60,11 +61,7 @@ func simplifyLambdaBodies(p *ir.Pipeline) []Rewrite {
 				continue
 			}
 			lam.Body = body
-			kinds := make([]string, 0, len(s.kinds))
-			for k := range s.kinds {
-				kinds = append(kinds, k)
-			}
-			sort.Strings(kinds)
+			kinds := slices.Sorted(maps.Keys(s.kinds))
 			rewrites = append(rewrites, Rewrite{Message: fmt.Sprintf(
 				"Domain simplified the Using: lambda of %s (%s). Guaranteed hit.",
 				n.Prim, strings.Join(kinds, ", "))})

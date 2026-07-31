@@ -81,11 +81,34 @@ func (b *blockPipeline) BindBlock(in *ir.Type) (*ir.Type, error) {
 // RunBlock applies the resolved body to one value. The Context comes from the
 // evaluation in progress (ir.EvalNode records it): a lambda body has no
 // Context parameter, and a `Reveal:` or `Binding Vow` inside a body needs one.
+//
+// Each application is a trace frame, for the same reason a loop's laps are: a
+// body runs once per element, and without a frame its steps land beside the
+// stage that ran them — a hundred elements of a three-stage body reading as
+// three hundred rows of the enclosing block, with the stage that produced them
+// last. Framed, they nest under it and fold into one row that opens.
 func (b *blockPipeline) RunBlock(v ir.Value) (ir.Value, error) {
 	if b.nodes == nil {
 		return nil, fmt.Errorf("%s: body was never resolved", b.pos)
 	}
-	return runBody(ir.CurrentContext(), b.nodes, v)
+	ctx := ir.CurrentContext()
+	if !ctx.Tracing() {
+		// Nobody is watching, and this runs once per element: no frame, and no
+		// deferred call to close one.
+		return runBody(ctx, b.nodes, v)
+	}
+	// The frame is unnumbered: the primitive calls the body through the lambda
+	// layer, which does not say which element this is. The recorder numbers a
+	// run of same-named siblings itself, where the count is known.
+	var out ir.Value
+	ctx.PushFrame(b.prim+" body", b.out)
+	defer func() { ctx.PopFrame(out) }()
+
+	out, err := runBody(ctx, b.nodes, v)
+	if err != nil {
+		out = nil
+	}
+	return out, err
 }
 
 // BlockNodes is the resolved body, for the optimizer and the compiler.
@@ -120,18 +143,4 @@ func (r *resolver) blockLambda(stmts []*ast.Statement, arity int, prim string, p
 			Pos:   pos,
 		},
 	}, nil
-}
-
-// blockNodes returns the resolved body behind a lambda that is a nested
-// pipeline, or nil for an ordinary expression lambda. The optimizer and the
-// compiler both need to see inside one.
-func blockNodes(lam *ast.Lambda) []*ir.Node {
-	if lam == nil {
-		return nil
-	}
-	bb, ok := lam.Body.(*ast.BlockBody)
-	if !ok {
-		return nil
-	}
-	return bb.Pipe.BlockNodes()
 }

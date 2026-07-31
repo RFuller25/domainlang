@@ -2,6 +2,7 @@ package prims
 
 import (
 	"fmt"
+	"slices"
 
 	"domain/ast"
 	"domain/eval"
@@ -142,14 +143,7 @@ func buildVowCheck(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Positi
 	}
 }
 
-func hasSym(op *ast.Operation, s string) bool {
-	for _, x := range op.OpSyms {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
+func hasSym(op *ast.Operation, s string) bool { return slices.Contains(op.OpSyms, s) }
 
 func compareFunc(sym string) (func(a, b int64) bool, error) {
 	switch sym {

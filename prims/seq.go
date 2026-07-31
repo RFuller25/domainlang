@@ -2,7 +2,8 @@ package prims
 
 import (
 	"fmt"
-	"sort"
+	"slices"
+	"strings"
 
 	"domain/ast"
 	"domain/eval"
@@ -326,19 +327,7 @@ func anyKey(lam *ast.Lambda, elem *ir.Type, x ir.Value) (ir.Value, error) {
 		append([]ir.Value{x}, ambientArgs()...)...)
 }
 
-func splitID(id string) []string {
-	out := []string{}
-	cur := ""
-	for _, r := range id {
-		if r == ' ' {
-			out = append(out, cur)
-			cur = ""
-			continue
-		}
-		cur += string(r)
-	}
-	return append(out, cur)
-}
+func splitID(id string) []string { return strings.Split(id, " ") }
 
 // ---------------------------------------------------------------------------
 // Domain Expansion: Sort By — List<T> x (T -> Int) -> List<T>: stable sort by
@@ -400,12 +389,12 @@ var sortBy = &Primitive{
 				for i := range idx {
 					idx[i] = i
 				}
-				sort.SliceStable(idx, func(a, b int) bool {
-					c := ir.Compare(keys[idx[a]], keys[idx[b]])
+				slices.SortStableFunc(idx, func(a, b int) int {
+					c := ir.Compare(keys[a], keys[b])
 					if desc {
-						return c > 0
+						return -c
 					}
-					return c < 0
+					return c
 				})
 				out := make([]ir.Value, len(xs))
 				for i, j := range idx {

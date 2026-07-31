@@ -22,24 +22,8 @@ func fuseAllPairsSum(p *ir.Pipeline) []Rewrite {
 	// permits — its sibling passes in scans.go and product.go already do this.
 	for _, list := range nodeLists(p) {
 		for _, n := range list {
-			if n.Prim != "All Pairs" {
-				continue
-			}
-			if hasMeasuredArg(n) {
-				continue // the arity this rewrite assumes must be a constant
-			}
-			if k, _ := n.Meta["k"].(int); k != 2 {
-				continue
-			}
-			mode, _ := n.Meta["mode"].(string)
-			if mode != "First" && mode != "Count" {
-				continue
-			}
-			if n.In == nil || !n.In.Equal(ir.List(ir.Int())) {
-				continue
-			}
-			lam, _ := n.Meta["lambda"].(*ast.Lambda)
-			if lam == nil {
+			mode, lam, ok := combinatorialScan(n, "All Pairs", 2)
+			if !ok {
 				continue
 			}
 			target, ok := matchSumPair(lam)
@@ -154,11 +138,11 @@ func FindPairSum(xs []int64, target int64) ([]int64, bool) {
 	for _, x := range xs {
 		remaining[x]++
 	}
-	for i := 0; i < len(xs); i++ {
-		remaining[xs[i]]-- // now reflects indices > i
-		need := target - xs[i]
+	for _, x := range xs {
+		remaining[x]-- // now reflects indices > i
+		need := target - x
 		if remaining[need] > 0 {
-			return []int64{xs[i], need}, true
+			return []int64{x, need}, true
 		}
 	}
 	return nil, false

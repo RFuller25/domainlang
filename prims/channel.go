@@ -49,15 +49,17 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 		Meta:    map[string]any{"name": name, "nodes": subNodes},
 		Pos:     stmt.Pos,
 		Eval: func(ctx *ir.Context, in ir.Value) (ir.Value, error) {
-			ctx.PushFrame(fmt.Sprintf("Channel %q", name))
-			defer ctx.PopFrame()
-			v := in
-			var err error
-			for _, n := range subNodes {
-				if v, err = ir.EvalNode(ctx, n, v); err != nil {
-					return nil, err
-				}
+			// The result is reported to the tracer on the way out, so a failed
+			// body closes its frame as unfinished rather than leaving it open.
+			var body ir.Value
+			ctx.PushFrame(fmt.Sprintf("Channel %q", name), subType)
+			defer func() { ctx.PopFrame(body) }()
+
+			v, err := runBody(ctx, subNodes, in)
+			if err != nil {
+				return nil, err
 			}
+			body = v
 			ctx.SetChannel(name, v)
 			return in, nil
 		},
@@ -136,12 +138,9 @@ func buildZip(froms []string, types []*ir.Type, cur *ir.Type, pos token.Position
 			if err != nil {
 				return nil, runtimeErr("Zip", pos, "channel %q: %v", b, err)
 			}
-			n := len(as)
-			if len(bs) < n {
-				n = len(bs)
-			}
+			n := min(len(as), len(bs))
 			zipped := make([]ir.Value, n)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				zipped[i] = []ir.Value{as[i], bs[i]}
 			}
 			return zipped, nil
@@ -187,12 +186,9 @@ func buildZipWith(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, p
 			if err != nil {
 				return nil, err
 			}
-			n := len(as)
-			if len(bs) < n {
-				n = len(bs) // truncated to the shorter list, like Zip
-			}
+			n := min(len(as), len(bs)) // truncated to the shorter list, like Zip
 			out := make([]ir.Value, n)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				r, err := eval.EvalLambdaTyped(lam, elems, as[i], bs[i])
 				if err != nil {
 					return nil, runtimeErr("Zip With", pos, "element %d: %v", i, err)
@@ -309,17 +305,16 @@ func buildCombine(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, p
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: "Combine: " + err.Error()}
 	}
-	names := froms
 	return &ir.Node{
 		Prim:    "Combine",
 		In:      cur,
 		Out:     outType,
 		Display: "Combine From: " + strings.Join(froms, ", "),
-		Meta:    map[string]any{"from": names, "lambda": lam},
+		Meta:    map[string]any{"from": froms, "lambda": lam},
 		Pos:     pos,
 		Eval: func(ctx *ir.Context, _ ir.Value) (ir.Value, error) {
-			vals := make([]ir.Value, len(names))
-			for i, n := range names {
+			vals := make([]ir.Value, len(froms))
+			for i, n := range froms {
 				v, ok := ctx.Channel(n)
 				if !ok {
 					return nil, runtimeErr("Combine", pos, "channel %q was not computed", n)

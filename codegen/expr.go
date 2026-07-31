@@ -348,13 +348,13 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmSparse", declSparse, "sort")
+		g.helper("dmSparse", declSparse, "slices")
 		return "dmNewSparse[" + elemGo + "](" + args[0] + ")", ir.Sparse(types[0]), nil
 	case "put":
 		if types[0] == nil || types[0].Kind != ir.KSparse {
 			return "", nil, fmt.Errorf("put needs a Sparse argument, got %s", types[0])
 		}
-		g.helper("dmSparse", declSparse, "sort")
+		g.helper("dmSparse", declSparse, "slices")
 		g.helper("dmSparsePut", declSparsePut)
 		return "dmSparsePut(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
 			types[0], nil
@@ -463,7 +463,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if isFloatType(types[0]) || isFloatType(types[1]) || isFloatType(types[2]) {
 			res = ir.Float()
 			a = make([]string, 3)
-			for i := 0; i < 3; i++ {
+			for i := range 3 {
 				if isFloatType(types[i]) {
 					a[i] = args[i]
 				} else {
@@ -521,20 +521,20 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			g.helper("dmIndexOfText", declIndexOfText, "strings", "unicode/utf8")
 			return "dmIndexOfText(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 		}
-		elem, err := listElem(0)
-		if err != nil {
+		if _, err := listElem(0); err != nil {
 			return "", nil, err
 		}
 		g.helper("dmIndexOf", declIndexOf)
-		_ = elem
 		return "dmIndexOf(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "charat":
 		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmASCII", declASCII, "unicode/utf8")
 		g.helper("dmCharAt", declCharAt)
 		return "dmCharAt(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
 	case "slice":
 		g.helper("dmClampRange", declClampRange)
 		if types[0] != nil && types[0].Kind == ir.KText {
+			g.helper("dmASCII", declASCII, "unicode/utf8")
 			g.helper("dmSliceText", declSliceText)
 			return "dmSliceText(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text(), nil
 		}
@@ -663,23 +663,22 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "(" + args[0] + ").keys", ir.List(types[0].Key), nil
 	case "values":
 		g.helper("dmMap", declMap)
-		keyGo, err := g.goType(types[0].Key)
-		if err != nil {
+		// The key and value types are not named by the (generic) helper, but
+		// interning them here keeps their struct declarations emitted and
+		// surfaces an uncompilable element type at the same point it used to.
+		if _, err := g.goType(types[0].Key); err != nil {
 			return "", nil, err
 		}
-		valGo, err := g.goType(types[0].Elem)
-		if err != nil {
+		if _, err := g.goType(types[0].Elem); err != nil {
 			return "", nil, err
 		}
-		g.helper("dmMapValues", fmt.Sprintf(`func dmMapValues[K comparable, V any](m dmMap[K, V]) []V {
+		g.helper("dmMapValues", `func dmMapValues[K comparable, V any](m dmMap[K, V]) []V {
 	out := make([]V, 0, len(m.keys))
 	for _, k := range m.keys {
 		out = append(out, m.vals[k])
 	}
 	return out
-}`))
-		_ = keyGo
-		_ = valGo
+}`)
 		return "dmMapValues(" + args[0] + ")", ir.List(types[0].Elem), nil
 	case "tolist":
 		g.helper("dmSet", declSet)
@@ -909,11 +908,11 @@ func callName(e ast.Expr) (*ast.CallExpr, string) {
 // no-copy subslice. The helper fails on an empty range exactly as max does, so
 // guarded uses behave identically. Returns ok=false (shape not matched) to let
 // the ordinary comparison path run — including surfacing type errors there.
-func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, bool, error) {
+func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, bool) {
 	switch x.Op {
 	case token.LT, token.GT, token.LE, token.GE:
 	default:
-		return "", nil, false, nil
+		return "", nil, false
 	}
 	isMax := func(e ast.Expr) *ast.CallExpr {
 		if c, n := callName(e); n == "max" && len(c.Args) == 1 {
@@ -931,22 +930,22 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 	case rMax != nil && lMax == nil:
 		maxCall, scalarExpr, op = rMax, x.Left, mirrorCmp(x.Op)
 	default:
-		return "", nil, false, nil
+		return "", nil, false
 	}
 	td, tdName := callName(maxCall.Args[0])
 	if (tdName != "take" && tdName != "drop") || len(td.Args) != 2 {
-		return "", nil, false, nil
+		return "", nil, false
 	}
 	isDrop := tdName == "drop"
 
 	// Shape confirmed; compile the pieces we need.
 	sv, st, err := g.compileExpr(scalarExpr, env)
 	if err != nil || !numericType(st) {
-		return "", nil, false, nil
+		return "", nil, false
 	}
 	nv, _, err := g.compileExpr(td.Args[1], env)
 	if err != nil {
-		return "", nil, false, nil
+		return "", nil, false
 	}
 
 	// max(range) >= s for LT/GE, max(range) > s for LE/GT; negate for LT/LE.
@@ -973,7 +972,7 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 	if call == "" { // generic list (includes row(g,r), a no-copy subslice)
 		seqv, seqt, serr := g.compileExpr(td.Args[0], env)
 		if serr != nil || seqt == nil || seqt.Kind != ir.KList || !numericType(seqt.Elem) {
-			return "", nil, false, nil
+			return "", nil, false
 		}
 		elem = seqt.Elem
 		sub, subDecl := "dmTake", declTake
@@ -990,18 +989,16 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 		call = fmt.Sprintf("%s(%s(%s, %s), %s)", base, sub, seqv, nv, sv)
 	}
 	if isFloatType(elem) != isFloatType(st) {
-		return "", nil, false, nil // mixed int/float: leave to the normal path
+		return "", nil, false // mixed int/float: leave to the normal path
 	}
 	if negate {
 		call = "(!" + call + ")"
 	}
-	return call, ir.Bool(), true, nil
+	return call, ir.Bool(), true
 }
 
 func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, error) {
-	if fused, ft, ok, err := g.tryMaxCompare(x, env); err != nil {
-		return "", nil, err
-	} else if ok {
+	if fused, ft, ok := g.tryMaxCompare(x, env); ok {
 		return fused, ft, nil
 	}
 	l, lt, err := g.compileExpr(x.Left, env)

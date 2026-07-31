@@ -1,0 +1,14 @@
+# The generators: Iterate keeps the whole trajectory a Repeat loop throws
+# away, and Unfold grows a value back into a list.
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> toint(s)
+Cursed Technique: Iterate 2000000
+    Using: (x) -> (x * 48271) % 2147483647
+Maximum Technique: Sum By
+    Using: (x) -> x % 7
+Cursed Technique: Unfold
+    While: (x) -> x > 1
+    Using: (x) -> x / 2
+Maximum Technique: Count
+Reveal: stdout

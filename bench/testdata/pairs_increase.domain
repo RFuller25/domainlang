@@ -1,0 +1,9 @@
+# List shaping (v0.5): Pairs tuples each element with the next, so counting
+# increases needs no Window and no index arithmetic.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Pairs
+Maximum Technique: Count Matching
+    Using: (p) -> pcol(p) > prow(p)
+Reveal: stdout

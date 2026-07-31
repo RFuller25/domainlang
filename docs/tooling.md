@@ -186,7 +186,9 @@ not a file, so `:visualize` records it in place and hands the recording to that
 same stepper as an overlay: step through it, press `q`, and the prompt is where
 it was. The recording is of the program **as the session runs it** —
 unoptimized — because that is the program being built; the rewrites the
-optimizer would apply are collected separately for the explain pane.
+optimizer would apply are collected separately for the explain pane, and the
+code screen (`c`) compiles the session's own program, so "what would this become"
+is one keystroke away from the statement you just typed.
 
 Piped, `:visualize` prints the text trace instead, which is what `--plain`
 prints and for the same reason.

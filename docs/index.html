@@ -1,6 +1,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Domain documentation</title>
+<meta name="description" content="Domain is a pipeline language for Advent of Code: you describe what needs to happen, and the compiler decides how to do it optimally. Reference, tutorial, 32 runnable programs, and a browser playground.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Domain documentation">
+<meta property="og:site_name" content="Domain">
+<meta property="og:description" content="A pipeline language for Advent of Code — you describe what, the compiler decides how. Reference, tutorial, 32 runnable programs, and a browser playground.">
+<meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c3aed'/%3E%3Ctext x='16' y='23' font-size='20' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3ED%3C/text%3E%3C/svg%3E">
 <style>
   :root {
@@ -245,7 +252,11 @@
   article th { background: var(--bg-alt); font-weight: 600; }
   article tr:nth-child(even) td { background: var(--bg-alt); }
   article hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
-  article a.heading-anchor { color: var(--text-muted); opacity: 0; margin-left: 8px; font-weight: 400; text-decoration: none; }
+  article a.heading-anchor {
+    color: var(--text-muted); opacity: 0; margin-left: 8px; font-weight: 400;
+    text-decoration: none; font-size: 0.8em; cursor: pointer;
+  }
+  article a.heading-anchor:hover { color: var(--accent-text); }
   article h1:hover .heading-anchor, article h2:hover .heading-anchor,
   article h3:hover .heading-anchor, article h4:hover .heading-anchor { opacity: 1; }
   article img { max-width: 100%; }
@@ -300,6 +311,143 @@
     font-size: 0.72rem; color: var(--text-muted);
   }
   .search-foot kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+
+  /* Present to screen readers, invisible on screen — the search dialog's own
+     name, and the live region that announces how many results there are. */
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  .search-panel .scope-btn {
+    flex: none; padding: 3px 10px; font: 600 0.7rem/1.5 var(--sans); cursor: pointer;
+    color: var(--text-muted); background: var(--bg-alt); border: 1px solid var(--border);
+    border-radius: 20px;
+  }
+  .search-panel .scope-btn:hover { color: var(--accent-text); border-color: var(--accent); }
+  .search-panel .scope-btn[aria-pressed="true"] {
+    color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent);
+  }
+  .search-recents { padding: 10px 14px 14px; }
+  .search-recents .rec-label {
+    font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-muted); font-weight: 700; margin-bottom: 8px;
+  }
+  .search-recents button {
+    font: 500 0.82rem/1.5 var(--sans); color: var(--text); background: var(--bg-alt);
+    border: 1px solid var(--border); border-radius: 20px; padding: 3px 12px;
+    margin: 0 6px 6px 0; cursor: pointer;
+  }
+  .search-recents button:hover { color: var(--accent-text); border-color: var(--accent); }
+
+  /* ---- Program gallery (examples / challenges) ---- */
+  article .program { margin: 0 0 2.6em; }
+  article .program h2 { margin-top: 1.6em; }
+  .program-meta { display: flex; align-items: center; gap: 10px; margin: 0 0 0.8em; flex-wrap: wrap; }
+  .program-meta code { font-size: 0.78rem; color: var(--text-muted); }
+  .program-desc { color: var(--text-muted); }
+  .program-io { margin: 0 0 1em; }
+  .program-io summary {
+    cursor: pointer; font-size: 0.8rem; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; padding: 4px 0;
+  }
+  .program-io summary:hover { color: var(--accent-text); }
+  .program-io pre, .program-out pre { margin-top: 0.5em; }
+  .io-label {
+    display: block; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); font-weight: 700; margin-bottom: 4px;
+  }
+  .program-out pre { border-left: 3px solid var(--accent); }
+
+  /* Run / Explain, on gallery cards and on runnable code blocks alike */
+  .run-btn, .explain-btn {
+    padding: 3px 11px; font: 600 0.72rem/1.6 var(--sans); cursor: pointer;
+    color: var(--accent-text); background: var(--bg); border: 1px solid var(--accent);
+    border-radius: 6px;
+  }
+  .run-btn:hover, .explain-btn:hover { background: var(--accent-soft); }
+  .run-btn[disabled], .explain-btn[disabled] { opacity: 0.5; cursor: default; }
+  .explain-btn { color: var(--text-muted); border-color: var(--border); }
+  article pre .run-btn, article pre .explain-btn {
+    position: absolute; top: 8px; opacity: 0; transition: opacity 0.12s ease;
+  }
+  article pre .run-btn { right: 62px; }
+  article pre .explain-btn { right: 116px; }
+  article pre:hover .run-btn, article pre:hover .explain-btn,
+  article pre .run-btn:focus-visible, article pre .explain-btn:focus-visible { opacity: 1; }
+  .run-output {
+    margin: -0.8em 0 1.2em; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg-alt); overflow: hidden;
+  }
+  .run-output .ro-head {
+    display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+    border-bottom: 1px solid var(--border); font-size: 0.68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted);
+  }
+  .run-output .ro-head .ro-close { margin-left: auto; cursor: pointer; border: none; background: none;
+    color: var(--text-muted); font-size: 0.9rem; padding: 0 4px; }
+  .run-output pre { margin: 0; border: none; border-radius: 0; background: none; }
+  .run-output.is-error .ro-head { color: #d9534f; }
+  .run-output.is-error pre code { color: #d9534f; }
+  .run-output .ro-explain { color: var(--accent-text); }
+  .run-ok { color: #16a34a; }
+  :root[data-theme="dark"] .run-ok { color: #4ade80; }
+
+  /* ---- Primitive index ---- */
+  .prim-filter { position: relative; margin: 0 0 1.4em; }
+  .prim-filter input {
+    width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.92rem; font-family: var(--sans);
+  }
+  .prim-filter input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+  .prim-count { font-size: 0.78rem; color: var(--text-muted); margin: 6px 2px 0; }
+  article table.prim-index { font-size: 0.86rem; }
+  article table.prim-index td:first-child { white-space: nowrap; }
+  article .prim-sig { white-space: nowrap; font-size: 0.82em; }
+  .empty-filter { color: var(--text-muted); padding: 24px 0; }
+
+  /* ---- Playground ---- */
+  .pg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0 0 14px; }
+  @media (max-width: 760px) { .pg-grid { grid-template-columns: 1fr; } }
+  .pg-pane { display: flex; flex-direction: column; min-width: 0; }
+  .pg-pane label {
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); font-weight: 700; margin-bottom: 5px;
+  }
+  .pg-pane textarea {
+    width: 100%; min-height: 240px; padding: 12px 14px; resize: vertical;
+    font-family: var(--mono); font-size: 0.84rem; line-height: 1.5;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg-code); color: var(--text); tab-size: 2;
+  }
+  .pg-pane textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+  .pg-pane textarea.pg-input { min-height: 240px; }
+  .pg-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
+  .pg-bar .pg-run {
+    padding: 7px 18px; font: 600 0.85rem/1.4 var(--sans); cursor: pointer; color: #fff;
+    background: var(--accent); border: 1px solid var(--accent); border-radius: 8px;
+  }
+  .pg-bar .pg-run:hover { filter: brightness(1.08); }
+  .pg-bar .pg-run[disabled] { opacity: 0.55; cursor: default; }
+  .pg-bar select, .pg-bar .pg-secondary {
+    padding: 6px 10px; font: 500 0.8rem/1.4 var(--sans); color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+  }
+  .pg-bar .pg-status { font-size: 0.78rem; color: var(--text-muted); margin-left: auto; }
+  .pg-unavailable {
+    padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg-alt); color: var(--text-muted); font-size: 0.88rem; margin: 0 0 16px;
+  }
+  .pg-unavailable code { font-size: 0.85em; }
+
+  /* Which build is serving these pages. Only appears when the site is served
+     by the binary, which is the only context that can know. */
+  .build-stamp {
+    margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--border);
+    font-size: 0.7rem; color: var(--text-muted); line-height: 1.5;
+  }
+  .build-stamp code { font-family: var(--mono); font-size: 0.95em; }
+  .build-stamp .dirty { color: #b45309; font-weight: 600; }
+  :root[data-theme="dark"] .build-stamp .dirty { color: #fcd34d; }
 
   .loading, .error-box { padding: 40px; color: var(--text-muted); }
   .error-box { color: #d9534f; }
@@ -510,6 +658,69 @@
   }
   @keyframes jjkBurst { 0%, 55% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(0.4); } }
 
+  /* 14. playground — Simple Domain: a dome drawn and held */
+  .fx-simple .dome {
+    position: absolute; left: 50%; top: 58%; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+    border: 2px solid var(--jjk-c); border-radius: 50%; border-bottom-color: transparent;
+    animation: jjkDome 3s ease-in-out infinite;
+  }
+  .fx-simple .core {
+    position: absolute; left: 50%; top: 58%; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px;
+    border-radius: 50%; background: var(--jjk-c); animation: jjkCore 3s ease-in-out infinite;
+  }
+  @keyframes jjkDome {
+    0%, 100% { transform: scale(0.55) rotate(0deg); opacity: 0.45; }
+    50% { transform: scale(1) rotate(180deg); opacity: 1; }
+  }
+
+  /* 15. examples — Curtain: panels dropping to reveal what is inside */
+  .fx-curtain i {
+    position: absolute; top: 0; width: 5px; height: 100%; background: var(--jjk-c);
+    opacity: 0.75; transform-origin: top; animation: jjkCurtain 3s ease-in-out infinite;
+  }
+  .fx-curtain i:nth-child(1) { left: 6px;  animation-delay: 0s; }
+  .fx-curtain i:nth-child(2) { left: 22px; animation-delay: -0.4s; }
+  .fx-curtain i:nth-child(3) { left: 38px; animation-delay: -0.8s; }
+  .fx-curtain i:nth-child(4) { left: 54px; animation-delay: -1.2s; }
+  .fx-curtain i:nth-child(5) { left: 70px; animation-delay: -1.6s; }
+  @keyframes jjkCurtain {
+    0%, 100% { transform: scaleY(1); opacity: 0.75; }
+    50% { transform: scaleY(0.15); opacity: 0.3; }
+  }
+
+  /* 16. challenges — Cursed Tool: two crossing slashes */
+  .fx-blade i {
+    position: absolute; top: 50%; left: 50%; width: 62px; height: 3px; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--jjk-c), transparent);
+    animation: jjkSlash 1.8s ease-in-out infinite;
+  }
+  .fx-blade i:nth-child(1) { --r: 28deg; animation-delay: 0s; }
+  .fx-blade i:nth-child(2) { --r: -28deg; animation-delay: -0.9s; }
+  @keyframes jjkSlash {
+    0% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--r)) scaleX(0.2); }
+    35% { opacity: 1; transform: translate(-50%, -50%) rotate(var(--r)) scaleX(1); }
+    70% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--r)) scaleX(1); }
+    100% { opacity: 0; }
+  }
+
+  /* 17. primitive-index — Heavenly Restriction: everything bound to one point */
+  .fx-bind .knot {
+    position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%; background: var(--jjk-c); box-shadow: 0 0 8px var(--jjk-c);
+  }
+  .fx-bind i {
+    position: absolute; left: 50%; top: 50%; width: 30px; height: 1.5px; background: var(--jjk-c);
+    transform-origin: left center; opacity: 0.8; animation: jjkBind 2.6s ease-in-out infinite;
+  }
+  .fx-bind i:nth-child(2) { --r: 20deg;  animation-delay: 0s; }
+  .fx-bind i:nth-child(3) { --r: 110deg; animation-delay: -0.65s; }
+  .fx-bind i:nth-child(4) { --r: 200deg; animation-delay: -1.3s; }
+  .fx-bind i:nth-child(5) { --r: 290deg; animation-delay: -1.95s; }
+  @keyframes jjkBind {
+    0%, 100% { transform: rotate(var(--r)) scaleX(1); opacity: 0.25; }
+    50% { transform: rotate(var(--r)) scaleX(0.3); opacity: 1; }
+  }
+
   /* Six Eyes glow behind the search icon — both sidebar box and the overlay */
   .search-pulse { position: relative; }
   .search-pulse::before {
@@ -530,6 +741,38 @@
   @media (prefers-reduced-motion: reduce) {
     .jjk-banner *, .search-pulse::before { animation: none !important; }
   }
+
+  /* ---- Print ----
+     A reference page is worth printing, and everything that makes it navigable
+     on screen is noise on paper: the nav is unclickable, the banner is
+     decoration, and the buttons do nothing. What matters is that code blocks
+     do not get cut off mid-line and that links keep their targets. */
+  @media print {
+    .sidebar, .page-toc, .menu-toggle, .scrim, .search-overlay,
+    .page-nav, .page-edit, .jjk-banner, .copy-btn, .run-btn, .explain-btn,
+    .heading-anchor, .build-stamp, .prim-filter { display: none !important; }
+    html, body { background: #fff !important; color: #000 !important; }
+    .layout { display: block; }
+    .main-wrap { display: block; }
+    main { max-width: none; padding: 0; }
+    article pre, article code {
+      background: #f6f6f6 !important; border: 1px solid #ddd !important;
+      color: #000 !important;
+    }
+    /* Long pipelines and type signatures must wrap rather than vanish off the
+       right edge — a printed page has no horizontal scrollbar. */
+    article pre { white-space: pre-wrap; word-break: break-word; overflow: visible; }
+    article table { display: table; width: 100%; }
+    article h1, article h2, article h3 { break-after: avoid; page-break-after: avoid; }
+    article pre, article table, .program { break-inside: avoid; page-break-inside: avoid; }
+    /* A printed link is only useful if you can read where it goes; in-app
+       routes are meaningless on paper, so only external ones are expanded. */
+    article a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.85em; color: #555; }
+    .program-io[open] summary { font-weight: 700; }
+    .tok-kw, .tok-arg, .tok-str, .tok-num, .tok-op, .tok-comment { color: #000 !important; }
+    .tok-kw { font-weight: 700; }
+    .tok-comment { font-style: italic; color: #555 !important; }
+  }
 </style>
 
 <div class="menu-toggle" id="menuToggle" aria-label="Toggle navigation">☰</div>
@@ -549,6 +792,7 @@
       <span class="kbd">/</span>
     </div>
     <nav class="toc-nav" id="docNav"></nav>
+    <div class="build-stamp" id="buildStamp" hidden></div>
   </aside>
 
   <div class="main-wrap">
@@ -562,15 +806,22 @@
 </div>
 
 <div class="search-overlay" id="searchOverlay">
-  <div class="search-panel">
+  <div class="search-panel" role="dialog" aria-modal="true" aria-labelledby="searchLabel">
+    <h2 id="searchLabel" class="visually-hidden">Search the documentation</h2>
     <div class="search-input-row">
-      <span class="search-pulse" style="color:var(--text-muted)">⌕</span>
-      <input type="text" id="searchInput" placeholder="Search across all documentation…" autocomplete="off" spellcheck="false">
-      <span class="close-hint">esc</span>
+      <span class="search-pulse" style="color:var(--text-muted)" aria-hidden="true">⌕</span>
+      <input type="text" id="searchInput" placeholder="Search across all documentation…"
+             autocomplete="off" spellcheck="false"
+             role="combobox" aria-expanded="false" aria-controls="searchResults"
+             aria-autocomplete="list" aria-describedby="searchStatus">
+      <button type="button" class="scope-btn" id="scopeBtn" aria-pressed="false"
+              title="Limit the search to the page you are on">This page</button>
+      <span class="close-hint" aria-hidden="true">esc</span>
     </div>
-    <div class="search-results" id="searchResults">
+    <div class="search-results" id="searchResults" role="listbox" aria-labelledby="searchLabel">
       <div class="empty">Start typing to search titles, headings, and full text.</div>
     </div>
+    <p id="searchStatus" class="visually-hidden" aria-live="polite"></p>
     <div class="search-foot">
       <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
       <span><kbd>↵</kbd> open</span>
@@ -594,11 +845,18 @@
 "use strict";
 
 // ---- Document manifest (ordered) ----
+// Most pages are Markdown. Four are built from data instead — the two program
+// galleries and the primitive index from their generated JSON, the playground
+// from the WebAssembly build of the language — and carry a `kind` saying so.
 const DOCS = [
   { id: "README",          file: "README.md",          title: "Overview",            desc: "Start here", group: "Introduction" },
   { id: "getting-started", file: "getting-started.md", title: "Getting started",     desc: "Install & first program", group: "Introduction" },
+  { id: "playground",      kind: "playground",         title: "Playground",          desc: "Run Domain in the browser", group: "Introduction" },
+  { id: "examples",        kind: "gallery",            title: "Examples",            desc: "19 annotated programs", group: "Programs", galleryGroup: "examples" },
+  { id: "challenges",      kind: "gallery",            title: "Challenges",          desc: "13 classic problems", group: "Programs", galleryGroup: "challenges" },
   { id: "language",        file: "language.md",        title: "Language reference",  desc: "Source structure & keywords", group: "Reference" },
   { id: "primitives",      file: "primitives.md",      title: "Primitives",          desc: "Every pipeline primitive", group: "Reference" },
+  { id: "primitive-index", kind: "primitives",         title: "Primitive index",     desc: "All of them, filterable", group: "Reference" },
   { id: "expressions",     file: "expressions.md",     title: "Expressions",         desc: "The expression layer", group: "Reference" },
   { id: "aoc-toolbox",     file: "aoc-toolbox.md",     title: "AoC toolbox",         desc: "Classic helpers, mapped", group: "Reference" },
   { id: "data-model",      file: "data-model.md",      title: "Data model",          desc: "Value & type model", group: "Reference" },
@@ -621,6 +879,10 @@ const REPO_EDIT_BASE = "https://github.com/RFuller25/domain/edit/main/docs/";
 const DOC_ANIM = {
   "README":          { fx: "rings",     color: "#60a5fa", kanji: "無限",       name: "Infinity",                  tag: "the gap between you and everything, always closing." },
   "getting-started": { fx: "flash",     color: "#e4e4e7", kanji: "黒閃",       name: "Black Flash",               tag: "your first strike — within 0.000001 seconds." },
+  "playground":      { fx: "simple",    color: "#4ade80", kanji: "簡易領域",   name: "Simple Domain",             tag: "a small domain of your own — run anything, right here." },
+  "examples":        { fx: "curtain",   color: "#f59e0b", kanji: "帳",         name: "Curtain",                   tag: "nineteen programs, drawn back one at a time." },
+  "challenges":      { fx: "blade",     color: "#ef4444", kanji: "呪具",       name: "Cursed Tool",               tag: "thirteen classics — pick one up and swing." },
+  "primitive-index": { fx: "bind",      color: "#8b5cf6", kanji: "天与呪縛",   name: "Heavenly Restriction",      tag: "the whole vocabulary, bound to one page." },
   "language":        { fx: "speech",    color: "#facc15", kanji: "呪言",       name: "Cursed Speech",             tag: "every keyword is a command reality obeys." },
   "primitives":      { fx: "shadows",   color: "#818cf8", kanji: "十種影法術", name: "Ten Shadows Technique",     tag: "summon the piece built for the job." },
   "expressions":     { fx: "thread",    color: "#fb7185", kanji: "芻霊呪法",   name: "Straw Doll Technique",      tag: "resonance links every value to its result." },
@@ -649,6 +911,10 @@ function fxMarkup(fx) {
     case "cross":     return "<i></i><i></i>";
     case "skewers":   return "<i></i><i></i><i></i><i></i><i></i>";
     case "expand":    return '<div class="barrier"></div><div class="burst"></div>';
+    case "simple":    return '<div class="dome"></div><div class="core"></div>';
+    case "curtain":   return "<i></i><i></i><i></i><i></i><i></i>";
+    case "blade":     return "<i></i><i></i>";
+    case "bind":      return '<div class="knot"></div><i></i><i></i><i></i><i></i>';
     default:          return "";
   }
 }
@@ -674,89 +940,29 @@ function renderDocBanner(docId) {
 // rest of the page already uses.
 const {
   escapeHtml, slugify, shortSlug, renderInline, makeLink, renderMarkdown,
-  renderList, highlightDomain,
+  renderList, highlightDomain, buildSearchEntries, searchEntries, makeSnippet,
+  renderGallery, renderPrimitiveIndex, programSlug,
+  buildGalleryEntries, buildPrimitiveEntries,
 } = DomainRender;
 DomainRender.setDocIndex(DOC_BY_ID);
 
-function buildSearchEntries(docId, docTitle, md) {
-  // Split the document into sections keyed by the nearest heading.
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
-  let heading = docTitle, headingSlug = "";
-  let buffer = [];
-  let inFence = false;
-
-  function commit() {
-    const text = buffer.join(" ").replace(/\s+/g, " ").trim();
-    if (text) {
-      searchIndex.push({ docId, docTitle, heading, headingSlug, text, lower: text.toLowerCase() });
-    }
-    buffer = [];
-  }
-
-  for (const line of lines) {
-    if (/^\s*```/.test(line)) { inFence = !inFence; buffer.push(line.replace(/```/g, "")); continue; }
-    if (inFence) { buffer.push(line); continue; }
-    const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) {
-      commit();
-      const raw = h[2].replace(/\s+#+\s*$/, "").replace(/[`*_~[\]]/g, "").replace(/\]\([^)]*\)/g, "");
-      heading = raw.replace(/\[|\]/g, "");
-      headingSlug = slugify(h[2].replace(/\s+#+\s*$/, ""));
-      buffer.push(raw);
-      continue;
-    }
-    // Strip markdown noise for cleaner snippets.
-    buffer.push(line.replace(/[#>|]/g, " ").replace(/[`*_~]/g, ""));
-  }
-  commit();
+// Fail loudly if render.js and this page have drifted apart. Every name above
+// is used somewhere below, often inside a try/catch that would otherwise turn
+// a missing export into a silently empty page — which is exactly how the
+// search index broke once already.
+for (const [name, fn] of Object.entries({
+  escapeHtml, slugify, shortSlug, renderInline, makeLink, renderMarkdown,
+  renderList, highlightDomain, buildSearchEntries, searchEntries, makeSnippet,
+  renderGallery, renderPrimitiveIndex, programSlug,
+  buildGalleryEntries, buildPrimitiveEntries,
+})) {
+  if (typeof fn !== "function") throw new Error(`render.js does not export ${name}()`);
 }
 
-function search(query) {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!terms.length) return [];
-  const scored = [];
-  for (const entry of searchIndex) {
-    let score = 0;
-    let allPresent = true;
-    for (const term of terms) {
-      const inHeading = entry.heading.toLowerCase().includes(term);
-      const inTitle = entry.docTitle.toLowerCase().includes(term);
-      let idx = entry.lower.indexOf(term);
-      const inBody = idx !== -1;
-      if (!inHeading && !inBody && !inTitle) { allPresent = false; break; }
-      if (inTitle) score += 8;
-      if (inHeading) score += 12;
-      if (inBody) {
-        // count occurrences (cheap)
-        let count = 0, from = 0;
-        while ((from = entry.lower.indexOf(term, from)) !== -1) { count++; from += term.length; }
-        score += Math.min(count, 5) * 2;
-        // whole-word bonus
-        if (new RegExp("\\b" + term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b").test(entry.lower)) score += 3;
-      }
-    }
-    if (!allPresent) continue;
-    scored.push({ entry, score });
-  }
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 30);
-}
-
-function makeSnippet(entry, terms) {
-  const text = entry.text;
-  const lower = entry.lower;
-  let pos = -1;
-  for (const term of terms) { const p = lower.indexOf(term); if (p !== -1 && (pos === -1 || p < pos)) pos = p; }
-  if (pos === -1) pos = 0;
-  const start = Math.max(0, pos - 60);
-  let snippet = (start > 0 ? "…" : "") + text.slice(start, start + 200) + (start + 200 < text.length ? "…" : "");
-  snippet = escapeHtml(snippet);
-  for (const term of terms) {
-    const re = new RegExp("(" + term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
-    snippet = snippet.replace(re, "<mark>$1</mark>");
-  }
-  return snippet;
-}
+// Every section of every page, built once at boot by loadAllForIndex. The
+// entries are plain data produced by render.js; the array is the page's,
+// which is what keeps the search code testable outside a browser.
+let searchIndex = []; // { docId, docTitle, heading, headingSlug, text, lower }
 
 // ============================================================
 //  App / routing
@@ -766,6 +972,13 @@ const docNavEl = document.getElementById("docNav");
 const pageTocEl = document.getElementById("pageToc");
 const pageNavEl = document.getElementById("pageNav");
 const rawCache = {};
+// The page currently displayed. Kept explicitly because the hash is not always
+// a page — while the search dialog is open it holds the query instead.
+let activeDocId = "README";
+// The page whose content is currently in the DOM. Distinct from activeDocId,
+// which is set before rendering: this is only assigned once a render finishes,
+// so a failed load re-renders rather than being mistaken for a scroll.
+let renderedDocId = null;
 
 function renderNav(activeId) {
   let html = "";
@@ -787,13 +1000,51 @@ async function fetchDoc(doc) {
   return text;
 }
 
-async function loadAllForIndex() {
-  await Promise.all(DOCS.map(async d => {
+// The two generated data files behind the gallery and the primitive index.
+// Each is fetched once; a failure is cached as an empty list so a missing file
+// degrades to an empty page rather than retrying on every navigation.
+const jsonCache = {};
+async function fetchJSON(file) {
+  if (jsonCache[file]) return jsonCache[file];
+  jsonCache[file] = (async () => {
     try {
-      const md = await fetchDoc(d);
-      buildSearchEntries(d.id, d.title, md);
-    } catch (e) { /* ignore individual failures for the index */ }
+      const res = await fetch(file, { cache: "no-cache" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return await res.json();
+    } catch (e) {
+      return [];
+    }
+  })();
+  return jsonCache[file];
+}
+const fetchGallery = () => fetchJSON("gallery.json");
+const fetchPrimitives = () => fetchJSON("primitives.json");
+
+async function loadAllForIndex() {
+  // Promise.all preserves order, so the index is assembled in manifest order
+  // and equally-scored results always come back in the same order.
+  const perDoc = await Promise.all(DOCS.map(async d => {
+    try {
+      // The generated pages are indexed from their data, so searching for
+      // "fizzbuzz" or a primitive's signature finds them alongside the prose.
+      if (d.kind === "gallery") {
+        const all = await fetchGallery();
+        return buildGalleryEntries(d.id, d.title, all.filter(p => p.group === d.galleryGroup));
+      }
+      if (d.kind === "primitives") {
+        return buildPrimitiveEntries(d.id, d.title, await fetchPrimitives());
+      }
+      if (d.kind) return []; // the playground has no text to index
+      return buildSearchEntries(d.id, d.title, await fetchDoc(d));
+    } catch (e) {
+      // A page that will not load is simply missing from the index — but say
+      // so. Swallowing this silently is what let the whole index sit empty
+      // without a single visible symptom.
+      console.warn(`docs: could not index ${d.id}:`, e);
+      return [];
+    }
   }));
+  searchIndex = perDoc.flat();
 }
 
 function renderPageToc(headings, docId) {
@@ -822,16 +1073,56 @@ function renderPageNav(activeId) {
 
 async function route() {
   const hash = location.hash.replace(/^#\/?/, "");
+
+  // #/search?q=… opens the dialog with a query already in it, so a search can
+  // be linked to, bookmarked, or pasted into an issue. The page underneath is
+  // left as it was.
+  const searchRoute = hash.match(/^search\?q=(.*)$/);
+  if (searchRoute) {
+    let q = "";
+    try { q = decodeURIComponent(searchRoute[1].replace(/\+/g, " ")); } catch (e) { q = searchRoute[1]; }
+    openSearch(q);
+    return;
+  }
+
   // Format: docId or docId#anchor
   const hashParts = hash.split("#");
   let docId = hashParts[0] || "README";
   const anchor = hashParts[1] || "";
   if (!DOC_BY_ID[docId]) docId = "README";
   const doc = DOC_BY_ID[docId];
+  activeDocId = docId;
+
+  // Moving to another anchor on the page already displayed is a scroll, not a
+  // navigation. Re-rendering would refetch and rebuild the whole document —
+  // and would replace the very heading link the reader just clicked, which is
+  // why its "copied" confirmation never survived long enough to be read.
+  if (docId === renderedDocId) {
+    scrollToAnchor(anchor);
+    setupScrollSpy();
+    return;
+  }
 
   renderNav(docId);
   renderPageNav(docId);
   contentEl.innerHTML = '<div class="loading"><span class="spinner"></span>Loading…</div>';
+
+  // Pages built from data rather than Markdown.
+  if (doc.kind) {
+    let rendered;
+    if (doc.kind === "gallery") rendered = await renderGalleryPage(doc);
+    else if (doc.kind === "primitives") rendered = await renderPrimitiveIndexPage(doc);
+    else rendered = renderPlaygroundPage(doc);
+    contentEl.innerHTML = renderDocBanner(docId) +
+      `<article>${rendered.html.replace(/__DOCID__/g, docId)}</article>`;
+    renderPageToc(rendered.headings || [], docId);
+    if (rendered.afterRender) rendered.afterRender();
+    renderedDocId = docId;
+    scrollToAnchor(anchor);
+    closeSidebar();
+    setupScrollSpy();
+    return;
+  }
 
   let md;
   try {
@@ -858,8 +1149,34 @@ npx serve                      # Node alternative</code></pre>`
   const editLink = `<div class="page-edit"><a href="${editUrl}" target="_blank" rel="noopener">Edit this page on GitHub</a></div>`;
   contentEl.innerHTML = renderDocBanner(docId) + `<article>${htmlWithIds}${editLink}</article>`;
   renderPageToc(rendered.headings, docId);
+  addRunButtons();
+  renderedDocId = docId;
+  scrollToAnchor(anchor);
+  closeSidebar();
+  setupScrollSpy();
+}
 
-  // Scroll to anchor or top
+// Give every Domain block on a rendered page a Run and an Explain button, once
+// the playground is known to be available. Done here rather than in render.js
+// so the renderer's output stays the same whether or not the wasm artifact was
+// built — the buttons are a property of the page, not of the Markdown.
+function addRunButtons() {
+  if (!playgroundReady()) return;
+  for (const pre of contentEl.querySelectorAll("pre")) {
+    const tag = pre.querySelector(".lang-tag");
+    if (!tag || tag.textContent !== "domain") continue;
+    if (pre.querySelector("[data-run-block]")) continue;
+    // Display-only blocks (marked `domain ignore` in the Markdown) are not
+    // programs, and the doc tests skip them for the same reason.
+    if (!/Reveal|Cursed|Maximum|Domain Expansion/.test(pre.textContent)) continue;
+    pre.insertAdjacentHTML("beforeend",
+      `<button class="explain-btn" type="button" data-run-block data-explain>Explain</button>` +
+      `<button class="run-btn" type="button" data-run-block>Run</button>`);
+  }
+}
+
+// Scroll to the requested anchor, or to the top when there isn't one.
+function scrollToAnchor(anchor) {
   requestAnimationFrame(() => {
     if (anchor) {
       const target = document.getElementById(anchor);
@@ -868,9 +1185,60 @@ npx serve                      # Node alternative</code></pre>`
     window.scrollTo(0, 0);
     document.querySelector("main").scrollIntoView({ block: "start" });
   });
+}
 
-  closeSidebar();
-  setupScrollSpy();
+// ---- The generated pages ----------------------------------------------
+async function renderGalleryPage(doc) {
+  const [all] = await Promise.all([fetchGallery(), probePlayground()]);
+  const programs = all.filter(p => p.group === doc.galleryGroup);
+  if (!programs.length) {
+    return { html: `<h1>${escapeHtml(doc.title)}</h1><div class="error-box">` +
+      `<p>Couldn't load <code>gallery.json</code>, so there is nothing to show here.</p>` +
+      `<p>It is generated from the repository: <code>go test ./docs -update</code>.</p></div>`, headings: [] };
+  }
+  const intro = doc.galleryGroup === "examples"
+    ? `<p>Nineteen small, self-contained programs. Each one is run against its own input in both optimizer modes and checked against the exact output below, so none of them can quietly rot.</p>`
+    : `<p>Thirteen classic programming problems — FizzBuzz through Game of Life — written as pipelines. Same golden testing as the examples.</p>`;
+  const rendered = renderGallery(programs, { runnable: playgroundReady() });
+  return {
+    html: `<h1>${escapeHtml(doc.title)}</h1>${intro}${rendered.html}`,
+    headings: rendered.headings,
+  };
+}
+
+async function renderPrimitiveIndexPage(doc) {
+  const entries = await fetchPrimitives();
+  if (!entries.length) {
+    return { html: `<h1>${escapeHtml(doc.title)}</h1><div class="error-box">` +
+      `<p>Couldn't load <code>primitives.json</code>.</p>` +
+      `<p>It is generated from the primitive catalog: <code>go test ./docs -update</code>.</p></div>`, headings: [] };
+  }
+  const body = renderPrimitiveIndex(entries, "");
+  const html = `<h1>${escapeHtml(doc.title)}</h1>` +
+    `<p>Every primitive in the vocabulary, grouped by the themed keyword that decides where in a pipeline it can appear. ` +
+    `Filter by name, type or description; each one links into the <a href="#/primitives" data-route>full reference</a>.</p>` +
+    `<div class="prim-filter"><input type="text" id="primFilter" placeholder="Filter ${entries.length} primitives — try “grid”, “List&lt;Int&gt;”, “sort”…" aria-label="Filter primitives" autocomplete="off"></div>` +
+    `<p class="prim-count" id="primCount" aria-live="polite">${entries.length} primitives</p>` +
+    `<div id="primBody">${body.html}</div>`;
+  return {
+    html, headings: body.headings,
+    // Filtering re-renders the table in place; the right-rail TOC is left
+    // alone, since a filter that empties it would leave the reader with no
+    // way back to the full list.
+    afterRender: () => {
+      const input = document.getElementById("primFilter");
+      const bodyEl = document.getElementById("primBody");
+      const countEl = document.getElementById("primCount");
+      if (!input || !bodyEl) return;
+      input.addEventListener("input", () => {
+        const out = renderPrimitiveIndex(entries, input.value);
+        bodyEl.innerHTML = out.html.replace(/__DOCID__/g, doc.id);
+        countEl.textContent = input.value.trim()
+          ? `${out.shown} of ${entries.length} primitives`
+          : `${entries.length} primitives`;
+      });
+    },
+  };
 }
 
 // Scroll spy for right-rail TOC
@@ -893,70 +1261,424 @@ function setupScrollSpy() {
 }
 
 // ============================================================
+//  Playground — the language compiled to WebAssembly
+// ============================================================
+// The whole front end (lexer, parser, resolver, optimizer, interpreter) is
+// pure Go with no dependencies, so it compiles to js/wasm unchanged and runs
+// the reader's program in the browser rather than on a server. That choice is
+// what makes Run safe to offer at all: there is no filesystem to read, so
+// `Cursed Energy: input.txt` falls through to the input box exactly as it
+// falls through to stdin on a terminal, and a runaway program is killed by
+// terminating the worker — something a server-side runner cannot do to a
+// goroutine.
+//
+// The artifact is built separately (docs/wasm/build.sh) and is not committed,
+// so the site has to work without it: everything below degrades to a note
+// explaining how to build it, and the Run buttons simply do not appear.
+const WASM_URL = "wasm/domain.wasm";
+const PLAYGROUND_TIMEOUT_MS = 5000;
+
+const playground = {
+  state: "unknown",   // unknown | loading | ready | absent
+  worker: null,
+  seq: 0,
+  pending: new Map(),
+};
+
+function playgroundReady() { return playground.state === "ready"; }
+
+// probePlayground checks for the artifact once, without downloading five
+// megabytes of it: a one-byte range request is enough to know whether the Run
+// buttons should be offered at all. (A HEAD would do the same, but Chromium
+// aborts the body it is never sent and logs a failed request for it, which
+// looks like a broken site to anyone with devtools open.)
+async function probePlayground() {
+  if (playground.state !== "unknown") return playground.state;
+  playground.state = "loading";
+  try {
+    const res = await fetch(WASM_URL, { headers: { Range: "bytes=0-0" }, cache: "no-cache" });
+    // 206 for a server that honours the range, 200 for one that ignores it.
+    playground.state = res.ok ? "ready" : "absent";
+    // Read the byte rather than cancelling: an abandoned body is itself
+    // reported as a failed request. A server that ignored the range would
+    // hand back the whole module, so only drain the partial response.
+    if (res.status === 206) await res.arrayBuffer();
+    else if (res.body && res.body.cancel) res.body.cancel();
+  } catch (e) {
+    playground.state = "absent";
+  }
+  return playground.state;
+}
+
+// startWorker boots the runner. Each run gets its own worker so a timeout can
+// terminate it outright — the only reliable way to stop a Go program that has
+// stopped cooperating.
+function startWorker() {
+  if (playground.worker) return playground.worker;
+  const w = new Worker("wasm/runner.js");
+  w.onmessage = e => {
+    const { id, ok, result, error } = e.data || {};
+    const entry = playground.pending.get(id);
+    if (!entry) return;
+    playground.pending.delete(id);
+    clearTimeout(entry.timer);
+    ok ? entry.resolve(result) : entry.reject(new Error(error || "run failed"));
+  };
+  w.onerror = e => {
+    for (const [, entry] of playground.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error(e.message || "the playground worker failed to start"));
+    }
+    playground.pending.clear();
+    killWorker();
+  };
+  playground.worker = w;
+  return w;
+}
+
+function killWorker() {
+  if (playground.worker) { playground.worker.terminate(); playground.worker = null; }
+}
+
+// runProgram sends one program to the worker and resolves with
+// { output, explain, error }. On timeout the worker is terminated, so an
+// infinite loop costs one worker rather than the tab.
+function runProgram(source, input, opts) {
+  const libs = (opts && opts.libs) || {};
+  const w = startWorker();
+  const id = ++playground.seq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      playground.pending.delete(id);
+      killWorker();
+      reject(new Error(`timed out after ${PLAYGROUND_TIMEOUT_MS / 1000}s — the program was stopped`));
+    }, PLAYGROUND_TIMEOUT_MS);
+    playground.pending.set(id, { resolve, reject, timer });
+    w.postMessage({ id, source, input, libs, explain: !!(opts && opts.explain), optimize: !(opts && opts.optimize === false) });
+  });
+}
+
+// The note shown wherever Run would be, when the artifact was never built.
+function playgroundMissingNote() {
+  return `<div class="pg-unavailable"><strong>The playground isn't built.</strong> ` +
+    `It is a separate WebAssembly artifact, not committed to the repository. Build it with:` +
+    `<pre><code>./docs/wasm/build.sh</code></pre>` +
+    `then reload this page. Everything else on the site works without it.</div>`;
+}
+
+// The thesis of the language in seven lines: a named algorithm is a request,
+// and Explain shows the optimizer answering it with a different one.
+const PLAYGROUND_STARTER = `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\\n\\n"
+Cursed Technique: Split Each by "\\n"
+Channeled Energy: Convert Each List to Integers
+Maximum Technique: Sum Each Group
+Domain Expansion: Quicksort, Descending
+Maximum Technique: Select Top 3, Sum
+Reveal: stdout`;
+const PLAYGROUND_STARTER_INPUT = "1000\n2000\n3000\n\n4000\n\n5000\n6000\n\n7000\n8000\n9000\n\n10000";
+
+function renderPlaygroundPage(doc) {
+  const html = `<h1>${escapeHtml(doc.title)}</h1>` +
+    `<p>The language runs here, in this tab — the same lexer, parser, resolver, optimizer and interpreter the ` +
+    `<code>domain</code> binary uses, compiled to WebAssembly. Nothing is sent anywhere.</p>` +
+    `<p><code>Cursed Energy: input.txt</code> reads the input box: on a terminal a missing input file falls back to stdin, ` +
+    `and in the browser there is no filesystem at all, so every program falls back the same way.</p>` +
+    `<div id="pgHost"></div>`;
+  return {
+    html, headings: [],
+    afterRender: async () => {
+      const host = document.getElementById("pgHost");
+      if (!host) return;
+      if (await probePlayground() !== "ready") { host.innerHTML = playgroundMissingNote(); return; }
+      host.innerHTML =
+        `<div class="pg-grid">
+          <div class="pg-pane">
+            <label for="pgSource">Program</label>
+            <textarea id="pgSource" spellcheck="false" autocomplete="off"></textarea>
+          </div>
+          <div class="pg-pane">
+            <label for="pgInput">Input</label>
+            <textarea id="pgInput" class="pg-input" spellcheck="false" autocomplete="off"></textarea>
+          </div>
+        </div>
+        <div class="pg-bar">
+          <button class="pg-run" type="button" id="pgRun">Run</button>
+          <button class="pg-secondary" type="button" id="pgExplain">Explain</button>
+          <select class="pg-secondary" id="pgLoad" aria-label="Load a program">
+            <option value="">Load a program…</option>
+          </select>
+          <span class="pg-status" id="pgStatus"></span>
+        </div>
+        <div id="pgOut"></div>`;
+      const srcEl = document.getElementById("pgSource");
+      const inEl = document.getElementById("pgInput");
+      srcEl.value = PLAYGROUND_STARTER;
+      inEl.value = PLAYGROUND_STARTER_INPUT;
+
+      // Every gallery program is loadable, so the playground doubles as the
+      // place to take one apart.
+      const sel = document.getElementById("pgLoad");
+      fetchGallery().then(all => {
+        for (const p of all) {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = `${p.group}/${p.id}`;
+          sel.appendChild(opt);
+        }
+        sel.addEventListener("change", async () => {
+          const prog = (await fetchGallery()).find(p => p.id === sel.value);
+          if (!prog) return;
+          srcEl.value = prog.source;
+          inEl.value = prog.input;
+          document.getElementById("pgOut").innerHTML = "";
+        });
+      });
+
+      const go = explain => runInto(document.getElementById("pgOut"), srcEl.value, inEl.value,
+        { explain }, document.getElementById("pgStatus"));
+      document.getElementById("pgRun").addEventListener("click", () => go(false));
+      document.getElementById("pgExplain").addEventListener("click", () => go(true));
+      // Ctrl/Cmd+Enter runs, the shortcut every editor-shaped box should have.
+      for (const el of [srcEl, inEl]) {
+        el.addEventListener("keydown", e => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(false); }
+        });
+      }
+    },
+  };
+}
+
+// runInto executes a program and renders the result into `host`. Shared by the
+// playground page, the gallery cards and the Run buttons on code blocks.
+async function runInto(host, source, input, opts, statusEl) {
+  if (!host) return;
+  const setStatus = t => { if (statusEl) statusEl.textContent = t; };
+  host.innerHTML = `<div class="run-output"><div class="ro-head"><span class="spinner"></span>Running…</div></div>`;
+  setStatus("running…");
+  const started = performance.now();
+  try {
+    const res = await runProgram(source, input, opts);
+    const ms = Math.round(performance.now() - started);
+    setStatus(`${ms} ms`);
+    const failed = !!res.error;
+    let body = "";
+    if (res.explain && res.explain.length) {
+      body += `<pre class="ro-explain"><code>${escapeHtml(res.explain.join("\n"))}</code></pre>`;
+    }
+    body += `<pre><code>${escapeHtml(failed ? res.error : (res.output || "(no output)"))}</code></pre>`;
+    host.innerHTML = `<div class="run-output${failed ? " is-error" : ""}">` +
+      `<div class="ro-head">${failed ? "Error" : "Output"}` +
+      `<button class="ro-close" type="button" data-close-output aria-label="Dismiss output">✕</button></div>` +
+      body + `</div>`;
+  } catch (e) {
+    setStatus("");
+    host.innerHTML = `<div class="run-output is-error"><div class="ro-head">Error` +
+      `<button class="ro-close" type="button" data-close-output aria-label="Dismiss output">✕</button></div>` +
+      `<pre><code>${escapeHtml(e.message)}</code></pre></div>`;
+  }
+}
+
+// Dismissing a result, and the Run buttons that appear on gallery cards and on
+// runnable code blocks — delegated, so blocks rendered after navigation work.
+document.addEventListener("click", async e => {
+  const close = e.target.closest("[data-close-output]");
+  if (close) { const box = close.closest(".run-output"); if (box) box.remove(); return; }
+
+  const galleryRun = e.target.closest("[data-run-program]");
+  if (galleryRun) {
+    const id = galleryRun.getAttribute("data-run-program");
+    const prog = (await fetchGallery()).find(p => p.id === id);
+    if (!prog) return;
+    let out = galleryRun.closest("section.program").querySelector(".run-host");
+    if (!out) {
+      out = document.createElement("div");
+      out.className = "run-host";
+      galleryRun.closest("section.program").appendChild(out);
+    }
+    runInto(out, prog.source, prog.input, { libs: prog.libs });
+    return;
+  }
+
+  const blockRun = e.target.closest("[data-run-block]");
+  if (blockRun) {
+    const pre = blockRun.closest("pre");
+    const code = pre && pre.querySelector("code");
+    if (!code) return;
+    let out = pre.nextElementSibling;
+    if (!out || !out.classList.contains("run-host")) {
+      out = document.createElement("div");
+      out.className = "run-host";
+      pre.after(out);
+    }
+    runInto(out, code.innerText, "", { explain: blockRun.hasAttribute("data-explain") });
+  }
+});
+
+// ============================================================
 //  Search UI
 // ============================================================
 const overlay = document.getElementById("searchOverlay");
 const searchInput = document.getElementById("searchInput");
 const searchResults = document.getElementById("searchResults");
-let currentResults = [];
+const searchStatus = document.getElementById("searchStatus");
+const scopeBtn = document.getElementById("scopeBtn");
 let selIndex = 0;
 let indexReady = false;
+let scopedToPage = false;
+// What the reader was on before the dialog took focus, so closing it puts them
+// back rather than at the top of the document.
+let focusBeforeSearch = null;
 
-function openSearch() {
+// ---- Recent searches ----------------------------------------------------
+// Kept locally, so a query you ran yesterday is one click away. Private-mode
+// storage failures are ignored: the feature is a convenience, not a dependency.
+const RECENTS_KEY = "domain-docs-recent-searches";
+const MAX_RECENTS = 6;
+function readRecents() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
+    return Array.isArray(raw) ? raw.filter(s => typeof s === "string").slice(0, MAX_RECENTS) : [];
+  } catch (e) { return []; }
+}
+function rememberSearch(q) {
+  q = q.trim();
+  if (q.length < 2) return;
+  const next = [q, ...readRecents().filter(s => s !== q)].slice(0, MAX_RECENTS);
+  try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)); } catch (e) { /* private mode */ }
+}
+function recentsMarkup() {
+  const recents = readRecents();
+  if (!recents.length) {
+    return '<div class="empty">Start typing to search titles, headings, and full text.</div>';
+  }
+  return `<div class="search-recents"><div class="rec-label">Recent</div>` +
+    recents.map(q => `<button type="button" data-recent="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("") +
+    `</div>`;
+}
+
+// ---- Opening and closing ------------------------------------------------
+function openSearch(initial) {
+  focusBeforeSearch = document.activeElement;
   overlay.classList.add("open");
+  if (typeof initial === "string") searchInput.value = initial;
   searchInput.focus();
   searchInput.select();
+  renderResults(searchInput.value);
+  syncSearchHash(searchInput.value);
 }
-function closeSearch() { overlay.classList.remove("open"); }
+function closeSearch() {
+  if (!overlay.classList.contains("open")) return;
+  overlay.classList.remove("open");
+  searchInput.setAttribute("aria-expanded", "false");
+  // Returning focus is the half of a dialog that is easy to forget and
+  // impossible to work around with a keyboard.
+  if (focusBeforeSearch && typeof focusBeforeSearch.focus === "function") focusBeforeSearch.focus();
+  focusBeforeSearch = null;
+  // A deep-linked search leaves #/search?q=… in the address bar; put the page
+  // back so Back does not reopen the dialog and a reload lands where the
+  // reader actually is.
+  if (location.hash.startsWith("#/search")) replaceHash(pageHash());
+}
+
+// The page the reader is on, for the "This page" scope filter. It is tracked
+// rather than read back out of the hash, because while the dialog is open the
+// hash is the search itself — parsing it would scope every search to README.
+function currentDocId() { return DOC_BY_ID[activeDocId] ? activeDocId : "README"; }
+
+// Reflect the query in the address bar as it is typed, so the URL can be
+// copied and shared. replaceState rather than assignment: this must not fire
+// the router or leave a history entry per keystroke.
+function syncSearchHash(q) {
+  if (!overlay.classList.contains("open")) return;
+  replaceHash(q.trim() ? `#/search?q=${encodeURIComponent(q)}` : pageHash());
+}
+
+// The hash for the page behind the dialog. Closing the search, or clearing the
+// query, restores this rather than dropping the hash altogether — stripping it
+// would silently move the reader back to the overview on the next reload.
+function pageHash() { return `#/${currentDocId()}`; }
+
+function replaceHash(target) {
+  try {
+    history.replaceState(null, "", target);
+  } catch (e) { /* some sandboxes forbid replaceState; the dialog still works */ }
+}
 
 function renderResults(q) {
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const setStatus = t => { if (searchStatus) searchStatus.textContent = t; };
+  searchInput.setAttribute("aria-expanded", terms.length ? "true" : "false");
+  searchInput.removeAttribute("aria-activedescendant");
   if (!terms.length) {
-    searchResults.innerHTML = '<div class="empty">Start typing to search titles, headings, and full text.</div>';
-    currentResults = [];
+    searchResults.innerHTML = recentsMarkup();
+    setStatus("");
     return;
   }
   if (!indexReady) {
     searchResults.innerHTML = '<div class="empty"><span class="spinner"></span>Building search index…</div>';
+    setStatus("Building the search index.");
     return;
   }
-  const results = search(q);
-  currentResults = results;
+  const scope = scopedToPage ? currentDocId() : null;
+  const pool = scope ? searchIndex.filter(e => e.docId === scope) : searchIndex;
+  const results = searchEntries(pool, q);
   selIndex = 0;
   if (!results.length) {
-    searchResults.innerHTML = `<div class="empty">No matches for “${escapeHtml(q)}”.</div>`;
+    const where = scope ? ` on ${DOC_BY_ID[scope].title}` : "";
+    searchResults.innerHTML = `<div class="empty">No matches for “${escapeHtml(q)}”${escapeHtml(where)}.</div>`;
+    setStatus(`No results for ${q}${where}.`);
     return;
   }
   searchResults.innerHTML = results.map((r, i) => {
     const e = r.entry;
     const href = `#/${e.docId}${e.headingSlug ? "#" + e.headingSlug : ""}`;
-    return `<a class="result ${i === 0 ? "sel" : ""}" href="${href}" data-search-result data-idx="${i}">
+    return `<a class="result ${i === 0 ? "sel" : ""}" href="${href}" id="search-result-${i}"
+      role="option" aria-selected="${i === 0}" data-search-result data-idx="${i}">
       <div class="r-doc">${escapeHtml(e.docTitle)}</div>
       <div class="r-title">${escapeHtml(e.heading)}</div>
       <div class="r-snippet">${makeSnippet(e, terms)}</div>
     </a>`;
   }).join("");
+  searchInput.setAttribute("aria-activedescendant", "search-result-0");
+  setStatus(`${results.length} result${results.length === 1 ? "" : "s"} for ${q}.`);
 }
 
 function moveSelection(delta) {
   const items = [...searchResults.querySelectorAll(".result")];
   if (!items.length) return;
   items[selIndex]?.classList.remove("sel");
+  items[selIndex]?.setAttribute("aria-selected", "false");
   selIndex = (selIndex + delta + items.length) % items.length;
   items[selIndex].classList.add("sel");
+  items[selIndex].setAttribute("aria-selected", "true");
   items[selIndex].scrollIntoView({ block: "nearest" });
+  // Arrow keys move a class; without this the announcement never follows.
+  searchInput.setAttribute("aria-activedescendant", items[selIndex].id);
+}
+
+function openResult(href) {
+  rememberSearch(searchInput.value);
+  closeSearch();
+  location.hash = href.slice(1);
 }
 
 function openSelected() {
-  const items = [...searchResults.querySelectorAll(".result")];
-  const el = items[selIndex];
-  if (el) { location.hash = el.getAttribute("href").slice(1); closeSearch(); }
+  const el = searchResults.querySelectorAll(".result")[selIndex];
+  if (el) openResult(el.getAttribute("href"));
 }
 
-searchInput.addEventListener("input", e => renderResults(e.target.value));
+searchInput.addEventListener("input", e => { renderResults(e.target.value); syncSearchHash(e.target.value); });
 searchResults.addEventListener("click", e => {
+  const recent = e.target.closest("[data-recent]");
+  if (recent) {
+    searchInput.value = recent.getAttribute("data-recent");
+    searchInput.focus();
+    renderResults(searchInput.value);
+    return;
+  }
   const a = e.target.closest("[data-search-result]");
-  if (a) { e.preventDefault(); location.hash = a.getAttribute("href").slice(1); closeSearch(); }
+  if (a) { e.preventDefault(); openResult(a.getAttribute("href")); }
 });
 searchInput.addEventListener("keydown", e => {
   if (e.key === "ArrowDown") { e.preventDefault(); moveSelection(1); }
@@ -964,9 +1686,26 @@ searchInput.addEventListener("keydown", e => {
   else if (e.key === "Enter") { e.preventDefault(); openSelected(); }
   else if (e.key === "Escape") { closeSearch(); }
 });
+// A modal dialog owns the Tab key: without this, tabbing walks out of the
+// panel into the page behind it, which is still there and still scrollable.
+overlay.addEventListener("keydown", e => {
+  if (e.key !== "Tab") return;
+  const focusable = [searchInput, scopeBtn].filter(el => el && el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+scopeBtn.addEventListener("click", () => {
+  scopedToPage = !scopedToPage;
+  scopeBtn.setAttribute("aria-pressed", String(scopedToPage));
+  scopeBtn.textContent = scopedToPage ? `On ${DOC_BY_ID[currentDocId()].title}` : "This page";
+  renderResults(searchInput.value);
+  searchInput.focus();
+});
 overlay.addEventListener("click", e => { if (e.target === overlay) closeSearch(); });
-document.getElementById("sidebarSearch").addEventListener("focus", openSearch);
-document.getElementById("sidebarSearch").addEventListener("click", openSearch);
+document.getElementById("sidebarSearch").addEventListener("focus", () => openSearch());
+document.getElementById("sidebarSearch").addEventListener("click", () => openSearch());
 
 // Global keyboard shortcuts
 document.addEventListener("keydown", e => {
@@ -1020,6 +1759,29 @@ document.addEventListener("click", e => {
   if (e.target.closest("#theme-toggle")) applyTheme(currentTheme() === "dark" ? "light" : "dark");
 });
 
+// ---- Heading links -----------------------------------------------------
+// The ¶ beside a heading was a plain link: clicking it jumped there, and
+// getting a shareable URL meant copying from the address bar afterwards.
+// Clicking now puts the absolute link on the clipboard and navigates, which is
+// what people were doing by hand. Modifier-clicks and middle-clicks are left
+// to the browser so "open in new tab" still works.
+document.addEventListener("click", async e => {
+  const anchor = e.target.closest("a.heading-anchor");
+  if (!anchor || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+  const href = anchor.getAttribute("href") || "";
+  const absolute = location.origin + location.pathname + location.search + href;
+  try {
+    await navigator.clipboard.writeText(absolute);
+    const was = anchor.textContent;
+    anchor.textContent = "copied";
+    anchor.style.opacity = "1";
+    setTimeout(() => { anchor.textContent = was; anchor.style.opacity = ""; }, 1200);
+  } catch (err) {
+    // Clipboard access can be refused (no permission, insecure origin). The
+    // link still works, which is the behaviour this replaced.
+  }
+});
+
 // ---- Copy buttons ------------------------------------------------------
 // Delegated, so blocks rendered after navigation are covered without rebinding.
 document.addEventListener("click", async e => {
@@ -1037,8 +1799,43 @@ document.addEventListener("click", async e => {
   setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 1400);
 });
 
+// ---- Build stamp -------------------------------------------------------
+// The documentation is embedded in the binary, so when the binary is serving
+// it the two are necessarily the same build — worth stating on a site whose
+// discipline is that the reference describes the code that exists. Served
+// statically there is nothing to report, and the panel stays hidden.
+async function showBuildStamp() {
+  const el = document.getElementById("buildStamp");
+  if (!el) return;
+  let info;
+  try {
+    const res = await fetch("build.json", { cache: "no-store" });
+    if (!res.ok) return;
+    info = await res.json();
+  } catch (e) { return; }
+  if (!info || !info.version) return;
+
+  const short = info.revision ? info.revision.slice(0, 12) : "";
+  // Go appends "+dirty" to the pseudo-version of a modified tree; the badge
+  // below says the same thing more legibly, so it is not printed twice.
+  const version = info.version.replace(/\+dirty$/, "");
+  let html = `Serving from <code>${escapeHtml(version)}</code>`;
+  if (short) {
+    html += `<br>commit <code>${escapeHtml(short)}</code>`;
+    if (info.modified) html += ` <span class="dirty" title="built from a working tree with uncommitted changes">+dirty</span>`;
+  }
+  if (info.time) html += `<br>${escapeHtml(info.time.slice(0, 10))}`;
+  if (info.go) html += ` · ${escapeHtml(info.go)}`;
+  el.innerHTML = html;
+  el.hidden = false;
+}
+
 (async function boot() {
   applyTheme(currentTheme());
+  showBuildStamp();
+  // Whether the playground was built decides whether Run buttons appear, so
+  // settle it before the first page renders.
+  await probePlayground();
   route();
   await loadAllForIndex();
   indexReady = true;

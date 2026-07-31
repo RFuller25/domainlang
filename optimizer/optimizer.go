@@ -6,7 +6,7 @@ package optimizer
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"domain/ir"
 )
@@ -16,13 +16,6 @@ type Rewrite struct {
 	Message string
 }
 
-// passes is the pass pipeline, in priority order within one round: the
-// expression-layer simplifier first (folding can expose patterns to every
-// later pass), then the algorithm substitutions (most specific patterns),
-// then reordering dead-code elimination, then map/filter dead code and
-// fusion. Passes cascade — e.g. Sort + Reverse first flips into one Sort,
-// which can then fuse with a following Select Top K — so Optimize reruns the
-// rounds until a full round applies nothing.
 // isIntList reports whether t is exactly List<Int> — the shape every
 // int-specialized rewrite requires. Float pipelines fail this check and keep
 // their naive nodes (Float sorts stay unswapped: quickselect helpers are
@@ -55,6 +48,13 @@ func typeHasFloat(t *ir.Type) bool {
 	return false
 }
 
+// passes is the pass pipeline, in priority order within one round: the
+// expression-layer simplifier first (folding can expose patterns to every
+// later pass), then the algorithm substitutions (most specific patterns),
+// then reordering dead-code elimination, then map/filter dead code and
+// fusion. Passes cascade — e.g. Sort + Reverse first flips into one Sort,
+// which can then fuse with a following Select Top K — so Optimize reruns the
+// rounds until a full round applies nothing.
 var passes = []func(*ir.Pipeline) []Rewrite{
 	// expression layer
 	simplifyLambdaBodies,
@@ -104,7 +104,7 @@ func Optimize(p *ir.Pipeline, enabled bool) []Rewrite {
 		return nil
 	}
 	var rewrites []Rewrite
-	for round := 0; round < maxRounds; round++ {
+	for range maxRounds {
 		applied := 0
 		for _, pass := range passes {
 			rs := pass(p)
@@ -207,10 +207,8 @@ func TopK(xs []int64, k int, desc bool) []int64 {
 	if k <= 0 || len(xs) == 0 {
 		return []int64{}
 	}
-	if k > len(xs) {
-		k = len(xs)
-	}
-	a := append([]int64(nil), xs...)
+	k = min(k, len(xs))
+	a := slices.Clone(xs)
 
 	// "front" reports whether x belongs ahead of y in the requested order.
 	front := func(x, y int64) bool {
@@ -222,7 +220,10 @@ func TopK(xs []int64, k int, desc bool) []int64 {
 
 	quickselect(a, k, front)
 	res := a[:k]
-	sort.Slice(res, func(i, j int) bool { return front(res[i], res[j]) })
+	slices.Sort(res)
+	if desc {
+		slices.Reverse(res)
+	}
 	return res
 }
 

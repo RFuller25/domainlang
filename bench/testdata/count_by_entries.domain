@@ -1,0 +1,11 @@
+# The Map vocabulary (v0.5): Count By builds the frequency map, Convert To
+# Entries drops it back into the list vocabulary, and item() reads a tuple.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Maximum Technique: Count By
+    Using: (s) -> slice(s, 0, 3)
+Channeled Energy: Convert To Entries
+Cursed Technique: Map Each
+    Using: (e) -> item(e, 1)
+Maximum Technique: Max
+Reveal: stdout

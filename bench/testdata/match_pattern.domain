@@ -1,0 +1,9 @@
+# All-int Match Pattern templates compile to a hand-rolled string scanner,
+# and the record predicate inlines into the counting loop.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{a:int}-{b:int},{c:int}-{d:int}"
+Maximum Technique: Count Matching
+    Using: (r) -> (r.a <= r.c and r.b >= r.d) or (r.c <= r.a and r.d >= r.b)
+Reveal: stdout

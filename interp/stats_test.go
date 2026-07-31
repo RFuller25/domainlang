@@ -55,9 +55,9 @@ func TestStatsAttributesNestedWorkToItsLoop(t *testing.T) {
 
 	// A loop's Eval reports its children first, then itself.
 	for i := 0; i < 3; i++ {
-		s.PushFrame("Repeat 3 iter")
+		s.PushFrame("Repeat 3 iter", nil)
 		s.Step(ir.StepEvent{Node: body, Out: int64(1), Dur: time.Millisecond})
-		s.PopFrame()
+		s.PopFrame(nil)
 	}
 	s.Step(ir.StepEvent{Node: loop, Out: int64(1), Dur: 5 * time.Millisecond})
 
@@ -87,15 +87,15 @@ func TestStatsSeparatesSiblingLoops(t *testing.T) {
 	b1, b2 := node("B1", ir.Int()), node("B2", ir.Int())
 	l1, l2 := node("Loop1", ir.Int()), node("Loop2", ir.Int())
 
-	s.PushFrame("iter")
+	s.PushFrame("iter", nil)
 	s.Step(ir.StepEvent{Node: b1, Dur: time.Millisecond})
-	s.PopFrame()
+	s.PopFrame(nil)
 	s.Step(ir.StepEvent{Node: l1, Dur: 2 * time.Millisecond})
 
-	s.PushFrame("iter")
+	s.PushFrame("iter", nil)
 	s.Step(ir.StepEvent{Node: b2, Dur: time.Millisecond})
 	s.Step(ir.StepEvent{Node: b2, Dur: time.Millisecond})
-	s.PopFrame()
+	s.PopFrame(nil)
 	s.Step(ir.StepEvent{Node: l2, Dur: 3 * time.Millisecond})
 
 	var buf bytes.Buffer

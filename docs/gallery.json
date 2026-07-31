@@ -1,0 +1,293 @@
+[
+  {
+    "id": "01_top_calories",
+    "group": "examples",
+    "title": "Top-three group sums — the signature optimization",
+    "description": "Groups of numbers separated by blank lines; sum each group, then take the\ntop 3 and sum those. The Quicksort is a *request*: run with --explain to\nwatch the optimizer fuse Quicksort + Select Top 3 into a quickselect that\nnever fully sorts.",
+    "source": "# Top-three group sums — the signature optimization.\n#\n# Groups of numbers separated by blank lines; sum each group, then take the\n# top 3 and sum those. The Quicksort is a *request*: run with --explain to\n# watch the optimizer fuse Quicksort + Select Top 3 into a quickselect that\n# never fully sorts.\n#\n#   domain examples/01_top_calories.domain\n#   domain run examples/01_top_calories.domain --explain\n#   Expected output: 32000\nCursed Energy: 01_top_calories.input\nCursed Technique: Split Text by \"\\n\\n\"\nCursed Technique: Split Each by \"\\n\"\nChanneled Energy: Convert Each List to Integers\nMaximum Technique: Sum Each Group\nDomain Expansion: Quicksort, Descending\nMaximum Technique: Select Top 3, Sum\nReveal: stdout\n",
+    "input": "1000\n2000\n3000\n\n4000\n\n5000\n6000\n\n7000\n8000\n\n900\n",
+    "expected": "32000\n"
+  },
+  {
+    "id": "02_pair_sum",
+    "group": "examples",
+    "title": "Find the two numbers summing to 100 and multiply them",
+    "description": "`All Pairs` with a sum-to-constant lambda is the O(n²) request; the\noptimizer lowers it to an O(n) hash-set scan (--explain shows it). The\n`Ints` line is a prelude Shikigami: split lines + convert to integers.",
+    "source": "# Find the two numbers summing to 100 and multiply them.\n#\n# `All Pairs` with a sum-to-constant lambda is the O(n²) request; the\n# optimizer lowers it to an O(n) hash-set scan (--explain shows it). The\n# `Ints` line is a prelude Shikigami: split lines + convert to integers.\n#\n#   domain examples/02_pair_sum.domain\n#   Expected output: 2419\nCursed Energy: 02_pair_sum.input\nShikigami: Ints\nDomain Expansion: All Pairs\n    Mode: First\n    Using: (a, b) -\u003e a + b = 100\nMaximum Technique: Product\nReveal: stdout\n",
+    "input": "12\n41\n87\n23\n59\n61\n39\n",
+    "expected": "2419\n"
+  },
+  {
+    "id": "03_overlapping_shifts",
+    "group": "examples",
+    "title": "Count overlapping range pairs, parsed with Match Pattern",
+    "description": "Each line holds two ranges, \"a-b,c-d\". The template's named typed holes\nproduce a Record per line ({a:Int, b:Int, c:Int, d:Int}); the predicate\ncounts pairs whose ranges overlap at all.",
+    "source": "# Count overlapping range pairs, parsed with Match Pattern.\n#\n# Each line holds two ranges, \"a-b,c-d\". The template's named typed holes\n# produce a Record per line ({a:Int, b:Int, c:Int, d:Int}); the predicate\n# counts pairs whose ranges overlap at all.\n#\n#   domain examples/03_overlapping_shifts.domain\n#   Expected output: 4\nCursed Energy: 03_overlapping_shifts.input\nCursed Technique: Split Text by \"\\n\"\nCursed Technique: Match Pattern\n    Mode: Each\n    Using: \"{a:int}-{b:int},{c:int}-{d:int}\"\nMaximum Technique: Count Matching\n    Using: (r) -\u003e r.a \u003c= r.d and r.c \u003c= r.b\nReveal: stdout\n",
+    "input": "2-4,6-8\n2-3,4-5\n5-7,7-9\n2-8,3-7\n6-6,4-6\n2-6,4-8\n",
+    "expected": "4\n"
+  },
+  {
+    "id": "04_grade_points",
+    "group": "examples",
+    "title": "Word + number lines: sum the squares of every sorcerer's grade",
+    "description": "A `word` hole makes the template fall back to the regex path (int-only\ntemplates compile to a hand-rolled scanner); field access and arithmetic\nhappen in the Map Each lambda.",
+    "source": "# Word + number lines: sum the squares of every sorcerer's grade.\n#\n# A `word` hole makes the template fall back to the regex path (int-only\n# templates compile to a hand-rolled scanner); field access and arithmetic\n# happen in the Map Each lambda.\n#\n#   domain examples/04_grade_points.domain\n#   Expected output: 552\nCursed Energy: 04_grade_points.input\nCursed Technique: Split Text by \"\\n\"\nCursed Technique: Match Pattern\n    Using: \"{name:word} grade {g:int}\"\nCursed Technique: Map Each\n    Using: (r) -\u003e r.g * r.g\nMaximum Technique: Sum\nReveal: stdout\n",
+    "input": "gojo grade 11\nsukuna grade 20\nitadori grade 1\nnobara grade 3\nmegumi grade 2\ntodo grade 1\nmaki grade 4\n",
+    "expected": "552\n"
+  },
+  {
+    "id": "05_two_sections",
+    "group": "examples",
+    "title": "A two-section input handled with Channels",
+    "description": "Section one is a roster, section two is a scores list. Each Channel\nbranches from the same upstream value (the section list), processes its\nown section, and Combine recombines them: squad size × 1000 + total score.",
+    "source": "# A two-section input handled with Channels.\n#\n# Section one is a roster, section two is a scores list. Each Channel\n# branches from the same upstream value (the section list), processes its\n# own section, and Combine recombines them: squad size × 1000 + total score.\n#\n#   domain examples/05_two_sections.domain\n#   Expected output: 4290\nCursed Energy: 05_two_sections.input\nCursed Technique: Split Text by \"\\n\\n\"\n\nChannel \"squad\":\n    Cursed Technique: Take Item 0\n    Cursed Technique: Split Text by \"\\n\"\n    Maximum Technique: Count\n\nChannel \"score\":\n    Cursed Technique: Take Item 1\n    Cursed Technique: Split Text by \"\\n\"\n    Channeled Energy: Convert List to Integers\n    Maximum Technique: Sum\n\nMaximum Technique: Combine\n    From: squad, score\n    Using: (squad, score) -\u003e squad * 1000 + score\n\nReveal: stdout\n",
+    "input": "gojo\nnanami\nitadori\nnobara\n\n75\n120\n95\n",
+    "expected": "4290\n"
+  },
+  {
+    "id": "06_tall_trees",
+    "group": "examples",
+    "title": "Count grid cells passing a predicate",
+    "description": "`Digit Grid` is a prelude Shikigami (split lines → split chars → convert →\ngrid). Count Cells applies the lambda to every cell.",
+    "source": "# Count grid cells passing a predicate.\n#\n# `Digit Grid` is a prelude Shikigami (split lines → split chars → convert →\n# grid). Count Cells applies the lambda to every cell.\n#\n#   domain examples/06_tall_trees.domain\n#   Expected output: 9\nCursed Energy: 06_tall_trees.input\nShikigami: Digit Grid\nMaximum Technique: Count Cells\n    Using: (h) -\u003e h \u003e= 5\nReveal: stdout\n",
+    "input": "30373\n25512\n65332\n33549\n35390\n",
+    "expected": "9\n"
+  },
+  {
+    "id": "07_loops",
+    "group": "examples",
+    "title": "Loops: Repeat a fixed number of times, then While a condition holds",
+    "description": "Sum the input (35), double it three times (280), then subtract 30 while\nthe value stays above 100 — landing exactly on 100. The Binding Vow is a\ndebug assertion: try breaking the input and re-running, then shed the vow\nwith --release.",
+    "source": "# Loops: Repeat a fixed number of times, then While a condition holds.\n#\n# Sum the input (35), double it three times (280), then subtract 30 while\n# the value stays above 100 — landing exactly on 100. The Binding Vow is a\n# debug assertion: try breaking the input and re-running, then shed the vow\n# with --release.\n#\n#   domain examples/07_loops.domain\n#   Expected output: 100\nCursed Energy: 07_loops.input\nShikigami: Ints\nBinding Vow: All Values \u003e 0\nMaximum Technique: Sum\nSimple Domain: Repeat 3\n    Cursed Technique: Apply\n        Using: (v) -\u003e v * 2\nSimple Domain: While\n    Using: (v) -\u003e v \u003e 100\n    Cursed Technique: Apply\n        Using: (v) -\u003e v - 30\nReveal: stdout\n",
+    "input": "20\n15\n",
+    "expected": "100\n"
+  },
+  {
+    "id": "08_builtins",
+    "group": "examples",
+    "title": "Expression-layer builtins inside a lambda",
+    "description": "For each group: first + last + (max - min) + the sum of the two leading\nvalues. The result is a list, rendered like the interpreter renders lists.",
+    "source": "# Expression-layer builtins inside a lambda.\n#\n# For each group: first + last + (max - min) + the sum of the two leading\n# values. The result is a list, rendered like the interpreter renders lists.\n#\n#   domain examples/08_builtins.domain\n#   Expected output: [122, 1100]\nCursed Energy: 08_builtins.input\nCursed Technique: Split Text by \"\\n\\n\"\nCursed Technique: Split Each by \"\\n\"\nChanneled Energy: Convert Each List to Integers\nCursed Technique: Map Each\n    Using: (g) -\u003e first(g) + last(g) + max(g) - min(g) + sum(take(g, 2))\nReveal: stdout\n",
+    "input": "10\n25\n3\n40\n\n100\n400\n200\n",
+    "expected": "[122, 1100]\n"
+  },
+  {
+    "id": "09_common_letters",
+    "group": "examples",
+    "title": "Set intersection over groups: which letters appear on every line?",
+    "description": "Splitting each line by \"\" makes a list of characters; Intersect reduces\nthe groups to a Set, rendered in the first line's letter order.",
+    "source": "# Set intersection over groups: which letters appear on every line?\n#\n# Splitting each line by \"\" makes a list of characters; Intersect reduces\n# the groups to a Set, rendered in the first line's letter order.\n#\n#   domain examples/09_common_letters.domain\n#   Expected output: {d, o, m, a, n}\nCursed Energy: 09_common_letters.input\nShikigami: Lines\nCursed Technique: Split Each by \"\"\nMaximum Technique: Intersect\nReveal: stdout\n",
+    "input": "domain\nnomads\nmonday\n",
+    "expected": "{d, o, m, a, n}\n"
+  },
+  {
+    "id": "10_shikigami",
+    "group": "examples",
+    "title": "Define your own Shikigami with a typed parameter",
+    "description": "\"Scaled Sum\" sums a list and multiplies by a factor; the parameter\nsubstitutes into the lambda body when the call is inlined. A Filter\ndrops the non-positive readings first.",
+    "source": "# Define your own Shikigami with a typed parameter.\n#\n# \"Scaled Sum\" sums a list and multiplies by a factor; the parameter\n# substitutes into the lambda body when the call is inlined. A Filter\n# drops the non-positive readings first.\n#\n#   domain examples/10_shikigami.domain\n#   Expected output: 231\nShikigami \"Scaled Sum\" (factor: Int)\n    Maximum Technique: Sum\n    Cursed Technique: Apply\n        Using: (v) -\u003e v * factor\n\nCursed Energy: 10_shikigami.input\nShikigami: Ints\nCursed Technique: Filter\n    Using: (x) -\u003e x \u003e 0\nShikigami: Scaled Sum\n    factor: 7\nReveal: stdout\n",
+    "input": "5\n-2\n11\n0\n17\n",
+    "expected": "231\n"
+  },
+  {
+    "id": "11_merged_ranges",
+    "group": "examples",
+    "title": "Mine integers out of messy text, then coalesce the ranges they describe",
+    "description": "`Extract Integers` pulls every integer off each line (two per line here, so\neach row is a range), and `Merge Ranges` sorts and merges the overlapping or\nadjacent ones.",
+    "source": "# Mine integers out of messy text, then coalesce the ranges they describe.\n#\n# `Extract Integers` pulls every integer off each line (two per line here, so\n# each row is a range), and `Merge Ranges` sorts and merges the overlapping or\n# adjacent ones.\n#\n#   domain examples/11_merged_ranges.domain\n#   Expected output: [[1, 8], [10, 12], [20, 20]]\nCursed Energy: 11_merged_ranges.input\nShikigami: Lines\nCursed Technique: Extract Integers\nMaximum Technique: Merge Ranges\nReveal: stdout\n",
+    "input": "range 1 to 4\nrange 3 to 7\nrange 10 to 12\nrange 6 to 8\nrange 20 to 20\n",
+    "expected": "[[1, 8], [10, 12], [20, 20]]\n"
+  },
+  {
+    "id": "12_maze_bfs",
+    "group": "examples",
+    "title": "Shortest path through a maze, as a one-liner algorithm request",
+    "description": "`Domain Expansion: BFS` floods step distances out from the start over the\ncells the `Using:` predicate marks walkable ('-1' where unreachable); `at`\nreads the distance at the exit corner.",
+    "source": "# Shortest path through a maze, as a one-liner algorithm request.\n#\n# `Domain Expansion: BFS` floods step distances out from the start over the\n# cells the `Using:` predicate marks walkable ('-1' where unreachable); `at`\n# reads the distance at the exit corner.\n#\n#   domain examples/12_maze_bfs.domain\n#   Expected output: 16\nCursed Energy: 12_maze_bfs.input\nShikigami: Lines\nChanneled Energy: Convert To Grid\nDomain Expansion: BFS from 0 0\n    Using: (c) -\u003e c = \".\"\nCursed Technique: Apply\n    Using: (g) -\u003e at(g, 4, 4)\nReveal: stdout\n",
+    "input": ".#...\n.#.#.\n.#.#.\n.#.#.\n...#.\n",
+    "expected": "16\n"
+  },
+  {
+    "id": "13_gear_ratios",
+    "group": "examples",
+    "title": "Whitespace fields + number theory builtins",
+    "description": "`Split Fields` splits each line on runs of whitespace (no separator to\nspell), and the lambda reduces each gear pair with lcm/gcd: teeth ratios\nlcm(a,b)/gcd(a,b), summed.",
+    "source": "# Whitespace fields + number theory builtins.\n#\n# `Split Fields` splits each line on runs of whitespace (no separator to\n# spell), and the lambda reduces each gear pair with lcm/gcd: teeth ratios\n# lcm(a,b)/gcd(a,b), summed.\n#\n#   domain examples/13_gear_ratios.domain\n#   Expected output: 22\nCursed Energy: 13_gear_ratios.input\nShikigami: Lines\nCursed Technique: Split Fields\nChanneled Energy: Convert Each List to Integers\nCursed Technique: Map Each\n    Using: (p) -\u003e lcm(first(p), last(p)) / gcd(first(p), last(p))\nMaximum Technique: Sum\nReveal: stdout\n",
+    "input": "4 6\n3 5\n10 10\n",
+    "expected": "22\n"
+  },
+  {
+    "id": "14_regions",
+    "group": "examples",
+    "title": "Two grid analyses of one map, branched through Channels",
+    "description": "One branch counts the 4-connected '#' regions (union-find under the hood);\nthe other finds every '#' cell as a (row, col) point and measures the\nManhattan distance between the first and last. Combine packs both numbers\ninto one answer: regions * 100 + span.",
+    "source": "# Two grid analyses of one map, branched through Channels.\n#\n# One branch counts the 4-connected '#' regions (union-find under the hood);\n# the other finds every '#' cell as a (row, col) point and measures the\n# Manhattan distance between the first and last. Combine packs both numbers\n# into one answer: regions * 100 + span.\n#\n#   domain examples/14_regions.domain\n#   Expected output: 507\nCursed Energy: 14_regions.input\nShikigami: Lines\nChanneled Energy: Convert To Grid\n\nChannel \"regions\":\n    Domain Expansion: Connected Components\n        Using: (c) -\u003e c = \"#\"\n\nChannel \"span\":\n    Cursed Technique: Find Cells\n        Using: (c) -\u003e c = \"#\"\n    Cursed Technique: Apply\n        Using: (ps) -\u003e manhattan(first(ps), last(ps))\n\nMaximum Technique: Combine\n    From: regions, span\n    Using: (r, s) -\u003e r * 100 + s\nReveal: stdout\n",
+    "input": "##..#\n#..##\n..#..\n#..##\n",
+    "expected": "507\n"
+  },
+  {
+    "id": "15_team_picks",
+    "group": "examples",
+    "title": "Exhaustive generation: every subset, filtered by a predicate",
+    "description": "`Subsets` produces the power set (empty set first, whole roster last);\nthe reduction keeps only the two-person teams that include ana.",
+    "source": "# Exhaustive generation: every subset, filtered by a predicate.\n#\n# `Subsets` produces the power set (empty set first, whole roster last);\n# the reduction keeps only the two-person teams that include ana.\n#\n#   domain examples/15_team_picks.domain\n#   Expected output: 3\nCursed Energy: 15_team_picks.input\nCursed Technique: Split Text by \", \"\nDomain Expansion: Subsets\nMaximum Technique: Count Matching\n    Using: (team) -\u003e length(team) = 2 and contains(team, \"ana\")\nReveal: stdout\n",
+    "input": "ana, bo, cy, dee\n",
+    "expected": "3\n"
+  },
+  {
+    "id": "16_no_prefixes",
+    "group": "examples",
+    "title": "The themed keyword in front of an operation is optional — the compiler",
+    "description": "infers it from the phrase. This is example 01 written without a single\nprefix, and it resolves to exactly the same pipeline (quickselect and all;\nrun it with --explain).\n\nThe two spellings mix freely: the Filter below keeps its keyword, and every\nother line drops it. A Shikigami is called by its bare name too, which is\nwhy a Shikigami may not be named after a built-in operation.",
+    "source": "# The themed keyword in front of an operation is optional — the compiler\n# infers it from the phrase. This is example 01 written without a single\n# prefix, and it resolves to exactly the same pipeline (quickselect and all;\n# run it with --explain).\n#\n# The two spellings mix freely: the Filter below keeps its keyword, and every\n# other line drops it. A Shikigami is called by its bare name too, which is\n# why a Shikigami may not be named after a built-in operation.\n#\n#   domain examples/16_no_prefixes.domain\n#   Expected output: 15000\nShikigami \"Heavy Elves\"\n    Filter\n        Using: (g) -\u003e sum(g) \u003e 5000\n\n16_no_prefixes.input\nSplit Text by \"\\n\\n\"\nSplit Each by \"\\n\"\nConvert Each List to Integers\nHeavy Elves\nSum Each Group\nCount Equals 3\nQuicksort, Descending\nCursed Technique: Take Item 0\nstdout\n",
+    "input": "1000\n2000\n3000\n\n4000\n\n5000\n6000\n\n7000\n8000\n\n900\n",
+    "expected": "15000\n"
+  },
+  {
+    "id": "17_two_parts",
+    "group": "examples",
+    "title": "Part blocks: two answers from one parse",
+    "description": "Every Advent of Code day asks two questions about the same input, and the\nparse above the Parts happens once. A Part branches from the current value\nlike a Channel does, but labels what its body Reveals instead of storing it\nunder a name — and it is a passthrough, so sibling Parts each see the same\nupstream list.\n\nPart 1: 24000\nPart 2: 45000",
+    "source": "# Part blocks: two answers from one parse.\n#\n# Every Advent of Code day asks two questions about the same input, and the\n# parse above the Parts happens once. A Part branches from the current value\n# like a Channel does, but labels what its body Reveals instead of storing it\n# under a name — and it is a passthrough, so sibling Parts each see the same\n# upstream list.\n#\n#   domain examples/17_two_parts.domain\n#   Expected output:\n#     Part 1: 24000\n#     Part 2: 45000\nCursed Energy: 17_two_parts.input\nCursed Technique: Split Text by \"\\n\\n\"\nCursed Technique: Split Each by \"\\n\"\nChanneled Energy: Convert Each List to Integers\nMaximum Technique: Sum Each Group\n\nPart \"1\":\n    Maximum Technique: Max\n    Reveal: stdout\n\nPart \"2\":\n    Domain Expansion: Quicksort, Descending\n    Maximum Technique: Select Top 3, Sum\n    Reveal: stdout\n",
+    "input": "1000\n2000\n3000\n\n4000\n\n5000\n6000\n\n7000\n8000\n9000\n\n10000\n",
+    "expected": "Part 1: 24000\nPart 2: 45000\n"
+  },
+  {
+    "id": "18_innate_domain",
+    "group": "examples",
+    "title": "Innate Domain: importing a Shikigami library",
+    "description": "`Innate Domain: lib/shapes` loads examples/lib/shapes.domain before this\nprogram, so its operations are callable by name — exactly like the prelude's.\nImports are declarations, not pipeline steps, so the line can sit anywhere;\nby convention it goes at the top.\n\nLibraries cost nothing at runtime: a Shikigami is inlined at its call site,\nso `Biggest` fuses into a quickselect just as if it had been written here.\nRun with --explain to watch that happen through the import.",
+    "source": "# Innate Domain: importing a Shikigami library.\n#\n# `Innate Domain: lib/shapes` loads examples/lib/shapes.domain before this\n# program, so its operations are callable by name — exactly like the prelude's.\n# Imports are declarations, not pipeline steps, so the line can sit anywhere;\n# by convention it goes at the top.\n#\n# Libraries cost nothing at runtime: a Shikigami is inlined at its call site,\n# so `Biggest` fuses into a quickselect just as if it had been written here.\n# Run with --explain to watch that happen through the import.\n#\n#   domain examples/18_innate_domain.domain\n#   Expected output: 28\nInnate Domain: lib/shapes\nCursed Energy: 18_innate_domain.input\nShikigami: Lines\nShikigami: All Ints\nShikigami: Biggest\n    n: 3\nReveal: stdout\n",
+    "input": "move 12 from -3 to 5\nx=9 y=2\n7 and 4\n",
+    "expected": "28\n",
+    "libs": {
+      "lib/shapes": "# A Shikigami library, imported with `Innate Domain: lib/shapes`.\n#\n# A library holds Shikigami definitions and nothing else — no pipeline\n# statements, because a library is not a program. It lives in a subdirectory so\n# the examples test harness, which runs every .domain file in examples/, does\n# not try to run it.\n\n# Every line's integers, as one flat list.\nShikigami \"All Ints\"\n    Cursed Technique: Extract Integers\n    Cursed Technique: Flatten\n\n# The n largest values, summed. Naming Quicksort is a request: the optimizer\n# fuses this pair into a quickselect, and it does so through the import.\nShikigami \"Biggest\" (n: Int)\n    Domain Expansion: Quicksort, Descending\n    Maximum Technique: Select Top n, Sum\n"
+    }
+  },
+  {
+    "id": "19_row_pairs",
+    "group": "examples",
+    "title": "A `Using:` written as an indented pipeline instead of a lambda",
+    "description": "`All Pairs` searches the *current value*, so over a List\u003cList\u003cInt\u003e\u003e it would\npair whole rows against each other. Writing Map Each's `Using:` as a pipeline\nruns that pipeline in the lambda's place, once per row with the row as its\ncurrent value — the only way to reach a primitive per element, since the\nexpression layer has no way to iterate. A body stands in for any 1-parameter\n`Using:` lambda, not just Map Each's: `Filter`, `Sort By`, `Group By` and the\nrest take one too.\n\nEach row here holds exactly one evenly-divisible pair (AoC 2017 day 2 part\n2). The body finds it and divides it; the outer pipeline sums the results.",
+    "source": "# A `Using:` written as an indented pipeline instead of a lambda.\n#\n# `All Pairs` searches the *current value*, so over a List\u003cList\u003cInt\u003e\u003e it would\n# pair whole rows against each other. Writing Map Each's `Using:` as a pipeline\n# runs that pipeline in the lambda's place, once per row with the row as its\n# current value — the only way to reach a primitive per element, since the\n# expression layer has no way to iterate. A body stands in for any 1-parameter\n# `Using:` lambda, not just Map Each's: `Filter`, `Sort By`, `Group By` and the\n# rest take one too.\n#\n# Each row here holds exactly one evenly-divisible pair (AoC 2017 day 2 part\n# 2). The body finds it and divides it; the outer pipeline sums the results.\n#\n#   domain examples/19_row_pairs.domain\n#   Expected output: 9\nCursed Energy: 19_row_pairs.input\nShikigami: Lines\nCursed Technique: Extract Integers\nCursed Technique: Map Each\n    Domain Expansion: All Pairs\n        Mode: First\n        Using: (a, b) -\u003e (a % b = 0) or (b % a = 0)\n    Maximum Technique: Reduce\n        Using: (x, y) -\u003e max(x, y) / min(x, y)\nMaximum Technique: Sum\nReveal: stdout\n",
+    "input": "5 9 2 8\n9 4 7 3\n3 8 6 5\n",
+    "expected": "9\n"
+  },
+  {
+    "id": "01_fizzbuzz",
+    "group": "challenges",
+    "title": "FizzBuzz — the classic screening question: print 1..N, but multiples of 3",
+    "description": "say Fizz, multiples of 5 say Buzz, and multiples of both say FizzBuzz.\n\nDomain has no range generator, so the program builds 1..15 itself: start\nfrom [1] and Repeat appending length+1. Divisibility is mod(n, k) = 0, and\ntotext renders the plain numbers.",
+    "source": "# FizzBuzz — the classic screening question: print 1..N, but multiples of 3\n# say Fizz, multiples of 5 say Buzz, and multiples of both say FizzBuzz.\n#\n# Domain has no range generator, so the program builds 1..15 itself: start\n# from [1] and Repeat appending length+1. Divisibility is mod(n, k) = 0, and\n# totext renders the plain numbers.\n#\n#   domain challenges/01_fizzbuzz.domain\nCursed Energy: 01_fizzbuzz.input\nCursed Technique: Apply\n    Using: (s) -\u003e list(toint(s))\nSimple Domain: Repeat 14\n    Cursed Technique: Apply\n        Using: (xs) -\u003e concat(xs, list(length(xs) + 1))\nCursed Technique: Map Each\n    Using: (n) -\u003e if mod(n, 15) = 0 then \"FizzBuzz\" else (if mod(n, 3) = 0 then \"Fizz\" else (if mod(n, 5) = 0 then \"Buzz\" else totext(n)))\nMaximum Technique: Join with \"\\n\"\nReveal: stdout\n",
+    "input": "1",
+    "expected": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n"
+  },
+  {
+    "id": "02_two_sum",
+    "group": "challenges",
+    "title": "Two Sum — the most famous interview question there is: find the pair of",
+    "description": "numbers that sums to 2020 (the Advent of Code 2020 Day 1 flavor).\n\nNamed naively as an all-pairs scan; run with --explain to watch the\noptimizer swap in the O(n) hash-set scan.",
+    "source": "# Two Sum — the most famous interview question there is: find the pair of\n# numbers that sums to 2020 (the Advent of Code 2020 Day 1 flavor).\n#\n# Named naively as an all-pairs scan; run with --explain to watch the\n# optimizer swap in the O(n) hash-set scan.\n#\n#   domain challenges/02_two_sum.domain\nCursed Energy: 02_two_sum.input\nShikigami: Ints\nDomain Expansion: All Pairs\n    Mode: First\n    Using: (a, b) -\u003e a + b = 2020\nReveal: stdout\n",
+    "input": "1721\n979\n366\n299\n675\n1456",
+    "expected": "[1721, 299]\n"
+  },
+  {
+    "id": "03_max_subarray",
+    "group": "challenges",
+    "title": "Maximum subarray sum (Kadane's algorithm) — the classic dynamic",
+    "description": "programming exercise: the largest sum of any contiguous run.\n\nThe fold state is a two-element list [best, current]. The main pipeline\nholds the seed (built from the first element); the Channel carries the\nrest of the numbers for Fold From: to run over.",
+    "source": "# Maximum subarray sum (Kadane's algorithm) — the classic dynamic\n# programming exercise: the largest sum of any contiguous run.\n#\n# The fold state is a two-element list [best, current]. The main pipeline\n# holds the seed (built from the first element); the Channel carries the\n# rest of the numbers for Fold From: to run over.\n#\n#   domain challenges/03_max_subarray.domain\nCursed Energy: 03_max_subarray.input\nShikigami: Ints\n\nChannel \"rest\":\n    Cursed Technique: Apply\n        Using: (xs) -\u003e drop(xs, 1)\n\nCursed Technique: Apply\n    Using: (xs) -\u003e list(item(xs, 0), item(xs, 0))\nMaximum Technique: Fold\n    From: rest\n    Using: (acc, x) -\u003e list(max(list(first(acc), max(list(x, last(acc) + x)))), max(list(x, last(acc) + x)))\nCursed Technique: Apply\n    Using: (acc) -\u003e first(acc)\nReveal: stdout\n",
+    "input": "-2\n1\n-3\n4\n-1\n2\n1\n-5\n4",
+    "expected": "6\n"
+  },
+  {
+    "id": "04_collatz",
+    "group": "challenges",
+    "title": "Collatz steps — count how many steps n takes to reach 1 under the famous",
+    "description": "3n+1 rule (halve when even, triple-and-add-one when odd).\n\nThe While loop threads a [value, steps] pair; evenness is n/2*2 = n.",
+    "source": "# Collatz steps — count how many steps n takes to reach 1 under the famous\n# 3n+1 rule (halve when even, triple-and-add-one when odd).\n#\n# The While loop threads a [value, steps] pair; evenness is n/2*2 = n.\n#\n#   domain challenges/04_collatz.domain\nCursed Energy: 04_collatz.input\nCursed Technique: Apply\n    Using: (s) -\u003e list(toint(s), 0)\nSimple Domain: While\n    Using: (st) -\u003e first(st) \u003e 1\n    Cursed Technique: Apply\n        Using: (st) -\u003e list(if first(st) / 2 * 2 = first(st) then first(st) / 2 else 3 * first(st) + 1, last(st) + 1)\nCursed Technique: Apply\n    Using: (st) -\u003e last(st)\nReveal: stdout\n",
+    "input": "27",
+    "expected": "111\n"
+  },
+  {
+    "id": "05_window_max",
+    "group": "challenges",
+    "title": "Sliding window maximum — the classic monotonic-deque exercise: the max of",
+    "description": "every window of size 3.\n\nWritten naively (materialize each window, take its max); run with\n--explain to watch the optimizer fuse it into an O(n) streaming\nWindowedReduce that never builds the window lists.",
+    "source": "# Sliding window maximum — the classic monotonic-deque exercise: the max of\n# every window of size 3.\n#\n# Written naively (materialize each window, take its max); run with\n# --explain to watch the optimizer fuse it into an O(n) streaming\n# WindowedReduce that never builds the window lists.\n#\n#   domain challenges/05_window_max.domain\nCursed Energy: 05_window_max.input\nShikigami: Ints\nCursed Technique: Window 3\nCursed Technique: Map Each\n    Using: (w) -\u003e max(w)\nReveal: stdout\n",
+    "input": "1\n3\n-1\n-3\n5\n3\n6\n7",
+    "expected": "[3, 3, 5, 5, 6, 7]\n"
+  },
+  {
+    "id": "06_binary_diagnostics",
+    "group": "challenges",
+    "title": "Binary diagnostics (AoC 2021 Day 3) — the classic bit-counting puzzle:",
+    "description": "gamma takes each column's majority bit, epsilon its complement; report\ngamma * epsilon.\n\nTranspose turns columns into rows; each row's sum against the line count\n(12 here) decides the majority; frombin reads the assembled bit string.",
+    "source": "# Binary diagnostics (AoC 2021 Day 3) — the classic bit-counting puzzle:\n# gamma takes each column's majority bit, epsilon its complement; report\n# gamma * epsilon.\n#\n# Transpose turns columns into rows; each row's sum against the line count\n# (12 here) decides the majority; frombin reads the assembled bit string.\n#\n#   domain challenges/06_binary_diagnostics.domain\nCursed Energy: 06_binary_diagnostics.input\nShikigami: Digit Grid\nCursed Technique: Transpose\nCursed Technique: Apply\n    Using: (g) -\u003e list(sum(row(g, 0)), sum(row(g, 1)), sum(row(g, 2)), sum(row(g, 3)), sum(row(g, 4)))\nCursed Technique: Map Each\n    Using: (s) -\u003e if 2 * s \u003e 12 then \"1\" else \"0\"\nMaximum Technique: Join with \"\"\nCursed Technique: Apply\n    Using: (s) -\u003e frombin(s) * (31 - frombin(s))\nReveal: stdout\n",
+    "input": "00100\n11110\n10110\n10111\n10101\n01111\n00111\n11100\n10000\n11001\n00010\n01010",
+    "expected": "198\n"
+  },
+  {
+    "id": "07_rotate_image",
+    "group": "challenges",
+    "title": "Rotate image (LeetCode 48) — rotate a square matrix 90 degrees clockwise",
+    "description": "The two-step identity: transpose, then reverse each row — the row\nreversal written as a positional Map Cells reading mirrored columns.",
+    "source": "# Rotate image (LeetCode 48) — rotate a square matrix 90 degrees clockwise.\n#\n# The two-step identity: transpose, then reverse each row — the row\n# reversal written as a positional Map Cells reading mirrored columns.\n#\n#   domain challenges/07_rotate_image.domain\nCursed Energy: 07_rotate_image.input\nShikigami: Digit Grid\nCursed Technique: Transpose\nCursed Technique: Map Cells\n    Using: (g, r, c) -\u003e at(g, r, cols(g) - 1 - c)\nReveal: stdout\n",
+    "input": "123\n456\n789",
+    "expected": "7 4 1\n8 5 2\n9 6 3\n"
+  },
+  {
+    "id": "08_flood_fill",
+    "group": "challenges",
+    "title": "Flood fill (LeetCode 733) — the paint-bucket tool: how many cells does",
+    "description": "the region connected to the top-left corner cover?\n\nFlood Fill marks the start's 4-connected region as a 0/1 mask;\nCount Cells measures it.",
+    "source": "# Flood fill (LeetCode 733) — the paint-bucket tool: how many cells does\n# the region connected to the top-left corner cover?\n#\n# Flood Fill marks the start's 4-connected region as a 0/1 mask;\n# Count Cells measures it.\n#\n#   domain challenges/08_flood_fill.domain\nCursed Energy: 08_flood_fill.input\nShikigami: Lines\nChanneled Energy: Convert To Grid\nDomain Expansion: Flood Fill from 0 0\n    Using: (c) -\u003e c = \".\"\nMaximum Technique: Count Cells\n    Using: (m) -\u003e m = 1\nReveal: stdout\n",
+    "input": "..#..\n..#..\n###..\n.....\n..###",
+    "expected": "4\n"
+  },
+  {
+    "id": "09_islands",
+    "group": "challenges",
+    "title": "Number of islands (LeetCode 200) — count the 4-connected groups of land",
+    "description": "Connected Components is the whole algorithm (union-find under the hood).",
+    "source": "# Number of islands (LeetCode 200) — count the 4-connected groups of land.\n#\n# Connected Components is the whole algorithm (union-find under the hood).\n#\n#   domain challenges/09_islands.domain\nCursed Energy: 09_islands.input\nShikigami: Lines\nChanneled Energy: Convert To Grid\nDomain Expansion: Connected Components\n    Using: (c) -\u003e c = \"#\"\nReveal: stdout\n",
+    "input": "##...\n##..#\n....#\n.#...",
+    "expected": "3\n"
+  },
+  {
+    "id": "10_shortest_path",
+    "group": "challenges",
+    "title": "Shortest weighted path (AoC 2021 Day 15) — cross the risk grid from the",
+    "description": "top-left to the bottom-right corner along the cheapest route.\n\nDijkstra floods entry costs from the start; at() reads the far corner.\nRun with --explain: the optimizer fuses the pair into an early-exit\nsearch that stops the moment the target settles.",
+    "source": "# Shortest weighted path (AoC 2021 Day 15) — cross the risk grid from the\n# top-left to the bottom-right corner along the cheapest route.\n#\n# Dijkstra floods entry costs from the start; at() reads the far corner.\n# Run with --explain: the optimizer fuses the pair into an early-exit\n# search that stops the moment the target settles.\n#\n#   domain challenges/10_shortest_path.domain\nCursed Energy: 10_shortest_path.input\nShikigami: Digit Grid\nDomain Expansion: Dijkstra from 0 0\nCursed Technique: Apply\n    Using: (g) -\u003e at(g, 9, 9)\nReveal: stdout\n",
+    "input": "1163751742\n1381373672\n2136511328\n3694931569\n7463417111\n1319128137\n1359912421\n3125421639\n1293138521\n2311944581",
+    "expected": "40\n"
+  },
+  {
+    "id": "11_game_of_life",
+    "group": "challenges",
+    "title": "Conway's Game of Life — a glider on an infinite plane, run 4 generations",
+    "description": "The board is a Sparse grid, so there are no edges to clip the glider. One\ngeneration is the classic counting trick: every live cell contributes 1\nto each of its 8 neighbors and 9 to itself, so after Count By a cell's\nscore is neighbors + 9*alive — and the next generation is exactly the\ncells scoring 3 (birth), 11, or 12 (survival). After 4 generations a\nglider is itself, translated one step diagonally — which the densified\nbounding-box picture normalizes away, so the output equals the input.",
+    "source": "# Conway's Game of Life — a glider on an infinite plane, run 4 generations.\n#\n# The board is a Sparse grid, so there are no edges to clip the glider. One\n# generation is the classic counting trick: every live cell contributes 1\n# to each of its 8 neighbors and 9 to itself, so after Count By a cell's\n# score is neighbors + 9*alive — and the next generation is exactly the\n# cells scoring 3 (birth), 11, or 12 (survival). After 4 generations a\n# glider is itself, translated one step diagonally — which the densified\n# bounding-box picture normalizes away, so the output equals the input.\n#\n#   domain challenges/11_game_of_life.domain\nCursed Energy: 11_game_of_life.input\nShikigami: Lines\nCursed Technique: Match Pattern\n    Using: \"{int},{int}\"\n    Mode: Each\nChanneled Energy: Convert To Sparse Grid\n    Default: 0\n    Mark: 1\nSimple Domain: Repeat 4\n    Cursed Technique: Find Cells\n        Using: (v) -\u003e v = 1\n    Cursed Technique: Map Each\n        Using: (p) -\u003e list(padd(p, point(-1, -1)), padd(p, point(-1, 0)), padd(p, point(-1, 1)), padd(p, point(0, -1)), padd(p, point(0, 1)), padd(p, point(1, -1)), padd(p, point(1, 0)), padd(p, point(1, 1)), p, p, p, p, p, p, p, p, p)\n    Cursed Technique: Flatten\n    Maximum Technique: Count By\n        Using: (q) -\u003e q\n    Channeled Energy: Convert To Sparse Grid\n        Default: 0\n    Cursed Technique: Find Cells\n        Using: (score) -\u003e score = 3 or score = 11 or score = 12\n    Channeled Energy: Convert To Sparse Grid\n        Default: 0\n        Mark: 1\nCursed Technique: Map Cells\n    Using: (v) -\u003e if v = 1 then \"#\" else \".\"\nChanneled Energy: Convert To Grid\nReveal: stdout\n",
+    "input": "0,1\n1,2\n2,0\n2,1\n2,2",
+    "expected": ".#.\n..#\n###\n"
+  },
+  {
+    "id": "12_origami",
+    "group": "challenges",
+    "title": "Transparent origami (AoC 2021 Day 13) — plot dots on an unbounded sheet,",
+    "description": "fold it up along y=7 and left along x=5, and read the letter the dots\nform.\n\nInput is x,y (column,row) pairs. Each fold is a per-point reflection, so\nboth compose in one Map Each; the Sparse grid keeps only the dots, and\ndensifying prints the picture.",
+    "source": "# Transparent origami (AoC 2021 Day 13) — plot dots on an unbounded sheet,\n# fold it up along y=7 and left along x=5, and read the letter the dots\n# form.\n#\n# Input is x,y (column,row) pairs. Each fold is a per-point reflection, so\n# both compose in one Map Each; the Sparse grid keeps only the dots, and\n# densifying prints the picture.\n#\n#   domain challenges/12_origami.domain\nCursed Energy: 12_origami.input\nShikigami: Lines\nCursed Technique: Match Pattern\n    Using: \"{int},{int}\"\n    Mode: Each\nCursed Technique: Map Each\n    Using: (q) -\u003e point(if item(q, 1) \u003e 7 then 14 - item(q, 1) else item(q, 1), if item(q, 0) \u003e 5 then 10 - item(q, 0) else item(q, 0))\nChanneled Energy: Convert To Sparse Grid\n    Default: \".\"\n    Mark: \"#\"\nChanneled Energy: Convert To Grid\nReveal: stdout\n",
+    "input": "6,10\n0,14\n9,10\n0,3\n10,4\n4,11\n6,0\n6,12\n4,1\n0,13\n10,12\n3,4\n3,0\n8,4\n1,10\n2,14\n8,10\n9,0",
+    "expected": "#####\n#...#\n#...#\n#...#\n#####\n"
+  },
+  {
+    "id": "13_minesweeper",
+    "group": "challenges",
+    "title": "Minesweeper board — given the mines, render the numbers: each cell shows",
+    "description": "how many of its 8 neighbors are mines, mines show *.\n\nSame weighted-count trick as Game of Life: every mine adds 1 to each\nneighbor and 9 to itself, so any score of 9 or more is a mine and the\nrest are plain neighbor counts. The Sparse default 0 becomes \".\" so\nuntouched cells stay quiet.",
+    "source": "# Minesweeper board — given the mines, render the numbers: each cell shows\n# how many of its 8 neighbors are mines, mines show *.\n#\n# Same weighted-count trick as Game of Life: every mine adds 1 to each\n# neighbor and 9 to itself, so any score of 9 or more is a mine and the\n# rest are plain neighbor counts. The Sparse default 0 becomes \".\" so\n# untouched cells stay quiet.\n#\n#   domain challenges/13_minesweeper.domain\nCursed Energy: 13_minesweeper.input\nShikigami: Lines\nCursed Technique: Match Pattern\n    Using: \"{int},{int}\"\n    Mode: Each\nCursed Technique: Map Each\n    Using: (q) -\u003e point(item(q, 0), item(q, 1))\nCursed Technique: Map Each\n    Using: (p) -\u003e list(padd(p, point(-1, -1)), padd(p, point(-1, 0)), padd(p, point(-1, 1)), padd(p, point(0, -1)), padd(p, point(0, 1)), padd(p, point(1, -1)), padd(p, point(1, 0)), padd(p, point(1, 1)), p, p, p, p, p, p, p, p, p)\nCursed Technique: Flatten\nMaximum Technique: Count By\n    Using: (q) -\u003e q\nChanneled Energy: Convert To Sparse Grid\n    Default: 0\nCursed Technique: Map Cells\n    Using: (v) -\u003e if v \u003e= 9 then \"*\" else (if v = 0 then \".\" else totext(v))\nChanneled Energy: Convert To Grid\nReveal: stdout\n",
+    "input": "0,0\n1,2\n2,0\n2,1",
+    "expected": "111..\n1*211\n234*1\n1**21\n1221.\n"
+  }
+]

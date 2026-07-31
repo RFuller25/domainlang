@@ -6,7 +6,9 @@ package diag
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -56,7 +58,7 @@ func Analyze(path, src string) *Report {
 	working := src
 	seen := map[string]bool{}
 
-	for round := 0; round < maxRepairRounds; round++ {
+	for range maxRepairRounds {
 		stage, prog, pipe := frontEnd(path, working)
 		if prog != nil {
 			r.Program = prog
@@ -267,10 +269,7 @@ func enrichDedent(d *Diagnostic, src string) {
 	// Nearest enclosing width strictly informs the fix; unique nearest → confident.
 	best, bestDist, ties := -1, 1<<30, 0
 	for _, w := range widths {
-		dist := got - w
-		if dist < 0 {
-			dist = -dist
-		}
+		dist := max(got-w, w-got)
 		if dist < bestDist {
 			best, bestDist, ties = w, dist, 1
 		} else if dist == bestDist {
@@ -317,18 +316,7 @@ func indentWidthsAbove(src string, line int) []int {
 			blank = false
 		}
 	}
-	var out []int
-	for w := range seen {
-		out = append(out, w)
-	}
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[j] < out[i] {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
-	return out
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +463,7 @@ func resolveDiags(err error, prog *ast.Program, src string) []Diagnostic {
 		}
 		if s, _ := closest(got, names); s != "" {
 			d.Help = fmt.Sprintf("did you mean %q?", s)
-			if fix := replaceWordInLine(&d, src, got, s); fix != nil {
+			if fix := replaceWordInLine(&d, got, s); fix != nil {
 				d.Fix = fix
 			}
 		} else {
@@ -645,12 +633,12 @@ func enrichTypeMismatch(d *Diagnostic, prim, want, got string) {
 func spanOfLeadingWords(src string, offset, n int) (int, int, bool) {
 	i := offset
 	end := offset
-	for w := 0; w < n; w++ {
+	for range n {
 		for i < len(src) && src[i] == ' ' {
 			i++
 		}
 		start := i
-		for i < len(src) && (isIdentByte(src[i])) {
+		for i < len(src) && isIdentByte(src[i]) {
 			i++
 		}
 		if i == start {
@@ -667,10 +655,9 @@ func isIdentByte(c byte) bool {
 
 // replaceWordInLine builds a fix replacing the first whole-word occurrence of
 // got on the diagnostic's line.
-func replaceWordInLine(d *Diagnostic, src, got, repl string) *Fix {
-	line := d.LineText
+func replaceWordInLine(d *Diagnostic, got, repl string) *Fix {
 	lineStart := d.Pos.Offset - (d.Pos.Col - 1)
-	if at := wordIndex(line, got); at >= 0 {
+	if at := wordIndex(d.LineText, got); at >= 0 {
 		return &Fix{Start: lineStart + at, End: lineStart + at + len(got),
 			Replacement: repl, Confident: true}
 	}

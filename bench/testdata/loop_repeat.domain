@@ -1,0 +1,9 @@
+# A Simple Domain loop threading one Int through five million laps: the
+# lowering of the loop itself, with nothing else in the way.
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> toint(s)
+Simple Domain: Repeat 5000000
+    Cursed Technique: Apply
+        Using: (x) -> (x * 48271) % 2147483647
+Reveal: stdout

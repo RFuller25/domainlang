@@ -82,9 +82,9 @@ func BenchmarkTraceWithStats(b *testing.B) {
 // from whatever a real consumer does with the events.
 type countingTracer struct{ steps, frames int }
 
-func (c *countingTracer) Step(ir.StepEvent) { c.steps++ }
-func (c *countingTracer) PushFrame(string)  { c.frames++ }
-func (c *countingTracer) PopFrame()         {}
+func (c *countingTracer) Step(ir.StepEvent)          { c.steps++ }
+func (c *countingTracer) PushFrame(string, *ir.Type) { c.frames++ }
+func (c *countingTracer) PopFrame(ir.Value)          {}
 
 func BenchmarkTraceWithCounter(b *testing.B) {
 	pipe, input := benchPipeline(b)
@@ -170,11 +170,11 @@ type recordingTracer struct {
 }
 
 func (r *recordingTracer) Step(e ir.StepEvent) { r.steps = append(r.steps, e) }
-func (r *recordingTracer) PushFrame(label string) {
+func (r *recordingTracer) PushFrame(label string, _ *ir.Type) {
 	r.frames = append(r.frames, label)
 	r.depth++
 }
-func (r *recordingTracer) PopFrame() { r.depth-- }
+func (r *recordingTracer) PopFrame(ir.Value) { r.depth-- }
 
 func (r *recordingTracer) sawFrame(label string) bool {
 	for _, f := range r.frames {

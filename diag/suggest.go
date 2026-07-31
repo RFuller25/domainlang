@@ -65,21 +65,11 @@ func levenshtein(a, b string) int {
 			if a[i-1] == b[j-1] {
 				cost = 0
 			}
-			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
 		}
 		prev, cur = cur, prev
 	}
 	return prev[len(b)]
-}
-
-func min3(a, b, c int) int {
-	if b < a {
-		a = b
-	}
-	if c < a {
-		a = c
-	}
-	return a
 }
 
 // closest finds the candidate nearest to got, or "" when nothing is close
@@ -94,10 +84,7 @@ func closest(got string, candidates []string) (string, int) {
 	}
 	budget := 2
 	if n := len(got); n >= 8 {
-		budget = n / 4
-		if budget > 5 {
-			budget = 5
-		}
+		budget = min(n/4, 5)
 	}
 	if best == "" || bestD > budget {
 		return "", 0

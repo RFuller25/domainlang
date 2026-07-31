@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1029,9 +1030,9 @@ func trialStatements(core *repl, line string) ([]string, bool) {
 	if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), ":") {
 		return nil, false
 	}
-	stmts := append([]string(nil), core.stmts...)
+	stmts := slices.Clone(core.stmts)
 	if len(core.pending) > 0 {
-		block := append(append([]string(nil), core.pending...), line)
+		block := append(slices.Clone(core.pending), line)
 		return append(stmts, strings.Join(block, "\n")), true
 	}
 	if line[0] == ' ' || line[0] == '\t' {
@@ -1110,7 +1111,7 @@ func (m replModel) edit() (tea.Model, tea.Cmd) {
 // finishEdit reloads the edited program, keeping the session untouched if it
 // does not resolve.
 func (m replModel) finishEdit(msg editDoneMsg) (tea.Model, tea.Cmd) {
-	defer os.Remove(msg.path)
+	defer func() { _ = os.Remove(msg.path) }()
 	if msg.err != nil {
 		m.status = fmt.Sprintf("editor exited: %v", msg.err)
 		return m, nil

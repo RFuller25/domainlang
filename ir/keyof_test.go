@@ -60,12 +60,12 @@ func TestKeyOfAgreesWithDeepEqual(t *testing.T) {
 func TestKeyOfAdversarialCases(t *testing.T) {
 	tup := func(vs ...Value) Value { return vs }
 	distinct := [][2]Value{
-		{tup(int64(1), int64(2)), tup(int64(12))},          // grouping
-		{tup("ab", "c"), tup("a", "bc")},                   // string boundaries
-		{tup("i1;"), tup(int64(1))},                        // text mimicking an int encoding
-		{tup(int64(1)), int64(1)},                          // 1-tuple vs bare scalar... both keyable
+		{tup(int64(1), int64(2)), tup(int64(12))},                    // grouping
+		{tup("ab", "c"), tup("a", "bc")},                             // string boundaries
+		{tup("i1;"), tup(int64(1))},                                  // text mimicking an int encoding
+		{tup(int64(1)), int64(1)},                                    // 1-tuple vs bare scalar... both keyable
 		{tup(tup(int64(1)), int64(2)), tup(int64(1), tup(int64(2)))}, // nesting shape
-		{"t1:a;", tup("a")},                                // text mimicking a tuple encoding
+		{"t1:a;", tup("a")},                                          // text mimicking a tuple encoding
 	}
 	for _, pair := range distinct {
 		if KeyOf(pair[0]) == KeyOf(pair[1]) {

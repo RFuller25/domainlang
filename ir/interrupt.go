@@ -57,9 +57,6 @@ func NewInterrupter(inner Tracer) *Interrupter { return &Interrupter{Inner: inne
 // from any goroutine, and safe to call after the run has already finished.
 func (i *Interrupter) Stop() { i.stopped.Store(true) }
 
-// Stopped reports whether Stop has been called.
-func (i *Interrupter) Stopped() bool { return i.stopped.Load() }
-
 // Step forwards the event and then aborts if the run has been stopped. The
 // check is after the inner tracer, so a profile keeps the step that was
 // running when the interrupt arrived.
@@ -76,15 +73,15 @@ func (i *Interrupter) Step(e StepEvent) {
 // by a matching pop, and unwinding between them would leave the tracer it
 // wraps holding a frame that never closed. Step runs often enough — every
 // stage of every iteration — that waiting for the next one costs nothing.
-func (i *Interrupter) PushFrame(label string) {
+func (i *Interrupter) PushFrame(label string, out *Type) {
 	if i.Inner != nil {
-		i.Inner.PushFrame(label)
+		i.Inner.PushFrame(label, out)
 	}
 }
 
 // PopFrame forwards the frame close.
-func (i *Interrupter) PopFrame() {
+func (i *Interrupter) PopFrame(out Value) {
 	if i.Inner != nil {
-		i.Inner.PopFrame()
+		i.Inner.PopFrame(out)
 	}
 }

@@ -530,11 +530,20 @@ func (s dmSparse[T]) pts() []dmSPt {
 	for k := range s.cells {
 		out = append(out, k)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].r != out[j].r {
-			return out[i].r < out[j].r
+	slices.SortFunc(out, func(a, b dmSPt) int {
+		if a.r != b.r {
+			if a.r < b.r {
+				return -1
+			}
+			return 1
 		}
-		return out[i].c < out[j].c
+		if a.c < b.c {
+			return -1
+		}
+		if a.c > b.c {
+			return 1
+		}
+		return 0
 	})
 	return out
 }`
@@ -814,7 +823,27 @@ const declIndexOf = `func dmIndexOf[T comparable](xs []T, v T) int64 {
 	return -1
 }`
 
+// dmASCII reports whether every byte of s is one rune, which is the case for
+// essentially all puzzle input. The rune-indexed text builtins below check it
+// first: when it holds, a position in runes is a position in bytes and the
+// answer is a substring of s — no []rune conversion, no allocation. The scan
+// costs one pass over a line, against two allocations and a full decode.
+const declASCII = `func dmASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}`
+
 const declCharAt = `func dmCharAt(s string, i int64) string {
+	if dmASCII(s) {
+		if i < 0 || i >= int64(len(s)) {
+			dmFail("charat: index %d out of range (length %d)", i, len(s))
+		}
+		return s[i : i+1]
+	}
 	rs := []rune(s)
 	if i < 0 || i >= int64(len(rs)) {
 		dmFail("charat: index %d out of range (length %d)", i, len(rs))
@@ -839,6 +868,10 @@ const declClampRange = `func dmClampRange(lo, hi, n int64) (int64, int64) {
 }`
 
 const declSliceText = `func dmSliceText(s string, lo, hi int64) string {
+	if dmASCII(s) {
+		l, h := dmClampRange(lo, hi, int64(len(s)))
+		return s[l:h]
+	}
 	rs := []rune(s)
 	l, h := dmClampRange(lo, hi, int64(len(rs)))
 	return string(rs[l:h])
@@ -1107,6 +1140,30 @@ func (m *dmMap[K, V]) put(k K, v V) {
 		m.keys = append(m.keys, k)
 	}
 	m.vals[k] = v
+}`
+
+// declMapBump is the counting path, and counting is the hottest thing anyone
+// does to a Map: put(k, vals[k]+1) probes three times (read, membership test,
+// store) where one does. A compound assignment on a missing key starts from
+// the zero value, so it needs no membership test, and the length delta says
+// whether the key was new without asking the map again.
+const declMapBump = `func dmBump[K comparable](m *dmMap[K, int64], k K, d int64) {
+	n := len(m.vals)
+	m.vals[k] += d
+	if len(m.vals) != n {
+		m.keys = append(m.keys, k)
+	}
+}`
+
+// declMapAppend is declMapBump's sibling for a Map whose values are lists:
+// put(k, append(vals[k], v)) reads, probes and stores where two probes do.
+const declMapAppend = `func dmAppend[K comparable, V any](m *dmMap[K, []V], k K, v V) {
+	if cur, ok := m.vals[k]; ok {
+		m.vals[k] = append(cur, v)
+		return
+	}
+	m.keys = append(m.keys, k)
+	m.vals[k] = []V{v}
 }`
 
 const declSet = `type dmSet[T comparable] struct {

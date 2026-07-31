@@ -1,0 +1,6 @@
+# The floor for every other case: read stdin and count its characters. What
+# is left is process startup, the read itself, and one pass over the bytes.
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> length(s)
+Reveal: stdout

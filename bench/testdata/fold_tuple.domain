@@ -1,0 +1,11 @@
+# A measured Seed widens Fold: the accumulator is a tuple, which no literal
+# seed could spell.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Maximum Technique: Fold
+    Seed: (xs) -> tuple(0, 0)
+    Using: (acc, x) -> tuple(prow(acc) + x, pcol(acc) + 1)
+Cursed Technique: Apply
+    Using: (t) -> prow(t) / pcol(t)
+Reveal: stdout

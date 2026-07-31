@@ -1,0 +1,8 @@
+# The v0.5 expression layer: Text is no longer opaque inside a lambda —
+# startswith, indexof, slice and upper all read into it without dropping
+# back to the pipeline layer.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Maximum Technique: Count Matching
+    Using: (s) -> startswith(s, "ab") or indexof(s, "zq") > 0 or upper(slice(s, 0, 3)) = "XYZ"
+Reveal: stdout

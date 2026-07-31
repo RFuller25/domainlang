@@ -15,6 +15,7 @@ package lsp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -74,7 +75,7 @@ func Serve(in io.Reader, out, log io.Writer) error {
 	s := &Server{in: bufio.NewReader(in), out: out, log: log, docs: map[string]*document{}}
 	for {
 		msg, err := s.read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -82,7 +83,7 @@ func Serve(in io.Reader, out, log io.Writer) error {
 		}
 		var req request
 		if err := json.Unmarshal(msg, &req); err != nil {
-			fmt.Fprintf(s.log, "lsp: bad message: %v\n", err)
+			s.logf("lsp: bad message: %v\n", err)
 			continue
 		}
 		if req.Method == "exit" {
@@ -120,7 +121,7 @@ func (s *Server) read() ([]byte, error) {
 		}
 	}
 	if length < 0 {
-		return nil, fmt.Errorf("missing Content-Length header")
+		return nil, errors.New("missing Content-Length header")
 	}
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(s.in, buf); err != nil {
@@ -129,14 +130,20 @@ func (s *Server) read() ([]byte, error) {
 	return buf, nil
 }
 
+// logf reports a non-fatal protocol problem to the session's log sink; a
+// failure to log is itself nothing the server can act on.
+func (s *Server) logf(format string, args ...any) {
+	_, _ = fmt.Fprintf(s.log, format, args...)
+}
+
 func (s *Server) write(v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
-		fmt.Fprintf(s.log, "lsp: marshal: %v\n", err)
+		s.logf("lsp: marshal: %v\n", err)
 		return
 	}
 	if _, err := fmt.Fprintf(s.out, "Content-Length: %d\r\n\r\n%s", len(body), body); err != nil {
-		fmt.Fprintf(s.log, "lsp: write: %v\n", err)
+		s.logf("lsp: write: %v\n", err)
 	}
 }
 
@@ -276,14 +283,8 @@ func lspSeverity(sev diag.Severity) int {
 }
 
 func diagRange(d *diag.Diagnostic) map[string]any {
-	line := d.Pos.Line - 1
-	if line < 0 {
-		line = 0
-	}
-	col := d.Pos.Col - 1
-	if col < 0 {
-		col = 0
-	}
+	line := max(d.Pos.Line-1, 0)
+	col := max(d.Pos.Col-1, 0)
 	return map[string]any{
 		"start": map[string]int{"line": line, "character": col},
 		"end":   map[string]int{"line": line, "character": col + d.Width()},

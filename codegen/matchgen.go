@@ -20,10 +20,10 @@ import (
 // materialized. Returns ok=false (nothing consumed) when the shape does not
 // match, leaving the ordinary per-node path to run.
 //
-//   Split(sep) + Match Pattern(Each) + Count Matching  -> walk the string,
-//       parse each line, count inline (no []string, no []Record)
-//   Match Pattern(Each) + Count Matching               -> range the []string,
-//       parse + count inline (no []Record)
+//	Split(sep) + Match Pattern(Each) + Count Matching  -> walk the string,
+//	    parse each line, count inline (no []string, no []Record)
+//	Match Pattern(Each) + Count Matching               -> range the []string,
+//	    parse + count inline (no []Record)
 func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// Every rule below keys on nodes[0]'s separator, and reads it with a type
 	// assertion whose zero value — the empty string — is a *meaningful*
@@ -115,10 +115,6 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 			return 2, out, true, nil
 		}
 	}
-	// Split Fields + Convert To Integers + Map Each(->scalar) + Sum: stream the
-	// whole chain through one reused per-line buffer, accumulating the lambda's
-	// result. No [][]string, no [][]int64, no mapped list, and no per-line
-	// allocation. Falls back per line to strings.Fields + dmParseInt.
 	// Split Fields + Convert To Integers + Union + Count: count distinct integers
 	// with a single map, streaming each line's fields in — no [][]int64, no
 	// per-group set, no ordered elems slice. An optional leading Split(sep)
@@ -164,6 +160,10 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 		}
 		return 3, out, true, nil
 	}
+	// Split Fields + Convert To Integers + Map Each(->scalar) + Sum: stream the
+	// whole chain through one reused per-line buffer, accumulating the lambda's
+	// result. No [][]string, no [][]int64, no mapped list, and no per-line
+	// allocation. Falls back per line to strings.Fields + dmParseInt.
 	fieldsMapSumScalar := func(fieldsN, convN, mapN, sumN *ir.Node) bool {
 		return fieldsN.Prim == "Split Fields" && convN.Prim == "Convert To Integers" &&
 			mapN.Prim == "Map Each" && sumN.Prim == "Sum" &&
@@ -328,7 +328,7 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// straight from lines, never materializing the string grid.
 	if len(nodes) >= 2 && nodes[0].Prim == "Convert To Grid" && gridSearchFusable(nodes[1]) &&
 		nodes[0].In != nil && nodes[0].In.Kind == ir.KList && nodes[0].In.Elem != nil && nodes[0].In.Elem.Kind == ir.KText {
-		out, err := g.emitGridSearchFromLines(nodes[0], nodes[1], in)
+		out, err := g.emitGridSearchFromLines(nodes[1], in)
 		if err != nil {
 			return 0, "", false, err
 		}
@@ -567,9 +567,8 @@ func (g *gen) matchParseFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo s
 		}
 	}
 	var src string
-	var err error
 	if fastEligible(tmpl, elemType) {
-		src, err = genFastParser(name, tmpl, elemType, elemGo)
+		src = genFastParser(name, tmpl, elemType, elemGo)
 		if hasInt {
 			g.imp("strconv") // int holes re-parse overflowing runs via strconv
 		}
@@ -580,14 +579,14 @@ func (g *gen) matchParseFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo s
 			g.imp("strings")
 		}
 	} else {
-		src, err = g.genRegexParser(name, tmpl, elemType, elemGo)
+		var err error
+		if src, err = g.genRegexParser(name, tmpl, elemType, elemGo); err != nil {
+			return "", err
+		}
 		g.imp("regexp")
 		if hasInt {
 			g.imp("strconv")
 		}
-	}
-	if err != nil {
-		return "", err
 	}
 	g.decls = append(g.decls, src)
 	return name, nil
@@ -607,7 +606,10 @@ func isWSByte(b byte) bool {
 //   - every Word hole (`\S+`) is followed by end-of-template or a non-empty
 //     literal beginning with whitespace, so the greedy non-whitespace run
 //     stops exactly where the regex would with no backtracking. Word holes are
-//     restricted to Record (named) templates so field assignment is well-typed.
+//     taken in a Record (named) template, where each lands in its own field,
+//     and in a positional one whose holes are all words — a List<Text>, where
+//     each lands at its own index. A positional template mixing words with
+//     ints is a Tuple of unlike types and stays on the regex path.
 //
 // Adjacent holes always need backtracking, so any hole immediately followed by
 // another hole disqualifies the template.
@@ -621,7 +623,10 @@ func fastEligible(tmpl *pattern.Template, elemType *ir.Type) bool {
 		case pattern.HoleInt:
 			// fall through to the shared successor check below
 		case pattern.HoleWord:
-			if elemType.Kind != ir.KRecord {
+			named := elemType.Kind == ir.KRecord
+			allWords := elemType.Kind == ir.KList && elemType.Elem != nil &&
+				elemType.Elem.Kind == ir.KText
+			if !named && !allWords {
 				return false
 			}
 		default:
@@ -665,7 +670,7 @@ func hasLongLiteral(tmpl *pattern.Template) bool {
 }
 
 // genFastParser emits a hand-rolled scanner for an all-int template.
-func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
+func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "func %s(s string) (%s, bool) {\n", name, elemGo)
 	if elemType.Kind == ir.KRecord {
@@ -706,7 +711,11 @@ func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemG
 			fmt.Fprintf(&b, "\t%s := i\n", wj)
 			fmt.Fprintf(&b, "\tfor %s < len(s) && !(s[%s] == ' ' || s[%s] == '\\t' || s[%s] == '\\n' || s[%s] == '\\f' || s[%s] == '\\r') {\n\t\t%s++\n\t}\n", wj, wj, wj, wj, wj, wj, wj)
 			fmt.Fprintf(&b, "\tif %s == i {\n\t\treturn out, false\n\t}\n", wj)
-			fmt.Fprintf(&b, "\tout.%s = s[i:%s]\n", fieldName(seg.Hole.Name), wj)
+			if elemType.Kind == ir.KRecord {
+				fmt.Fprintf(&b, "\tout.%s = s[i:%s]\n", fieldName(seg.Hole.Name), wj)
+			} else {
+				fmt.Fprintf(&b, "\tout[%d] = s[i:%s]\n", holeIdx, wj)
+			}
 			fmt.Fprintf(&b, "\ti = %s\n", wj)
 			holeIdx++
 			continue
@@ -738,7 +747,7 @@ func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemG
 	}
 	b.WriteString("\tif i != len(s) {\n\t\treturn out, false\n\t}\n")
 	b.WriteString("\treturn out, true\n}")
-	return b.String(), nil
+	return b.String()
 }
 
 // genRegexParser emits the fallback: a package-level compiled regexp with the

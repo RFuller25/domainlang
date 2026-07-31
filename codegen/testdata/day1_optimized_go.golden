@@ -99,6 +99,36 @@ func dmParseInt(s string) int64 {
 	return m
 }
 
+func dmParseIntSeg(s string) int64 {
+	n := len(s)
+	if n >= 1 && n <= 19 {
+		i, neg := 0, false
+		if s[0] == '-' || s[0] == '+' {
+			neg = s[0] == '-'
+			i = 1
+		}
+		if d := n - i; d >= 1 && d <= 18 {
+			var v int64
+			ok := true
+			for ; i < n; i++ {
+				c := s[i]
+				if c < '0' || c > '9' {
+					ok = false
+					break
+				}
+				v = v*10 + int64(c-'0')
+			}
+			if ok {
+				if neg {
+					return -v
+				}
+				return v
+			}
+		}
+	}
+	return dmParseInt(s)
+}
+
 func dmTopK(xs []int64, k int, desc bool) []int64 {
 	if k <= 0 || len(xs) == 0 {
 		return []int64{}
@@ -151,7 +181,7 @@ func main() {
 	for i7, g8 := range v3 {
 		row11 := make([]int64, len(g8))
 		for j9, s10 := range g8 {
-			row11[j9] = dmParseInt(s10)
+			row11[j9] = dmParseIntSeg(s10)
 		}
 		v6[i7] = row11
 	}

@@ -1,0 +1,11 @@
+# Binding Vows on a hot pipeline: what a debug-time run costs when the
+# assertions are left in (the default; --release compiles them out).
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Binding Vow: All Values >= 0
+Binding Vow: Holds
+    Using: (xs) -> length(xs) > 0
+Maximum Technique: Sum By
+    Using: (x) -> x % 11
+Reveal: stdout

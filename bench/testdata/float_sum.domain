@@ -1,0 +1,7 @@
+# The Float path: parsing, an accumulation that is not Int, and the shortest
+# round-trip rendering Reveal gives a Float.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Floats
+Maximum Technique: Sum
+Reveal: stdout

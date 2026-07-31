@@ -43,19 +43,6 @@ const (
 	HoleText
 )
 
-func (h HoleType) String() string {
-	switch h {
-	case HoleInt:
-		return "int"
-	case HoleWord:
-		return "word"
-	case HoleText:
-		return "text"
-	default:
-		return "?"
-	}
-}
-
 // irType maps a hole type to its Domain value type.
 func (h HoleType) irType() *ir.Type {
 	if h == HoleInt {
@@ -123,9 +110,8 @@ func ParseTemplate(s string) (*Template, error) {
 				sawPositional = true
 			}
 			flushLit()
-			h := hole
-			t.Segments = append(t.Segments, Segment{Hole: &h})
-			t.Holes = append(t.Holes, h)
+			t.Segments = append(t.Segments, Segment{Hole: &hole})
+			t.Holes = append(t.Holes, hole)
 			i += rel + 1
 		case '}':
 			return nil, fmt.Errorf("unexpected '}' at offset %d in %q", i, s)

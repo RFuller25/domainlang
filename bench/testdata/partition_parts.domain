@@ -1,0 +1,18 @@
+# Partition (one pass, both halves) and the early-exit reductions, with a
+# Part block so one parse answers two questions.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+
+Part "1":
+    Cursed Technique: Partition
+        Using: (x) -> x % 3 = 0
+    Cursed Technique: Take Item 0
+    Maximum Technique: Sum By
+        Using: (x) -> x * 2
+    Reveal: stdout
+
+Part "2":
+    Maximum Technique: Find Index
+        Using: (x) -> x = 424242
+    Reveal: stdout

@@ -1,0 +1,20 @@
+# Shikigami: a named composition, inlined at every call site — including a
+# higher-order one taking a lambda parameter.
+Shikigami "Weighted" (k: Int) : List<Int> -> List<Int>
+    Cursed Technique: Map Each
+        Using: (x) -> x * k + 1
+
+Shikigami "Kept" (p: (Int) -> Bool) : List<Int> -> Int
+    Cursed Technique: Filter
+        Using: p
+    Maximum Technique: Sum
+
+Cursed Energy: stdin
+Shikigami: Ints
+Shikigami: Weighted
+    k: 3
+Shikigami: Weighted
+    k: 2
+Shikigami: Kept
+    p: (x) -> x % 7 > 2
+Reveal: stdout

@@ -40,6 +40,11 @@ editors/vscode/node_modules/
 editors/vscode/*.vsix
 editors/vscode/package-lock.json
 
+# the compiler itself, built at the repo root per docs/wasm/build.sh
+# ("go build -o domain ./cmd/domain") and the README
+/domain
+/domain-wasm
+
 # stray domain-build default outputs (built at repo root per the README/
 # examples/challenges instructions, e.g. `domain build challenges/02_two_sum.domain -o two_sum`)
 /day1
@@ -60,7 +65,10 @@ editors/vscode/package-lock.json
 /life
 /max_by
 /modpow_sum
+/part1
 /regions
+/s5g
+/s5h
 /sort_by
 /two_sum
 /union_count

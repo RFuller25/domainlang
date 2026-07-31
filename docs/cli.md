@@ -151,6 +151,7 @@ domain expansion: visualize day1.domain                     # the program names 
 domain expansion: visualize day1.domain --input input.txt    # or say where it is
 domain expansion: visualize day1.domain --plain              # print the trace as text
 domain expansion: visualize life.domain --max-steps 200      # bound the capture
+domain expansion: visualize day1.domain --go                 # …and the Go it compiles to
 ```
 
 | Flag | Effect |
@@ -159,6 +160,8 @@ domain expansion: visualize life.domain --max-steps 200      # bound the capture
 | `--max-steps N` | how many steps to keep (default 10,000) |
 | `--plain` | print the trace as text instead of opening the UI |
 | `--json` | print the recording as data (see [below](#--json)) |
+| `--go` | also print the Go the compiler backend emits (see [below](#the-code-screen-c)) |
+| `--expand-loops` | print every lap of a loop instead of folding them |
 | `--no-optimize` | record the naive pipeline |
 
 The program is resolved, optimized and run **once** under a recording tracer;
@@ -171,15 +174,65 @@ the UI then navigates what was recorded. Two consequences worth knowing:
   raw-mode terminal cannot take writes from underneath the UI. It is shown in
   the plain output under `revealed:`.
 
-Loops, `Channel` bodies and `Part` bodies are **frames you can step into**:
-`Repeat 4` collapses to one row and opens into `Repeat 4 iter 2/4`, each
-holding that iteration's steps. An inlined `Shikigami` has no frame, because
-there is no runtime construct — its steps appear where the call was.
+Loops, `Channel` bodies, `Part` bodies and nested `Using:` bodies are **frames
+you can step into**: `Repeat 4` collapses to one row and opens into `Repeat 4
+iter 2/4`, each holding that iteration's steps, and a `Map Each` with an
+indented body opens into `Map Each body 2/4` — one frame per element, since a
+body runs once per element. An inlined `Shikigami` has no frame, because there
+is no runtime construct — its steps appear where the call was.
 
-A collapsed row says what it is hiding — `Repeat 500 (500 frames, 2000 steps)`
-— so the row that is most of the run explains itself before it is opened.
+A collapsed row says what it is hiding — `Repeat 500 (500 iterations, 2000
+steps)` — so the row that is most of the run explains itself before it is
+opened.
+
+### What a block produced
+
+A `Channel` and a `Part` are **passthroughs**: the pipeline carries on with the
+value that entered them, and what the code inside them computed is not the
+value they hand on. Their row reports the **body's** result — its type, its
+size, and the value itself — because that is the answer someone opening a block
+in a debugger is after. The detail pane shows both, named:
+
+```
+Channel
+type   Int
+size   —
+…
+in     ["gojo\nnanami\nitadori\nnobara", "75\n120\n95"]
+
+result
+  what the body produced, after every step in it
+  4
+
+passes on
+  the value the next stage receives, unchanged
+  ["gojo\nnanami\nitadori\nnobara", "75\n120\n95"]
+```
+
+One lap of a loop reports its result the same way, so a loop can be read
+without opening every iteration.
+
+### Folded repetition
+
+Anything that runs the same steps over and over — a loop's laps, a `Using:`
+body applied to each element — is gathered behind **one row that opens onto all
+of them**:
+
+```
+▾ Map Each                               List<Bool>    4   4.21ms   61.2%   1.1%
+  ▸ 500 iterations (1500 steps)          Bool          —   4.16ms   60.1%
+```
+
+Nothing is summarized away — opening the fold gives every repetition, each
+still holding its own steps — but the stages *around* it stay on screen, which
+is what a trace with fifteen hundred nearly identical rows costs you. In the
+text output the first one is printed and the rest are one line saying what is
+behind it; `--expand-loops` prints them all.
 
 ### Keys
+
+`?` shows this list in the UI — the footer carries only where you are, since a
+legend wide enough to hold every key is the loudest thing on the screen.
 
 | | |
 |---|---|
@@ -191,6 +244,8 @@ A collapsed row says what it is hiding — `Repeat 500 (500 frames, 2000 steps)`
 | `t` | the timing profile — call sites ranked by self time |
 | `s` | the program source, with each line's share of the run |
 | `e` | the optimizer's rewrites |
+| `c` | the emitted Go, full screen (see [below](#the-code-screen-c)) |
+| `?` | the key list |
 | `q` | quit; `esc` backs out of a filter, then a pane, then the program |
 
 `H` and `!` open whatever frames stand between the cursor and their target: on
@@ -277,6 +332,44 @@ number would confidently point at the wrong line of your program. Those nodes
 are marked at resolve time (`ir.MetaForeign`) and left out of the per-line
 profile.
 
+### The code screen (`c`)
+
+What the stage under the cursor *is*, once compiled. A Domain stage is one
+line; the loop, the allocation and the scan it becomes are twenty lines of Go.
+`c` opens the emitted program across the whole terminal, at that stage's code —
+its lines lit and marked in the gutter — and scrolls anywhere from there,
+because the code around a stage is most of what makes it legible:
+
+```
+emitted go day1.domain · 155 lines
+Split by "," → lines 133–141
+
+ 131 func main() {
+ 132     v1 := dmReadSource("day1.input")
+▌133     v2 := make([]int64, 0, len(v1)/2+1)
+▌134     start3 := 0
+▌135     for i4 := 0; i4 < len(v1); i4++ {
+```
+
+| | |
+|---|---|
+| `j`/`k`, arrows | scroll a line |
+| `ctrl+d`/`ctrl+u`, `pgdn`/`pgup`, space | scroll half a screen |
+| `g`/`G` | the top and the end of the program |
+| `z` | back to the selected row's code, after scrolling away |
+| `esc`, `q`, `c` | back to the tree |
+
+The code is the compiler backend's real output — the same source
+[`domain build --emit-go`](compiler.md) writes, byte for byte. It is compiled
+on demand, the first time the screen is opened, from the *recorded* program, so
+a fused stage's rewrite and the Go it became are one keystroke apart.
+
+Two rows have no code of their own and say so: a **frame**, which is a label
+around a sub-pipeline rather than a stage, and a step the backend **fused into
+its neighbour**. A program the backend cannot compile yet reports that instead
+of the code — the interpreter ran it perfectly well, and the rest of the
+recording is unaffected. `--go` prints the same source without opening the UI.
+
 ### `--json`
 
 The recording as data, for a reader that is not a terminal — a CI job asserting
@@ -294,7 +387,11 @@ domain expansion: visualize day1.domain --json | jq '.hotspots[0]'
 The document carries the program, the run's failure if it had one, the
 optimizer's messages, the program's `Reveal` output, the whole tree (nested,
 with each row's `time`/`pct`/`self_pct` and source `line`), and the ranked
-`hotspots`. Percentages are rounded to the tenth the UI displays, so a report
+`hotspots`. A block's row also carries what its body produced, as `result`,
+`result_type` and `result_size` — separate fields from `out`, which is the
+value it passed on — and a folded run of loop laps is a row marked `folded`
+holding those laps unabridged. With `--go` the emitted Go is in the `go`
+field. Percentages are rounded to the tenth the UI displays, so a report
 and a test of that report cannot disagree about what a step cost. `--json`
 wins over `--plain` when both are given.
 

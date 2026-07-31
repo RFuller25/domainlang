@@ -289,21 +289,18 @@ func keywordColon(toks []token.Token) int {
 func renderTokens(src string, toks []token.Token) string {
 	var b strings.Builder
 	for i, t := range toks {
-		if i > 0 && needsSpace(toks[i-1], t, prevSignificant(toks, i-1)) {
+		// beforePrev stays the zero token at the start of the run, which is
+		// what tells needsSpace a leading `-` is unary.
+		var beforePrev token.Token
+		if i > 1 {
+			beforePrev = toks[i-2]
+		}
+		if i > 0 && needsSpace(toks[i-1], t, beforePrev) {
 			b.WriteByte(' ')
 		}
 		b.WriteString(text(src, t))
 	}
 	return b.String()
-}
-
-// prevSignificant returns the token before index i, or a zero token when i is
-// the first — used to decide whether a `-` is unary.
-func prevSignificant(toks []token.Token, i int) token.Token {
-	if i <= 0 {
-		return token.Token{}
-	}
-	return toks[i-1]
 }
 
 // needsSpace decides whether a space separates prev from cur. beforePrev is

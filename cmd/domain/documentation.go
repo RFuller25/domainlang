@@ -12,12 +12,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -60,10 +62,62 @@ func parseDocumentationArgs(args []string) (int, error) {
 	return port, nil
 }
 
+// buildStamp describes the binary serving the docs. The documentation is
+// embedded in it, so the two always match — which is worth saying out loud on
+// a site whose whole discipline is that the reference describes the code that
+// exists. Without it a reader has no way to tell whether the page in front of
+// them is their build or a newer one.
+type buildStamp struct {
+	Version  string `json:"version"`            // module version, or "(devel)"
+	Revision string `json:"revision,omitempty"` // VCS commit, when built from a checkout
+	Time     string `json:"time,omitempty"`     // commit time
+	Modified bool   `json:"modified,omitempty"` // built with uncommitted changes
+	Go       string `json:"go"`
+}
+
+// readBuildStamp reads what the toolchain recorded at link time. `go build`
+// stamps VCS information automatically from a clean checkout; `go run` and a
+// build from a tarball do not, so every field beyond Go is best-effort.
+func readBuildStamp() buildStamp {
+	s := buildStamp{Version: "(unknown)", Go: runtime.Version()}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return s
+	}
+	if info.Main.Version != "" {
+		s.Version = info.Main.Version
+	}
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			s.Revision = setting.Value
+		case "vcs.time":
+			s.Time = setting.Value
+		case "vcs.modified":
+			s.Modified = setting.Value == "true"
+		}
+	}
+	return s
+}
+
 // documentationHandler serves the embedded documentation site: "/" resolves to
 // index.html, and index.html fetches the sibling Markdown pages by name.
+// /build.json is the one thing the site cannot get from the embedded files —
+// which binary is serving them.
 func documentationHandler() http.Handler {
-	return http.FileServer(http.FS(docs.FS))
+	files := http.FileServer(http.FS(docs.FS))
+	stamp, err := json.Marshal(readBuildStamp())
+	if err != nil { // a struct of strings; unreachable in practice
+		stamp = []byte("{}")
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/build.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(stamp)
+	})
+	mux.Handle("/", files)
+	return mux
 }
 
 // cmdDocumentation binds the port, prints where to reach the site, opens a
@@ -117,5 +171,5 @@ func openBrowser(url string, stdout io.Writer) {
 	}
 	// Reap the opener so it doesn't linger as a zombie; we don't care whether
 	// it succeeded, only that we don't block on it.
-	go cmd.Wait()
+	go func() { _ = cmd.Wait() }()
 }

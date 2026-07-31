@@ -132,16 +132,14 @@ func (l *lexer) run() ([]token.Token, error) {
 // INDENT/DEDENT tokens. Blank and comment-only lines produce no layout tokens.
 func (l *lexer) lineStart() error {
 	width := 0
-	for l.pos < len(l.src) {
-		c := l.at()
-		if c == ' ' {
-			width++
-			l.advance()
-		} else if c == '\t' {
-			return l.errf("tabs are not allowed for indentation; use spaces")
-		} else {
-			break
-		}
+	for l.at() == ' ' {
+		width++
+		l.advance()
+	}
+	// A tab can only turn up here as the first non-space byte of the leading
+	// whitespace run, which is exactly the case that is an error.
+	if l.at() == '\t' {
+		return l.errf("tabs are not allowed for indentation; use spaces")
 	}
 
 	// End of input after trailing whitespace: this line never had real

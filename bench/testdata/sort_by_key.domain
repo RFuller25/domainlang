@@ -1,0 +1,12 @@
+# Sort By with a key lambda, then Take Item 0 — the optimizer fuses the pair
+# into a selection of the single largest key, with no sort at all.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{a:int}-{b:int}"
+Domain Expansion: Sort By, Descending
+    Using: (r) -> r.b
+Cursed Technique: Take Item 0
+Cursed Technique: Apply
+    Using: (r) -> r.a
+Reveal: stdout

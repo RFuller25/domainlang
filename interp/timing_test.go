@@ -16,9 +16,9 @@ func recordLoop(t *testing.T, loopDur, bodyDur time.Duration) *Recorder {
 	rec := NewRecorder(0)
 	body := node("Map Each", ir.List(ir.Int()))
 	for i := 1; i <= 2; i++ {
-		rec.PushFrame("Repeat 2 iter " + string(rune('0'+i)) + "/2")
+		rec.PushFrame("Repeat 2 iter "+string(rune('0'+i))+"/2", nil)
 		rec.Step(ir.StepEvent{Node: body, Depth: 1, Dur: bodyDur})
-		rec.PopFrame()
+		rec.PopFrame(nil)
 	}
 	rec.Step(ir.StepEvent{Node: node("Repeat 2", ir.List(ir.Int())), Dur: loopDur})
 	return rec
@@ -156,9 +156,9 @@ func TestTimingWithoutADenominator(t *testing.T) {
 func TestTimingCountsOrphanedFrames(t *testing.T) {
 	rec := NewRecorder(0)
 	rec.Step(ir.StepEvent{Node: node("A", ir.Int()), Dur: 30 * time.Millisecond})
-	rec.PushFrame("Repeat 2 iter 1/2")
+	rec.PushFrame("Repeat 2 iter 1/2", nil)
 	rec.Step(ir.StepEvent{Node: node("Inner", ir.Int()), Depth: 1, Dur: 10 * time.Millisecond})
-	rec.PopFrame()
+	rec.PopFrame(nil)
 	// The enclosing loop's step never arrives.
 
 	tm := rec.Timing()
@@ -176,9 +176,9 @@ func TestTimingCountsOrphanedFrames(t *testing.T) {
 // every lookup and silently report zeros.
 func TestRootsSyntheticRowIsStable(t *testing.T) {
 	rec := NewRecorder(0)
-	rec.PushFrame("Repeat 2 iter 1/2")
+	rec.PushFrame("Repeat 2 iter 1/2", nil)
 	rec.Step(ir.StepEvent{Node: node("Inner", ir.Int()), Depth: 1, Dur: time.Millisecond})
-	rec.PopFrame()
+	rec.PopFrame(nil)
 
 	first, second := rec.Roots(), rec.Roots()
 	if first[0] != second[0] {

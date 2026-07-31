@@ -1,11 +1,12 @@
 package prims
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -67,7 +68,14 @@ func readSourceData(ctx *ir.Context, target string) ([]byte, error) {
 	if err == nil {
 		return b, nil
 	}
-	if !os.IsNotExist(err) {
+	// A platform with no filesystem at all — js/wasm, where the documentation
+	// site's playground runs — reports ENOSYS rather than "not found". It is
+	// the same situation as a missing file from the program's point of view,
+	// and falling back to stdin is what makes `Cursed Energy: input.txt` mean
+	// "the input box" there, exactly as it means "the piped input" on a
+	// terminal. Without this the playground could not run a single example.
+	unsupported := errors.Is(err, errors.ErrUnsupported)
+	if !os.IsNotExist(err) && !unsupported {
 		// A real failure (permission denied, path is a directory, I/O error,
 		// ...) should be reported, not masked by silently reading unrelated
 		// stdin data (or hanging if stdin is an interactive terminal).
@@ -429,14 +437,7 @@ var selectTopK = &Primitive{
 				if err != nil {
 					return nil, err
 				}
-				n := int(k)
-				if n > len(xs) {
-					n = len(xs)
-				}
-				if n < 0 {
-					n = 0
-				}
-				top := xs[:n]
+				top := xs[:min(max(int(k), 0), len(xs))]
 				if thenSum {
 					var s int64
 					for _, x := range top {
@@ -491,11 +492,10 @@ var sortPrim = &Primitive{
 				if err != nil {
 					return nil, runtimeErr("Sort", pos, "%v", err)
 				}
-				out := append([]int64(nil), xs...)
+				out := slices.Clone(xs)
+				slices.Sort(out)
 				if desc {
-					sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
-				} else {
-					sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+					slices.Reverse(out)
 				}
 				return ir.IntsToValue(out), nil
 			},
@@ -540,7 +540,7 @@ var emit = &Primitive{
 					w = ctx.Stderr
 				}
 				if w != nil {
-					fmt.Fprintln(w, ir.LabelledOutput(ctx.PartLabel, ir.FormatValue(v)))
+					_, _ = fmt.Fprintln(w, ir.LabelledOutput(ctx.PartLabel, ir.FormatValue(v)))
 				}
 				return v, nil
 			},

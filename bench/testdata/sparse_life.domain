@@ -1,0 +1,31 @@
+# Conway's Game of Life on the unbounded Sparse plane: every live cell adds
+# 1 to each neighbour and 9 to itself, so Count By scores the whole
+# neighbourhood in one pass and the next generation is the cells scoring
+# 3 (birth), 11 or 12 (survival).
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{int},{int}"
+    Mode: Each
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+    Mark: 1
+Simple Domain: Repeat 8
+    Cursed Technique: Find Cells
+        Using: (v) -> v = 1
+    Cursed Technique: Map Each
+        Using: (p) -> list(padd(p, point(-1, -1)), padd(p, point(-1, 0)), padd(p, point(-1, 1)), padd(p, point(0, -1)), padd(p, point(0, 1)), padd(p, point(1, -1)), padd(p, point(1, 0)), padd(p, point(1, 1)), p, p, p, p, p, p, p, p, p)
+    Cursed Technique: Flatten
+    Maximum Technique: Count By
+        Using: (q) -> q
+    Channeled Energy: Convert To Sparse Grid
+        Default: 0
+    Cursed Technique: Find Cells
+        Using: (score) -> score = 3 or score = 11 or score = 12
+    Channeled Energy: Convert To Sparse Grid
+        Default: 0
+        Mark: 1
+Cursed Technique: Find Cells
+    Using: (v) -> v = 1
+Maximum Technique: Count
+Reveal: stdout

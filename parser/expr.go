@@ -7,10 +7,10 @@ import (
 
 // Binding powers for the Pratt expression parser. Higher binds tighter.
 const (
-	bpNone    = 0
-	bpOr      = 4  // or
-	bpAnd     = 6  // and
-	bpNot     = 8  // ikke x   (tighter than `and`, looser than a comparison,
+	bpNone = 0
+	bpOr   = 4 // or
+	bpAnd  = 6 // and
+	bpNot  = 8 // ikke x   (tighter than `and`, looser than a comparison,
 	//                          so `ikke a = b` reads as `ikke (a = b)`)
 	bpCompare = 10 // = < > <= >=
 	bpSum     = 20 // + -

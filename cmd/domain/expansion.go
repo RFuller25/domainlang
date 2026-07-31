@@ -13,6 +13,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -83,18 +84,19 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		return 2
 	}
 
+	name := strings.Join(cmd, " ")
+	switch name {
 	// `documentation` is the odd one out: it serves the docs website rather
 	// than analyzing a program, so it takes an optional -p/--port flag and no
 	// file. Handle it before the shared "one file, no flags" parsing below.
-	if strings.Join(cmd, " ") == "documentation" {
+	case "documentation":
 		fmt.Fprint(stdout, expansionBanner("documentation", isColorTerminal(stdout)))
 		return cmdDocumentation(rest, stdout, stderr)
-	}
 
 	// `visualize` also takes flags of its own (--input, --max-steps, --plain),
 	// so it is parsed before the shared "one file, no flags" rule below. It
 	// prints no banner: the stepper owns the screen.
-	if strings.Join(cmd, " ") == "visualize" {
+	case "visualize":
 		path, opts, err := parseVisualizeArgs(rest)
 		if err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
@@ -125,9 +127,9 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		return 1
 	}
 	color := isColorTerminal(stdout)
-	fmt.Fprint(stdout, expansionBanner(strings.Join(cmd, " "), color))
+	fmt.Fprint(stdout, expansionBanner(name, color))
 
-	switch strings.Join(cmd, " ") {
+	switch name {
 	case "diagnosis":
 		return cmdDiagnosis(path, string(src), stdout, color)
 	case "lint":
@@ -140,6 +142,13 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		return cmdMaximumCompile(path, string(src), stdin, stdout, stderr, color)
 	}
 	return 2
+}
+
+// renderDiag writes one rendered diagnostic and the blank line that separates
+// it from the next — the shape every expansion command prints a diagnostic in.
+func renderDiag(w io.Writer, d *diag.Diagnostic, path string, color bool) {
+	fmt.Fprint(w, diag.Render(d, path, color))
+	fmt.Fprintln(w)
 }
 
 // cmdDiagnosis reads the program and reports every error with suggestions —
@@ -155,8 +164,7 @@ func cmdDiagnosis(path, src string, w io.Writer, color bool) int {
 	fixable := 0
 	for i := range rep.Diags {
 		d := &rep.Diags[i]
-		fmt.Fprint(w, diag.Render(d, path, color))
-		fmt.Fprintln(w)
+		renderDiag(w, d, path, color)
 		if d.Severity == diag.Error && d.HasConfidentFix() {
 			fixable++
 		}
@@ -175,8 +183,7 @@ func cmdDiagnosis(path, src string, w io.Writer, color bool) int {
 func cmdLint(path, src string, w io.Writer, color bool) int {
 	rep := diag.Analyze(path, src)
 	for i := range rep.Diags {
-		fmt.Fprint(w, diag.Render(&rep.Diags[i], path, color))
-		fmt.Fprintln(w)
+		renderDiag(w, &rep.Diags[i], path, color)
 	}
 	errs, warns, hints := rep.Counts()
 	if errs+warns+hints == 0 {
@@ -201,8 +208,7 @@ func cmdFix(path, src string, w, stderr io.Writer, color bool) int {
 		}
 		fmt.Fprintf(w, "%s: no automatic fixes available; %d error(s) need a human:\n\n", path, len(res.Remaining))
 		for i := range res.Remaining {
-			fmt.Fprint(w, diag.Render(&res.Remaining[i], path, color))
-			fmt.Fprintln(w)
+			renderDiag(w, &res.Remaining[i], path, color)
 		}
 		return 1
 	}
@@ -221,8 +227,7 @@ func cmdFix(path, src string, w, stderr io.Writer, color bool) int {
 	if len(res.Remaining) > 0 {
 		fmt.Fprintf(w, "\n%d error(s) could not be fixed automatically:\n\n", len(res.Remaining))
 		for i := range res.Remaining {
-			fmt.Fprint(w, diag.Render(&res.Remaining[i], path, color))
-			fmt.Fprintln(w)
+			renderDiag(w, &res.Remaining[i], path, color)
 		}
 		return 1
 	}
@@ -237,8 +242,7 @@ func cmdOptimize(path, src string, w, stderr io.Writer, color bool) int {
 		fmt.Fprintf(w, "%s: cannot optimize a broken program — %d error(s):\n\n", path, errs)
 		for i := range rep.Diags {
 			if rep.Diags[i].Severity == diag.Error {
-				fmt.Fprint(w, diag.Render(&rep.Diags[i], path, color))
-				fmt.Fprintln(w)
+				renderDiag(w, &rep.Diags[i], path, color)
 			}
 		}
 		fmt.Fprintf(w, "run `domain expansion: fix %s` first\n", path)
@@ -300,8 +304,7 @@ func cmdMaximumCompile(path, src string, stdin io.Reader, w, stderr io.Writer, c
 	if len(res.Remaining) > 0 {
 		fmt.Fprintf(w, "[fix] %d error(s) could not be fixed automatically:\n\n", len(res.Remaining))
 		for i := range res.Remaining {
-			fmt.Fprint(w, diag.Render(&res.Remaining[i], path, color))
-			fmt.Fprintln(w)
+			renderDiag(w, &res.Remaining[i], path, color)
 		}
 		return 1
 	}
@@ -317,15 +320,15 @@ func cmdMaximumCompile(path, src string, stdin io.Reader, w, stderr io.Writer, c
 			fmt.Fprintln(w, "[lint]")
 			warned = true
 		}
-		fmt.Fprint(w, diag.Render(&rep.Diags[i], path, color))
-		fmt.Fprintln(w)
+		renderDiag(w, &rep.Diags[i], path, color)
 	}
 
 	// Stage 3+4: compile with the optimizer narrating, then run.
 	fmt.Fprintln(w, "[compile]")
 	err := Build(path, BuildOptions{Optimize: true, Explain: true, Run: true}, stdin, w, stderr)
 	if err != nil {
-		if xe, ok := err.(*exitError); ok {
+		var xe *exitError
+		if errors.As(err, &xe) {
 			return xe.code
 		}
 		fmt.Fprintf(stderr, "domain: %v\n", err)

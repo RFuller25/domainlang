@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"domain/codegen"
 	"domain/interp"
 	"domain/ir"
 	"domain/optimizer"
@@ -28,6 +29,8 @@ type visualizeOptions struct {
 	MaxSteps int    // --max-steps N: capture bound (0 = the recorder's default)
 	Plain    bool   // --plain: print the trace as text instead of opening the UI
 	JSON     bool   // --json: print the recording as data instead
+	Expand   bool   // --expand-loops: print every lap, rather than folding them
+	Go       bool   // --go: also print the Go the compiler backend would emit
 	Optimize bool
 }
 
@@ -42,6 +45,10 @@ func parseVisualizeArgs(args []string) (string, visualizeOptions, error) {
 			opts.Plain = true
 		case a == "--json":
 			opts.JSON = true
+		case a == "--expand-loops":
+			opts.Expand = true
+		case a == "--go":
+			opts.Go = true
 		case a == "--no-optimize":
 			opts.Optimize = false
 		case a == "--input" || a == "-i":
@@ -112,15 +119,17 @@ func Visualize(path string, opts visualizeOptions, stdin io.Reader, stdout, stde
 
 	view := &traceView{
 		path:     path,
+		pipe:     pipe,
 		rec:      rec,
 		rewrites: rewrites,
 		revealed: strings.TrimRight(revealed.String(), "\n"),
 		runErr:   runErr,
+		expand:   opts.Expand,
 	}
 
 	// --json is asked for explicitly, so it wins over both other forms.
 	if opts.JSON {
-		if err := view.writeJSON(stdout); err != nil {
+		if err := view.writeJSON(stdout, opts.Go); err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 1
 		}
@@ -128,8 +137,11 @@ func Visualize(path string, opts visualizeOptions, stdin io.Reader, stdout, stde
 	}
 	// Without a terminal there is nothing to drive, so print the trace instead.
 	// That is also what makes the command testable.
-	if opts.Plain || !isColorTerminal(stdout) {
+	if opts.Plain || opts.Go || !isColorTerminal(stdout) {
 		view.writePlain(stdout)
+		if opts.Go {
+			view.writeGo(stdout)
+		}
 		return 0
 	}
 	return runVisualizeTUI(view, stdin, stdout, stderr)
@@ -228,10 +240,12 @@ func namesReadableSource(path string, pipe *ir.Pipeline) bool {
 // traceView is everything the UI (or the plain printer) needs.
 type traceView struct {
 	path     string
+	pipe     *ir.Pipeline // the program that was run, for the emitted-Go pane
 	rec      *interp.Recorder
 	rewrites []optimizer.Rewrite
 	revealed string
 	runErr   error
+	expand   bool // print every lap of a folded loop rather than folding it
 
 	// Derived on first use, so that every way of building a traceView — the
 	// command, and the tests that build one directly — gets the same answers
@@ -240,6 +254,10 @@ type traceView struct {
 	srcOnce bool
 	src     []string
 	shares  map[int]float64
+	goOnce  bool
+	goSrc   []string
+	goSpans map[*ir.Node]codegen.Span
+	goErr   error
 }
 
 // times returns the recording's timing profile, computing it once.
@@ -261,6 +279,32 @@ func (v *traceView) source() []string {
 		}
 	}
 	return v.src
+}
+
+// emitted returns the Go the compiler backend would produce for this program,
+// as lines, plus the lines each node became. It is compiled once, on demand:
+// the visualizer's job is the run, and a reader who never opens the code pane
+// should not pay for it.
+//
+// A program the backend cannot compile yet is not a failure of the visualizer —
+// the interpreter ran it perfectly well — so the error is returned to be shown
+// in place of the code.
+func (v *traceView) emitted() ([]string, map[*ir.Node]codegen.Span, error) {
+	if v.goOnce {
+		return v.goSrc, v.goSpans, v.goErr
+	}
+	v.goOnce = true
+	if v.pipe == nil {
+		v.goErr = fmt.Errorf("no program to compile")
+		return nil, nil, v.goErr
+	}
+	src, spans, err := codegen.EmitAnnotated(v.pipe, codegen.Options{})
+	if err != nil {
+		v.goErr = err
+		return nil, nil, err
+	}
+	v.goSrc, v.goSpans = strings.Split(strings.TrimRight(src, "\n"), "\n"), spans
+	return v.goSrc, v.goSpans, nil
 }
 
 // where names the source a step came from: a line of the program, or the other
@@ -309,6 +353,7 @@ type visualizeJSON struct {
 	Failed    string   `json:"failed,omitempty"`
 	Optimizer []string `json:"optimizer,omitempty"`
 	Revealed  string   `json:"revealed,omitempty"`
+	Go        string   `json:"go,omitempty"` // the emitted Go, with --go
 
 	// Embedded, so the recording's own fields sit at the top level of the
 	// document rather than under a wrapper nobody would want to type.
@@ -318,7 +363,7 @@ type visualizeJSON struct {
 // writeJSON prints the recording as JSON, for a reader that is not a terminal:
 // a CI job asserting a stage stayed under its share of the run, or a tool that
 // wants the trace without parsing a table.
-func (v *traceView) writeJSON(w io.Writer) error {
+func (v *traceView) writeJSON(w io.Writer, withGo bool) error {
 	doc := visualizeJSON{
 		Program:   v.path,
 		Revealed:  v.revealed,
@@ -326,6 +371,17 @@ func (v *traceView) writeJSON(w io.Writer) error {
 	}
 	if v.runErr != nil {
 		doc.Failed = v.runErr.Error()
+	}
+	// A program the backend cannot compile reports why, in the field the
+	// caller asked for: an empty "go" would look like a program that compiled
+	// to nothing.
+	if withGo {
+		src, _, err := v.emitted()
+		if err != nil {
+			doc.Go = err.Error()
+		} else {
+			doc.Go = strings.Join(src, "\n")
+		}
 	}
 	for _, r := range v.rewrites {
 		doc.Optimizer = append(doc.Optimizer, r.Message)
@@ -351,6 +407,12 @@ func (v *traceView) writePlain(w io.Writer) {
 		fmt.Fprintf(w, "run failed: %v\n", v.runErr)
 	}
 	fmt.Fprintln(w, "% is the step's share of the run; self% excludes the work of its nested frames.")
+	// Said only where it applies: on a program with no blocks it would be two
+	// lines of explanation for something the trace never does.
+	if hasBlocks(v.rec.Roots()) {
+		fmt.Fprintln(w, "A block row (Channel, Part, one loop lap) reports what its body produced, which is")
+		fmt.Fprintln(w, "not what it passes on: those stages hand on the value that entered them.")
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "%s %s %6s %9s %7s %7s\n",
 		col("step", 40), col("out type", 22), "size", "time", "%", "self%")
@@ -362,10 +424,13 @@ func (v *traceView) writePlain(w io.Writer) {
 			nt := t.Of(n)
 			// Pad by runes and against fixed columns, so nesting and multi-byte
 			// type names keep the columns straight. A frame is not a step: it
-			// has no value or type of its own, only the cost of its contents.
+			// has no value or type of its own, only what its body came to.
 			label, outType, size := indent+n.Frame, "", ""
 			if !n.IsFrame() {
 				label, outType, size = indent+n.Label(), typeOf(n.Step), sizeOf(n.Step)
+			}
+			if b := n.Block; b != nil {
+				outType, size = b.Type, recSize(b)
 			}
 			fmt.Fprintf(w, "%s %s %6s %9s %7s %7s\n",
 				col(label, 40), col(outType, 22), size,
@@ -373,6 +438,16 @@ func (v *traceView) writePlain(w io.Writer) {
 				selfPctText(nt))
 			if !n.IsFrame() && n.Step.Err != nil {
 				fmt.Fprintf(w, "%serror: %v\n", indent+"  ", n.Step.Err)
+			}
+			// A folded run of laps prints its first lap and then says what it
+			// is standing in for: five hundred laps of the same three steps
+			// would otherwise be the whole output, and none of it the program.
+			if laps, folded := n.Iterations(); folded && !v.expand && laps > 1 {
+				walk(n.Children[:1], depth+1)
+				hidden, _ := hiddenBy(n.Children[1:])
+				fmt.Fprintf(w, "%s… %d more iterations, %s (--expand-loops shows them)\n",
+					strings.Repeat("  ", depth+1), laps-1, plural(hidden, "step"))
+				continue
 			}
 			walk(n.Children, depth+1)
 		}
@@ -388,6 +463,46 @@ func (v *traceView) writePlain(w io.Writer) {
 	if v.revealed != "" {
 		fmt.Fprintf(w, "\nrevealed:\n%s\n", v.revealed)
 	}
+}
+
+// writeGo prints the Go the compiler backend would emit for this program — the
+// text form of the stepper's code pane, for a reader who is not a terminal.
+func (v *traceView) writeGo(w io.Writer) {
+	src, _, err := v.emitted()
+	if err != nil {
+		fmt.Fprintf(w, "\ngenerated go:\n  %v\n", err)
+		return
+	}
+	fmt.Fprintf(w, "\ngenerated go (%d lines):\n", len(src))
+	for _, line := range src {
+		fmt.Fprintln(w, line)
+	}
+}
+
+// hasBlocks reports whether anything in the recording has a body of its own,
+// which is what the plain output's note about block rows is worth printing for.
+func hasBlocks(nodes []*interp.TraceNode) bool {
+	for _, n := range nodes {
+		if n.Block != nil || hasBlocks(n.Children) {
+			return true
+		}
+	}
+	return false
+}
+
+// hiddenBy reports what a set of rows holds: how many steps, and how many
+// frames. It is what a fold says about the laps it is standing in for.
+func hiddenBy(nodes []*interp.TraceNode) (steps, frames int) {
+	for _, n := range nodes {
+		if n.IsFrame() {
+			frames++
+		} else {
+			steps++
+		}
+		s, f := n.Counts()
+		steps, frames = steps+s, frames+f
+	}
+	return steps, frames
 }
 
 // col renders a table cell w columns wide, counting runes so a multi-byte type
@@ -433,4 +548,12 @@ func sizeOf(s *interp.Step) string {
 		return "—"
 	}
 	return strconv.Itoa(s.Size)
+}
+
+// recSize renders a captured value's size, the same way sizeOf renders a step's.
+func recSize(r *interp.Recorded) string {
+	if r == nil || !r.SizeOK {
+		return "—"
+	}
+	return strconv.Itoa(r.Size)
 }

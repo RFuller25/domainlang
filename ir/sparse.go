@@ -1,6 +1,9 @@
 package ir
 
-import "sort"
+import (
+	"cmp"
+	"slices"
+)
 
 // SparseValue is the dedicated nested/sparse grid: an unbounded 2D
 // plane addressed by (row, col) int64 coordinates — negative coordinates
@@ -100,11 +103,11 @@ func (s *SparseValue) Points() [][2]int64 {
 	for k := range s.cells {
 		pts = append(pts, k)
 	}
-	sort.Slice(pts, func(i, j int) bool {
-		if pts[i][0] != pts[j][0] {
-			return pts[i][0] < pts[j][0]
+	slices.SortFunc(pts, func(a, b [2]int64) int {
+		if a[0] != b[0] {
+			return cmp.Compare(a[0], b[0])
 		}
-		return pts[i][1] < pts[j][1]
+		return cmp.Compare(a[1], b[1])
 	})
 	return pts
 }

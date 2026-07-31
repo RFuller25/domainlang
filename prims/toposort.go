@@ -9,6 +9,7 @@ package prims
 
 import (
 	"fmt"
+	"slices"
 
 	"domain/ast"
 	"domain/ir"
@@ -102,7 +103,7 @@ func topoSortEdges(v ir.Value, pos token.Position) (ir.Value, error) {
 		if prev != nil {
 			succ, _ = ir.AsList(prev)
 		}
-		m.Put(pair[0], append(append([]ir.Value{}, succ...), pair[1]))
+		m.Put(pair[0], append(slices.Clone(succ), pair[1]))
 		// The target must exist as a node even with no outgoing edges.
 		if !m.Has(pair[1]) {
 			m.Put(pair[1], []ir.Value{})

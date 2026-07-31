@@ -1,0 +1,8 @@
+# The signature substitution: a requested Quicksort feeding Select Top K is
+# rewritten into a quickselect that never fully sorts.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Quicksort, Descending
+Maximum Technique: Select Top 3, Sum
+Reveal: stdout

@@ -105,8 +105,14 @@ func (g *gen) emitPartition(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.wl("%s := []%s{}", yes, elemGo)
-	g.wl("%s := []%s{}", no, elemGo)
+	// Either half can hold the whole input, and a cap that guesses the split
+	// (half each, say) pays a full reallocation and copy the moment the data
+	// is lopsided — which is the normal case for a predicate worth writing.
+	// Reserving the length for both trades transient memory for never
+	// regrowing; they cannot share one array, since a later append onto one
+	// half would then overwrite the other.
+	g.wl("%s := make([]%s, 0, len(%s))", yes, elemGo, in)
+	g.wl("%s := make([]%s, 0, len(%s))", no, elemGo, in)
 	g.wl("for %s := 0; %s < len(%s); %s++ {", i, i, in, i)
 	g.in()
 	g.wl("if %s {", body)

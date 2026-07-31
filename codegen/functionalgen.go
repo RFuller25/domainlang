@@ -99,7 +99,9 @@ func (g *gen) emitPairs(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	v, i := g.fresh("v"), g.fresh("i")
-	g.wl("%s := []%s{}", v, tupGo)
+	// n elements give exactly n-1 pairs, so the backing array is sized once
+	// here rather than grown a dozen times by append.
+	g.wl("%s := make([]%s, 0, len(%s))", v, tupGo, in)
 	g.wl("for %s := 0; %s+1 < len(%s); %s++ {", i, i, in, i)
 	g.in()
 	g.wl("%s = append(%s, %s{%s[%s], %s[%s+1]})", v, v, tupGo, in, i, in, i)

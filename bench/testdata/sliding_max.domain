@@ -1,0 +1,11 @@
+# Measured arguments: the window size is a lambda over the current list
+# rather than a literal, and Sliding Reduce still streams it with a
+# monotonic deque.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Sliding Reduce
+    Size: (xs) -> length(xs) / 1000
+    Mode: Max
+Maximum Technique: Sum
+Reveal: stdout

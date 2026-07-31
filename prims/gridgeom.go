@@ -58,8 +58,8 @@ func rotateGridValue(g *ir.GridValue, mode string) *ir.GridValue {
 	switch mode {
 	case "Half":
 		out := ir.NewGridValue(rows, cols)
-		for r := 0; r < rows; r++ {
-			for c := 0; c < cols; c++ {
+		for r := range rows {
+			for c := range cols {
 				v, _ := g.At(r, c)
 				out.SetAt(rows-1-r, cols-1-c, v)
 			}
@@ -67,8 +67,8 @@ func rotateGridValue(g *ir.GridValue, mode string) *ir.GridValue {
 		return out
 	case "Left":
 		out := ir.NewGridValue(cols, rows)
-		for r := 0; r < rows; r++ {
-			for c := 0; c < cols; c++ {
+		for r := range rows {
+			for c := range cols {
 				v, _ := g.At(r, c)
 				out.SetAt(cols-1-c, r, v)
 			}
@@ -76,8 +76,8 @@ func rotateGridValue(g *ir.GridValue, mode string) *ir.GridValue {
 		return out
 	default: // Right
 		out := ir.NewGridValue(cols, rows)
-		for r := 0; r < rows; r++ {
-			for c := 0; c < cols; c++ {
+		for r := range rows {
+			for c := range cols {
 				v, _ := g.At(r, c)
 				out.SetAt(c, rows-1-r, v)
 			}
@@ -116,8 +116,8 @@ var flipGrid = &Primitive{
 					return nil, runtimeErr("Flip Grid", pos, "expected a Grid, got %s", ir.DescribeValue(v))
 				}
 				out := ir.NewGridValue(g.Rows, g.Cols)
-				for r := 0; r < g.Rows; r++ {
-					for c := 0; c < g.Cols; c++ {
+				for r := range g.Rows {
+					for c := range g.Cols {
 						// Horizontal mirrors left-right (columns reverse);
 						// Vertical mirrors top-bottom (rows reverse).
 						cell, _ := g.At(r, c)
@@ -157,9 +157,9 @@ var convertToRows = &Primitive{
 					return nil, runtimeErr("Convert To Rows", pos, "expected a Grid, got %s", ir.DescribeValue(v))
 				}
 				rows := make([]ir.Value, g.Rows)
-				for r := 0; r < g.Rows; r++ {
+				for r := range g.Rows {
 					row := make([]ir.Value, g.Cols)
-					for c := 0; c < g.Cols; c++ {
+					for c := range g.Cols {
 						cell, _ := g.At(r, c)
 						row[c] = cell
 					}
@@ -450,8 +450,8 @@ var padGrid = &Primitive{
 				for i := range out.Cells {
 					out.Cells[i] = fill
 				}
-				for r := 0; r < g.Rows; r++ {
-					for c := 0; c < g.Cols; c++ {
+				for r := range g.Rows {
+					for c := range g.Cols {
 						cell, _ := g.At(r, c)
 						out.SetAt(r+int(n), c+int(n), cell)
 					}

@@ -1,0 +1,10 @@
+# The functional layer (v0.5): Scan is the running fold, and % is the new
+# Euclidean modulo operator in the expression layer.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Scan
+    Using: (acc, x) -> acc + x
+Maximum Technique: Count Matching
+    Using: (s) -> s % 7 = 0
+Reveal: stdout

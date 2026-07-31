@@ -70,8 +70,7 @@ func TestReplTTYAdoptsTheTerminalBackground(t *testing.T) {
 		t.Error("a light background did not install the light palette")
 	}
 
-	next, _ = m.Update(tea.BackgroundColorMsg{Color: color.RGBA{A: 0xff}})
-	m = next.(replModel)
+	m.Update(tea.BackgroundColorMsg{Color: color.RGBA{A: 0xff}})
 	if lightTheme {
 		t.Error("a dark background did not install the dark palette")
 	}

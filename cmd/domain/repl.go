@@ -29,6 +29,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
@@ -189,7 +190,7 @@ func (r *repl) handleLine(line string) (quit bool) {
 // any other error is reported and the line dropped.
 func (r *repl) acceptTopLevel(line string) {
 	stmt := r.withLead(line)
-	trial := append(append([]string{}, r.stmts...), stmt)
+	trial := append(slices.Clone(r.stmts), stmt)
 	pipe, src, err := r.frontEnd(trial)
 	if err != nil && needsBlock(err) {
 		r.pending = []string{stmt}
@@ -221,7 +222,7 @@ func (r *repl) flushPending() {
 	}
 	stmt := strings.Join(r.pending, "\n")
 	r.pending = nil
-	trial := append(append([]string{}, r.stmts...), stmt)
+	trial := append(slices.Clone(r.stmts), stmt)
 	pipe, src, err := r.frontEnd(trial)
 	if err != nil {
 		r.reportError(src, err)

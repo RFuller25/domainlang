@@ -123,6 +123,20 @@ compiled binary over the same generated large inputs — the compiled numbers
 include process startup, which is what a user actually pays. Run them with
 `go test ./codegen -bench . -run XXX`.
 
+Beating the interpreter is the easy half. The other half — **is the emitted
+Go as fast as Go you would have written?** — is
+[`bench/`](../bench/README.md): eleven Domain programs, each with a
+hand-written Go counterpart answering the same question about the same
+input, built with the same flags and required to print the same bytes.
+Today every one of them is inside 2× of the hand-written program and five
+are faster than it. `bench/README.md` carries the table, the methodology,
+and the measured payoff of the fusion passes that are not written yet.
+
+```sh
+go test ./bench                                          # the two must agree
+DOMAIN_BENCH=1 go test ./bench -run TestSpeedRatio -v    # the 2× gate
+```
+
 ## Documented semantic deltas
 
 Success output is byte-identical to the interpreter; two deliberate

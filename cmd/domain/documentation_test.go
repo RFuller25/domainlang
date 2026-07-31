@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,67 @@ func TestDocumentationHandlerServesEmbeddedSite(t *testing.T) {
 			t.Errorf("%s not served as Markdown:\n%.120s", page, md)
 		}
 	}
+
+	// The two generated data files behind the gallery and the primitive index
+	// ship in the binary too — without them those pages render an error box.
+	for _, data := range []string{"gallery.json", "primitives.json"} {
+		body := getBody(t, srv.URL+"/"+data)
+		var parsed []map[string]any
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			t.Errorf("%s is not served as a JSON array: %v", data, err)
+			continue
+		}
+		if len(parsed) == 0 {
+			t.Errorf("%s served empty", data)
+		}
+	}
+}
+
+// The site is embedded in the binary, so the binary is the only thing that can
+// say which build a reader is looking at. Served statically there is no
+// build.json at all and the sidebar panel stays hidden, which is why the site
+// treats it as optional.
+func TestDocumentationHandlerReportsItsBuild(t *testing.T) {
+	srv := httptest.NewServer(documentationHandler())
+	defer srv.Close()
+
+	res, err := http.Get(srv.URL + "/build.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if got := res.Header.Get("Content-Type"); !strings.Contains(got, "application/json") {
+		t.Errorf("Content-Type = %q, want JSON", got)
+	}
+	// A cached stamp would outlive the binary that produced it.
+	if got := res.Header.Get("Cache-Control"); !strings.Contains(got, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stamp struct {
+		Version  string `json:"version"`
+		Revision string `json:"revision"`
+		Go       string `json:"go"`
+	}
+	if err := json.Unmarshal(body, &stamp); err != nil {
+		t.Fatalf("build.json is not JSON: %v\n%s", err, body)
+	}
+	// Version and Go runtime are always available; VCS details are not stamped
+	// by `go test`, so they are not required here.
+	if stamp.Version == "" {
+		t.Error("build.json reports no version")
+	}
+	if !strings.HasPrefix(stamp.Go, "go1.") {
+		t.Errorf("build.json reports Go %q", stamp.Go)
+	}
+
+	// Adding the endpoint must not have shadowed the file server.
+	if body := getBody(t, srv.URL+"/"); !strings.Contains(body, "Domain documentation") {
+		t.Error("index.html is no longer served at / after mounting build.json")
+	}
 }
 
 func TestExpansionDocumentationRejectsBadPort(t *testing.T) {
@@ -78,7 +140,7 @@ func getBody(t *testing.T, url string) string {
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s: status %d", url, resp.StatusCode)
 	}

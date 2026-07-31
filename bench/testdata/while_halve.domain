@@ -1,0 +1,11 @@
+# A While loop whose predicate is a reduction over the value it guards, with
+# a full pass in the body: the loop lowering, not the body's.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Simple Domain: While
+    Using: (xs) -> max(xs) > 1
+    Cursed Technique: Map Each
+        Using: (x) -> if x > 1 then x / 2 else x
+Maximum Technique: Sum
+Reveal: stdout

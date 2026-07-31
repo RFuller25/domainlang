@@ -23,7 +23,7 @@ func BuildBinary(goSrc, outPath string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(goSrc), 0o644); err != nil {
 		return err
@@ -37,7 +37,7 @@ func BuildBinary(goSrc, outPath string) error {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("go build failed: %v\n%s", err, out)
+		return fmt.Errorf("go build failed: %w\n%s", err, out)
 	}
 	return nil
 }
