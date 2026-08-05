@@ -123,6 +123,26 @@ var Builtins = []string{
 	"endswith", "replace",
 	"psub", "pscale", "chebyshev", "dirs8", "around4", "around8",
 	"haskey", "getor", "keys", "values", "size", "tolist",
+	// v0.6: the collections stop being read-only. Sparse was the only kind
+	// with a constructor and a functional update, which is why a sparse
+	// automaton was writable as a Fold and a frequency map was not.
+	"toset", "tomap", "entries", "insert", "del", "union", "intersect",
+	"difference", "emptyset", "emptymap", "setat", "cellpoints",
+	// v0.6: list generation. Every list used to have to arrive from outside
+	// the expression.
+	"range", "fill",
+	// v0.6: text splitting, codepoints, padding and classification.
+	"split", "words", "ord", "chr", "repeat",
+	"padleft", "padright", "trimprefix", "trimsuffix",
+	"isdigit", "isalpha", "isupper", "islower",
+	// v0.6: the float tower past sqrt.
+	"log", "log2", "log10", "exp", "sin", "cos", "tan", "atan2", "hypot", "trunc",
+	// v0.6: named-field construction and update.
+	"record", "with",
+	// v0.6: bases, bits and number theory.
+	"frombase", "tobase", "fromhex", "tohex", "tobin",
+	"bnot", "popcount", "testbit", "digits", "fromdigits",
+	"isprime", "divisors", "crt",
 }
 
 // PointType is the expression-layer representation of a 2D point: an
@@ -165,13 +185,39 @@ var builtinArity = map[string]int{
 	"minrow": 1, "maxrow": 1, "mincol": 1, "maxcol": 1,
 	// bit operations (2021 D3 and friends)
 	"band": 2, "bor": 2, "bxor": 2, "shl": 2, "shr": 2, "frombin": 1,
+	// collection construction, update and enumeration
+	"toset": 1, "tomap": 1, "entries": 1,
+	"insert": -1, // 2 over a Set, 3 over a Map
+	"del":    2,  // Set × elem, or Map × key
+	"union":  2, "intersect": 2, "difference": 2,
+	"emptyset": 1, "emptymap": 2, "setat": 4, "cellpoints": 1,
+	// list generation
+	"range": 2, "fill": 2,
+	// text
+	"split": 2, "words": 1, "ord": 1, "chr": 1, "repeat": 2,
+	"padleft": 3, "padright": 3, "trimprefix": 2, "trimsuffix": 2,
+	"isdigit": 1, "isalpha": 1, "isupper": 1, "islower": 1,
+	// floats
+	"log": 1, "log2": 1, "log10": 1, "exp": 1,
+	"sin": 1, "cos": 1, "tan": 1, "atan2": 2, "hypot": 2, "trunc": 1,
+	// records
+	"record": -1, // variadic, >= 2 and even: name, value, name, value, …
+	"with":   3,
+	// bases, bits, number theory
+	"frombase": 2, "tobase": 2, "fromhex": 1, "tohex": 1, "tobin": 1,
+	"bnot": 1, "popcount": 1, "testbit": 2, "digits": 1, "fromdigits": 1,
+	"isprime": 1, "divisors": 1, "crt": 2,
 }
 
 // variadicArity bounds the builtins whose builtinArity is -1, as {min, max}
 // with -1 for unbounded. `tuple` needs two (a 1-tuple is just the value);
-// `min`/`max` are either the list reduction (1) or the two-scalar form.
+// `min`/`max` are either the list reduction (1) or the two-scalar form;
+// `insert` is the Set form (2) or the Map form (3); `record` takes name/value
+// pairs, so it also has to be *even* — checked in its own typing rule, where
+// the message can say so.
 var variadicArity = map[string][2]int{
 	"list": {1, -1}, "tuple": {2, -1}, "min": {1, 2}, "max": {1, 2},
+	"insert": {2, 3}, "record": {2, -1},
 }
 
 // callType types a builtin call. Several builtins are polymorphic in the
@@ -303,8 +349,17 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return args[0].Elem, nil
 	case "contains":
+		// Over Text it is the substring test. `indexof(s, sub) >= 0` said the
+		// same thing, but a membership question should read the same whatever
+		// it is asked of.
+		if args[0] != nil && args[0].Kind == ir.KText {
+			if err := needText(x, name, args, 1); err != nil {
+				return nil, err
+			}
+			return ir.Bool(), nil
+		}
 		if args[0] == nil || (args[0].Kind != ir.KList && args[0].Kind != ir.KSet) {
-			return nil, fmt.Errorf("%s: contains needs a List or Set argument, got %s", x.Pos, args[0])
+			return nil, fmt.Errorf("%s: contains needs a Text, List or Set argument, got %s", x.Pos, args[0])
 		}
 		elem := args[0].Elem
 		if !ir.Keyable(elem) {
@@ -379,13 +434,24 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		return ir.Int(), nil
-	case "gcd", "lcm", "modinv", "mod", "pow", "choose":
+	case "gcd", "lcm", "modinv", "mod", "choose":
 		for i := range 2 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
 		}
 		return ir.Int(), nil
+	case "pow":
+		// The one builtin that follows the operators' promotion rule rather
+		// than staying integral: `pow(2, 10)` is an Int, `pow(x, 0.5)` is the
+		// square root it looks like. Int × Int was the whole of it before, so
+		// nothing that used to typecheck changes meaning.
+		for i := range 2 {
+			if !numeric(args[i]) {
+				return nil, fmt.Errorf("%s: pow needs Int or Float, got %s", x.Pos, args[i])
+			}
+		}
+		return promote(args[0], args[1]), nil
 	case "divmod":
 		for i := range 2 {
 			if err := needInt(i); err != nil {
@@ -705,8 +771,340 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, fmt.Errorf("%s: frombin needs Text, got %s", x.Pos, args[0])
 		}
 		return ir.Int(), nil
+
+	// -- collection construction, update and enumeration -------------------------
+	//
+	// Sparse used to be the only collection with a constructor and a functional
+	// update, which is exactly why a sparse automaton was writable as a Fold and
+	// a frequency map was not. These close that.
+	case "toset":
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		if err := needKeyable(x, name, elem); err != nil {
+			return nil, err
+		}
+		return ir.Set(elem), nil
+	case "emptyset":
+		// The argument is a *type witness*, never stored — the same trick
+		// `sparse(d)` plays with its default, since a collection's element type
+		// cannot be inferred from an absence.
+		if err := needKeyable(x, name, args[0]); err != nil {
+			return nil, err
+		}
+		return ir.Set(args[0]), nil
+	case "emptymap":
+		if err := needKeyable(x, name, args[0]); err != nil {
+			return nil, err
+		}
+		return ir.Map(args[0], args[1]), nil
+	case "tomap":
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		if elem == nil || elem.Kind != ir.KTuple || len(elem.Elems) != 2 {
+			return nil, fmt.Errorf("%s: tomap needs a List of (key, value) pairs, got List<%s>", x.Pos, elem)
+		}
+		if err := needKeyable(x, name, elem.Elems[0]); err != nil {
+			return nil, err
+		}
+		return ir.Map(elem.Elems[0], elem.Elems[1]), nil
+	case "entries":
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: entries needs a Map argument, got %s", x.Pos, args[0])
+		}
+		return ir.List(ir.Tuple(args[0].Key, args[0].Elem)), nil
+	case "insert":
+		// Two shapes, told apart by the collection: a Set takes the element, a
+		// Map takes a key and a value.
+		if args[0] != nil && args[0].Kind == ir.KSet {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("%s: insert into a Set takes 2 arguments, got %d", x.Pos, len(args))
+			}
+			if !args[1].Equal(args[0].Elem) {
+				return nil, fmt.Errorf("%s: insert value must be %s, got %s", x.Pos, args[0].Elem, args[1])
+			}
+			return args[0], nil
+		}
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: insert needs a Set or Map argument, got %s", x.Pos, args[0])
+		}
+		if len(args) != 3 {
+			return nil, fmt.Errorf("%s: insert into a Map takes 3 arguments (map, key, value), got %d", x.Pos, len(args))
+		}
+		if !args[1].Equal(args[0].Key) {
+			return nil, fmt.Errorf("%s: insert key must be %s, got %s", x.Pos, args[0].Key, args[1])
+		}
+		if !args[2].Equal(args[0].Elem) {
+			return nil, fmt.Errorf("%s: insert value must be %s, got %s", x.Pos, args[0].Elem, args[2])
+		}
+		return args[0], nil
+	case "del":
+		if args[0] != nil && args[0].Kind == ir.KSet {
+			if !args[1].Equal(args[0].Elem) {
+				return nil, fmt.Errorf("%s: del value must be %s, got %s", x.Pos, args[0].Elem, args[1])
+			}
+			return args[0], nil
+		}
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: del needs a Set or Map argument, got %s", x.Pos, args[0])
+		}
+		if !args[1].Equal(args[0].Key) {
+			return nil, fmt.Errorf("%s: del key must be %s, got %s", x.Pos, args[0].Key, args[1])
+		}
+		return args[0], nil
+	case "union", "intersect", "difference":
+		for i := range 2 {
+			if args[i] == nil || args[i].Kind != ir.KSet {
+				return nil, fmt.Errorf("%s: %s needs Set arguments, got %s", x.Pos, name, args[i])
+			}
+		}
+		if !args[0].Equal(args[1]) {
+			return nil, fmt.Errorf("%s: %s needs two sets of the same type, got %s and %s",
+				x.Pos, name, args[0], args[1])
+		}
+		return args[0], nil
+	case "setat":
+		if args[0] == nil || args[0].Kind != ir.KGrid {
+			return nil, fmt.Errorf("%s: setat needs a Grid argument, got %s (a Sparse grid uses put)", x.Pos, args[0])
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		if err := needInt(2); err != nil {
+			return nil, err
+		}
+		if !args[3].Equal(args[0].Elem) {
+			return nil, fmt.Errorf("%s: setat value must be %s, got %s", x.Pos, args[0].Elem, args[3])
+		}
+		return args[0], nil
+	case "cellpoints":
+		if args[0] == nil || args[0].Kind != ir.KSparse {
+			return nil, fmt.Errorf("%s: cellpoints needs a Sparse argument, got %s", x.Pos, args[0])
+		}
+		return ir.List(PointType()), nil
+
+	// -- list generation ---------------------------------------------------------
+	case "range":
+		for i := range 2 {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.List(ir.Int()), nil
+	case "fill":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.List(args[1]), nil
+
+	// -- text --------------------------------------------------------------------
+	case "split", "trimprefix", "trimsuffix":
+		for i := range 2 {
+			if err := needText(x, name, args, i); err != nil {
+				return nil, err
+			}
+		}
+		if name == "split" {
+			return ir.List(ir.Text()), nil
+		}
+		return ir.Text(), nil
+	case "words":
+		if err := needText(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		return ir.List(ir.Text()), nil
+	case "ord":
+		if err := needText(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		return ir.Int(), nil
+	case "chr":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.Text(), nil
+	case "repeat":
+		if err := needText(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		return ir.Text(), nil
+	case "padleft", "padright":
+		if err := needText(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		if err := needText(x, name, args, 2); err != nil {
+			return nil, err
+		}
+		return ir.Text(), nil
+	case "isdigit", "isalpha", "isupper", "islower":
+		if err := needText(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		return ir.Bool(), nil
+
+	// -- floats ------------------------------------------------------------------
+	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
+		if !numeric(args[0]) {
+			return nil, fmt.Errorf("%s: %s needs Int or Float, got %s", x.Pos, name, args[0])
+		}
+		return ir.Float(), nil
+	case "atan2", "hypot":
+		for i := range 2 {
+			if !numeric(args[i]) {
+				return nil, fmt.Errorf("%s: %s needs Int or Float, got %s", x.Pos, name, args[i])
+			}
+		}
+		return ir.Float(), nil
+	case "trunc":
+		if !numeric(args[0]) {
+			return nil, fmt.Errorf("%s: trunc needs Int or Float, got %s", x.Pos, args[0])
+		}
+		return ir.Int(), nil
+
+	// -- records -----------------------------------------------------------------
+	//
+	// Field names are literals rather than a new argument form in the grammar:
+	// `record("a", 1, "b", 2)` is typeable exactly the way `item(t, 0)` over a
+	// Tuple already is — by reading the literal at resolve time — and it costs
+	// the language no new syntax at all. Both compile to a plain struct.
+	case "record":
+		return recordType(x, args)
+	case "with":
+		if args[0] == nil || args[0].Kind != ir.KRecord {
+			return nil, fmt.Errorf("%s: with needs a Record argument, got %s", x.Pos, args[0])
+		}
+		lit, ok := x.Args[1].(*ast.StringLit)
+		if !ok {
+			return nil, fmt.Errorf("%s: with needs a literal field name (the result's type depends on it)", x.Pos)
+		}
+		for _, f := range args[0].Fields {
+			if f.Name != lit.Value {
+				continue
+			}
+			if !args[2].Equal(f.Type) {
+				return nil, fmt.Errorf("%s: with field %q must be %s, got %s",
+					x.Pos, lit.Value, f.Type, args[2])
+			}
+			return args[0], nil
+		}
+		return nil, fmt.Errorf("%s: record %s has no field %q", x.Pos, args[0], lit.Value)
+
+	// -- bases, bits, number theory ----------------------------------------------
+	case "frombase":
+		if err := needText(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		return ir.Int(), nil
+	case "fromhex":
+		if err := needText(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		return ir.Int(), nil
+	case "tobase":
+		for i := range 2 {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.Text(), nil
+	case "tohex", "tobin":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.Text(), nil
+	case "bnot", "popcount":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.Int(), nil
+	case "testbit":
+		for i := range 2 {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.Bool(), nil
+	case "isprime":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.Bool(), nil
+	case "digits", "divisors":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.List(ir.Int()), nil
+	case "fromdigits":
+		if !args[0].Equal(ir.List(ir.Int())) {
+			return nil, fmt.Errorf("%s: fromdigits needs List<Int>, got %s", x.Pos, args[0])
+		}
+		return ir.Int(), nil
+	case "crt":
+		for i := range 2 {
+			if !args[i].Equal(ir.List(ir.Int())) {
+				return nil, fmt.Errorf("%s: crt needs List<Int> arguments, got %s", x.Pos, args[i])
+			}
+		}
+		return ir.Int(), nil
 	}
 	return nil, fmt.Errorf("%s: unknown function %q", x.Pos, name)
+}
+
+// recordType builds the Record type of a `record("a", v, "b", w)` call. The
+// field names must be string literals, for the reason item-over-a-Tuple's index
+// must be an int literal: the result type is only knowable when they are.
+func recordType(x *ast.CallExpr, args []*ir.Type) (*ir.Type, error) {
+	if len(args)%2 != 0 {
+		return nil, fmt.Errorf("%s: record takes name/value pairs, so an even number of arguments; got %d",
+			x.Pos, len(args))
+	}
+	fields := make([]ir.Field, 0, len(args)/2)
+	seen := make(map[string]bool, len(args)/2)
+	for i := 0; i < len(args); i += 2 {
+		lit, ok := x.Args[i].(*ast.StringLit)
+		if !ok {
+			return nil, fmt.Errorf("%s: record field name %d must be a literal (the result's type depends on it)",
+				x.Pos, i/2+1)
+		}
+		if lit.Value == "" {
+			return nil, fmt.Errorf("%s: record field names cannot be empty", x.Pos)
+		}
+		if seen[lit.Value] {
+			return nil, fmt.Errorf("%s: record has a duplicate field %q", x.Pos, lit.Value)
+		}
+		seen[lit.Value] = true
+		fields = append(fields, ir.Field{Name: lit.Value, Type: args[i+1]})
+	}
+	return ir.Record(fields...), nil
+}
+
+// needKeyable requires a type that can be a Map key or Set element.
+func needKeyable(x *ast.CallExpr, name string, t *ir.Type) error {
+	if !ir.Keyable(t) {
+		return fmt.Errorf("%s: %s needs keyable elements (Int, Text, or Tuples/Records of them), got %s",
+			x.Pos, name, t)
+	}
+	return nil
+}
+
+// needText requires argument i to be Text.
+func needText(x *ast.CallExpr, name string, args []*ir.Type, i int) error {
+	if !args[i].Equal(ir.Text()) {
+		return fmt.Errorf("%s: %s argument %d must be Text, got %s", x.Pos, name, i+1, args[i])
+	}
+	return nil
 }
 
 // needPoint requires argument i to be an (Int, Int) tuple — the expression
@@ -827,7 +1225,10 @@ func LambdaType(l *ast.Lambda, paramTypes ...*ir.Type) (*ir.Type, error) {
 		return nil, fmt.Errorf("%s: lambda expects %d parameter type(s), got %d",
 			l.Pos, len(l.Params), len(paramTypes))
 	}
-	env := make(Env, len(l.Params))
+	env := make(Env, len(l.Params)+BindingDepth())
+	// Bindings first, parameters second: a parameter of the same name shadows
+	// the binding, which is the rule every other scope in the language uses.
+	seedBindings(env)
 	for i, p := range l.Params {
 		env[p] = paramTypes[i]
 	}

@@ -23,9 +23,11 @@ binary — every primitive and all 92 expression builtins have a codegen case,
 each pinned by an interpreter-vs-binary oracle test.
 
 **New here? Start with [docs/getting-started.md](docs/getting-started.md)** —
-a ground-up tutorial from FizzBuzz to a Game of Life glider. The full
-reference (language, primitives, expression builtins, CLI, optimizer,
-compiler backend) lives in [`docs/`](docs/README.md).
+a ground-up tutorial from FizzBuzz to a Game of Life glider, then
+[docs/walkthroughs.md](docs/walkthroughs.md), which takes the features one at a
+time as whole working programs. The full reference (language, primitives,
+expression builtins, CLI, optimizer, compiler backend) lives in
+[`docs/`](docs/README.md).
 
 ## Try it
 
@@ -46,7 +48,7 @@ go run ./cmd/domain build testdata/day1.domain -o day1
 go run ./cmd/domain build testdata/day1.domain --emit-go -
 ```
 
-Nineteen ready-to-run programs with inputs and expected outputs live in
+Twenty ready-to-run programs with inputs and expected outputs live in
 [`examples/`](examples/README.md) — each one shows off a different piece of
 the language — and thirteen classic programming challenges (FizzBuzz, Two
 Sum, Kadane, Conway's Game of Life, Minesweeper, …) live in
@@ -71,7 +73,9 @@ domain expansion: diagnosis day1.domain          # every error + how to fix it
 domain expansion: fix day1.domain                # apply the unambiguous fixes (.bak kept)
 domain expansion: maximum compile day1.domain < input.txt   # fix → lint → optimize → compile → run
 domain expansion: visualize day1.domain          # step through the run, watching the data change shape
+domain expansion: visualize day1.domain --expressions   # …down to what each Using: expression computed
 domain expansion: documentation                  # serve the docs as a local website (port 4444)
+domain expansion: vscode                         # install the VS Code extension carried in the binary
 ```
 
 There is also an interactive REPL (`domain repl` — build a pipeline line by
@@ -121,7 +125,17 @@ a Go toolchain, even on machines without Go installed.
 
 Syntax highlighting for VS Code (TextMate grammar) and Neovim/Vim (runtime
 plugin, also exported by the flake as `packages.<system>.domain-nvim`) lives
-in [`editors/`](editors/README.md). Note for maintainers:
+in [`editors/`](editors/README.md). Both grammars are **generated from the
+language itself** — the primitives from the registry, all 144 expression
+builtins, the keywords — and a test fails if they fall behind it.
+
+The binary carries the VS Code extension and installs it for you:
+
+```sh
+domain expansion: vscode                 # into the first editor found
+domain expansion: vscode --list-targets  # VS Code, Insiders, Codium, Cursor, remote/WSL, …
+```
+ Note for maintainers:
 after the first `nix build` / `nix flake lock`, commit the generated
 `flake.lock` so consumers are pinned to the same nixpkgs.
 
@@ -174,7 +188,7 @@ after a built-in operation. See
 
 ## Keyword taxonomy
 
-Every keyword below is optional — see
+Every keyword below is optional except where the row says otherwise — see
 [optional keywords](docs/language.md#optional-keywords).
 
 | Keyword | Semantic role | Examples |
@@ -184,12 +198,13 @@ Every keyword below is optional — see
 | `Cursed Technique:` | 1:1 transforms | Split, Map Each, Filter, Match Pattern, Take Item, Transpose, Map Cells, Apply, Unique, Scan, Pairs, Chunk, Take/Drop While, Partition, Iterate, Unfold |
 | `Channeled Energy:` | type coercion | Convert To Integers, Convert To Grid |
 | `Maximum Technique:` | reductions / aggregation | Sum, Max, Min, Count, Fold, Reduce, Any/All, Find, Sum By, Group By, Select Top K, Intersect/Union, Combine, Zip |
-| `Domain Expansion:` | a named algorithm the optimizer may swap | Quicksort, All Pairs, Combinations, Sliding Reduce |
+| `Domain Expansion:` | a named algorithm the optimizer may swap — or a foreign block, the one it may not | Quicksort, All Pairs, Combinations, Sliding Reduce, Python |
 | `Reverse Cursed Technique:` | inversions | Reverse |
 | `Simple Domain:` | control flow | Repeat N, Iterate Until Fixed Point, While |
 | `Channel "name":` | named sub-pipeline (dataflow branch) | + `From:` consumers |
 | `Part "label":` | labelled output block (two answers, one parse) | + `Reveal:` inside |
 | `Shikigami "name" (p: T) : In -> Out` | user-defined operation (inlined) | the prelude is written this way |
+| `Consider x As …` / `Consider x Of …` (required) | a local variable for one stage's expressions — `As` a constant or a function, `Of` the current value put through an operation | `Consider total Of Sum` |
 | `Binding Vow:` | debug-time assertion over the current value | Count Equals N, All Values > N |
 | `Reveal:` | terminal output sink | stdout |
 
@@ -221,6 +236,16 @@ Every keyword below is optional — see
   `drop`, `reverse`, `concat`, `first`, `last`, `sum`, `min`, `max`,
   `contains`, `get(m, k)`, `at(grid, r, c)` — e.g.
   `(g) -> sum(take(g, 2)) > max(drop(g, 2))`.
+- **Local bindings on any stage** — `Consider accum As 3`, `Consider len As (x)
+  -> length(x)`, `Consider total Of Sum`. `As` binds a constant or a function
+  and never sees the pipeline value; `Of` binds what an operation, a lambda, or
+  a whole sub-pipeline makes *of* it. The preposition has to carry that,
+  because a 1-parameter lambda already means two things depending on the slot
+  it sits in — per element in a `Using:`, once over the current value in a
+  measured argument — and a binding has no slot. A constant folds into the
+  lambdas that read it and a function is inlined at its call sites, so both are
+  gone before either backend runs, and the optimizer still sees the body shapes
+  it rewrites.
 - **Grids**: build from chars or digits, `Transpose`, `Map Cells`, `Count Cells`,
   neighbor walks.
 - **Sparse grids** (`Sparse<T>`): an infinite plane with a default value —
@@ -235,6 +260,14 @@ Every keyword below is optional — see
   above the Parts happens once and each Part sees the same upstream value.
 - **Loops** (`Repeat`/`Iterate Until Fixed Point`/`While`), bounded against
   runaway.
+- **Foreign blocks** — `Domain Expansion: Python` (or `Go`, `rask`, `cRust`)
+  followed by an indented block of *that language's* source, run as a
+  subprocess with the current value on its stdin and its stdout as the next
+  stage's value. The block is captured verbatim — its own comment character,
+  its own braces, tabs if it wants them — and a declared `: List<Int> -> Int`
+  says what crosses the wire. It is the one Domain Expansion the optimizer
+  never touches: it names an implementation, not a result. See
+  [docs/primitives.md](docs/primitives.md#foreign-block--t---text-or-a-declared-in---out).
 - **`Innate Domain`** — import a library of Shikigami (`Innate Domain: aoc`),
   searched beside the program, then `$DOMAIN_PATH`, then `~/.config/domain/lib`.
   Libraries are free: a Shikigami is inlined, so an imported operation gets
@@ -353,7 +386,9 @@ Go is aggressively concrete:
 The interpreter is the correctness oracle: `codegen`'s tests compile every
 anchor program in both modes and require byte-identical stdout. On a
 1M-line AoC 2022 Day 4 input the compiled binary is ~7× faster than the
-interpreter; binaries are self-contained (~1.5 MB, stdlib only).
+interpreter; binaries are self-contained (~1.5 MB, stdlib only) — unless the
+program contains a [foreign block](docs/primitives.md#foreign-block--t---text-or-a-declared-in---out), which
+embeds another language's source but not the runtime that runs it.
 
 The benchmark that matters is against Go rather than against the
 interpreter: [`bench/`](bench/README.md) pairs each Domain program in it
@@ -375,10 +410,15 @@ that state today: the whole surface — parsing/range/set primitives, the
 grid searches, the sparse grid type, and all 92 expression builtins
 including the point group — compiles, with oracle tests pinning
 interpreter/binary parity (see [`docs/compiler.md`](docs/compiler.md)).
+A foreign block compiles too, with its source embedded as a constant and the
+same subprocess run at run time; what it costs is the sentence above about
+self-contained binaries.
 
 ## Design decisions
 
-- Significant indentation, **spaces only** (tabs in indentation are an error).
+- Significant indentation, **spaces only** (tabs in indentation are an error) —
+  except inside a foreign block, which is another language's source and is
+  copied byte for byte, tabs included.
 - `=` is equality; `and`/`or` are the boolean connectives (no assignment exists).
 - `#` begins a comment to end of line.
 - Double-quoted strings interpret standard escapes (`\n \t \\ \"`).

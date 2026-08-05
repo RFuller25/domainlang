@@ -129,6 +129,17 @@ var reverse = &Primitive{
 // ---------------------------------------------------------------------------
 
 func (r *resolver) resolveLoop(stmt *ast.Statement, cur *ir.Type) (*ir.Node, error) {
+	var rewriteErr error
+	node, err := r.loopNode(stmt, cur, &rewriteErr)
+	// A lambda the binding scope could not rewrite is the more specific
+	// failure; see resolveOne.
+	if rewriteErr != nil {
+		return nil, rewriteErr
+	}
+	return node, err
+}
+
+func (r *resolver) loopNode(stmt *ast.Statement, cur *ir.Type, rewriteErr *error) (*ir.Node, error) {
 	if cur == nil {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: "Simple Domain loop needs an upstream value"}
 	}
@@ -156,7 +167,7 @@ func (r *resolver) resolveLoop(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 
 	switch {
 	case hasWord(op, "Repeat"):
-		timesM, err := requireMeasuredInt(op, ArgSet{args: stmt.Args}, "Repeat", "Times", 0, 0, cur,
+		timesM, err := requireMeasuredInt(op, r.args(stmt, rewriteErr), "Repeat", "Times", 0, 0, cur,
 			stmt.Pos, "a count", "Repeat 3")
 		if err != nil {
 			return nil, err
@@ -167,7 +178,7 @@ func (r *resolver) resolveLoop(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 		return repeatNode(subNodes, timesM, cur, stmt.Pos), nil
 
 	case hasWord(op, "While"):
-		lam, ok := ArgSet{args: stmt.Args}.Lambda("Using")
+		lam, ok := r.args(stmt, rewriteErr).Lambda("Using")
 		if !ok {
 			return nil, &ResolveError{Pos: stmt.Pos, Msg: "While needs a Using: predicate"}
 		}

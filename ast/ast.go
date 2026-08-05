@@ -124,6 +124,7 @@ type ShikigamiDef struct {
 	Name   string
 	Params []Param
 	Sig    *Signature // declared `: In -> Out`; nil when not written
+	Binds  []*Binding // `Consider x As/Of …` lines at the top of the body
 	Body   []*Statement
 	Pos    token.Position
 }
@@ -148,8 +149,14 @@ type Statement struct {
 	PartName    string       // for `Part "1":` statements; "" otherwise
 	Op          *Operation   // the inline operation phrase (nil for a pure block opener)
 	Args        []*Arg       // named arguments from an indented block (Mode:, Using:)
+	Binds       []*Binding   // `Consider x As/Of …` lines from an indented block
 	Block       []*Statement // an indented sub-pipeline (mutually exclusive with Args)
-	Pos         token.Position
+	// Foreign is the verbatim body of a foreign-language statement
+	// (`Domain Expansion: Python` and its siblings). It excludes Args and
+	// Block: the indented region beneath such a statement is source in another
+	// language, so there is nothing there for either of them to hold.
+	Foreign *ForeignBlock
+	Pos     token.Position
 }
 
 // Operation is a parsed operation phrase: the text after a keyword's colon.
@@ -178,6 +185,46 @@ type Arg struct {
 	Value ArgValue
 	Used  bool
 	Pos   token.Position
+}
+
+// Binding is a `Consider NAME As <value>` or `Consider NAME Of <source>` line
+// written in a statement's indented block: a local variable the expressions on
+// that statement (and on the statements nested beneath it) can use by name.
+//
+// The two prepositions are the whole distinction, and they exist because a
+// 1-parameter lambda already means two different things in Domain depending on
+// the slot it is written in — a `Using:` lambda is applied per element, a
+// measured argument's lambda is applied once to the current pipeline value. A
+// binding has no slot to disambiguate it, so the keyword does:
+//
+//	Consider accum As 3                # a constant
+//	Consider len   As (x) -> length(x) # a function: call it as len(xs)
+//	Consider total Of Sum              # the current value, summed
+//	Consider total Of (xs) -> sum(xs)  # the same, written as a lambda
+//	Consider total Of                  # …or as a whole sub-pipeline
+//	    Cursed Technique: Map Each
+//	        Using: (r) -> r.n
+//	    Maximum Technique: Sum
+//
+// `As` never sees the pipeline value; `Of` always does. Exactly one of Value,
+// Lambda and Body is set:
+//
+//	Of == false, Value  != nil   As <expression>
+//	Of == false, Lambda != nil   As <lambda>   — a function, inlined at call sites
+//	Of == true,  Lambda != nil   Of <lambda>   — applied to the current value
+//	Of == true,  Body   != nil   Of <phrase>, or Of + an indented sub-pipeline
+//
+// Used is set by the resolver when something actually reads the binding, for
+// the same reason Arg.Used exists: so the linter can say a binding has no
+// effect rather than letting it sit there looking load-bearing.
+type Binding struct {
+	Name   string
+	Of     bool
+	Value  Expr
+	Lambda *Lambda
+	Body   []*Statement
+	Used   bool
+	Pos    token.Position
 }
 
 // ArgValue is the value of a named argument.

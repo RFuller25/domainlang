@@ -188,6 +188,25 @@ The guard is the default, so a measured argument added later to a primitive a
 pass has never heard of is refused rather than mis-folded, and enabling a pass
 is a deliberate change at one call site.
 
+## Local bindings and node lists
+
+A `Consider … Of` binding (see
+[expressions.md](expressions.md#stage-bindings--consider--as--consider--of))
+puts the statements of its scope inside a **Consider node**, the way a loop
+holds its body. That has the same consequence a loop body has: passes that
+rewrite nodes *in place* recurse into the list and fire normally, while passes
+that change a list's **length** — the fusions — stay on the top-level chain,
+so a stage carrying an `Of` binding is not fused with its neighbours. It is
+the measured-argument bargain in a different shape: a value that is not known
+until data arrives stands the length-changing rewrites down.
+
+The `As` bindings never reach the optimizer at all, and one of them is folded
+rather than bound precisely so that they do not cost a rewrite. The passes
+below match the *shape* of a lambda body — `(a, b) -> a + b = 2020` is the
+pair-sum scan's whole trigger — so a constant left behind a name would have
+hidden the literal the pass reads. Substituting it at resolve time means
+`Consider target As 2020` keeps the rewrite, and a test pins that.
+
 The compiler's *lowerings* have no such distinction: `gen.measuredOperand`
 emits the literal as a constant when there is one and a computed `int64`
 otherwise, so a measured argument costs one variable and the bounds check the

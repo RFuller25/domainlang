@@ -5,6 +5,15 @@
 // Indentation is significant: the lexer emits INDENT / DEDENT tokens using the
 // classic stack-of-widths approach. Indentation must be spaces; a tab in the
 // leading whitespace of a line is an error (decision locked in v0.1).
+//
+// The one place layout is suspended is **inside parentheses**. An expression
+// that has grown past a comfortable line has to break somewhere, and the only
+// place a break can be unambiguous is where the reader can already see the
+// expression is unfinished: an open `(`. So while a parenthesis is open a
+// newline is not a line ending and the next line's leading spaces are not
+// indentation — the classic implicit-continuation rule. The parser's other
+// half of multi-line expressions (an indented block continuing an argument's
+// value) is layout-aware and therefore lives in the parser, not here.
 package lexer
 
 import (
@@ -19,6 +28,13 @@ import (
 type Error struct {
 	Pos token.Position
 	Msg string
+	// Incomplete marks the errors that mean "nothing is wrong yet, the source
+	// just stops in the middle" — today, an open parenthesis at end of input.
+	// A file has no more lines to offer and reports the error as it stands; the
+	// REPL reads the flag and waits for them, the way it does for
+	// parser.Error.NeedsBlock. It is a property of the error rather than of its
+	// wording, so rephrasing the message cannot change what the REPL does.
+	Incomplete bool
 }
 
 func (e *Error) Error() string {
@@ -33,6 +49,15 @@ type lexer struct {
 	indents     []int // stack of indentation widths, always starts with 0
 	toks        []token.Token
 	atLineStart bool
+	// parens is the stack of open '(' positions. While it is non-empty the
+	// lexer is inside an expression that cannot have ended, so newlines and
+	// leading whitespace are not layout. The positions are kept (rather than a
+	// bare counter) so an unclosed parenthesis can point at itself.
+	parens []token.Position
+	// lineTok is the index in toks where the current logical line's tokens
+	// begin, so a completed line can be inspected as a whole — which is how a
+	// foreign block opener is recognized (see foreign.go).
+	lineTok int
 }
 
 // Lex tokenizes src into a slice ending in EOF, or returns the first error.
@@ -89,11 +114,22 @@ func (l *lexer) run() ([]token.Token, error) {
 		}
 		c := l.at()
 		switch {
+		case c == '\n' && len(l.parens) > 0:
+			// Implicit continuation: the expression is demonstrably unfinished,
+			// so the break is whitespace. Leaving atLineStart false is the whole
+			// mechanism — the next line's leading spaces fall through to the
+			// whitespace case below instead of being measured as indentation.
+			l.advance()
 		case c == '\n':
 			start := l.curPos()
 			l.advance()
 			l.emit(token.NEWLINE, "", start)
 			l.atLineStart = true
+			// The line is complete, so it can now be read as a whole: if it
+			// opened a foreign block, everything indented beneath it is another
+			// language's source and must be captured before the loop reaches it.
+			l.rawBlock()
+			l.lineTok = len(l.toks)
 		case c == ' ' || c == '\t' || c == '\r':
 			l.advance()
 		case c == '#':
@@ -113,6 +149,15 @@ func (l *lexer) run() ([]token.Token, error) {
 				return nil, err
 			}
 		}
+	}
+
+	// An open parenthesis has swallowed every newline since it was written, so
+	// the rest of the file is one logical line and whatever goes wrong next
+	// would be reported somewhere it did not happen. Say where it started.
+	if len(l.parens) > 0 {
+		open := l.parens[len(l.parens)-1]
+		return nil, &Error{Pos: open, Incomplete: true,
+			Msg: "unclosed '(': the expression opened here never ends"}
 	}
 
 	// Emit a trailing NEWLINE if the final line had content but no newline.
@@ -293,8 +338,14 @@ func (l *lexer) lexOperator() error {
 		k = token.DOT
 	case '(':
 		k = token.LPAREN
+		l.parens = append(l.parens, start)
 	case ')':
 		k = token.RPAREN
+		// A stray ')' is not the lexer's error to report — the parser has the
+		// context to say what was expected — so it simply closes nothing.
+		if len(l.parens) > 0 {
+			l.parens = l.parens[:len(l.parens)-1]
+		}
 	case '+':
 		k = token.PLUS
 	case '-':

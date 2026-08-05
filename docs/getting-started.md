@@ -129,7 +129,7 @@ Things to notice:
   language. `and`/`or` short-circuit.
 - `if cond then a else b` is an expression with lazy arms, so
   `if length(xs) = 0 then -1 else first(xs)` is safe.
-- There are 92 builtin functions available inside lambdas — list ops
+- There are 144 builtin functions available inside lambdas — list ops
   (`length`, `item`, `take`, `sum`, …), math (`gcd`, `modpow`, …), text
   (`toint`, `totext`, …), bits (`band`, `frombin`, …), points and grids
   (`point`, `manhattan`, `at`, `neighbors4`, …), and sparse grids (`put`,
@@ -343,7 +343,10 @@ file; both fall back to stdin when the file is absent.
 
 ## 9. Where to go next
 
-- **[../examples/](../examples/README.md)** — nineteen small programs, each
+- **[walkthroughs.md](walkthroughs.md)** — the same features as whole working
+  programs: stage bindings, all four loop drivers, Channels, Parts, a `Using:`
+  written as a pipeline, Shikigami, and the optimizer caught in the act.
+- **[../examples/](../examples/README.md)** — twenty small programs, each
   showing off one feature, with inputs and expected outputs.
 - **[../challenges/](../challenges/README.md)** — thirteen classics
   (FizzBuzz → Game of Life) solved in Domain; great for seeing idioms

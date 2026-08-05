@@ -49,10 +49,13 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 		b, ok := env[x.Name]
 		if !ok {
 			// Fall back to the enclosing For loops' variables — the lambda's
-			// trailing ambient parameters. The caller's env wins, so a leading
+			// trailing ambient parameters — and then to the `Consider`
+			// bindings in scope. The caller's env wins, so a leading
 			// parameter of the same name still shadows.
 			if b, ok = g.ambientNames[x.Name]; !ok {
-				return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+				if b, ok = g.bindNames[x.Name]; !ok {
+					return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+				}
 			}
 		}
 		return b.expr, b.typ, nil
@@ -311,6 +314,10 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmMax", declMaxInts)
 		return "dmMax(" + args[0] + ")", elem, nil
 	case "contains":
+		if types[0] != nil && types[0].Kind == ir.KText {
+			g.imp("strings")
+			return "strings.Contains(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+		}
 		if types[0] != nil && types[0].Kind == ir.KSet {
 			g.helper("dmSet", declSet)
 			g.helper("dmSetHas", declSetHas)
@@ -440,6 +447,13 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return pt + "{dmDiv(" + a + " - dmMod(" + a + ", " + b + "), " + b + "), dmMod(" + a + ", " + b + ")}",
 			irPoint(), nil
 	case "pow":
+		// Follows the operators' promotion rule: integral unless an operand is
+		// a Float, in which case it is math.Pow like every other float op.
+		if isFloatType(types[0]) || isFloatType(types[1]) {
+			g.imp("math")
+			return "math.Pow(" + g.asFloat(args[0], types[0]) + ", " +
+				g.asFloat(args[1], types[1]) + ")", ir.Float(), nil
+		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmPow", declPow)
 		return "dmPow(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
@@ -826,9 +840,340 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmFromBin", declFromBin, "strconv", "strings")
 		return "dmFromBin(" + args[0] + ")", ir.Int(), nil
+
+	// -- collection construction, update and enumeration -------------------------
+	case "toset":
+		elem, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmSet", declSet)
+		g.helper("dmToSet", declToSet)
+		return "dmToSet(" + args[0] + ")", ir.Set(elem), nil
+	case "emptyset":
+		// The witness contributes nothing but its type — but it is still
+		// *evaluated*, because the interpreter evaluates every argument before
+		// dispatching and `emptyset(first(xs))` on an empty list has to fail in
+		// both backends or the two disagree. Passing it to a func that ignores
+		// it keeps the evaluation and discards the value.
+		elemGo, err := g.goType(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmSet", declSet)
+		return "func(" + elemGo + ") dmSet[" + elemGo + "] { return dmNewSet[" + elemGo +
+			"]() }(" + args[0] + ")", ir.Set(types[0]), nil
+	case "emptymap":
+		keyGo, err := g.goType(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		valGo, err := g.goType(types[1])
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmMap", declMap)
+		mapGo := "dmMap[" + keyGo + ", " + valGo + "]"
+		return "func(" + keyGo + ", " + valGo + ") " + mapGo + " { return dmNewMap[" +
+				keyGo + ", " + valGo + "]() }(" + args[0] + ", " + args[1] + ")",
+			ir.Map(types[0], types[1]), nil
+	case "tomap":
+		elem, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		if elem == nil || elem.Kind != ir.KTuple || len(elem.Elems) != 2 {
+			return "", nil, fmt.Errorf("tomap needs a List of (key, value) pairs, got List<%s>", elem)
+		}
+		mapT := ir.Map(elem.Elems[0], elem.Elems[1])
+		mapGo, err := g.goType(mapT)
+		if err != nil {
+			return "", nil, err
+		}
+		pairGo, err := g.goType(elem)
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmMap", declMap)
+		// Parameterized rather than closed over, so the argument expression is
+		// evaluated exactly once however big it is.
+		return "func(ps []" + pairGo + ") " + mapGo + " { m := " + mapGo +
+			"{keys: make([]" + mustGo(g, elem.Elems[0]) + ", 0, len(ps)), vals: make(map[" +
+			mustGo(g, elem.Elems[0]) + "]" + mustGo(g, elem.Elems[1]) +
+			", len(ps))}; for _, p := range ps { m.put(p.f0, p.f1) }; return m }(" +
+			args[0] + ")", mapT, nil
+	case "entries":
+		if types[0] == nil || types[0].Kind != ir.KMap {
+			return "", nil, fmt.Errorf("entries needs a Map argument, got %s", types[0])
+		}
+		pairT := ir.Tuple(types[0].Key, types[0].Elem)
+		pairGo, err := g.goType(pairT)
+		if err != nil {
+			return "", nil, err
+		}
+		mapGo, err := g.goType(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmMap", declMap)
+		return "func(m " + mapGo + ") []" + pairGo + " { out := make([]" + pairGo +
+				", 0, len(m.keys)); for _, k := range m.keys { out = append(out, " + pairGo +
+				"{f0: k, f1: m.vals[k]}) }; return out }(" + args[0] + ")",
+			ir.List(pairT), nil
+	case "insert":
+		if types[0] != nil && types[0].Kind == ir.KSet {
+			g.helper("dmSet", declSet)
+			g.helper("dmSetClone", declSetClone)
+			g.helper("dmSetWith", declSetWith)
+			return "dmSetWith(" + args[0] + ", " + args[1] + ")", types[0], nil
+		}
+		if types[0] == nil || types[0].Kind != ir.KMap {
+			return "", nil, fmt.Errorf("insert needs a Set or Map argument, got %s", types[0])
+		}
+		g.helper("dmMap", declMap)
+		g.helper("dmMapClone", declMapClone)
+		g.helper("dmMapWith", declMapWith)
+		return "dmMapWith(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+	case "del":
+		if types[0] != nil && types[0].Kind == ir.KSet {
+			g.helper("dmSet", declSet)
+			g.helper("dmSetClone", declSetClone)
+			g.helper("dmSetWithout", declSetWithout)
+			return "dmSetWithout(" + args[0] + ", " + args[1] + ")", types[0], nil
+		}
+		if types[0] == nil || types[0].Kind != ir.KMap {
+			return "", nil, fmt.Errorf("del needs a Set or Map argument, got %s", types[0])
+		}
+		g.helper("dmMap", declMap)
+		g.helper("dmMapClone", declMapClone)
+		g.helper("dmMapWithout", declMapWithout)
+		return "dmMapWithout(" + args[0] + ", " + args[1] + ")", types[0], nil
+	case "union", "intersect", "difference":
+		g.helper("dmSet", declSet)
+		switch name {
+		case "union":
+			g.helper("dmSetUnion", declSetUnion)
+			return "dmSetUnion(" + args[0] + ", " + args[1] + ")", types[0], nil
+		case "intersect":
+			g.helper("dmSetIntersect", declSetIntersect)
+			return "dmSetIntersect(" + args[0] + ", " + args[1] + ")", types[0], nil
+		}
+		g.helper("dmSetDiff", declSetDiff)
+		return "dmSetDiff(" + args[0] + ", " + args[1] + ")", types[0], nil
+	case "setat":
+		if types[0] == nil || types[0].Kind != ir.KGrid {
+			return "", nil, fmt.Errorf("setat needs a Grid argument, got %s", types[0])
+		}
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmGrid", declGrid)
+		g.helper("dmGridWith", declGridWith)
+		return "dmGridWith(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
+			types[0], nil
+	case "cellpoints":
+		if types[0] == nil || types[0].Kind != ir.KSparse {
+			return "", nil, fmt.Errorf("cellpoints needs a Sparse argument, got %s", types[0])
+		}
+		ptGo, err := g.goType(irPoint())
+		if err != nil {
+			return "", nil, err
+		}
+		return "func(ps []dmSPt) []" + ptGo + " { out := make([]" + ptGo +
+				", len(ps)); for i, p := range ps { out[i] = " + ptGo +
+				"{f0: p.r, f1: p.c} }; return out }((" + args[0] + ").pts())",
+			ir.List(irPoint()), nil
+
+	// -- list generation ---------------------------------------------------------
+	case "range":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmRange", declRange)
+		return "dmRange(" + args[0] + ", " + args[1] + ")", ir.List(ir.Int()), nil
+	case "fill":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmFill", declFill)
+		return "dmFill(" + args[0] + ", " + args[1] + ")", ir.List(types[1]), nil
+
+	// -- text --------------------------------------------------------------------
+	case "split":
+		g.imp("strings")
+		return "strings.Split(" + args[0] + ", " + args[1] + ")", ir.List(ir.Text()), nil
+	case "words":
+		g.imp("strings")
+		return "strings.Fields(" + args[0] + ")", ir.List(ir.Text()), nil
+	case "ord":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmOrd", declOrd, "unicode/utf8")
+		return "dmOrd(" + args[0] + ")", ir.Int(), nil
+	case "chr":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmChr", declChr)
+		return "dmChr(" + args[0] + ")", ir.Text(), nil
+	case "repeat":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmRepeatText", declRepeatText, "strings")
+		return "dmRepeatText(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+	case "padleft", "padright":
+		g.helper("dmPadText", declPadText, "strings")
+		return "dmPadText(" + args[0] + ", " + args[1] + ", " + args[2] + ", " +
+			strconv.FormatBool(name == "padleft") + ")", ir.Text(), nil
+	case "trimprefix":
+		g.imp("strings")
+		return "strings.TrimPrefix(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+	case "trimsuffix":
+		g.imp("strings")
+		return "strings.TrimSuffix(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+	case "isdigit", "isalpha", "isupper", "islower":
+		g.helper("dmClassify", declClassify, "strings")
+		fn := map[string]string{
+			"isdigit": "dmIsDigit", "isalpha": "dmIsAlpha",
+			"isupper": "dmIsUpper", "islower": "dmIsLower",
+		}[name]
+		return fn + "(" + args[0] + ")", ir.Bool(), nil
+
+	// -- floats ------------------------------------------------------------------
+	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmFloat1", declFloat1, "math", "strconv")
+		return "dmFloat1(" + strconv.Quote(name) + ", " + g.asFloat(args[0], types[0]) + ")",
+			ir.Float(), nil
+	case "atan2", "hypot":
+		g.imp("math")
+		fn := "math.Atan2"
+		if name == "hypot" {
+			fn = "math.Hypot"
+		}
+		return fn + "(" + g.asFloat(args[0], types[0]) + ", " + g.asFloat(args[1], types[1]) + ")",
+			ir.Float(), nil
+	case "trunc":
+		if !isFloatType(types[0]) {
+			return args[0], ir.Int(), nil
+		}
+		g.imp("math")
+		return "int64(math.Trunc(" + args[0] + "))", ir.Int(), nil
+
+	// -- records -----------------------------------------------------------------
+	case "record":
+		// The Record type was built from the literal field names at resolve
+		// time; the struct declaration is interned by shape like every other
+		// record, so this is a plain composite literal.
+		recT, err := recordTypeOf(x, types)
+		if err != nil {
+			return "", nil, err
+		}
+		recGo, err := g.goType(recT)
+		if err != nil {
+			return "", nil, err
+		}
+		var b strings.Builder
+		b.WriteString(recGo)
+		b.WriteByte('{')
+		for i, f := range recT.Fields {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fieldName(f.Name) + ": " + args[i*2+1])
+		}
+		b.WriteByte('}')
+		return b.String(), recT, nil
+	case "with":
+		if types[0] == nil || types[0].Kind != ir.KRecord {
+			return "", nil, fmt.Errorf("with needs a Record argument, got %s", types[0])
+		}
+		lit, ok := x.Args[1].(*ast.StringLit)
+		if !ok {
+			return "", nil, fmt.Errorf("with needs a literal field name")
+		}
+		recGo, err := g.goType(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		// A Go struct is a value, so the copy is the assignment: no allocation
+		// and nothing shared with the original.
+		return "func(r " + recGo + ") " + recGo + " { r." + fieldName(lit.Value) + " = " +
+			args[2] + "; return r }(" + args[0] + ")", types[0], nil
+
+	// -- bases, bits, number theory ----------------------------------------------
+	case "frombase", "fromhex":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmParseBase", declParseBase, "strconv", "strings")
+		base := "16"
+		if name == "frombase" {
+			base = args[1]
+		}
+		return "dmParseBase(" + strconv.Quote(name) + ", " + args[0] + ", " + base + ")",
+			ir.Int(), nil
+	case "tobase":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmToBase", declToBase, "strconv")
+		return "dmToBase(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+	case "tohex", "tobin":
+		g.imp("strconv")
+		base := "16"
+		if name == "tobin" {
+			base = "2"
+		}
+		return "strconv.FormatInt(" + args[0] + ", " + base + ")", ir.Text(), nil
+	case "bnot":
+		return "(^" + args[0] + ")", ir.Int(), nil
+	case "popcount":
+		g.imp("math/bits")
+		return "int64(bits.OnesCount64(uint64(" + args[0] + ")))", ir.Int(), nil
+	case "testbit":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmTestBit", declTestBit)
+		return "dmTestBit(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+	case "digits":
+		g.helper("dmDigits", declDigits)
+		return "dmDigits(" + args[0] + ")", ir.List(ir.Int()), nil
+	case "fromdigits":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmFromDigits", declFromDigits, "math")
+		return "dmFromDigits(" + args[0] + ")", ir.Int(), nil
+	case "isprime":
+		g.helper("dmModArith", declModArith, "math/bits")
+		g.helper("dmIsPrime", declIsPrime, "math/bits")
+		return "dmIsPrime(" + args[0] + ")", ir.Bool(), nil
+	case "divisors":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmDivisors", declDivisors)
+		return "dmDivisors(" + args[0] + ")", ir.List(ir.Int()), nil
+	case "crt":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmModArith", declModArith, "math/bits")
+		g.helper("dmCRT", declCRT)
+		return "dmCRT(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+
 	default:
 		return "", nil, fmt.Errorf("unknown function %q", name)
 	}
+}
+
+// mustGo is goType where the type has already been proved compilable by an
+// earlier call in the same emitter; it keeps a composite literal readable
+// instead of threading four error checks through it.
+func mustGo(g *gen, t *ir.Type) string {
+	s, err := g.goType(t)
+	if err != nil {
+		return "any"
+	}
+	return s
+}
+
+// recordTypeOf rebuilds the Record type of a `record(...)` call from its
+// literal field names — the same rule typecheck applied, restated here because
+// the compiled backend must not depend on the resolver having stashed it.
+func recordTypeOf(x *ast.CallExpr, types []*ir.Type) (*ir.Type, error) {
+	if len(types)%2 != 0 {
+		return nil, fmt.Errorf("record takes name/value pairs, so an even number of arguments")
+	}
+	fields := make([]ir.Field, 0, len(types)/2)
+	for i := 0; i < len(types); i += 2 {
+		lit, ok := x.Args[i].(*ast.StringLit)
+		if !ok {
+			return nil, fmt.Errorf("record field name %d must be a literal", i/2+1)
+		}
+		fields = append(fields, ir.Field{Name: lit.Value, Type: types[i+1]})
+	}
+	return ir.Record(fields...), nil
 }
 
 // irPoint is the expression layer's point type: an (Int, Int) tuple of
@@ -1105,6 +1450,15 @@ func scalarKind(k ir.TypeKind) bool {
 
 // isFloatType reports whether t is exactly Float.
 func isFloatType(t *ir.Type) bool { return t != nil && t.Kind == ir.KFloat }
+
+// asFloat widens an already-compiled argument to float64 when its Domain type
+// is Int — the promotion the float builtins share with the operators.
+func (g *gen) asFloat(arg string, t *ir.Type) string {
+	if isFloatType(t) {
+		return arg
+	}
+	return "float64(" + arg + ")"
+}
 
 // numericType reports whether t is Int or Float.
 func numericType(t *ir.Type) bool {

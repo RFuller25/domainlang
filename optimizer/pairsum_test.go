@@ -261,3 +261,44 @@ Reveal: stdout
 		t.Fatalf("optimized output %q diverges from naive %q", got, want)
 	}
 }
+
+// A constant `Consider` binding folds into the lambda while the program is
+// resolved rather than becoming a runtime value, and this is why: the pair-sum
+// scan matches the *shape* of the lambda body, and a binding left in place
+// would have hidden the constant behind a name the pass cannot read.
+//
+// The `Of` form has no such folding available — its value is not known until
+// data arrives — so it stands the rewrite down instead, the way a measured
+// argument does. Both must still compute the same answer as the naive
+// pipeline, which is what the oracle comparison at the end pins.
+func TestPairSumRewriteSurvivesAConstantBinding(t *testing.T) {
+	const input = "1 5 99 3\n50 50 2"
+	folded := `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Domain Expansion: All Pairs
+        Mode: First
+        Consider target As 40 + 60
+        Using: (a, b) -> a + b = target
+    Maximum Technique: Product
+Reveal: stdout
+`
+	pipe, rewrites := resolveProgram(t, folded, true)
+	if len(rewrites) != 1 || !strings.Contains(rewrites[0].Message, "Hash-Set Scan") {
+		t.Fatalf("a constant binding hid the target from the pair-sum pass: %v", rewrites)
+	}
+
+	naive, _ := resolveProgram(t, folded, false)
+	want, err := interpret(naive, input)
+	if err != nil {
+		t.Fatalf("naive run: %v", err)
+	}
+	got, err := interpret(pipe, input)
+	if err != nil {
+		t.Fatalf("optimized run: %v", err)
+	}
+	if got != want {
+		t.Fatalf("optimized output %q diverges from naive %q", got, want)
+	}
+}

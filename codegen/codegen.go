@@ -83,6 +83,12 @@ type gen struct {
 	// the ambient ones — which is what lets nodeLambda bind them without
 	// knowing any primitive's own arity. See compileExpr's Ident case.
 	ambientNames exprEnv
+	// bindNames maps the `Consider` bindings currently in scope to the Go
+	// locals holding their values — the compiled mirror of the stack eval
+	// seeds every lambda environment from (eval/bindings.go). Like
+	// ambientNames it is consulted only after the caller's own env, so a
+	// lambda parameter of the same name still shadows the binding.
+	bindNames exprEnv
 }
 
 // ambientVar is one enclosing For loop's current-lap binding in generated Go.
@@ -309,6 +315,32 @@ func goStr(s string) string { return strconv.Quote(s) }
 // as needed. Used when comparing s[i] against a fixed template separator.
 func goByte(b byte) string { return strconv.QuoteRune(rune(b)) }
 
+// goSlice renders a string slice as a Go composite literal, and an empty one as
+// nil so the emitted source says what it means.
+func goSlice(xs []string) string {
+	if len(xs) == 0 {
+		return "nil"
+	}
+	quoted := make([]string, len(xs))
+	for i, x := range xs {
+		quoted[i] = goStr(x)
+	}
+	return "[]string{" + strings.Join(quoted, ", ") + "}"
+}
+
+// goStrMap renders a string map as a Go composite literal, with keys sorted so
+// the emitted source is deterministic.
+func goStrMap(m map[string]string) string {
+	if len(m) == 0 {
+		return "nil"
+	}
+	parts := make([]string, 0, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		parts = append(parts, goStr(k)+": "+goStr(m[k]))
+	}
+	return "map[string]string{" + strings.Join(parts, ", ") + "}"
+}
+
 // ---------------------------------------------------------------------------
 // node dispatch
 // ---------------------------------------------------------------------------
@@ -390,6 +422,8 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		in += ".elems"
 	}
 	switch n.Prim {
+	case "Foreign Block":
+		return g.emitForeign(n, in)
 	case "Read Source":
 		return g.emitReadSource(n)
 	case "Split":
@@ -565,6 +599,8 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitLoop(n, in)
 	case "Channel":
 		return g.emitChannel(n, in)
+	case "Consider":
+		return g.emitConsider(n, in)
 	case "Part":
 		return g.emitPart(n, in)
 	case "Combine":

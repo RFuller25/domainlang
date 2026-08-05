@@ -17,6 +17,15 @@ func FuzzLex(f *testing.F) {
 		"\x00\x01\x02",
 		"# comment\n\nReveal: stdout\n",
 		"(a, b) -> a + b = 2020\n",
+		// Foreign blocks: the region the lexer copies instead of reading, so
+		// the seeds are the shapes that decide where it starts and stops.
+		"Domain Expansion: Python\n    print({1: [2]})\n",
+		"Domain Expansion: Go\n\tpackage main\n",
+		"Python\n    \xff\x00 # \"\n",
+		"Domain Expansion: Python\n",
+		"Domain Expansion: Python\n\n\n",
+		"Part \"1\":\n    Python\n        x\n    Reveal: stdout\n",
+		"Using: Python\n    x\n",
 	}
 	for _, s := range seeds {
 		f.Add(s)

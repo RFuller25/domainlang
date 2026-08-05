@@ -162,24 +162,31 @@ func TestInferKeepsGoingAfterAFailure(t *testing.T) {
 // primitive: matchers overlapping across keywords would make prefix-free lines
 // ambiguous, and this test fails the day that happens.
 func TestNoCrossKeywordAmbiguity(t *testing.T) {
-	for id := range Catalog {
-		if catchAllKeywords[Catalog[id].Keyword] {
+	for _, p := range Registry {
+		if catchAllKeywords[p.Keyword] {
 			continue // matched by shape, not by the registry scan
 		}
-		src := "Cursed Technique: " + id + "\n"
-		prog := parseSrc(t, src)
-		op := prog.Statements[0].Op
-		prim, err := inferPrimitive(op, op.Pos)
-		if err != nil {
-			t.Errorf("%s: %v", id, err)
-			continue
-		}
-		if prim == nil {
-			t.Errorf("%s: no primitive matches its own catalog ID", id)
-			continue
-		}
-		if prim.ID != id {
-			t.Errorf("%s: prefix-free form resolves to %q instead", id, prim.ID)
+		// A primitive whose ID is not itself writable lists the phrases that
+		// are; every one of them has to name it just as unambiguously.
+		for _, phrase := range p.Spellings() {
+			src := "Cursed Technique: " + phrase + "\n"
+			if _, isLang := ast.ForeignLanguage(phrase); isLang {
+				src += "    a block\n" // a language name does not parse without one
+			}
+			prog := parseSrc(t, src)
+			op := prog.Statements[0].Op
+			prim, err := inferPrimitive(op, op.Pos)
+			if err != nil {
+				t.Errorf("%s (%q): %v", p.ID, phrase, err)
+				continue
+			}
+			if prim == nil {
+				t.Errorf("%s: no primitive matches its phrase %q", p.ID, phrase)
+				continue
+			}
+			if prim.ID != p.ID {
+				t.Errorf("%s: prefix-free %q resolves to %q instead", p.ID, phrase, prim.ID)
+			}
 		}
 	}
 }

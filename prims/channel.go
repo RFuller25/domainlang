@@ -68,7 +68,18 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 
 // resolveConsumer lowers a From:-consumer (Combine or Difference).
 func (r *resolver) resolveConsumer(stmt *ast.Statement, cur *ir.Type) (*ir.Node, error) {
-	args := ArgSet{args: stmt.Args}
+	var rewriteErr error
+	node, err := r.consumerNode(stmt, cur, &rewriteErr)
+	// A lambda the binding scope could not rewrite is the more specific
+	// failure; see resolveOne.
+	if rewriteErr != nil {
+		return nil, rewriteErr
+	}
+	return node, err
+}
+
+func (r *resolver) consumerNode(stmt *ast.Statement, cur *ir.Type, rewriteErr *error) (*ir.Node, error) {
+	args := r.args(stmt, rewriteErr)
 	froms, _ := args.Idents("From")
 	if len(froms) == 0 {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: "From: must name at least one channel"}

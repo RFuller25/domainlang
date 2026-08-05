@@ -345,6 +345,16 @@ type RuntimeError struct {
 	Msg  string
 }
 
+// Error renders the failure as "position: message (in stage)".
+//
+// A message that runs to several lines — a foreign block reporting the
+// traceback or compile error its runtime produced — keeps the stage tag on the
+// *first* line, where it belongs, rather than letting it dangle after the last
+// line of somebody else's output. Single-line messages, which is every other
+// primitive, render exactly as they always did.
 func (e *RuntimeError) Error() string {
+	if head, rest, multiline := strings.Cut(e.Msg, "\n"); multiline {
+		return fmt.Sprintf("%s: %s (in %s)\n%s", e.Pos, head, e.Prim, rest)
+	}
 	return fmt.Sprintf("%s: %s (in %s)", e.Pos, e.Msg, e.Prim)
 }

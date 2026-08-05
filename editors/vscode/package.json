@@ -1,8 +1,8 @@
 {
   "name": "domain-language",
   "displayName": "Domain Language",
-  "description": "Language support for the Domain language (.domain) — syntax highlighting plus a language server (diagnostics, primitive-documentation hover, completion, go-to-Shikigami, quick fixes) for the JJK-themed Advent of Code pipeline language",
-  "version": "0.3.0",
+  "description": "Language support for the Domain language (.domain) — syntax highlighting generated from the language itself (every primitive, all 144 expression builtins, Consider bindings, embedded foreign-language blocks) plus a language server (diagnostics, hover types, inlay hints, completion, go-to-Shikigami, quick fixes) for the JJK-themed Advent of Code pipeline language",
+  "version": "0.4.0",
   "publisher": "domain-lang",
   "engines": {
     "vscode": "^1.75.0"

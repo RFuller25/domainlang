@@ -4,8 +4,9 @@ Domain's diagnostics engine (package `diag/`) sits on top of the static front
 end and turns every failure into a rich, positioned report: what is wrong,
 where, why, and — whenever the repair is unambiguous — a machine-applicable
 fix. It powers the five diagnostic `domain expansion:` CLI commands below.
-(A sixth, `domain expansion: documentation`, is unrelated to the engine — it
-serves this documentation as a local website; see [cli.md](cli.md).)
+(Two more, `domain expansion: documentation` and `domain expansion: vscode`,
+are unrelated to the engine — they serve this documentation as a local website
+and install the VS Code extension; both are in [cli.md](cli.md).)
 
 ## The report format
 
@@ -112,6 +113,13 @@ Style and hygiene (warnings):
   what `Build` actually reads. It runs only over a program that resolved
   cleanly, since a statement the resolver never reached never had the chance
   to read anything;
+- a `Consider` binding nothing reads. An `As` binding nothing names is dead
+  weight; an `Of` one computes a value on every pass through its stage and
+  throws it away, so the help says which it is. It reads the same mark the
+  unread-argument check does (`ast.Binding.Used`, set when an expression
+  actually resolves the name), which catches the near miss for free: a binding
+  shadowed by a lambda parameter of the same name everywhere it could have
+  been read was never resolved, so it arrives as a binding nothing reads;
 - an expression written into an operation phrase.
   `Cursed Technique: Window length(xs) / 2` parses to the words
   `[Window length xs]` plus the integer `2`, and every primitive reads only

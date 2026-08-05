@@ -3,6 +3,8 @@ package codegen
 import (
 	"bytes"
 	"fmt"
+	"maps"
+	"slices"
 
 	"domain/ast"
 	"domain/ir"
@@ -42,11 +44,15 @@ func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (st
 	if err != nil {
 		return "", nil, err
 	}
-	// Enclosing For loops' variables are locals of main, out of scope in a
-	// top-level function, so they are passed in — see blockFunc.
+	// Enclosing For loops' variables and the `Consider` bindings in scope are
+	// locals of main, out of scope in a top-level function, so they are passed
+	// in — see blockFunc.
 	call := fn + "(" + arg
 	for _, a := range g.ambient {
 		call += ", " + a.v
+	}
+	for _, name := range g.bindOrder() {
+		call += ", " + g.bindNames[name].expr
 	}
 	return call + ")", outType, nil
 }
@@ -93,10 +99,28 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type) (
 	}
 	g.ambient = rebound
 
+	// The bindings in scope travel the same way, and for the same reason: a
+	// lambda inside the body may read one, and the local holding it belongs to
+	// the function the body was written in.
+	savedBinds := g.bindNames
+	reboundBinds := make(exprEnv, len(savedBinds))
+	for _, bname := range g.bindOrder() {
+		b := savedBinds[bname]
+		p := g.fresh("bb")
+		bindGo, terr := g.goType(b.typ)
+		if terr != nil {
+			g.main, g.indent, g.ambient = savedMain, savedIndent, savedAmbient
+			return "", terr
+		}
+		sig += fmt.Sprintf(", %s %s", p, bindGo)
+		reboundBinds[bname] = exprBinding{expr: p, typ: b.typ}
+	}
+	g.bindNames = reboundBinds
+
 	cur, err := g.emitSequence(nodes, param)
 	body := g.main.String()
 
-	g.main, g.indent, g.ambient = savedMain, savedIndent, savedAmbient
+	g.main, g.indent, g.ambient, g.bindNames = savedMain, savedIndent, savedAmbient, savedBinds
 	if err != nil {
 		return "", err
 	}
@@ -114,4 +138,15 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type) (
 	}
 	g.blocks[bb] = name
 	return name, nil
+}
+
+// bindOrder is the names of the `Consider` bindings in scope, in a fixed order
+// so that the parameters a block function declares and the arguments its call
+// passes line up. Map iteration order would not: the same body is emitted once
+// and called from wherever it appears.
+func (g *gen) bindOrder() []string {
+	if len(g.bindNames) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(g.bindNames))
 }

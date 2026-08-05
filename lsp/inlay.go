@@ -63,11 +63,21 @@ func (s *Server) inlayHints(params json.RawMessage) any {
 	// prelude or a library file — so the resolver tags the group's last node
 	// with the call site, and that is what the call's line reports.
 	outByLine := map[int]*ir.Type{}
+	// A `Consider` binding's line reports the type of the value it binds
+	// rather than a statement's output — it is the one line in a block that
+	// introduces a name, and its type is the thing a reader cannot infer.
+	bindByLine := map[int]*ir.Type{}
 	var walk func(nodes []*ir.Node)
 	walk = func(nodes []*ir.Node) {
 		for _, n := range nodes {
 			if n.Out != nil {
 				outByLine[n.Pos.Line] = n.Out
+			}
+			if binds, _ := n.Meta[ir.MetaBinds].([]ir.Binding); binds != nil {
+				for _, b := range binds {
+					bindByLine[b.Pos().Line] = b.Type()
+					walk(b.BlockNodes())
+				}
 			}
 			if pos, ok := n.Meta["callPos"].(token.Position); ok && n.Out != nil {
 				outByLine[pos.Line] = n.Out
@@ -105,6 +115,19 @@ func (s *Server) inlayHints(params json.RawMessage) any {
 					"kind":        1, // Type
 					"paddingLeft": true,
 					"tooltip":     "the value type flowing out of this statement",
+				})
+			}
+			for _, b := range st.Binds {
+				t, ok := bindByLine[b.Pos.Line]
+				if !ok || t == nil || !inRange(b.Pos.Line) {
+					continue
+				}
+				hints = append(hints, map[string]any{
+					"position":    map[string]int{"line": b.Pos.Line - 1, "character": lineLength(doc.text, b.Pos.Line)},
+					"label":       ": " + t.String(),
+					"kind":        1, // Type
+					"paddingLeft": true,
+					"tooltip":     "the type of the value this binding holds",
 				})
 			}
 			visit(st.Block)

@@ -6,6 +6,7 @@ package interp
 import (
 	"fmt"
 
+	"domain/eval"
 	"domain/ir"
 )
 
@@ -29,6 +30,11 @@ func Run(p *ir.Pipeline, ctx *ir.Context) (result ir.Value, err error) {
 	if ctx.Channels == nil {
 		ctx.Channels = map[string]ir.Value{}
 	}
+	// Local bindings are dynamically scoped, pushed and popped by the Consider
+	// nodes that own them (prims/locals.go). A run that ended inside one — an
+	// error, an interrupt — leaves its bindings behind, so each run starts by
+	// clearing them rather than trusting the last one to have unwound.
+	eval.ResetBindings()
 	var cur ir.Value
 	for _, n := range p.Nodes {
 		// ir.EvalNode reports to ctx.Trace when one is set; without a tracer it

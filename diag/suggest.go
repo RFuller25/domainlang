@@ -36,11 +36,20 @@ func knownKeywords() []string {
 	return out
 }
 
-// opsUnder returns the primitive IDs registered under a keyword.
+// opsUnder returns the primitive IDs registered under a keyword, for the fuzzy
+// matcher.
+//
+// A primitive whose ID is not itself a phrase (prims.Primitive.Phrases) is left
+// out. Its writable spellings are the four foreign languages, which are short
+// enough that ordinary operations land within the matcher's edit distance of
+// them — `Top 3` is two edits from `Go` — and a *confident* suggestion is one
+// `expansion: fix` applies, so a false positive there rewrites a working
+// program into a broken one. The exact-match layer still names them, which is
+// where the useful half of the suggestion was.
 func opsUnder(keyword string) []string {
 	var out []string
 	for _, p := range prims.Registry {
-		if p.Keyword == keyword {
+		if p.Keyword == keyword && len(p.Phrases) == 0 {
 			out = append(out, p.ID)
 		}
 	}
@@ -128,10 +137,18 @@ func suggestOperation(keyword string, op *ast.Operation) *opSuggestion {
 		return nil
 	}
 
-	// Layer 1: exact ID (case-insensitive) under any keyword.
+	// Layer 1: an exact phrase (case-insensitive) under another keyword. A
+	// primitive is named by its spellings, which is its ID unless it says
+	// otherwise — `Cursed Technique: Python` is exactly this mistake, and the
+	// keyword is the only thing wrong with it.
 	for _, p := range prims.Registry {
-		if phraseStartsWith(op.Words, idWords(p.ID)) && p.Keyword != keyword {
-			return &opSuggestion{Keyword: p.Keyword, Op: p.ID, Confident: true}
+		if p.Keyword == keyword {
+			continue
+		}
+		for _, phrase := range p.Spellings() {
+			if phraseStartsWith(op.Words, idWords(phrase)) {
+				return &opSuggestion{Keyword: p.Keyword, Op: phrase, Confident: true}
+			}
 		}
 	}
 
@@ -163,7 +180,9 @@ func suggestBareOperation(op *ast.Operation) *opSuggestion {
 	}
 	var ids []string
 	for _, p := range prims.Registry {
-		ids = append(ids, p.ID)
+		if len(p.Phrases) == 0 { // see opsUnder
+			ids = append(ids, p.ID)
+		}
 	}
 	s := fuzzyOp(op.Words, ids)
 	if s == nil {

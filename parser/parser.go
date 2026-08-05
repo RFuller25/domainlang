@@ -13,6 +13,7 @@ package parser
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -75,8 +76,13 @@ type parser struct {
 
 // Parse parses a whole program. src is the original source text, used to
 // recover exact operation-phrase text.
+//
+// The token slice is cloned because an argument written across several lines
+// has its layout tokens spliced out (joinArgContinuation), and callers keep
+// using the stream they passed in — `domain fmt` reads the very same slice to
+// work out each line's indentation.
 func Parse(src string, toks []token.Token) (*ast.Program, error) {
-	p := &parser{src: src, toks: toks}
+	p := &parser{src: src, toks: slices.Clone(toks)}
 	return p.parseProgram()
 }
 
@@ -99,6 +105,18 @@ func (p *parser) errf(format string, args ...any) error {
 // the errors an indented block would fix. See Error.NeedsBlock.
 func (p *parser) errBlockf(format string, args ...any) error {
 	return &Error{Pos: p.cur().Pos, Msg: fmt.Sprintf(format, args...), NeedsBlock: true}
+}
+
+// errRanOutf is errf for an expression that stops at the end of a line: the
+// text so far is fine, there is simply none of it left. Indented lines are
+// where the rest goes (joinArgContinuation), which makes this the same "waiting
+// for a block" situation the REPL already knows how to sit in, so it is flagged
+// the same way. Anywhere else the cursor is not at a line end and this is an
+// ordinary error.
+func (p *parser) errRanOutf(format string, args ...any) error {
+	k := p.cur().Kind
+	return &Error{Pos: p.cur().Pos, Msg: fmt.Sprintf(format, args...),
+		NeedsBlock: k == token.NEWLINE || k == token.EOF}
 }
 
 func (p *parser) expect(k token.Kind) (token.Token, error) {
@@ -249,11 +267,12 @@ func (p *parser) parseShikigamiDef() (*ast.ShikigamiDef, error) {
 	if p.cur().Kind != token.INDENT {
 		return nil, p.errBlockf("Shikigami %q must be followed by an indented body", nameTok.Literal)
 	}
-	body, err := p.parseBody()
+	body, binds, err := p.parseBody()
 	if err != nil {
 		return nil, err
 	}
 	def.Body = body
+	def.Binds = binds
 	return def, nil
 }
 
@@ -292,31 +311,52 @@ func (p *parser) parseParamsOpt() ([]ast.Param, error) {
 }
 
 // parseBody parses an indented block of pipeline statements (Shikigami body).
-func (p *parser) parseBody() ([]*ast.Statement, error) {
+func (p *parser) parseBody() ([]*ast.Statement, []*ast.Binding, error) {
 	if _, err := p.expect(token.INDENT); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var body []*ast.Statement
+	var binds []*ast.Binding
 	for p.cur().Kind != token.DEDENT && p.cur().Kind != token.EOF {
 		p.skipNewlines()
 		if p.cur().Kind == token.DEDENT || p.cur().Kind == token.EOF {
 			break
 		}
+		// A binding written among a body's statements scopes over the whole
+		// body, which is what makes `Consider` usable in a Shikigami that has
+		// no single statement to hang it on.
+		if prep, ok := p.bindingLine(); ok {
+			b, err := p.parseBinding(prep)
+			if err != nil {
+				return nil, nil, err
+			}
+			binds = append(binds, b)
+			continue
+		}
 		s, err := p.parseStatement()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		body = append(body, s)
 	}
 	if _, err := p.expect(token.DEDENT); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return body, nil
+	return body, binds, nil
 }
 
 // parseStatement parses one keyword line and any indented block beneath it.
 func (p *parser) parseStatement() (*ast.Statement, error) {
 	startPos := p.cur().Pos
+
+	// A binding reached here is one written where no statement can own it —
+	// at the top level, or between the stages of a pipeline. Saying so beats
+	// letting it fall through to the phrase parser, which would report a
+	// perfectly true but useless "no operation matches Consider n As 3".
+	if _, ok := p.bindingLine(); ok {
+		return nil, &Error{Pos: startPos, Msg: "a Consider binding belongs to a statement: " +
+			"indent it under the stage whose expressions use it (or, in a Shikigami, under the definition)"}
+	}
 
 	// Special forms: `Channel "name":` and `Part "1":` open a labelled
 	// sub-pipeline block. Both are `IDENT STRING COLON`, which is what
@@ -328,6 +368,13 @@ func (p *parser) parseStatement() (*ast.Statement, error) {
 		case "Part":
 			return p.parsePart(startPos)
 		}
+	}
+
+	// A foreign block opener (`Domain Expansion: Python`) is read before the
+	// phrase parser sees it: what follows the language name is a declared
+	// signature, not an operation phrase. See foreign.go.
+	if lang, rest, ok := ast.ForeignOpener(p.lineTokens()); ok {
+		return p.parseForeignStatement(startPos, lang, rest)
 	}
 
 	// The themed keyword is optional: a line that does not open with one is a
@@ -572,7 +619,13 @@ func (p *parser) parseBlock(stmt *ast.Statement) error {
 		}
 		// Look ahead: an `IDENT:` line is a named argument unless the
 		// identifier is a single-word themed keyword (Reveal/Channel/Shikigami).
-		if p.cur().Kind == token.IDENT && p.peek().Kind == token.COLON &&
+		if prep, ok := p.bindingLine(); ok {
+			b, err := p.parseBinding(prep)
+			if err != nil {
+				return err
+			}
+			stmt.Binds = append(stmt.Binds, b)
+		} else if p.cur().Kind == token.IDENT && p.peek().Kind == token.COLON &&
 			!singleWordThemed[p.cur().Literal] {
 			arg, err := p.parseArg()
 			if err != nil {
@@ -601,6 +654,7 @@ func (p *parser) parseArg() (*ast.Arg, error) {
 	}
 	arg := &ast.Arg{Name: nameTok.Literal, Pos: nameTok.Pos}
 
+	p.joinArgContinuation()
 	val, err := p.parseArgValue()
 	if err != nil {
 		return nil, err
@@ -610,6 +664,85 @@ func (p *parser) parseArg() (*ast.Arg, error) {
 		return nil, err
 	}
 	return arg, nil
+}
+
+// joinArgContinuation splices the layout tokens out of an indented block that
+// continues an argument's value, so the value parser reads the whole run as one
+// logical line. The cursor must be at the argument's value, just past its colon.
+//
+// This is the layout-aware half of multi-line expressions; the lexer owns the
+// other half (a newline inside parentheses is whitespace). It is needed because
+// the outermost level of a lambda body has no parentheses to break inside —
+// `consider … in if … then … else …` is all one unbracketed expression — and
+// indenting the rest under the argument is how every other continuation in the
+// language is already written:
+//
+//	Using: (s, r) ->
+//	    consider t as min(s, r)
+//	    in if r = s * s then s - 1 else t
+//
+// An argument's value was always exactly one line and an indented block beneath
+// one was a syntax error, so the shape was free to be given this meaning.
+//
+// What is removed: the NEWLINE that opens the block, its INDENT, every layout
+// token inside it (so an arm indented further again is joined too), and the
+// DEDENTs that close it. What is kept is the block's last NEWLINE — it is the
+// one parseArg consumes to end the argument. Only DEDENTs can stand between
+// that NEWLINE and the close (a content token after it would need a NEWLINE of
+// its own before any DEDENT), so keeping it re-ends the argument's line exactly
+// where the block does, and the enclosing block's structure is untouched.
+//
+// A value that does not open a block, or a stream that does not close one,
+// leaves the tokens untouched and fails wherever it would have failed before.
+func (p *parser) joinArgContinuation() {
+	// The NEWLINE ending the argument's own line. Parentheses cannot hide one:
+	// the lexer emits no NEWLINE inside them at all.
+	open := p.pos
+	for open < len(p.toks) && p.toks[open].Kind != token.NEWLINE && p.toks[open].Kind != token.EOF {
+		open++
+	}
+	if open+1 >= len(p.toks) || p.toks[open].Kind != token.NEWLINE ||
+		p.toks[open+1].Kind != token.INDENT {
+		return
+	}
+
+	drop := map[int]bool{open: true, open + 1: true}
+	depth, lastNL, closed := 1, -1, -1
+	for i := open + 2; i < len(p.toks); i++ {
+		switch p.toks[i].Kind {
+		case token.INDENT:
+			depth++
+			drop[i] = true
+		case token.DEDENT:
+			depth--
+			drop[i] = true
+			if depth == 0 {
+				closed = i
+			}
+		case token.NEWLINE:
+			lastNL = i
+			drop[i] = true
+		}
+		if closed >= 0 {
+			break
+		}
+	}
+	// A block the lexer never closed, or one holding no line at all, cannot
+	// happen — it closes every open indent before EOF, and it only opens one
+	// for a line with content — but splicing a half-scanned run would corrupt
+	// the stream, so neither is touched.
+	if closed < 0 || lastNL < 0 {
+		return
+	}
+	delete(drop, lastNL)
+
+	kept := make([]token.Token, 0, len(p.toks)-len(drop))
+	for i, t := range p.toks {
+		if !drop[i] {
+			kept = append(kept, t)
+		}
+	}
+	p.toks = kept
 }
 
 func (p *parser) parseArgValue() (ast.ArgValue, error) {
@@ -674,7 +807,7 @@ func (p *parser) parseArgValue() (ast.ArgValue, error) {
 		}
 		return ast.IdentArg{Value: first}, nil
 	default:
-		return nil, p.errf("expected an argument value, got %s", p.cur())
+		return nil, p.errRanOutf("expected an argument value, got %s", p.cur())
 	}
 }
 

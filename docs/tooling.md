@@ -276,7 +276,10 @@ Per-construct rules: a `Shikigami` call shows the **call's** result type (its
 inlined nodes carry positions from the definition — possibly in the prelude or
 a library — so the resolver tags the group with the call site); a `Channel`
 shows its **body's** result, which is what a `From:` consumer will see; a
-`Part` and a `Binding Vow` show nothing, since neither changes the value.
+`Part` and a `Binding Vow` show nothing, since neither changes the value. A
+`Consider … Of` line shows **the type of the value it binds** rather than a
+statement's output — it is the one line in a block that introduces a name, and
+its type is what a reader cannot get from the line itself.
 
 **A program that does not resolve still gets hints.** Resolution stops at the
 first error but hands back the nodes it built, so every line above a mistake
@@ -290,6 +293,19 @@ Also on hover: a `Shikigami` definition shows its parameters and its declared
 signature (`(k: Int) : List<Int> -> Int`) when it has one.
 
 ### Editor wiring
+
+**VS Code** — the binary carries the extension and installs it:
+
+```sh
+domain expansion: vscode
+```
+
+Reload the window afterwards. That is highlighting *and* this server, wired
+together; `--list-targets` shows the other editors it can install into
+(Insiders, VS Codium, Cursor, a remote/WSL `~/.vscode-server`), and
+[cli.md](cli.md#domain-expansion-vscode) covers the rest. The extension runs
+`domain lsp`, so keep the binary on your `PATH` or point `domain.server.path`
+at it.
 
 **Neovim** (v0.11+ native LSP config; the `editors/nvim` runtime files
 already provide filetype detection and syntax):

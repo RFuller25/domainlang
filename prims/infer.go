@@ -90,6 +90,7 @@ func InferWith(prog *ast.Program, extra []string) error {
 	// statement inside one can be the program's source stage.
 	for _, def := range prog.Shikigamis {
 		keep(inferSequence(def.Body, names, false))
+		keep(inferBinds(def.Binds, names))
 	}
 	keep(inferSequence(prog.Statements, names, true))
 	return firstErr
@@ -110,6 +111,24 @@ func inferSequence(stmts []*ast.Statement, names map[string]bool, source bool) e
 		if err := inferSequence(s.Block, names, false); err != nil && firstErr == nil {
 			firstErr = err
 		}
+		// A `Consider x Of <operation>` source is an ordinary statement whose
+		// keyword may have been left out like any other's, and it runs on the
+		// current value rather than reading an input.
+		if err := inferBinds(s.Binds, names); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// inferBinds infers the keywords of the statements behind `Consider x Of …`
+// bindings.
+func inferBinds(binds []*ast.Binding, names map[string]bool) error {
+	var firstErr error
+	for _, b := range binds {
+		if err := inferSequence(b.Body, names, false); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	return firstErr
 }
@@ -120,6 +139,15 @@ func inferStatement(s *ast.Statement, names map[string]bool, source bool) error 
 	}
 	s.KeywordInferred = true
 	op := s.Op
+	// A statement carrying foreign source needs no inference: the parser
+	// already established what it is, and the shape rule that let it capture a
+	// block is stricter than anything below. Deciding here also keeps it away
+	// from the source-target case, which would otherwise claim a foreign block
+	// written as the first line of a program.
+	if s.Foreign != nil {
+		s.Keyword = "Domain Expansion"
+		return nil
+	}
 	switch {
 	case names[strings.ToLower(strings.TrimSpace(op.Raw))]:
 		s.Keyword = "Shikigami"

@@ -45,7 +45,55 @@ func lintResolved(prog *ast.Program, src string) []Diagnostic {
 		ds = append(ds, d)
 	}
 	lintUnusedArgs(prog, add)
+	lintBindings(prog, add)
 	return ds
+}
+
+// lintBindings warns about a `Consider` binding nothing reads. An `As`
+// binding that nothing names is dead weight; an `Of` one computes a value on
+// every pass through its stage and throws it away.
+//
+// Like the unused-argument lint this asks the resolver what happened
+// (ast.Binding.Used, set when an expression actually resolves the name)
+// rather than keeping a second opinion about what counts as a read. That also
+// catches the near miss for free: a binding shadowed by a lambda parameter of
+// the same name everywhere it could have been read was never resolved, so it
+// arrives here as exactly what it is — a binding nothing reads.
+//
+// Shikigami definition bodies are skipped for the same reason arguments are:
+// their statements resolve as substituted copies, and the originals are
+// marked wholesale at substitution.
+func lintBindings(prog *ast.Program, add func(Diagnostic)) {
+	check := func(binds []*ast.Binding, where string) {
+		for _, b := range binds {
+			if b.Used {
+				continue
+			}
+			d := Diagnostic{
+				Severity: Warning, Code: "style", Pos: b.Pos,
+				Msg: fmt.Sprintf("nothing reads the binding %q", b.Name),
+				Help: fmt.Sprintf("delete the `Consider %s …` line — no expression in %s names it, so it has no effect",
+					b.Name, where),
+			}
+			if b.Of {
+				d.Help = fmt.Sprintf(
+					"delete the `Consider %s Of …` line — no expression in %s names it, so its value is computed and thrown away",
+					b.Name, where)
+			}
+			add(d)
+		}
+	}
+	var walk func(stmts []*ast.Statement)
+	walk = func(stmts []*ast.Statement) {
+		for _, s := range stmts {
+			check(s.Binds, "this stage")
+			walk(s.Block)
+			for _, b := range s.Binds {
+				walk(b.Body)
+			}
+		}
+	}
+	walk(prog.Statements)
 }
 
 // lintUnusedArgs warns about a named argument the primitive on that line never

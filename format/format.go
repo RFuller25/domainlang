@@ -58,14 +58,48 @@ func Format(src string) (string, error) {
 
 	depths := lineDepths(toks)
 	args := argLines(prog)
+	binds := bindLines(prog)
 	byLine := tokensByLine(toks)
+	openedBy := parenContinuations(toks)
+	blocks, rawOf := rawBlocks(src, toks)
 
 	lines := strings.Split(src, "\n")
 	out := make([]string, 0, len(lines))
 	pendingBlank := false
+	// How far each line that opens a multi-line parenthesis moved, so the lines
+	// continuing it can move with it. A line always precedes its continuations,
+	// so its shift is known by the time they are reached.
+	shifts := map[int]int{}
 
 	for i, raw := range lines {
 		lineNo := i + 1
+
+		// A foreign block is another language's source: it is re-indented with
+		// its opener and otherwise reproduced byte for byte (see foreign.go).
+		// The whole block is emitted at once, on reaching its first line, since
+		// a negative shift is decided by the block rather than line by line.
+		if bi, ok := rawOf[lineNo]; ok {
+			b := blocks[bi]
+			if lineNo != b.first {
+				continue
+			}
+			for _, line := range shiftRaw(lines[b.first-1:b.last], shifts[b.opener]) {
+				out = appendWithBlank(out, &pendingBlank, line)
+			}
+			continue
+		}
+
+		// A line inside an open parenthesis is not a line the layout knows
+		// about: the lexer joined it to the line that opened the parenthesis,
+		// so it has no depth of its own and is not a statement to re-render.
+		// What its indentation *is* is the author's alignment of a call broken
+		// across lines — the one thing a formatter must not flatten — so it is
+		// kept as written, shifted by however far its opening line moved.
+		if openLine, ok := openedBy[lineNo]; ok {
+			out = appendWithBlank(out, &pendingBlank, shiftIndent(raw, shifts[openLine]))
+			continue
+		}
+
 		code, comment := splitComment(raw)
 		codeTrimmed := strings.TrimSpace(code)
 
@@ -88,10 +122,14 @@ func Format(src string) (string, error) {
 		}
 
 		d := depths[lineNo]
+		shifts[lineNo] = d*indentWidth - (len(raw) - len(strings.TrimLeft(raw, " \t")))
 		var body string
-		if args[lineNo] {
+		switch {
+		case binds[lineNo] != nil:
+			body = renderBinding(src, byLine[lineNo], code, binds[lineNo])
+		case args[lineNo]:
 			body = renderTokens(src, byLine[lineNo])
-		} else {
+		default:
 			body = renderStatement(src, byLine[lineNo], code)
 		}
 		out = appendWithBlank(out, &pendingBlank, indent(d)+body+joinComment(comment))
@@ -112,6 +150,53 @@ func appendWithBlank(out []string, pending *bool, line string) []string {
 		*pending = false
 	}
 	return append(out, line)
+}
+
+// parenContinuations maps each source line that sits inside an open
+// parenthesis to the line that opened it. Those are the lines the lexer joined
+// to their opener rather than treating as lines of their own (see package
+// lexer), so they carry no INDENT/DEDENT and lineDepths cannot speak for them.
+//
+// The whole span is mapped, not only the lines holding tokens, so a comment
+// written between two arguments of a broken-up call travels with them instead
+// of being re-indented to the enclosing block.
+func parenContinuations(toks []token.Token) map[int]int {
+	cont := map[int]int{}
+	depth, openLine := 0, 0
+	for _, t := range toks {
+		switch t.Kind {
+		case token.LPAREN:
+			if depth == 0 {
+				openLine = t.Pos.Line
+			}
+			depth++
+		case token.RPAREN:
+			if depth > 0 {
+				depth--
+			}
+			// Only the outermost parenthesis delimits a span; a nested one is
+			// inside a span already marked.
+			if depth == 0 {
+				for l := openLine + 1; l <= t.Pos.Line; l++ {
+					cont[l] = openLine
+				}
+			}
+		}
+	}
+	return cont
+}
+
+// shiftIndent re-indents a line by delta columns, keeping its interior exactly
+// as written. A tab in the leading whitespace counts as one column, which is
+// also how it is rewritten — Domain indents with spaces, and a line the
+// formatter touches should not be the one place a tab survives.
+func shiftIndent(line string, delta int) string {
+	body := strings.TrimLeft(line, " \t")
+	if body == "" {
+		return ""
+	}
+	width := max(len(line)-len(body)+delta, 0)
+	return strings.Repeat(" ", width) + strings.TrimRight(body, " \t")
 }
 
 func indent(depth int) string {
@@ -154,6 +239,11 @@ func lineDepths(toks []token.Token) map[int]int {
 			}
 			continue
 		case token.NEWLINE, token.EOF:
+			continue
+		case token.RAW:
+			// A foreign block has no Domain layout: its lines are reproduced
+			// from source, and letting them claim a depth would also let a
+			// comment above the block borrow one (see commentDepth).
 			continue
 		}
 		if _, seen := depths[t.Pos.Line]; !seen {
@@ -201,12 +291,84 @@ func argLines(prog *ast.Program) map[int]bool {
 	return lines
 }
 
+// bindLines collects the lines holding a `Consider x As/Of …` binding, walking
+// the program the way argLines does. The binding itself comes along because
+// how the line is rendered depends on which form it takes.
+func bindLines(prog *ast.Program) map[int]*ast.Binding {
+	lines := make(map[int]*ast.Binding)
+	var walk func(stmts []*ast.Statement)
+	walk = func(stmts []*ast.Statement) {
+		for _, s := range stmts {
+			for _, b := range s.Binds {
+				lines[b.Pos.Line] = b
+				walk(b.Body)
+			}
+			walk(s.Block)
+		}
+	}
+	walk(prog.Statements)
+	for _, d := range prog.Shikigamis {
+		for _, b := range d.Binds {
+			lines[b.Pos.Line] = b
+			walk(b.Body)
+		}
+		walk(d.Body)
+	}
+	return lines
+}
+
+// renderBinding normalizes a binding line. `Consider NAME As|Of` is the head
+// either way; what follows decides how much of the rest may be touched.
+//
+// An expression or a lambda is expression-layer text and is re-rendered like
+// any argument's value. An operation phrase is not: it is read as a Shikigami
+// name and as a file path, exactly as a statement's phrase is, so it is copied
+// verbatim for the same reason renderStatement copies one.
+func renderBinding(src string, toks []token.Token, code string, b *ast.Binding) string {
+	const head = 3 // Consider, NAME, As|Of
+	if len(toks) < head {
+		return renderTokens(src, toks)
+	}
+	// Canonical capitalization: the keywords are matched case-insensitively,
+	// and every other themed word in a formatted program is spelled this way.
+	prep := "As"
+	if b.Of {
+		prep = "Of"
+	}
+	canonicalHead := "Consider " + text(src, toks[1]) + " " + prep
+	if len(toks) == head {
+		return canonicalHead
+	}
+	if !b.Of || b.Lambda != nil {
+		return canonicalHead + " " + renderTokens(src, toks[head:])
+	}
+	return canonicalHead + " " + verbatimTail(src, toks, code, head)
+}
+
+// verbatimTail is the rest of a line from toks[from] onward, copied from
+// source. Shared by renderStatement and renderBinding, which both have a
+// canonical head and a phrase that must not be rewritten.
+func verbatimTail(src string, toks []token.Token, code string, from int) string {
+	if from >= len(toks) {
+		return ""
+	}
+	// The line's absolute start is the first token's offset minus the leading
+	// whitespace that token sits behind.
+	lead := len(code) - len(strings.TrimLeft(code, " \t"))
+	lineStart := toks[0].Pos.Offset - lead
+	start, end := toks[from].Pos.Offset, lineStart+len(code)
+	if start < 0 || start > end || end > len(src) {
+		return renderTokens(src, toks[from:]) // defensive
+	}
+	return strings.TrimRight(src[start:end], " \t")
+}
+
 // tokensByLine groups the real (non-layout) tokens by source line.
 func tokensByLine(toks []token.Token) map[int][]token.Token {
 	byLine := make(map[int][]token.Token)
 	for _, t := range toks {
 		switch t.Kind {
-		case token.INDENT, token.DEDENT, token.NEWLINE, token.EOF:
+		case token.INDENT, token.DEDENT, token.NEWLINE, token.EOF, token.RAW:
 			continue
 		}
 		byLine[t.Pos.Line] = append(byLine[t.Pos.Line], t)
@@ -237,20 +399,7 @@ func renderStatement(src string, toks []token.Token, code string) string {
 	}
 
 	head := renderTokens(src, toks[:k+1]) // includes the colon
-	phrase := ""
-	if k+1 < len(toks) {
-		// Verbatim from the first phrase token to the end of this line's code.
-		// The line's absolute start is the first token's offset minus the
-		// leading whitespace that token sits behind.
-		lead := len(code) - len(strings.TrimLeft(code, " \t"))
-		lineStart := toks[0].Pos.Offset - lead
-		start, end := toks[k+1].Pos.Offset, lineStart+len(code)
-		if start >= 0 && start <= end && end <= len(src) {
-			phrase = strings.TrimRight(src[start:end], " \t")
-		} else { // defensive: fall back to canonical rendering
-			phrase = renderTokens(src, toks[k+1:])
-		}
-	}
+	phrase := verbatimTail(src, toks, code, k+1)
 	if phrase == "" {
 		return head
 	}

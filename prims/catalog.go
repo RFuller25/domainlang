@@ -168,6 +168,8 @@ var Catalog = map[string]PrimDoc{
 		"Builds a Map from key/value pairs; last write wins.", "convert-to-map"},
 	"Topological Sort": {"Topological Sort", "Domain Expansion", "Map<K, List<K>> | List<(K, K)> → List<K>",
 		"A dependency order over an explicit graph; a cycle is a runtime error naming a blocked node.", "topological-sort"},
+	"Foreign Block": {"Foreign Block", "Domain Expansion", "T → Text, or a declared `In -> Out`",
+		"Runs an indented block of Python, Go, rask or cRust as a subprocess, with the current value on its stdin and its stdout as the next stage's value.", "foreign-block"},
 	"Explore": {"Explore", "Domain Expansion", "S × (S → List<S>) → List<S> | Int | Map<S,Int>",
 		"Breadth-first search over an implicit state graph; the answer to a problem that seems to need recursion.", "explore"},
 	"Sort": {"Sort", "Domain Expansion", "List<T> → List<T>",

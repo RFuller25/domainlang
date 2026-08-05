@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"domain/ast"
+
 	"domain/ir"
 	"domain/pattern"
 )
@@ -175,5 +177,31 @@ func TestBuildBinaryBadSource(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "go build failed") {
 		t.Fatalf("error should be prefixed 'go build failed', got: %v", err)
+	}
+}
+
+// TestForeignSpecsCoverEveryLanguage is the guard on the closed set of foreign
+// languages: one that lexes and interprets but has no runner here would parse,
+// run, and then fail to compile — the one failure mode `domain build` is
+// supposed to be free of. Adding a language to ast.ForeignLanguages fails this
+// test until it can be compiled too.
+func TestForeignSpecsCoverEveryLanguage(t *testing.T) {
+	for _, lang := range ast.ForeignLanguages {
+		spec, ok := foreignSpecs[lang]
+		if !ok {
+			t.Errorf("%s has no codegen runner", lang)
+			continue
+		}
+		if spec.file == "" || spec.env == "" || len(spec.candidates) == 0 {
+			t.Errorf("%s: incomplete runner spec %+v", lang, spec)
+		}
+		if !spec.appendProg && len(spec.tail) == 0 {
+			t.Errorf("%s: the runner would never be told which program to run", lang)
+		}
+	}
+	for lang := range foreignSpecs {
+		if _, ok := ast.ForeignLanguage(lang); !ok {
+			t.Errorf("codegen has a runner for %q, which is not a foreign language", lang)
+		}
 	}
 }

@@ -183,7 +183,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		}
 		return inner, nil
 	default:
-		return nil, p.errf("unexpected %s in expression", t)
+		return nil, p.errRanOutf("unexpected %s in expression", t)
 	}
 }
 

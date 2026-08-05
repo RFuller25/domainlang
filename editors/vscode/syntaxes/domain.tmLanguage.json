@@ -2,20 +2,52 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Domain",
   "scopeName": "source.domain",
-  "fileTypes": ["domain"],
+  "fileTypes": [
+    "domain"
+  ],
   "patterns": [
-    { "include": "#comment" },
-    { "include": "#themed-statement" },
-    { "include": "#argument-key" },
-    { "include": "#string" },
-    { "include": "#lambda-arrow" },
-    { "include": "#builtin" },
-    { "include": "#mode-value" },
-    { "include": "#order-modifier" },
-    { "include": "#type-name" },
-    { "include": "#logical-operator" },
-    { "include": "#operator" },
-    { "include": "#number" }
+    {
+      "include": "#foreign-block"
+    },
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#binding"
+    },
+    {
+      "include": "#themed-statement"
+    },
+    {
+      "include": "#argument-key"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#lambda-arrow"
+    },
+    {
+      "include": "#builtin"
+    },
+    {
+      "include": "#mode-value"
+    },
+    {
+      "include": "#order-modifier"
+    },
+    {
+      "include": "#type-name"
+    },
+    {
+      "include": "#logical-operator"
+    },
+    {
+      "include": "#operator"
+    },
+    {
+      "include": "#number"
+    }
   ],
   "repository": {
     "comment": {
@@ -24,31 +56,135 @@
     },
     "themed-statement": {
       "comment": "A statement head: the themed keyword, its ':' , and the operation phrase up to end of line. The operation is highlighted in its own context so primitives, control-flow words, modifiers, and literals each get their own colour.",
-      "begin": "^\\s*(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal|Channel|Shikigami)\\b[ \\t]*(:)?",
+      "begin": "^\\s*(Reverse Cursed Technique|Maximum Technique|Channeled Energy|Cursed Technique|Domain Expansion|Cursed Energy|Innate Domain|Simple Domain|Binding Vow|Shikigami|Channel|Reveal|Part)\\b[ \\t]*(:)?",
       "beginCaptures": {
-        "1": { "name": "keyword.control.domain" },
-        "2": { "name": "punctuation.separator.key-value.domain" }
+        "1": {
+          "name": "keyword.control.domain"
+        },
+        "2": {
+          "name": "punctuation.separator.key-value.domain"
+        }
       },
       "end": "$",
       "patterns": [
-        { "include": "#comment" },
-        { "include": "#string" },
-        { "include": "#lambda-arrow" },
-        { "include": "#control-flow" },
-        { "include": "#primitive" },
-        { "include": "#order-modifier" },
-        { "include": "#builtin" },
-        { "include": "#type-name" },
-        { "include": "#logical-operator" },
-        { "include": "#preposition" },
-        { "include": "#operator" },
-        { "include": "#number" }
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#lambda-arrow"
+        },
+        {
+          "include": "#control-flow"
+        },
+        {
+          "include": "#primitive"
+        },
+        {
+          "include": "#shikigami-prelude"
+        },
+        {
+          "include": "#io-target"
+        },
+        {
+          "include": "#order-modifier"
+        },
+        {
+          "include": "#builtin"
+        },
+        {
+          "include": "#type-name"
+        },
+        {
+          "include": "#logical-operator"
+        },
+        {
+          "include": "#preposition"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#number"
+        }
+      ]
+    },
+    "binding": {
+      "comment": "A local binding line: `Consider NAME As <expression|lambda>` or `Consider NAME Of <operation|lambda>`. The rest of the line is highlighted like any other expression or phrase.",
+      "begin": "^\\s*(?i:(Consider))\\b[ \\t]+([A-Za-z_][A-Za-z0-9_]*)[ \\t]+(?i:(As|Of))\\b",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.domain"
+        },
+        "2": {
+          "name": "variable.other.definition.domain"
+        },
+        "3": {
+          "name": "keyword.control.domain"
+        }
+      },
+      "end": "$",
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#lambda-arrow"
+        },
+        {
+          "include": "#control-flow"
+        },
+        {
+          "include": "#primitive"
+        },
+        {
+          "include": "#shikigami-prelude"
+        },
+        {
+          "include": "#io-target"
+        },
+        {
+          "include": "#order-modifier"
+        },
+        {
+          "include": "#builtin"
+        },
+        {
+          "include": "#type-name"
+        },
+        {
+          "include": "#logical-operator"
+        },
+        {
+          "include": "#preposition"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#number"
+        }
       ]
     },
     "primitive": {
       "comment": "The Go-backed primitives. Multi-word phrases precede their single-word prefixes so the longest name wins (Oniguruma matches left-to-right, not longest-overall).",
       "name": "support.function.primitive.domain",
-      "match": "\\b(Sum Each Group|Split Each|Split Fields|Extract Integers|Ragged Columns|Map Each|Map Cells|Find Cells|Match Pattern|Take Item|Select Top|Count Matching|Count Cells|Count By|Min By|Max By|Sort By|Group By|All Pairs|Merge Ranges|Flood Fill|Connected Components|Convert|Split|Window|Flatten|Enumerate|Filter|Unique|Transpose|Apply|Quicksort|Sort|Combinations|Permutations|Subsets|BFS|Dijkstra|Reverse|Product|Intersect|Union|Difference|Fold|Join|Sum|Count|Max|Min|Emit)\\b"
+      "match": "\\b(Convert To Sparse Grid|Connected Components|Convert To Integers|Convert To Entries|Convert To Floats|Extract Integers|Topological Sort|Convert To Grid|Convert To Rows|Convert To Map|Convert To Set|Count Matching|Filter Entries|Ragged Columns|Sliding Reduce|Sum Each Group|Match Pattern|Combinations|Merge Ranges|Permutations|Select Top K|Split Fields|Binding Vow|Count Cells|Read Source|Rotate Grid|Difference|Drop While|Find Cells|Find Cycle|Find Index|Flood Fill|Map Values|Product By|Split Each|Take While|All Pairs|Enumerate|Flip Grid|Intersect|Map Cells|Partition|Quicksort|Take Item|Transpose|Count By|Dijkstra|Group By|Map Each|Pad Grid|Combine|Explore|Flatten|Iterate|Product|Reverse|Sort By|Subgrid|Subsets|Equals|Filter|Max By|Min By|Reduce|Sum By|Unfold|Unique|Values|Window|Apply|Chunk|Count|Holds|Pairs|Range|Split|Union|Emit|Find|Fold|Join|Scan|Sort|All|Any|BFS|Max|Min|Sum|Zip)\\b"
+    },
+    "shikigami-prelude": {
+      "comment": "The prelude's Shikigami. A Shikigami is called by its bare name, so these read exactly like primitives at a call site and are coloured as the operations they are. Generated from prims.PreludeNames().",
+      "name": "support.function.shikigami.domain",
+      "match": "\\b(Digit Grid|Top K Sum|Blocks|Lines|Ints)\\b"
+    },
+    "io-target": {
+      "comment": "The standard source and sink targets, which are phrase words rather than keywords: `Cursed Energy: stdin`, `Reveal: stdout`.",
+      "name": "constant.language.domain",
+      "match": "\\b(stdin|stdout)\\b"
     },
     "control-flow": {
       "comment": "Simple Domain loop drivers.",
@@ -64,7 +200,9 @@
       "comment": "Indented named arguments: Using:, Mode:, Seed:, From:, Default:, Mark: ...",
       "match": "^\\s+([A-Za-z_][A-Za-z0-9_]*)(?=:)",
       "captures": {
-        "1": { "name": "variable.parameter.domain" }
+        "1": {
+          "name": "variable.parameter.domain"
+        }
       }
     },
     "string": {
@@ -90,13 +228,15 @@
     "builtin": {
       "comment": "Expression-layer builtin functions (call position only).",
       "name": "support.function.builtin.domain",
-      "match": "\\b(abs|at|band|bor|bxor|ceil|cells|col|cols|concat|contains|dirs4|drop|first|floor|frombin|gcd|get|has|inbounds|item|last|lcm|length|list|manhattan|maxcol|maxrow|max|mincol|minrow|min|modinv|modpow|name|neighbors4|neighbors8|occurrences|padd|pcol|point|prow|put|repeats|reverse|rotl|rotr|round|rows|row|set|shl|shr|sign|solve2x2|sparse|sqrt|sum|take|tofloat|toint|totext)(?=\\s*\\()"
+      "match": "\\b(occurrences|cellpoints|difference|fromdigits|neighbors4|neighbors8|startswith|trimprefix|trimsuffix|chebyshev|factorial|intersect|manhattan|contains|divisors|emptymap|emptyset|endswith|frombase|inbounds|padright|popcount|solve2x2|textjoin|around4|around8|entries|frombin|fromhex|indexof|isalpha|isdigit|islower|isprime|isupper|padleft|repeats|replace|reverse|testbit|tofloat|charat|choose|concat|digits|divmod|haskey|insert|length|maxcol|maxrow|mincol|minrow|modinv|modpow|pscale|record|repeat|sparse|tobase|tolist|totext|values|atan2|cells|chars|clamp|dirs4|dirs8|first|floor|getor|hypot|isqrt|log10|lower|point|range|round|setat|slice|split|tobin|tohex|toint|tomap|toset|trunc|tuple|union|upper|words|band|bnot|bxor|ceil|cols|drop|fill|item|keys|last|list|log2|padd|pcol|prow|psub|rotl|rotr|rows|sign|size|sqrt|take|trim|with|abs|bor|chr|col|cos|crt|del|exp|gcd|get|has|lcm|log|max|min|mod|ord|pow|put|row|set|shl|shr|sin|sum|tan|at)(?=\\s*\\()"
     },
     "mode-value": {
       "comment": "The variant selector after Mode: (One/Each/Filter/Count/First/Map).",
       "match": "(?<=Mode:)\\s*(One|Each|Filter|Count|First|Map)\\b",
       "captures": {
-        "1": { "name": "constant.language.mode.domain" }
+        "1": {
+          "name": "constant.language.mode.domain"
+        }
       }
     },
     "order-modifier": {
@@ -119,6 +259,97 @@
     "number": {
       "name": "constant.numeric.integer.domain",
       "match": "\\b\\d+\\b"
+    },
+    "foreign-block": {
+      "comment": "A foreign-language block: `Domain Expansion: Python` (or Go/rask/cRust) and everything indented beneath it, which is that language's source and not Domain. The `while` clause is the standard indented-block trick: the region continues while a line is blank or indented deeper than the opener captured in \\1 — the same rule the lexer applies. Where the language has a grammar installed it is embedded, so the block reads as itself; where it does not, the block is simply left unhighlighted, which is still better than colouring it as Domain.",
+      "patterns": [
+        {
+          "begin": "^([ \\t]*)(?:(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal)[ \\t]*(:)[ \\t]*)?(Python)\\b[ \\t]*(:[^\\n]*)?$",
+          "beginCaptures": {
+            "2": {
+              "name": "keyword.control.domain"
+            },
+            "3": {
+              "name": "punctuation.separator.key-value.domain"
+            },
+            "4": {
+              "name": "entity.name.type.foreign.domain"
+            },
+            "5": {
+              "name": "storage.type.domain"
+            }
+          },
+          "while": "^(?:\\1[ \\t]+\\S|[ \\t]*$)",
+          "contentName": "meta.embedded.block.python",
+          "patterns": [
+            {
+              "include": "source.python"
+            }
+          ]
+        },
+        {
+          "begin": "^([ \\t]*)(?:(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal)[ \\t]*(:)[ \\t]*)?(Go)\\b[ \\t]*(:[^\\n]*)?$",
+          "beginCaptures": {
+            "2": {
+              "name": "keyword.control.domain"
+            },
+            "3": {
+              "name": "punctuation.separator.key-value.domain"
+            },
+            "4": {
+              "name": "entity.name.type.foreign.domain"
+            },
+            "5": {
+              "name": "storage.type.domain"
+            }
+          },
+          "while": "^(?:\\1[ \\t]+\\S|[ \\t]*$)",
+          "contentName": "meta.embedded.block.go",
+          "patterns": [
+            {
+              "include": "source.go"
+            }
+          ]
+        },
+        {
+          "begin": "^([ \\t]*)(?:(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal)[ \\t]*(:)[ \\t]*)?(rask)\\b[ \\t]*(:[^\\n]*)?$",
+          "beginCaptures": {
+            "2": {
+              "name": "keyword.control.domain"
+            },
+            "3": {
+              "name": "punctuation.separator.key-value.domain"
+            },
+            "4": {
+              "name": "entity.name.type.foreign.domain"
+            },
+            "5": {
+              "name": "storage.type.domain"
+            }
+          },
+          "while": "^(?:\\1[ \\t]+\\S|[ \\t]*$)",
+          "contentName": "meta.embedded.block.rask"
+        },
+        {
+          "begin": "^([ \\t]*)(?:(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal)[ \\t]*(:)[ \\t]*)?(cRust)\\b[ \\t]*(:[^\\n]*)?$",
+          "beginCaptures": {
+            "2": {
+              "name": "keyword.control.domain"
+            },
+            "3": {
+              "name": "punctuation.separator.key-value.domain"
+            },
+            "4": {
+              "name": "entity.name.type.foreign.domain"
+            },
+            "5": {
+              "name": "storage.type.domain"
+            }
+          },
+          "while": "^(?:\\1[ \\t]+\\S|[ \\t]*$)",
+          "contentName": "meta.embedded.block.crust"
+        }
+      ]
     }
   }
 }

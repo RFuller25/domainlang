@@ -30,11 +30,16 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 		return nil, nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("unknown Shikigami %q", name)}
 	}
 
-	env, err := bindParams(def, ArgSet{args: stmt.Args}, stmt.Pos)
+	var rewriteErr error
+	env, err := bindParams(def, r.args(stmt, &rewriteErr), stmt.Pos)
+	if rewriteErr != nil {
+		return nil, nil, rewriteErr
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	body := substituteBody(def.Body, env)
+	binds := substituteBinds(def.Binds, env)
 
 	// A declared signature is checked at the boundary, which is the whole point:
 	// the mismatch is reported here, against the call, instead of surfacing as
@@ -72,11 +77,23 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 				name, strings.Join(append(slices.Clone(r.inlining[i:]), name), " -> "))}
 		}
 	}
+	// Bindings written at the top of the body scope over the whole body, so
+	// they are pushed around resolving it — and, when their values are only
+	// known at runtime, the inlined nodes go inside a Consider node the same
+	// way a statement's own do.
+	rts, pop, err := r.pushBinds(binds, cur)
+	if err != nil {
+		return nil, nil, r.wrapShikigamiErr(name, stmt.Pos, err)
+	}
 	r.inlining = append(r.inlining, name)
 	nodes, out, err := r.resolveSequence(body, cur, scopeNested)
 	r.inlining = r.inlining[:len(r.inlining)-1]
+	pop()
 	if err != nil {
 		return nil, nil, r.wrapShikigamiErr(name, stmt.Pos, err)
+	}
+	if len(rts) > 0 {
+		nodes = []*ir.Node{bindNode(rts, nodes, cur, out, stmt.Pos)}
 	}
 
 	// The body has to deliver what the definition promised. This catches a body
@@ -309,6 +326,30 @@ func checkLambdaParam(defName string, p ast.Param, lam *ast.Lambda, pos token.Po
 }
 
 // substituteBody returns a copy of the statements with parameters substituted.
+// substituteBinds substitutes a call's arguments into the `Consider` bindings
+// written at the top of a Shikigami body, so a binding may be written in terms
+// of the definition's parameters.
+func substituteBinds(binds []*ast.Binding, env map[string]paramVal) []*ast.Binding {
+	if len(binds) == 0 {
+		return nil
+	}
+	out := make([]*ast.Binding, len(binds))
+	for i, b := range binds {
+		b.Used = true // the copy records the reads; see substituteArg
+		nb := *b
+		switch {
+		case b.Lambda != nil:
+			nb.Lambda = substituteLambda(b.Lambda, env)
+		case b.Value != nil:
+			nb.Value = substExpr(b.Value, env, map[string]bool{})
+		case len(b.Body) > 0:
+			nb.Body = substituteBody(b.Body, env)
+		}
+		out[i] = &nb
+	}
+	return out
+}
+
 func substituteBody(body []*ast.Statement, env map[string]paramVal) []*ast.Statement {
 	out := make([]*ast.Statement, len(body))
 	for i, s := range body {
@@ -330,6 +371,9 @@ func substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Stat
 	}
 	if len(stmt.Block) > 0 {
 		ns.Block = substituteBody(stmt.Block, env)
+	}
+	if len(stmt.Binds) > 0 {
+		ns.Binds = substituteBinds(stmt.Binds, env)
 	}
 	return &ns
 }

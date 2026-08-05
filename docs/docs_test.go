@@ -153,10 +153,11 @@ func TestRunnableProgramCountsAreCurrent(t *testing.T) {
 			t.Fatalf("%d programs — extend the number-word table", n)
 		}
 	}
-	for _, page := range []string{"README.md", "getting-started.md"} {
+	for _, page := range []string{"README.md", "getting-started.md", "walkthroughs.md"} {
 		src := docFile(t, page)
 		check(t, "docs/"+page, src, "examples", count("examples"))
 		check(t, "docs/"+page, src, "challenges", count("challenges"))
+		check(t, "docs/"+page, src, "programs", count("examples"))
 	}
 	for _, f := range []string{"README.md", "examples/README.md"} {
 		check(t, f, repoFile(t, f), "programs", count("examples"))

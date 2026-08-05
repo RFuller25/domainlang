@@ -737,3 +737,52 @@ Reveal: stdout
 		t.Fatalf("unexpected expression-in-phrase warning: %v", *d)
 	}
 }
+
+// A `Consider` binding nothing reads is a warning, like an argument the
+// primitive never read: both are silent at runtime, and both are usually a
+// rename that did not finish. A binding that *is* read must stay quiet.
+func TestLintUnusedBinding(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider spare As 3
+    Consider dropped Of Sum
+    Consider used As 5
+    Using: (x) -> x + used
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if d := diagWith(r, Warning, `nothing reads the binding "spare"`); d == nil {
+		t.Errorf("missing unused-binding warning in %v", r.Diags)
+	}
+	// An `Of` binding is worse than dead weight — it computes a value on every
+	// pass through its stage — so its help says so.
+	d := diagWith(r, Warning, `nothing reads the binding "dropped"`)
+	if d == nil {
+		t.Fatalf("missing unused Of-binding warning in %v", r.Diags)
+	}
+	if !strings.Contains(d.Help, "thrown away") {
+		t.Errorf("help = %q, want it to mention the wasted computation", d.Help)
+	}
+	if diagWith(r, Warning, `nothing reads the binding "used"`) != nil {
+		t.Errorf("a binding that is read was reported unused: %v", r.Diags)
+	}
+}
+
+// A binding shadowed by a lambda parameter of the same name is never resolved,
+// so it arrives at the linter as exactly what it is: a binding nothing reads.
+func TestLintBindingShadowedByParameter(t *testing.T) {
+	src := `Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider x As 3
+    Using: (x) -> x + 1
+Reveal: stdout
+`
+	r := analyze(t, src)
+	if diagWith(r, Warning, `nothing reads the binding "x"`) == nil {
+		t.Errorf("a fully shadowed binding was not reported: %v", r.Diags)
+	}
+}

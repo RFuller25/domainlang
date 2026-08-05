@@ -19,6 +19,9 @@ func FuzzParse(f *testing.F) {
 		"Channel \"moves\":\n    Cursed Technique: Take Item 1\n",
 		"Cursed Energy input.txt\n", // missing colon
 		"Binding Vow: All Values > -5\n",
+		"Domain Expansion: Python\n    print(1)\nReveal: stdout\n",
+		"Domain Expansion: Python\n", // an opener with no block
+		"Shikigami \"X\"\n    Python\n        x\n",
 	}
 	for _, s := range seeds {
 		f.Add(s)

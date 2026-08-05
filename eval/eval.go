@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"math/bits"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,7 +36,21 @@ func EvalExpr(e ast.Expr, env Env) (ir.Value, error) {
 // to their statically inferred types; it may be nil (unknown), in which case
 // builtins whose result type is ambiguous at runtime — sum of an empty list
 // — fall back to sniffing the runtime values.
+//
+// Every recursive step goes through here, which is what lets TraceLambda
+// (trace.go) watch a whole application without a single case below knowing it
+// can be watched. What that costs an ordinary run is the nil check — the same
+// bargain ir.EvalNode makes for the pipeline layer.
 func evalExpr(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
+	if tracing != nil {
+		return tracing.step(e, env, types)
+	}
+	return evalExprStep(e, env, types)
+}
+
+// evalExprStep is evalExpr's body: one node, recursing back through evalExpr
+// so that a trace sees its children too.
+func evalExprStep(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 	switch x := e.(type) {
 	case *ast.IntLit:
 		return x.Value, nil
@@ -309,6 +324,13 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		return acc, nil
 	case "contains":
+		if s, ok := args[0].(string); ok {
+			sub, ok := args[1].(string)
+			if !ok {
+				return fail("contains: expected a Text needle, got %s", ir.DescribeValue(args[1]))
+			}
+			return strings.Contains(s, sub), nil
+		}
 		if s, ok := args[0].(*ir.SetValue); ok {
 			return s.Has(args[1]), nil
 		}
@@ -474,6 +496,16 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		return []ir.Value{q, m}, nil
 	case "pow":
+		// Follows the operators' promotion rule: integral unless an operand is
+		// a Float, in which case it is math.Pow like every other float op.
+		if isFloatOperand(args[0]) || isFloatOperand(args[1]) {
+			a, err1 := ir.AsFloat(args[0])
+			b, err2 := ir.AsFloat(args[1])
+			if err := firstErr(err1, err2); err != nil {
+				return fail("pow: %v", err)
+			}
+			return math.Pow(a, b), nil
+		}
 		a, b, err := twoInts(args, "pow")
 		if err != nil {
 			return fail("%v", err)
@@ -1038,6 +1070,370 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("frombin: %q is not a binary number", s)
 		}
 		return n, nil
+
+	// -- collection construction, update and enumeration -------------------------
+	//
+	// Every one of these is *functional*: the argument is never mutated, because
+	// a lambda may be applied to the same value more than once (the optimizer
+	// folds constants by doing exactly that) and an in-place update would make
+	// the second application see the first one's work.
+	case "toset":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("toset: %v", err)
+		}
+		return ir.SetFromList(xs), nil
+	case "emptyset":
+		return ir.NewSetValue(), nil
+	case "emptymap":
+		return ir.NewMapValue(), nil
+	case "tomap":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("tomap: %v", err)
+		}
+		m := ir.NewMapSized(len(xs))
+		for i, e := range xs {
+			p, ok := e.([]ir.Value)
+			if !ok || len(p) != 2 {
+				return fail("tomap: element %d is not a (key, value) pair", i)
+			}
+			m.Put(p[0], p[1])
+		}
+		return m, nil
+	case "entries":
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("entries: expected a Map, got %s", ir.DescribeValue(args[0]))
+		}
+		out := make([]ir.Value, 0, m.Len())
+		for _, k := range m.Keys() {
+			v, _ := m.Get(k)
+			out = append(out, []ir.Value{k, v})
+		}
+		return out, nil
+	case "insert":
+		if s, ok := args[0].(*ir.SetValue); ok {
+			return s.With(args[1]), nil
+		}
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("insert: expected a Set or Map, got %s", ir.DescribeValue(args[0]))
+		}
+		return m.With(args[1], args[2]), nil
+	case "del":
+		if s, ok := args[0].(*ir.SetValue); ok {
+			return s.Without(args[1]), nil
+		}
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("del: expected a Set or Map, got %s", ir.DescribeValue(args[0]))
+		}
+		return m.Without(args[1]), nil
+	case "union", "intersect", "difference":
+		a, ok1 := args[0].(*ir.SetValue)
+		b, ok2 := args[1].(*ir.SetValue)
+		if !ok1 || !ok2 {
+			return fail("%s: expected two Sets", name)
+		}
+		switch name {
+		case "union":
+			return ir.SetUnion(a, b), nil
+		case "intersect":
+			return ir.SetIntersect(a, b), nil
+		}
+		return ir.SetDifference(a, b), nil
+	case "setat":
+		grid, ok := args[0].(*ir.GridValue)
+		if !ok {
+			return fail("setat: expected a Grid, got %s", ir.DescribeValue(args[0]))
+		}
+		r, err1 := ir.AsInt(args[1])
+		c, err2 := ir.AsInt(args[2])
+		if err := firstErr(err1, err2); err != nil {
+			return fail("setat: %v", err)
+		}
+		if !grid.InBounds(int(r), int(c)) {
+			return fail("setat: position (%d, %d) out of range (grid %dx%d)", r, c, grid.Rows, grid.Cols)
+		}
+		return grid.With(int(r), int(c), args[3]), nil
+	case "cellpoints":
+		sp, ok := args[0].(*ir.SparseValue)
+		if !ok {
+			return fail("cellpoints: expected a Sparse grid, got %s", ir.DescribeValue(args[0]))
+		}
+		pts := sp.Points()
+		out := make([]ir.Value, len(pts))
+		for i, p := range pts {
+			out[i] = []ir.Value{p[0], p[1]}
+		}
+		return out, nil
+
+	// -- list generation ---------------------------------------------------------
+	case "range":
+		lo, hi, err := twoInts(args, "range")
+		if err != nil {
+			return fail("%v", err)
+		}
+		out, err := intRange(lo, hi)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return out, nil
+	case "fill":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("fill: %v", err)
+		}
+		// Total, like take and drop: a negative count is the empty list rather
+		// than an error, because there is a sensible answer to give.
+		if n <= 0 {
+			return []ir.Value{}, nil
+		}
+		if n > maxBuildable {
+			return fail("fill: %d elements is more than can be built", n)
+		}
+		out := make([]ir.Value, n)
+		for i := range out {
+			out[i] = args[1]
+		}
+		return out, nil
+
+	// -- text --------------------------------------------------------------------
+	case "split":
+		s, sep, err := twoTexts(args, "split")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return textList(strings.Split(s, sep)), nil
+	case "words":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("words: expected Text, got %s", ir.DescribeValue(args[0]))
+		}
+		return textList(strings.Fields(s)), nil
+	case "ord":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("ord: expected Text, got %s", ir.DescribeValue(args[0]))
+		}
+		if s == "" {
+			return fail("ord of the empty text is undefined")
+		}
+		r, _ := utf8.DecodeRuneInString(s)
+		return int64(r), nil
+	case "chr":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("chr: %v", err)
+		}
+		if n < 0 || n > utf8.MaxRune || (n >= 0xD800 && n <= 0xDFFF) {
+			return fail("chr: %d is not a character code", n)
+		}
+		return string(rune(n)), nil
+	case "repeat":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("repeat: expected Text, got %s", ir.DescribeValue(args[0]))
+		}
+		n, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("repeat: %v", err)
+		}
+		if n <= 0 || s == "" {
+			return "", nil
+		}
+		if n > maxBuildable/int64(len(s)) {
+			return fail("repeat: %d copies of a %d-byte text is more than can be built", n, len(s))
+		}
+		return strings.Repeat(s, int(n)), nil
+	case "padleft", "padright":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
+		}
+		width, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		padding, ok := args[2].(string)
+		if !ok {
+			return fail("%s: pad must be Text, got %s", name, ir.DescribeValue(args[2]))
+		}
+		return padText(s, width, padding, name == "padleft"), nil
+	case "trimprefix", "trimsuffix":
+		s, p, err := twoTexts(args, name)
+		if err != nil {
+			return fail("%v", err)
+		}
+		if name == "trimprefix" {
+			return strings.TrimPrefix(s, p), nil
+		}
+		return strings.TrimSuffix(s, p), nil
+	case "isdigit", "isalpha", "isupper", "islower":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
+		}
+		return classify(name, s), nil
+
+	// -- floats ------------------------------------------------------------------
+	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
+		f, err := ir.AsFloat(args[0])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		r, err := float1(name, f)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return r, nil
+	case "atan2", "hypot":
+		a, err1 := ir.AsFloat(args[0])
+		b, err2 := ir.AsFloat(args[1])
+		if err := firstErr(err1, err2); err != nil {
+			return fail("%s: %v", name, err)
+		}
+		if name == "atan2" {
+			return math.Atan2(a, b), nil
+		}
+		return math.Hypot(a, b), nil
+	case "trunc":
+		if n, ok := args[0].(int64); ok {
+			return n, nil
+		}
+		f, err := ir.AsFloat(args[0])
+		if err != nil {
+			return fail("trunc: %v", err)
+		}
+		return int64(math.Trunc(f)), nil
+
+	// -- records -----------------------------------------------------------------
+	case "record":
+		rec := ir.NewRecordValueSized(len(args) / 2)
+		for i := 0; i+1 < len(args); i += 2 {
+			field, ok := args[i].(string)
+			if !ok {
+				return fail("record: field name %d is not Text", i/2+1)
+			}
+			rec.Set(field, args[i+1])
+		}
+		return rec, nil
+	case "with":
+		rec, ok := args[0].(*ir.RecordValue)
+		if !ok {
+			return fail("with: expected a Record, got %s", ir.DescribeValue(args[0]))
+		}
+		field, ok := args[1].(string)
+		if !ok {
+			return fail("with: field name is not Text")
+		}
+		if _, ok := rec.Get(field); !ok {
+			return fail("with: record has no field %q", field)
+		}
+		return rec.With(field, args[2]), nil
+
+	// -- bases, bits, number theory ----------------------------------------------
+	case "frombase", "fromhex":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
+		}
+		base := int64(16)
+		if name == "frombase" {
+			var err error
+			if base, err = ir.AsInt(args[1]); err != nil {
+				return fail("frombase: %v", err)
+			}
+		}
+		n, err := parseBase(name, s, base)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return n, nil
+	case "tobase", "tohex", "tobin":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		base := int64(16)
+		switch name {
+		case "tobin":
+			base = 2
+		case "tobase":
+			if base, err = ir.AsInt(args[1]); err != nil {
+				return fail("tobase: %v", err)
+			}
+			if base < 2 || base > 36 {
+				return fail("tobase: base must be between 2 and 36, got %d", base)
+			}
+		}
+		return strconv.FormatInt(n, int(base)), nil
+	case "bnot":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("bnot: %v", err)
+		}
+		return ^n, nil
+	case "popcount":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("popcount: %v", err)
+		}
+		return int64(bits.OnesCount64(uint64(n))), nil
+	case "testbit":
+		n, i, err := twoInts(args, "testbit")
+		if err != nil {
+			return fail("%v", err)
+		}
+		if i < 0 || i > 63 {
+			return fail("testbit: bit %d is outside an Int (0 to 63)", i)
+		}
+		return n&(1<<uint(i)) != 0, nil
+	case "digits":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("digits: %v", err)
+		}
+		return decimalDigits(n), nil
+	case "fromdigits":
+		ds, err := ir.AsIntSlice(args[0])
+		if err != nil {
+			return fail("fromdigits: %v", err)
+		}
+		n, err := fromDigits(ds)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return n, nil
+	case "isprime":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("isprime: %v", err)
+		}
+		return isPrime(n), nil
+	case "divisors":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("divisors: %v", err)
+		}
+		out, err := divisorsOf(n)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return out, nil
+	case "crt":
+		rs, err1 := ir.AsIntSlice(args[0])
+		ms, err2 := ir.AsIntSlice(args[1])
+		if err := firstErr(err1, err2); err != nil {
+			return fail("crt: %v", err)
+		}
+		n, err := crtSolve(rs, ms)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return n, nil
+
 	default:
 		return fail("unknown function %q", name)
 	}
@@ -1310,13 +1706,44 @@ func EvalLambdaTyped(l *ast.Lambda, paramTypes []*ir.Type, args ...ir.Value) (ir
 	if len(args) != len(l.Params) {
 		return nil, fmt.Errorf("lambda expects %d argument(s), got %d", len(l.Params), len(args))
 	}
-	env := make(Env, len(l.Params))
+	// Reported before the body runs, so a watcher sees the application even if
+	// evaluating it is what fails. Never during a trace: TraceLambda's whole
+	// job is re-running an application a watcher already saw.
+	//
+	// The slices are *copied* rather than handed over, and that is load-bearing
+	// for a run with no watcher at all: passing one to a function variable
+	// makes escape analysis give up on it, and both of these are built fresh at
+	// call sites that otherwise keep them on the stack. Twelve thousand
+	// applications would become twenty-four thousand heap allocations for a
+	// watcher nobody installed (BenchmarkTraceUntraced pins that). Copying also
+	// means a watcher may keep what it is given, which is what the recorder
+	// needs anyway.
+	if watching != nil && tracing == nil {
+		types := make([]*ir.Type, len(paramTypes))
+		copy(types, paramTypes)
+		vals := make([]ir.Value, len(args))
+		copy(vals, args)
+		watching(l, types, vals)
+	}
+	// Bindings in scope are seeded first and parameters second, so a parameter
+	// of the same name shadows the binding (see eval/bindings.go). The length
+	// check keeps an application that uses none exactly as cheap as before.
+	env := make(Env, len(l.Params)+len(bindings))
+	var bindTypes typecheck.Env
+	if len(bindings) > 0 {
+		bindTypes = make(typecheck.Env, len(bindings))
+		for _, b := range bindings {
+			env[b.name] = b.value
+			bindTypes[b.name] = b.typ
+		}
+	}
 	for i, p := range l.Params {
 		env[p] = args[i]
 	}
 	var types typecheck.Env
 	if len(paramTypes) == len(l.Params) {
-		types = make(typecheck.Env, len(l.Params))
+		types = make(typecheck.Env, len(l.Params)+len(bindTypes))
+		maps.Copy(types, bindTypes)
 		for i, p := range l.Params {
 			if paramTypes[i] == nil {
 				types = nil

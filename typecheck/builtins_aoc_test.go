@@ -74,7 +74,9 @@ func TestAoCBuiltinTypeErrors(t *testing.T) {
 		{"(p, n) -> padd(p, n)", []*ir.Type{pt, ir.Int()}, "must be a point"},
 		{"(n) -> inbounds(n, 0, 0)", []*ir.Type{ir.Int()}, "needs a Grid"},
 		{"(s) -> contains(s, 3)", []*ir.Type{ir.Set(ir.Text())}, "contains value must be Text"},
-		{"(n) -> contains(n, 3)", []*ir.Type{ir.Int()}, "needs a List or Set"},
+		// contains also answers the substring question over Text, so what it
+		// refuses is narrower than it used to be.
+		{"(n) -> contains(n, 3)", []*ir.Type{ir.Int()}, "needs a Text, List or Set"},
 	}
 	for _, c := range cases {
 		lam := parseLambda(t, c.src)

@@ -208,16 +208,24 @@ func argItems() []map[string]any {
 // meets it first. The detail line names the keyword each one infers.
 func bareOperationItems() []map[string]any {
 	out := make([]map[string]any, 0, len(prims.Registry))
-	for i, prim := range prims.Registry {
+	i := 0
+	for _, prim := range prims.Registry {
 		doc, _ := prims.Doc(prim.ID)
-		out = append(out, map[string]any{
-			"label":         prim.ID,
-			"kind":          kindFunction,
-			"detail":        prim.Keyword + " — " + doc.Signature,
-			"documentation": md(doc.Summary + "\n\nThe `" + prim.Keyword + ":` keyword is optional.\n\n_See primitives.md#" + doc.DocAnchor + "_"),
-			"insertText":    prim.ID,
-			"sortText":      sortKey(len(statementKeywords) + i),
-		})
+		// A primitive is offered under each of its writable spellings, which is
+		// its ID unless it says otherwise: completing a foreign block has to
+		// insert `Python`, since `Foreign Block` is a name for the construct
+		// and not a phrase anyone can write.
+		for _, phrase := range prim.Spellings() {
+			out = append(out, map[string]any{
+				"label":         phrase,
+				"kind":          kindFunction,
+				"detail":        prim.Keyword + " — " + doc.Signature,
+				"documentation": md(doc.Summary + "\n\nThe `" + prim.Keyword + ":` keyword is optional.\n\n_See primitives.md#" + doc.DocAnchor + "_"),
+				"insertText":    phrase,
+				"sortText":      sortKey(len(statementKeywords) + i),
+			})
+			i++
+		}
 	}
 	return out
 }
@@ -232,15 +240,17 @@ func primitiveItems(keyword string) []map[string]any {
 			continue
 		}
 		doc, _ := prims.Doc(prim.ID)
-		out = append(out, map[string]any{
-			"label":         prim.ID,
-			"kind":          kindFunction,
-			"detail":        doc.Signature,
-			"documentation": md(doc.Summary + "\n\n_See primitives.md#" + doc.DocAnchor + "_"),
-			"insertText":    prim.ID,
-			"sortText":      sortKey(i),
-		})
-		i++
+		for _, phrase := range prim.Spellings() { // see bareOperationItems
+			out = append(out, map[string]any{
+				"label":         phrase,
+				"kind":          kindFunction,
+				"detail":        doc.Signature,
+				"documentation": md(doc.Summary + "\n\n_See primitives.md#" + doc.DocAnchor + "_"),
+				"insertText":    phrase,
+				"sortText":      sortKey(i),
+			})
+			i++
+		}
 	}
 	return out
 }

@@ -532,6 +532,13 @@
     "anchor": "flood-fill"
   },
   {
+    "id": "Foreign Block",
+    "keyword": "Domain Expansion",
+    "signature": "T → Text, or a declared `In -\u003e Out`",
+    "summary": "Runs an indented block of Python, Go, rask or cRust as a subprocess, with the current value on its stdin and its stdout as the next stage's value.",
+    "anchor": "foreign-block"
+  },
+  {
     "id": "Permutations",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e → List\u003cList\u003cT\u003e\u003e",

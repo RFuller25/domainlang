@@ -50,6 +50,16 @@ func nodeLists(p *ir.Pipeline) [][]*ir.Node {
 			if sub, _ := n.Meta["nodes"].([]*ir.Node); sub != nil {
 				lists = append(lists, sub)
 			}
+			// A Consider node's `Of` bindings each hold a sub-pipeline of
+			// their own — the operation or body the binding is computed by —
+			// and they are node lists like any other. They are kept apart
+			// rather than flattened together because they are separate
+			// pipelines: concatenating them would put the last node of one
+			// beside the first node of the next, and a pass that reads a
+			// node's neighbour would see an adjacency that does not exist.
+			if subs, _ := n.Meta[ir.MetaBindNodes].([][]*ir.Node); subs != nil {
+				lists = append(lists, subs...)
+			}
 			if sub := lambdaBodyNodes(n); sub != nil {
 				lists = append(lists, sub)
 			}

@@ -174,6 +174,15 @@
     "expected": "9\n"
   },
   {
+    "id": "20_stage_locals",
+    "group": "examples",
+    "title": "Local bindings: naming a value for one stage's expressions",
+    "description": "The lambda below needs the mean of the whole list, which no lambda can reach\non its own — it sees one element at a time. `Consider mean Of …` computes it\nonce from the value entering the stage and binds it by name for every\nexpression on that stage.\n\nThe preposition says where a binding's value comes from, and it has to: a\n1-parameter lambda already means two different things in Domain depending on\nwhere it is written (per element in a `Using:`, once over the current value\nin a measured argument like `Size:`), and a binding has no slot to say which.\nSo `As` never sees the pipeline value — it binds a constant or a function —\nand `Of` always does.\n\nThe two `As` bindings cost nothing at all: `tolerance` folds into the lambda\nas a literal and `spread` is inlined at its call site, so both are gone\nbefore either backend sees the program.",
+    "source": "# Local bindings: naming a value for one stage's expressions.\n#\n# The lambda below needs the mean of the whole list, which no lambda can reach\n# on its own — it sees one element at a time. `Consider mean Of …` computes it\n# once from the value entering the stage and binds it by name for every\n# expression on that stage.\n#\n# The preposition says where a binding's value comes from, and it has to: a\n# 1-parameter lambda already means two different things in Domain depending on\n# where it is written (per element in a `Using:`, once over the current value\n# in a measured argument like `Size:`), and a binding has no slot to say which.\n# So `As` never sees the pipeline value — it binds a constant or a function —\n# and `Of` always does.\n#\n# The two `As` bindings cost nothing at all: `tolerance` folds into the lambda\n# as a literal and `spread` is inlined at its call site, so both are gone\n# before either backend sees the program.\n#\n#   domain examples/20_stage_locals.domain\n#   Expected output: 3\nCursed Energy: 20_stage_locals.input\nShikigami: Lines\nChanneled Energy: Convert List to Integers\nMaximum Technique: Count Matching\n    Consider tolerance As 5\n    Consider spread As (a, b) -\u003e a - b\n    Consider mean Of (xs) -\u003e sum(xs) / length(xs)\n    Using: (x) -\u003e spread(x, mean) \u003e tolerance\nReveal: stdout\n",
+    "input": "10\n12\n30\n8\n40\n5\n22\n3\n",
+    "expected": "3\n"
+  },
+  {
     "id": "01_fizzbuzz",
     "group": "challenges",
     "title": "FizzBuzz — the classic screening question: print 1..N, but multiples of 3",

@@ -1,6 +1,6 @@
 # Examples
 
-Nineteen small, self-contained programs, each with its input (`*.input`) and
+Twenty small, self-contained programs, each with its input (`*.input`) and
 its exact expected output (`*.expected`). (For classic programming
 challenges — FizzBuzz, Two Sum, Game of Life — see
 [../challenges/](../challenges/README.md); for a guided tour, start at
@@ -53,6 +53,7 @@ self-contained Go helpers (see [docs/compiler.md](../docs/compiler.md)).
 | `17_two_parts` | `Part 1: 24000` / `Part 2: 45000` | **`Part` blocks** — two answers from one parse |
 | `18_innate_domain` | `28` | **`Innate Domain`** — a Shikigami library, inlined and still fused |
 | `19_row_pairs` | `9` | **a `Using:` written as a pipeline** — a whole sub-pipeline where a lambda would go |
+| `20_stage_locals` | `3` | **`Consider … As` / `… Of`** — stage-local values, including one a lambda could not reach |
 
 Things to try with any of them:
 

@@ -25,14 +25,59 @@ domain expansion: optimize <file>         optimization report; rewrites the sour
 domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
 domain expansion: visualize <file>        step through a run in a terminal UI (see below)
 domain expansion: documentation [-p PORT] serve this documentation as a local website (default port 4444)
+domain expansion: vscode [--dir PATH]     install the VS Code extension carried in this binary
 ```
 
-`documentation` is the one expansion command that takes no program file: it
-serves the browsable documentation site (this reference, rendered with search
-and cross-links) at `http://localhost:4444/` and opens it in your browser.
-The optional `-p`/`--port` picks a different port. The whole site is embedded
-in the `domain` binary, so it works from any install — including the NixOS
-package — with no source checkout present. Press Ctrl+C to stop the server.
+`documentation` and `vscode` are the two expansion commands that take no
+program file — they hand you something the binary carries rather than
+analyzing something you wrote.
+
+`documentation` serves the browsable documentation site (this reference,
+rendered with search and cross-links) at `http://localhost:4444/` and opens it
+in your browser. The optional `-p`/`--port` picks a different port. The whole
+site is embedded in the `domain` binary, so it works from any install —
+including the NixOS package — with no source checkout present. Press Ctrl+C to
+stop the server.
+
+### `domain expansion: vscode`
+
+Installs the VS Code extension — syntax highlighting plus the language-server
+client for `domain lsp` — into your editor's extensions directory:
+
+```sh
+domain expansion: vscode                 # into the first editor found
+domain expansion: vscode --list-targets  # show the candidates, install nothing
+domain expansion: vscode --insiders      # into VS Code Insiders
+domain expansion: vscode --dir PATH      # into a directory you name
+domain expansion: vscode --force         # reinstall over the same version
+```
+
+| Flag | Effect |
+|---|---|
+| `--list-targets` | list every extensions directory the installer knows, marking the ones that exist, and stop |
+| `--insiders` | install into the VS Code Insiders layout |
+| `--dir PATH` | install into the extensions directory you name (mutually exclusive with `--insiders`) |
+| `--force` | reinstall when the same version is already there |
+
+The extension is embedded in the binary and installed as an **unpacked
+folder**, which is a first-class way for VS Code to load one — so there is no
+`.vsix`, no marketplace, and no network involved. Candidate directories, in
+order: VS Code, VS Code Insiders, a remote/WSL `~/.vscode-server`, VS Codium,
+Cursor, Windsurf. The first that exists wins; if none does, VS Code's own is
+created, since the editor reads that directory at startup whether or not it is
+there now.
+
+Running it again after upgrading the binary **upgrades in place**. Running it
+against the version already installed reports that and changes nothing, so a
+local edit is never silently discarded; `--force` is the way through.
+
+Two things it deliberately does not do. It does not put the `domain` binary on
+your `PATH` — the extension runs `domain lsp` for diagnostics and types, so
+either `domain` is findable or `domain.server.path` names it, and the installer
+prints the path of the binary you ran. And it does not fetch the language
+client's npm dependency (`vscode-languageclient`), which needs npm: highlighting
+works without it, the server features wait for `npm install --omit=dev` in the
+installed folder. The installer prints that command with the path filled in.
 
 The rule of thumb: **a bare program file runs it; anything more builds it.**
 The explicit `run` subcommand exists because of that rule — it is the only
@@ -152,6 +197,7 @@ domain expansion: visualize day1.domain --input input.txt    # or say where it i
 domain expansion: visualize day1.domain --plain              # print the trace as text
 domain expansion: visualize life.domain --max-steps 200      # bound the capture
 domain expansion: visualize day1.domain --go                 # …and the Go it compiles to
+domain expansion: visualize day1.domain --expressions        # …and what each Using: computed
 ```
 
 | Flag | Effect |
@@ -161,6 +207,7 @@ domain expansion: visualize day1.domain --go                 # …and the Go it 
 | `--plain` | print the trace as text instead of opening the UI |
 | `--json` | print the recording as data (see [below](#--json)) |
 | `--go` | also print the Go the compiler backend emits (see [below](#the-code-screen-c)) |
+| `--expressions`, `--exprs` | also break every `Using:` expression down (see [below](#inside-an-expression-x)) |
 | `--expand-loops` | print every lap of a loop instead of folding them |
 | `--no-optimize` | record the naive pipeline |
 
@@ -241,6 +288,7 @@ legend wide enough to hold every key is the loudest thing on the screen.
 | `H` | jump to the hottest row — the one with the most self time |
 | `!` | jump to the next failing step, wrapping |
 | `/` | search: narrows the tree live as you type, `enter` accepts, `esc` clears |
+| `x` | the row's `Using:` expression, one parenthesis at a time |
 | `t` | the timing profile — call sites ranked by self time |
 | `s` | the program source, with each line's share of the run |
 | `e` | the optimizer's rewrites |
@@ -306,6 +354,101 @@ Split by ","                     956ns   1.8%
 ```
 
 `H` jumps the tree cursor to the row behind the top entry.
+
+### Inside an expression (`x`)
+
+Every other pane describes a *stage*: `Map Each` took 200 numbers and gave back
+200 numbers. The arithmetic in between — the `Using:` expression — is where the
+wrong number is actually made, and `x` opens it up. Every parenthesis is its own
+row, with the value it came to, nested the way the source nests:
+
+```
+expression
+every parenthesis, and what it came to
+
+  s = 4, r = 13
+
+  consider t as s - 1 - min(list(abs(s * s - r), …           2
+    s - 1 - min(list(abs(s * s - r), abs(s * s - s …         2
+      s - 1                                                  3
+      min(list(abs(s * s - r), abs(s * s - s - r), …         1
+        list(abs(s * s - r), abs(s * s - s - r), a…          [3, 1, 5, 9]
+          abs(s * s - r)                                     3
+            s * s - r                                        3
+              s * s                                          16
+    if r = s * s then s - 1 else t                           2
+      r = s * s                                              false
+```
+
+Three things about what is and is not there:
+
+- **The rows are what ran, not what was written.** An `if` shows only the arm
+  it took and a short-circuited `and`/`or` only the operand it needed — which
+  is frequently the answer on its own.
+- **Literals and bare names get no row.** `4` coming to `4` is noise, and what
+  a parameter is bound to is the line above the rows.
+- **One application is shown.** A lambda applied to every element of a list ran
+  hundreds of times; the pane replays the first and says how many there were.
+  A `Using:` written as an indented pipeline has no expression to break down,
+  and says so — its stages are already rows of the tree.
+
+The values are **recomputed on demand**, not recorded: the expression layer is
+pure, so the recording keeps only the arguments of each step's first
+application (`interp.Application`) and replays it when asked
+(`eval.TraceLambda`). That is what makes this detail free in a run nobody opens
+the pane for.
+
+`--expressions` prints the same breakdown for every stage that ran one, without
+opening the UI, and adds an `expressions` array to `--json`.
+
+#### Inside a foreign block
+
+A [foreign block](primitives.md#foreign-block--t---text-or-a-declared-in---out)
+has no expression — its inside is another language's program — but `x` asks the
+same question of it, and answers with what there is:
+
+```
+python block
+the program, and the bytes that crossed to and from it
+
+ran    /usr/local/bin/python3 program.py
+took   12.7ms
+
+source
+  import sys
+  for line in sys.stdin:
+      print(int(line) + 1)
+
+stdin · 6 bytes
+  1
+  2
+  3
+
+stdout · 6 bytes
+  2
+  3
+  4
+```
+
+The bytes are the ones that actually crossed, not a rendering of the Domain
+value on either side, because a foreign stage is the one place a value stops
+being a value and becomes bytes — and that is where its mistakes are. A
+trailing newline that was or was not there, a grid whose rows were not what the
+block expected, an empty list that arrived as no input at all: none of those are
+visible from the values, and all of them are visible here. Trailing whitespace
+is shown as `·` and a stream with no final newline says so, for the same reason.
+
+A block that failed keeps its `stderr` too — the traceback or compile error is
+in the step's own error, and the input that provoked it is here.
+
+Unlike an expression breakdown this is **recorded, not replayed**: a subprocess
+is not a pure expression, so re-running one to recover its detail later is not
+free of consequence and is not done. The capture is bounded — 4 KiB per stream,
+1 MiB across a recording — and a stream past the budget says it was dropped
+rather than reading as empty.
+
+`--expressions` prints the same under a `foreign blocks:` heading, and `--json`
+carries it as a `foreign` array (always, since it cannot be recovered later).
 
 ### The source pane (`s`)
 

@@ -1,0 +1,29 @@
+# Local bindings: naming a value for one stage's expressions.
+#
+# The lambda below needs the mean of the whole list, which no lambda can reach
+# on its own — it sees one element at a time. `Consider mean Of …` computes it
+# once from the value entering the stage and binds it by name for every
+# expression on that stage.
+#
+# The preposition says where a binding's value comes from, and it has to: a
+# 1-parameter lambda already means two different things in Domain depending on
+# where it is written (per element in a `Using:`, once over the current value
+# in a measured argument like `Size:`), and a binding has no slot to say which.
+# So `As` never sees the pipeline value — it binds a constant or a function —
+# and `Of` always does.
+#
+# The two `As` bindings cost nothing at all: `tolerance` folds into the lambda
+# as a literal and `spread` is inlined at its call site, so both are gone
+# before either backend sees the program.
+#
+#   domain examples/20_stage_locals.domain
+#   Expected output: 3
+Cursed Energy: 20_stage_locals.input
+Shikigami: Lines
+Channeled Energy: Convert List to Integers
+Maximum Technique: Count Matching
+    Consider tolerance As 5
+    Consider spread As (a, b) -> a - b
+    Consider mean Of (xs) -> sum(xs) / length(xs)
+    Using: (x) -> spread(x, mean) > tolerance
+Reveal: stdout

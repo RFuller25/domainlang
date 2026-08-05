@@ -22,6 +22,13 @@ const (
 	FLOAT  // decimal literal: 3.25 (digits '.' digits)
 	STRING // double-quoted string with escapes interpreted
 
+	// RAW is an indented block of foreign-language source captured verbatim —
+	// the body of `Domain Expansion: Python` and its siblings. It is the one
+	// token that spans several lines, and the one whose text the lexer does not
+	// interpret at all: no keywords, no comments, no escapes, no layout. Its
+	// Literal is the block dedented to column zero (see lexer.rawBlock).
+	RAW
+
 	// Punctuation / operators
 	COLON  // :
 	COMMA  // ,
@@ -63,6 +70,7 @@ var kindNames = [...]string{
 	INT:     "INT",
 	FLOAT:   "FLOAT",
 	STRING:  "STRING",
+	RAW:     "RAW",
 	COLON:   "COLON",
 	COMMA:   "COMMA",
 	DOT:     "DOT",

@@ -7,6 +7,13 @@ to the `codegen` package, which emits one fully typed, self-contained Go
 `go build -trimpath -ldflags "-s -w"` (CGO disabled). The result is a
 static binary around 1.5 MB that needs nothing at runtime.
 
+The one exception is a [foreign block](primitives.md#foreign-block--t---text-or-a-declared-in---out). Its
+source is embedded as a string constant and run as a subprocess exactly as the
+interpreter runs it, so a binary containing one needs that language's runtime
+— `python3`, the Go toolchain, `rask`, `crust` — on the machine it runs on.
+Everything else about the binary is unchanged, including the parity oracle:
+the compiled program's stdout matches the interpreter's byte for byte.
+
 Because algorithm selection already happened in the optimizer, a compiled
 program contains the quickselect and the hash-set scan, not the requested
 quicksort or pair loop — the thesis survives compilation intact.

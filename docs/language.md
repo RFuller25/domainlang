@@ -2,6 +2,11 @@
 
 ## Source format
 
+- **Foreign blocks are the one exception to everything below.** The body of
+  `Domain Expansion: Python` (or `Go`/`rask`/`cRust`) is source in that
+  language, captured verbatim: its own comment character, its own brackets,
+  tabs if it wants them. See
+  [primitives.md](primitives.md#foreign-block--t---text-or-a-declared-in---out).
 - **Significant indentation, spaces only.** A tab anywhere in indentation is a
   lex error. Indented lines form a block belonging to the statement above.
 - **One pipeline statement per line**, `Keyword: operation phrase` — or just
@@ -39,6 +44,7 @@ mistyped pipeline fails with a positioned error, never mid-run.
 | `Simple Domain:` | control flow (loops) |
 | `Channel "name":` | a named sub-pipeline branching from the current value |
 | an indented body under a `Using:`-taking stage | a sub-pipeline standing in for the lambda ([expressions.md](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)) |
+| `Consider name As …` / `Consider name Of …` (keyword required) | a local binding for the stage's expressions ([expressions.md](expressions.md#stage-bindings--consider--as--consider--of)) |
 | `Part "label":` | a labelled output block branching from the current value |
 | `Shikigami "name" (params) : In -> Out` / `Shikigami: Name` | user-defined operation definition / call |
 | `Binding Vow:` | debug-time assertion over the current value |
@@ -137,6 +143,49 @@ accepts is listed in [primitives.md](primitives.md); common ones:
 
 An argument no primitive on that line reads is silently ignored, so the
 linter reports it (see [diagnostics.md](diagnostics.md#the-linter)).
+
+### Local bindings
+
+The same block may hold `Consider NAME As …` and `Consider NAME Of …` lines,
+which name a value the stage's expressions can use instead of repeating it:
+
+```domain
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Cursed Technique: Filter
+    Consider mean Of (xs) -> sum(xs) / length(xs)
+    Using: (x) -> x > mean
+Reveal: stdout
+```
+
+They are their own line kind rather than arguments, because an argument's name
+is vocabulary (`Mode:`, `Using:`) and a binding's name is yours — keeping them
+apart is what lets a misspelled `Usng:` still be reported as a misspelled
+argument instead of quietly becoming a local nobody reads.
+
+`As` binds an expression or a function and never sees the pipeline value; `Of`
+binds the result of applying an operation, a lambda, or a whole sub-pipeline to
+it. A binding is in scope for every lambda on its statement and for the
+statements nested under it. The full rules are in
+[expressions.md](expressions.md#stage-bindings--consider--as--consider--of).
+
+An argument's value may run past its line. A newline inside a parenthesis is
+whitespace, and lines indented under the argument continue it — which is how a
+lambda body long enough to think about gets written down the page instead of
+across it:
+
+```domain
+Cursed Technique: Apply
+    Using: (v) ->
+        consider d as abs(v - 10)
+        in if d > 3
+            then d * 2
+            else d
+```
+
+Neither form changes anything but the line breaks; see
+[expressions.md](expressions.md#writing-an-expression-across-lines).
 
 ### Measured arguments
 

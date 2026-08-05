@@ -17,6 +17,7 @@ import (
 	"domain/ast"
 	"domain/ir"
 	"domain/token"
+	"domain/typecheck"
 )
 
 // Primitive is one entry of the vocabulary.
@@ -29,6 +30,24 @@ type Primitive struct {
 	// receives the operation phrase, the statement's named arguments (Using:,
 	// Mode:, Seed:, ...), the current pipeline type, and a position.
 	Build func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error)
+	// Phrases are the operation phrases that name this primitive, for the tools
+	// that need a spelling a user could actually write: the cross-keyword
+	// ambiguity check, the linter's "did you mean", the language server's
+	// completion. Like argNames it is documentation rather than dispatch —
+	// Match decides what resolves — and it is empty for almost every
+	// primitive, whose ID *is* the phrase you write. It is set only where the
+	// two genuinely differ, as they do for a foreign block, whose ID names the
+	// construct while its phrases are the four languages.
+	Phrases []string
+}
+
+// Spellings returns the operation phrases that name p, which is its ID unless
+// the primitive says otherwise.
+func (p *Primitive) Spellings() []string {
+	if len(p.Phrases) > 0 {
+		return p.Phrases
+	}
+	return []string{p.ID}
 }
 
 // ArgSet provides typed lookup over a statement's named arguments, and over
@@ -45,11 +64,44 @@ type ArgSet struct {
 	block    []*ast.Statement
 	res      *resolver
 	blockUse *bool
+	// foreign is the statement's block of foreign-language source, if it has
+	// one, with the same "was it read?" flag the body carries and for the same
+	// reason: only one primitive in the registry takes one, and a statement
+	// that resolved to any other must not have its block quietly dropped.
+	foreign    *ast.ForeignBlock
+	foreignUse *bool
+	// locals rewrites each lambda as it is read, against the `Consider`
+	// bindings in scope: constants substituted, calls to function bindings
+	// inlined (prims/locals.go). It happens here rather than in each Build so
+	// that every primitive in the vocabulary gets bindings without knowing
+	// they exist — the same seam the indented-body form uses.
+	//
+	// The rewrite is memoized per argument because it must be *the same*
+	// lambda every time: a primitive that stores one in Meta and captures
+	// another in its Eval closure would otherwise have the optimizer simplify
+	// the copy the interpreter never runs.
+	rewritten map[*ast.Arg]*ast.Lambda
+	// rewriteErr carries a rewrite failure past Build, which has no way to
+	// report one: ArgSet.Lambda answers "is there a lambda?", not "was it
+	// well formed?". resolveOne checks it once Build has returned.
+	rewriteErr *error
 }
 
 // hasBlock reports whether an indented pipeline body is available to stand in
 // for a Using: lambda.
 func (a ArgSet) hasBlock() bool { return len(a.block) > 0 && a.res != nil }
+
+// ForeignBlock returns the statement's block of foreign-language source,
+// recording that a primitive asked for it.
+func (a ArgSet) ForeignBlock() (*ast.ForeignBlock, bool) {
+	if a.foreign == nil {
+		return nil, false
+	}
+	if a.foreignUse != nil {
+		*a.foreignUse = true
+	}
+	return a.foreign, true
+}
 
 // get finds a named argument and records that some primitive asked for it.
 // Every typed accessor goes through here, so "was this argument ever read?"
@@ -73,14 +125,72 @@ func (a ArgSet) Has(name string) bool {
 	return ok
 }
 
-// Lambda returns the lambda supplied for a named argument, if any.
+// Lambda returns the lambda supplied for a named argument, if any, rewritten
+// against the `Consider` bindings in scope (prims/locals.go). A statement with
+// no bindings gets back exactly the lambda the user wrote.
 func (a ArgSet) Lambda(name string) (*ast.Lambda, bool) {
-	if v, ok := a.get(name); ok {
-		if la, ok := v.(ast.LambdaArg); ok {
-			return la.Lambda, true
+	for _, arg := range a.args {
+		if arg.Name != name {
+			continue
 		}
+		arg.Used = true
+		la, ok := arg.Value.(ast.LambdaArg)
+		if !ok {
+			return nil, false
+		}
+		return a.bindLambda(arg, la.Lambda), true
 	}
 	return nil, false
+}
+
+// bindLambda rewrites one argument's lambda once and remembers the result.
+func (a ArgSet) bindLambda(arg *ast.Arg, lam *ast.Lambda) *ast.Lambda {
+	if a.res == nil || len(a.res.locals) == 0 {
+		return lam
+	}
+	if done, ok := a.rewritten[arg]; ok {
+		return done
+	}
+	out, err := a.res.rewriteLambda(lam)
+	if err != nil {
+		if a.rewriteErr != nil && *a.rewriteErr == nil {
+			*a.rewriteErr = err
+		}
+		out = lam
+	}
+	if a.rewritten != nil {
+		a.rewritten[arg] = out
+	}
+	return out
+}
+
+// argSet builds the ArgSet for a statement, with the binding scope and the
+// indented body wired in. Every path that resolves a statement's arguments
+// goes through here, so no primitive can be reached with bindings missing
+// from its lambdas.
+func (r *resolver) argSet(stmt *ast.Statement, blockUse, foreignUse *bool, rewriteErr *error) ArgSet {
+	a := ArgSet{
+		args:       stmt.Args,
+		res:        r,
+		rewritten:  map[*ast.Arg]*ast.Lambda{},
+		rewriteErr: rewriteErr,
+		blockUse:   blockUse,
+		foreignUse: foreignUse,
+	}
+	if blockUse != nil {
+		a.block = stmt.Block
+	}
+	if foreignUse != nil {
+		a.foreign = stmt.Foreign
+	}
+	return a
+}
+
+// args is argSet for the callers that only read named arguments — a loop's
+// count, a channel consumer's lambda — and never take an indented body or a
+// foreign block, because the statement's own block means something else there.
+func (r *resolver) args(stmt *ast.Statement, rewriteErr *error) ArgSet {
+	return r.argSet(stmt, nil, nil, rewriteErr)
 }
 
 // Int returns an integer named argument, if present and integer-typed.
@@ -241,6 +351,10 @@ var Registry = []*Primitive{
 	permutations,
 	subsets,
 	explore,
+	// Before the grid searches and Sort: a foreign block's phrase is a bare
+	// language name, which no other matcher accepts, but the registry is
+	// ordered specific-first and this is as specific as a matcher gets.
+	foreignPrim,
 	bfs,
 	dijkstra,
 	floodFill,
@@ -271,8 +385,13 @@ func (e *ResolveError) Error() string {
 // resolver carries the channel type environment and the Shikigami registry
 // while lowering a program.
 type resolver struct {
-	channels   map[string]*ir.Type
-	parts      map[string]bool // Part labels already defined, to catch duplicates
+	channels map[string]*ir.Type
+	parts    map[string]bool // Part labels already defined, to catch duplicates
+	// locals is the stack of `Consider x As/Of …` bindings in scope, innermost
+	// last (prims/locals.go). It is a stack rather than a map because bindings
+	// shadow: an inner block may rebind a name the outer one is still using
+	// after it.
+	locals     []localBind
 	shikigamis map[string]*ast.ShikigamiDef
 	// origins says where each Shikigami came from — the embedded prelude, an
 	// imported library, or the user's own file. token.Position carries no file,
@@ -309,6 +428,12 @@ func Resolve(prog *ast.Program) (*ir.Pipeline, error) {
 // Definitions are registered weakest-first — prelude, then imports in load
 // order, then the program's own — so each layer shadows the one beneath it.
 func ResolveWith(prog *ast.Program, opts ResolveOptions) (*ir.Pipeline, error) {
+	// Resolution is a fresh start. A program that failed part-way through a
+	// binding's scope left its types on typecheck's stack, and the REPL, the
+	// language server and the diagnostics engine all resolve again in the same
+	// process — where a leaked binding would resolve a name the new program
+	// never bound.
+	typecheck.ResetBindings()
 	r := &resolver{
 		channels:   map[string]*ir.Type{},
 		parts:      map[string]bool{},
@@ -401,68 +526,107 @@ func (r *resolver) resolveSequence(stmts []*ast.Statement, in *ir.Type, sc scope
 	var nodes []*ir.Node
 	cur := in
 	for _, stmt := range stmts {
-		switch {
-		case stmt.Keyword == "Shikigami":
-			subNodes, outType, err := r.resolveShikigamiCall(stmt, cur)
-			if err != nil {
-				return nodes, nil, err
-			}
-			nodes = append(nodes, subNodes...) // inline the body
-			cur = outType
-		case stmt.Keyword == "Simple Domain":
-			node, err := r.resolveLoop(stmt, cur)
-			if err != nil {
-				return nodes, nil, err
-			}
-			nodes = append(nodes, node)
-			cur = node.Out
-		case stmt.Keyword == "Channel":
-			if sc == scopePart {
-				return nodes, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "Channels cannot be defined inside a Part; define them above the Parts and consume them with From:"}
-			}
-			if sc != scopeTop {
-				return nodes, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "Channels cannot be nested inside " + sc.describe()}
-			}
-			node, err := r.resolveChannel(stmt, cur)
-			if err != nil {
-				return nodes, nil, err
-			}
-			nodes = append(nodes, node) // a Channel does not change the current value
-		case stmt.Keyword == "Part":
-			if sc != scopeTop {
-				return nodes, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "Part blocks are only allowed at the top level"}
-			}
-			node, err := r.resolvePart(stmt, cur)
-			if err != nil {
-				return nodes, nil, err
-			}
-			nodes = append(nodes, node) // a Part does not change the current value
-		case hasFrom(stmt):
-			// A Channel body may consume channels declared *above* it: a name
-			// enters r.channels only once its own body has resolved, so a
-			// self- or forward-reference is already an unknown-channel error
-			// and declaration order gives the dependency DAG for free.
-			if sc == scopeNested {
-				return nodes, nil, &ResolveError{Pos: stmt.Pos,
-					Msg: "From: consumers are not allowed inside a loop, Shikigami, or Using: body"}
-			}
-			node, err := r.resolveConsumer(stmt, cur)
-			if err != nil {
-				return nodes, nil, err
-			}
-			nodes = append(nodes, node)
-			cur = node.Out
-		default:
-			node, err := r.resolveOne(stmt, cur)
-			if err != nil {
-				return nodes, nil, err
-			}
-			nodes = append(nodes, node)
-			cur = node.Out
+		stmtNodes, out, err := r.resolveStatement(stmt, cur, sc)
+		if err != nil {
+			// The partial pipeline rides along with the error; see below.
+			return nodes, nil, err
 		}
+		nodes = append(nodes, stmtNodes...)
+		cur = out
+	}
+	return nodes, cur, nil
+}
+
+// resolveStatement lowers one statement of a sequence, with its `Consider`
+// bindings in scope for everything it and its nested body contain. Bindings
+// whose values are only known at runtime put the statement's nodes inside a
+// Consider node, which is what computes them and takes them out of scope
+// again (see prims/locals.go).
+func (r *resolver) resolveStatement(stmt *ast.Statement, cur *ir.Type, sc scope) ([]*ir.Node, *ir.Type, error) {
+	if len(stmt.Binds) == 0 {
+		return r.resolveStatementBody(stmt, cur, sc)
+	}
+	rts, pop, err := r.pushBinds(stmt.Binds, cur)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer pop()
+
+	nodes, out, err := r.resolveStatementBody(stmt, cur, sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(rts) == 0 {
+		return nodes, out, nil
+	}
+	return []*ir.Node{bindNode(rts, nodes, cur, out, stmt.Pos)}, out, nil
+}
+
+// resolveStatementBody is resolveStatement without the binding scope: the
+// statement kinds themselves.
+func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc scope) ([]*ir.Node, *ir.Type, error) {
+	var nodes []*ir.Node
+	switch {
+	case stmt.Keyword == "Shikigami":
+		subNodes, outType, err := r.resolveShikigamiCall(stmt, cur)
+		if err != nil {
+			return nodes, nil, err
+		}
+		nodes = append(nodes, subNodes...) // inline the body
+		cur = outType
+	case stmt.Keyword == "Simple Domain":
+		node, err := r.resolveLoop(stmt, cur)
+		if err != nil {
+			return nodes, nil, err
+		}
+		nodes = append(nodes, node)
+		cur = node.Out
+	case stmt.Keyword == "Channel":
+		if sc == scopePart {
+			return nodes, nil, &ResolveError{Pos: stmt.Pos,
+				Msg: "Channels cannot be defined inside a Part; define them above the Parts and consume them with From:"}
+		}
+		if sc != scopeTop {
+			return nodes, nil, &ResolveError{Pos: stmt.Pos,
+				Msg: "Channels cannot be nested inside " + sc.describe()}
+		}
+		node, err := r.resolveChannel(stmt, cur)
+		if err != nil {
+			return nodes, nil, err
+		}
+		nodes = append(nodes, node) // a Channel does not change the current value
+	case stmt.Keyword == "Part":
+		if sc != scopeTop {
+			return nodes, nil, &ResolveError{Pos: stmt.Pos,
+				Msg: "Part blocks are only allowed at the top level"}
+		}
+		node, err := r.resolvePart(stmt, cur)
+		if err != nil {
+			return nodes, nil, err
+		}
+		nodes = append(nodes, node) // a Part does not change the current value
+	case hasFrom(stmt):
+		// A Channel body may consume channels declared *above* it: a name
+		// enters r.channels only once its own body has resolved, so a
+		// self- or forward-reference is already an unknown-channel error
+		// and declaration order gives the dependency DAG for free.
+		if sc == scopeNested {
+			return nodes, nil, &ResolveError{Pos: stmt.Pos,
+				Msg: "From: consumers are not allowed inside a loop, Shikigami, or Using: body"}
+		}
+		node, err := r.resolveConsumer(stmt, cur)
+		if err != nil {
+			return nodes, nil, err
+		}
+		nodes = append(nodes, node)
+		cur = node.Out
+	default:
+		node, err := r.resolveOne(stmt, cur)
+		if err != nil {
+			return nodes, nil, err
+		}
+		nodes = append(nodes, node)
+		cur = node.Out
 	}
 	return nodes, cur, nil
 }
@@ -481,11 +645,23 @@ func (r *resolver) resolveOne(stmt *ast.Statement, cur *ir.Type) (*ir.Node, erro
 	// up as the Using: lambda (prims/block.go). Whether it was picked up is the
 	// primitive's answer to "do I take a lambda at all?", so no list of which
 	// primitives accept a body has to be maintained here — or kept in sync.
-	used := false
-	args := ArgSet{args: stmt.Args, block: stmt.Block, res: r, blockUse: &used}
+	used, foreignUsed := false, false
+	var rewriteErr error
+	args := r.argSet(stmt, &used, &foreignUsed, &rewriteErr)
 	node, err := prim.Build(stmt.Op, args, cur, stmt.Pos)
+	// A lambda that could not be rewritten against the bindings in scope is
+	// reported ahead of whatever Build made of it: the mangled lambda is the
+	// cause, and its message names the binding.
+	if rewriteErr != nil {
+		return nil, rewriteErr
+	}
 	if err != nil {
 		return nil, err
+	}
+	if stmt.Foreign != nil && !foreignUsed {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(
+			"%s does not take a block of %s code; only `Domain Expansion: %s` does",
+			prim.ID, stmt.Foreign.Language, stmt.Foreign.Language)}
 	}
 	if len(stmt.Block) > 0 && !used {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(

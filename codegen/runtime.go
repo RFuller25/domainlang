@@ -1186,3 +1186,663 @@ func (s *dmSet[T]) contains(v T) bool {
 	_, ok := s.has[v]
 	return ok
 }`
+
+// ---------------------------------------------------------------------------
+// v0.6 expression-layer builtins.
+//
+// The interpreter's implementations are eval/eval.go and eval/numbers.go, and
+// these must agree with them exactly — same results, same error wording, same
+// iteration order. Where a helper is an algorithm rather than a wrapper
+// (isprime, divisors, crt) the two are written the same way on purpose, so a
+// reader can put them side by side.
+// ---------------------------------------------------------------------------
+
+// The collection updates are functional: each returns a new value and leaves
+// its argument untouched, because a lambda may be applied to the same value
+// twice (the optimizer folds constants by doing exactly that). Every one sizes
+// its copy exactly, so building a map in a fold costs one allocation per step
+// rather than a growth sequence.
+
+const declMapClone = `func dmMapClone[K comparable, V any](m dmMap[K, V]) dmMap[K, V] {
+	out := dmMap[K, V]{keys: make([]K, len(m.keys)), vals: make(map[K]V, len(m.vals))}
+	copy(out.keys, m.keys)
+	for k, v := range m.vals {
+		out.vals[k] = v
+	}
+	return out
+}`
+
+const declMapWith = `func dmMapWith[K comparable, V any](m dmMap[K, V], k K, v V) dmMap[K, V] {
+	out := dmMapClone(m)
+	out.put(k, v)
+	return out
+}`
+
+const declMapWithout = `func dmMapWithout[K comparable, V any](m dmMap[K, V], k K) dmMap[K, V] {
+	if _, ok := m.vals[k]; !ok {
+		return dmMapClone(m)
+	}
+	out := dmMap[K, V]{keys: make([]K, 0, len(m.keys)-1), vals: make(map[K]V, len(m.vals)-1)}
+	for _, key := range m.keys {
+		if key != k {
+			out.keys = append(out.keys, key)
+			out.vals[key] = m.vals[key]
+		}
+	}
+	return out
+}`
+
+const declSetClone = `func dmSetClone[T comparable](s dmSet[T]) dmSet[T] {
+	out := dmSet[T]{elems: make([]T, len(s.elems)), has: make(map[T]struct{}, len(s.has))}
+	copy(out.elems, s.elems)
+	for k := range s.has {
+		out.has[k] = struct{}{}
+	}
+	return out
+}`
+
+const declSetWith = `func dmSetWith[T comparable](s dmSet[T], v T) dmSet[T] {
+	out := dmSetClone(s)
+	out.add(v)
+	return out
+}`
+
+const declSetWithout = `func dmSetWithout[T comparable](s dmSet[T], v T) dmSet[T] {
+	if _, ok := s.has[v]; !ok {
+		return dmSetClone(s)
+	}
+	out := dmSet[T]{elems: make([]T, 0, len(s.elems)-1), has: make(map[T]struct{}, len(s.has)-1)}
+	for _, e := range s.elems {
+		if e != v {
+			out.elems = append(out.elems, e)
+			out.has[e] = struct{}{}
+		}
+	}
+	return out
+}`
+
+const declToSet = `func dmToSet[T comparable](xs []T) dmSet[T] {
+	out := dmSet[T]{elems: make([]T, 0, len(xs)), has: make(map[T]struct{}, len(xs))}
+	for _, x := range xs {
+		out.add(x)
+	}
+	return out
+}`
+
+// a is already deduplicated, so only b's elements need the membership test.
+const declSetUnion = `func dmSetUnion[T comparable](a, b dmSet[T]) dmSet[T] {
+	out := dmSet[T]{elems: make([]T, len(a.elems), len(a.elems)+len(b.elems)),
+		has: make(map[T]struct{}, len(a.elems)+len(b.elems))}
+	copy(out.elems, a.elems)
+	for k := range a.has {
+		out.has[k] = struct{}{}
+	}
+	for _, e := range b.elems {
+		out.add(e)
+	}
+	return out
+}`
+
+const declSetIntersect = `func dmSetIntersect[T comparable](a, b dmSet[T]) dmSet[T] {
+	n := len(a.elems)
+	if len(b.elems) < n {
+		n = len(b.elems)
+	}
+	out := dmSet[T]{elems: make([]T, 0, n), has: make(map[T]struct{}, n)}
+	for _, e := range a.elems {
+		if _, ok := b.has[e]; ok {
+			out.add(e)
+		}
+	}
+	return out
+}`
+
+const declSetDiff = `func dmSetDiff[T comparable](a, b dmSet[T]) dmSet[T] {
+	out := dmSet[T]{elems: make([]T, 0, len(a.elems)), has: make(map[T]struct{}, len(a.elems))}
+	for _, e := range a.elems {
+		if _, ok := b.has[e]; !ok {
+			out.add(e)
+		}
+	}
+	return out
+}`
+
+const declGridWith = `func dmGridWith[T any](g dmGrid[T], r, c int64, v T) dmGrid[T] {
+	if r < 0 || r >= int64(g.rows) || c < 0 || c >= int64(g.cols) {
+		dmFail("setat: position (%d, %d) out of range (grid %dx%d)", r, c, g.rows, g.cols)
+	}
+	out := dmGrid[T]{rows: g.rows, cols: g.cols, cells: make([]T, len(g.cells))}
+	copy(out.cells, g.cells)
+	out.cells[r*int64(g.cols)+c] = v
+	return out
+}`
+
+// dmRange is the half-open [lo, hi), matching the Range primitive. The count is
+// computed in uint64 so a range spanning zero reports its size instead of
+// overflowing to a negative count and silently building nothing.
+const declRange = `func dmRange(lo, hi int64) []int64 {
+	if hi <= lo {
+		return []int64{}
+	}
+	n := uint64(hi) - uint64(lo)
+	if n > 1<<40 {
+		dmFail("range: [%d, %d) has %d elements, which is more than can be built", lo, hi, n)
+	}
+	out := make([]int64, n)
+	for i := range out {
+		out[i] = lo + int64(i)
+	}
+	return out
+}`
+
+// Total, like take and drop: a negative count is the empty list.
+const declFill = `func dmFill[T any](n int64, v T) []T {
+	if n <= 0 {
+		return []T{}
+	}
+	if n > 1<<40 {
+		dmFail("fill: %d elements is more than can be built", n)
+	}
+	out := make([]T, n)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}`
+
+const declOrd = `func dmOrd(s string) int64 {
+	if s == "" {
+		dmFail("ord of the empty text is undefined")
+	}
+	r, _ := utf8.DecodeRuneInString(s)
+	return int64(r)
+}`
+
+const declChr = `func dmChr(n int64) string {
+	if n < 0 || n > 0x10FFFF || (n >= 0xD800 && n <= 0xDFFF) {
+		dmFail("chr: %d is not a character code", n)
+	}
+	return string(rune(n))
+}`
+
+const declRepeatText = `func dmRepeatText(s string, n int64) string {
+	if n <= 0 || s == "" {
+		return ""
+	}
+	if n > (1<<40)/int64(len(s)) {
+		dmFail("repeat: %d copies of a %d-byte text is more than can be built", n, len(s))
+	}
+	return strings.Repeat(s, int(n))
+}`
+
+// Padding counts runes, not bytes, because every other text position in the
+// language does — padding by bytes would disagree with length on exactly the
+// input that makes padding worth doing.
+const declPadText = `func dmPadText(s string, width int64, pad string, left bool) string {
+	if pad == "" || width <= 0 {
+		return s
+	}
+	have := int64(0)
+	for range s {
+		have++
+	}
+	if have >= width {
+		return s
+	}
+	need := int(width - have)
+	padRunes := []rune(pad)
+	fill := make([]rune, need)
+	for i := range fill {
+		fill[i] = padRunes[i%len(padRunes)]
+	}
+	filled := string(fill)
+	var b strings.Builder
+	b.Grow(len(s) + len(filled))
+	if left {
+		b.WriteString(filled)
+		b.WriteString(s)
+	} else {
+		b.WriteString(s)
+		b.WriteString(filled)
+	}
+	return b.String()
+}`
+
+// The empty text is false for all four: "every rune is a digit" is vacuously
+// true of it, which is never what a guard means. isupper/islower ask about the
+// cased runes, so "A1" is upper and "1" is neither.
+const declClassify = `func dmIsDigit(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func dmUpperRune(r rune) bool {
+	if r < 128 {
+		return r >= 'A' && r <= 'Z'
+	}
+	return r != []rune(strings.ToLower(string(r)))[0]
+}
+
+func dmLowerRune(r rune) bool {
+	if r < 128 {
+		return r >= 'a' && r <= 'z'
+	}
+	return r != []rune(strings.ToUpper(string(r)))[0]
+}
+
+func dmIsAlpha(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		ascii := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+		if !ascii && !(r > 127 && (dmUpperRune(r) || dmLowerRune(r))) {
+			return false
+		}
+	}
+	return true
+}
+
+func dmIsUpper(s string) bool {
+	if s == "" {
+		return false
+	}
+	cased := false
+	for _, r := range s {
+		if dmLowerRune(r) {
+			return false
+		}
+		cased = cased || dmUpperRune(r)
+	}
+	return cased
+}
+
+func dmIsLower(s string) bool {
+	if s == "" {
+		return false
+	}
+	cased := false
+	for _, r := range s {
+		if dmUpperRune(r) {
+			return false
+		}
+		cased = cased || dmLowerRune(r)
+	}
+	return cased
+}`
+
+// Domain has no infinity or NaN — there is no way to write one and no way to
+// print one usefully — so a computation that leaves the reals fails where it
+// happens rather than poisoning a value three stages later.
+const declFloat1 = `func dmFloat1(name string, f float64) float64 {
+	var r float64
+	switch name {
+	case "log", "log2", "log10":
+		if f <= 0 {
+			dmFail("%s of a non-positive number (%s)", name, strconv.FormatFloat(f, 'g', -1, 64))
+		}
+		switch name {
+		case "log":
+			r = math.Log(f)
+		case "log2":
+			r = math.Log2(f)
+		default:
+			r = math.Log10(f)
+		}
+	case "exp":
+		r = math.Exp(f)
+	case "sin":
+		r = math.Sin(f)
+	case "cos":
+		r = math.Cos(f)
+	case "tan":
+		r = math.Tan(f)
+	}
+	if math.IsInf(r, 0) || math.IsNaN(r) {
+		dmFail("%s(%s) has no finite value", name, strconv.FormatFloat(f, 'g', -1, 64))
+	}
+	return r
+}`
+
+const declParseBase = `func dmParseBase(name, s string, base int64) int64 {
+	if base < 2 || base > 36 {
+		dmFail("frombase: base must be between 2 and 36, got %d", base)
+	}
+	t := strings.TrimSpace(s)
+	if name == "fromhex" {
+		if rest, ok := strings.CutPrefix(t, "0x"); ok {
+			t = rest
+		} else if rest, ok := strings.CutPrefix(t, "0X"); ok {
+			t = rest
+		}
+	}
+	n, err := strconv.ParseInt(t, int(base), 64)
+	if err != nil {
+		dmFail("%s: %q is not a base-%d number", name, s, base)
+	}
+	return n
+}`
+
+const declToBase = `func dmToBase(n, base int64) string {
+	if base < 2 || base > 36 {
+		dmFail("tobase: base must be between 2 and 36, got %d", base)
+	}
+	return strconv.FormatInt(n, int(base))
+}`
+
+// The digit count is computed first so the slice is allocated once and filled
+// from the back — the obvious "append then reverse" does the same work twice.
+const declDigits = `func dmDigits(n int64) []int64 {
+	if n == 0 {
+		return []int64{0}
+	}
+	u := uint64(n)
+	if n < 0 {
+		u = -u
+	}
+	count := 0
+	for v := u; v > 0; v /= 10 {
+		count++
+	}
+	out := make([]int64, count)
+	for i := count - 1; i >= 0; i-- {
+		out[i] = int64(u % 10)
+		u /= 10
+	}
+	return out
+}`
+
+const declFromDigits = `func dmFromDigits(ds []int64) int64 {
+	var n int64
+	for i, d := range ds {
+		if d < 0 || d > 9 {
+			dmFail("fromdigits: element %d is %d, not a decimal digit", i, d)
+		}
+		if n > (math.MaxInt64-d)/10 {
+			dmFail("fromdigits: %d digits overflow Int", len(ds))
+		}
+		n = n*10 + d
+	}
+	return n
+}`
+
+// dmMulMod computes a*b mod m through the 128-bit product: Miller-Rabin on
+// int64-sized inputs is impossible without it, since the naive product
+// overflows for any modulus past 2^32.
+const declModArith = `func dmMulMod(a, b, m uint64) uint64 {
+	hi, lo := bits.Mul64(a, b)
+	_, r := bits.Div64(hi%m, lo, m)
+	return r
+}
+
+func dmPowMod(b, e, m uint64) uint64 {
+	r := uint64(1) % m
+	b %= m
+	for e > 0 {
+		if e&1 == 1 {
+			r = dmMulMod(r, b, m)
+		}
+		b = dmMulMod(b, b, m)
+		e >>= 1
+	}
+	return r
+}`
+
+// The first twelve primes make the test deterministic past 3.3e24, so isprime
+// is exact for every Int rather than probabilistic — and O(log^3 n) rather than
+// the three billion divisions a trial division would take on a 19-digit input.
+const declIsPrime = `var dmMRBases = [...]uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37}
+
+func dmIsPrime(n int64) bool {
+	if n < 2 {
+		return false
+	}
+	u := uint64(n)
+	for _, p := range dmMRBases {
+		if u == p {
+			return true
+		}
+		if u%p == 0 {
+			return false
+		}
+	}
+	d := u - 1
+	s := bits.TrailingZeros64(d)
+	d >>= uint(s)
+	for _, a := range dmMRBases {
+		x := dmPowMod(a, d, u)
+		if x == 1 || x == u-1 {
+			continue
+		}
+		composite := true
+		for range s - 1 {
+			x = dmMulMod(x, x, u)
+			if x == u-1 {
+				composite = false
+				break
+			}
+		}
+		if composite {
+			return false
+		}
+	}
+	return true
+}`
+
+// One pass to sqrt(n): the small half of each divisor pair lands in order and
+// the large half in reverse, so appending the second backwards yields a sorted
+// result with no sort at all.
+const declDivisors = `func dmDivisors(n int64) []int64 {
+	if n <= 0 {
+		dmFail("divisors: needs a positive number, got %d", n)
+	}
+	var small, large []int64
+	for d := int64(1); d <= n/d; d++ {
+		if n%d != 0 {
+			continue
+		}
+		small = append(small, d)
+		if q := n / d; q != d {
+			large = append(large, q)
+		}
+	}
+	out := make([]int64, 0, len(small)+len(large))
+	out = append(out, small...)
+	for i := len(large) - 1; i >= 0; i-- {
+		out = append(out, large[i])
+	}
+	return out
+}`
+
+// The moduli need not be coprime: each pair is checked for agreement modulo
+// their gcd and merged on their lcm, which is what makes crt usable on a system
+// read out of a puzzle rather than one constructed to be coprime.
+const declCRT = `func dmExtGCD(a, b int64) (int64, int64, int64) {
+	if b == 0 {
+		return a, 1, 0
+	}
+	g, x1, y1 := dmExtGCD(b, a%b)
+	return g, y1, x1 - (a/b)*y1
+}
+
+func dmMulChecked(a, b int64) int64 {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	p := a * b
+	if p/b != a {
+		dmFail("crt: the combined modulus overflows Int")
+	}
+	return p
+}
+
+func dmCRT(rs, ms []int64) int64 {
+	if len(rs) != len(ms) {
+		dmFail("crt: %d residues but %d moduli", len(rs), len(ms))
+	}
+	if len(rs) == 0 {
+		dmFail("crt: needs at least one congruence")
+	}
+	var r, m int64 = 0, 1
+	for i := range rs {
+		if ms[i] <= 0 {
+			dmFail("crt: modulus %d must be positive, got %d", i, ms[i])
+		}
+		r2, m2 := ((rs[i]%ms[i])+ms[i])%ms[i], ms[i]
+		g, p, _ := dmExtGCD(m, m2)
+		diff := r2 - r
+		if diff%g != 0 {
+			dmFail("crt: no solution — %d (mod %d) and %d (mod %d) disagree", r, m, r2, m2)
+		}
+		lcm := dmMulChecked(m, m2/g)
+		unit := m2 / g
+		step := int64(dmMulMod(uint64(((diff/g)%unit+unit)%unit), uint64(((p%unit)+unit)%unit), uint64(unit)))
+		r = r + dmMulChecked(step, m)
+		r = ((r % lcm) + lcm) % lcm
+		m = lcm
+	}
+	return r
+}`
+
+const declTestBit = `func dmTestBit(n, i int64) bool {
+	if i < 0 || i > 63 {
+		dmFail("testbit: bit %d is outside an Int (0 to 63)", i)
+	}
+	return n&(1<<uint(i)) != 0
+}`
+
+// The foreign-block runtime. It mirrors prims/foreign.go: same wire format,
+// same runner resolution, same wording on failure — the differential tests
+// require a foreign program to print the same bytes under `domain run` and as
+// a compiled binary, and these are the two halves that have to agree.
+
+const declForeignLine = `func dmForeignLine(s string) string {
+	if s == "" {
+		return ""
+	}
+	return s + "\n"
+}`
+
+const declForeignBody = `func dmForeignBody(out string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(out, "\n"), "\r")
+}`
+
+const declForeignLines = `func dmForeignLines(out string) []string {
+	body := dmForeignBody(out)
+	if body == "" {
+		return []string{}
+	}
+	lines := strings.Split(body, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimSuffix(l, "\r")
+	}
+	return lines
+}`
+
+const declForeignInt = `func dmForeignInt(s string) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		dmFail("the foreign block's output: expected an Int, got %q", s)
+	}
+	return n
+}`
+
+const declForeignFloat = `func dmForeignFloat(s string) float64 {
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		dmFail("the foreign block's output: expected a Float, got %q", s)
+	}
+	return f
+}`
+
+const declForeignBool = `func dmForeignBool(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	}
+	dmFail("the foreign block's output: expected a Bool (true/false), got %q", s)
+	return false
+}`
+
+// declForeignRun writes the block into a throwaway directory and runs it. The
+// temporary directory is removed on every path, including the failing ones —
+// dmFail exits the process, so a deferred cleanup would not run.
+const declForeignRun = `type dmForeignSpec struct {
+	Lang, File, Source, Env string
+	Cands, Tail             []string
+	AppendProg              bool
+	Extra                   map[string]string
+}
+
+func dmForeignRun(s dmForeignSpec, stdin string) string {
+	dir, err := os.MkdirTemp("", "domain-foreign-*")
+	if err != nil {
+		dmFail("%v", err)
+	}
+	fail := func(format string, args ...any) {
+		os.RemoveAll(dir)
+		dmFail(format, args...)
+	}
+	files := map[string]string{s.File: s.Source}
+	for name, content := range s.Extra {
+		files[name] = content
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			fail("%v", err)
+		}
+	}
+
+	var argv []string
+	if override := strings.TrimSpace(os.Getenv(s.Env)); override != "" {
+		argv = strings.Fields(override)
+	} else {
+		for _, c := range s.Cands {
+			if p, err := exec.LookPath(c); err == nil {
+				argv = []string{p}
+				break
+			}
+		}
+	}
+	if len(argv) == 0 {
+		fail("a %s block needs %s on PATH to run (set %s to name it differently)",
+			s.Lang, strings.Join(s.Cands, " or "), s.Env)
+	}
+	argv = append(argv, s.Tail...)
+	if s.AppendProg {
+		argv = append(argv, filepath.Join(dir, s.File))
+	}
+
+	var out, errBuf bytes.Buffer
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if runErr := cmd.Run(); runErr != nil {
+		msg := strings.TrimRight(errBuf.String(), "\n")
+		var exit *exec.ExitError
+		switch {
+		case !errors.As(runErr, &exit):
+			fail("could not run the %s block: %v", s.Lang, runErr)
+		case msg == "":
+			fail("the %s block exited with status %d and said nothing", s.Lang, exit.ExitCode())
+		default:
+			fail("the %s block failed with status %d\n%s", s.Lang, exit.ExitCode(), msg)
+		}
+	}
+	os.RemoveAll(dir)
+	if errBuf.Len() > 0 {
+		os.Stderr.Write(errBuf.Bytes())
+	}
+	return out.String()
+}`

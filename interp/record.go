@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"domain/ast"
 	"domain/ir"
 )
 
@@ -36,6 +37,14 @@ import (
 // DefaultMaxSteps is how many steps a recording keeps before it stops.
 const DefaultMaxSteps = 10000
 
+// defaultForeignBudget caps the total bytes spent on captured foreign streams.
+// A block inside a `Map Each` body runs once per element and each run may be
+// handed the whole input, so without a ceiling a recording of one could be
+// larger than the input several thousand times over. Past it the runs are still
+// recorded — what ran, how long it took — and only the streams are dropped,
+// which is the part a reader has already seen a representative sample of.
+const defaultForeignBudget = 1 << 20 // 1 MiB
+
 // defaultValueBudget caps the total bytes spent on full value renderings.
 const defaultValueBudget = 8 << 20 // 8 MiB
 
@@ -56,6 +65,47 @@ type Step struct {
 	SizeOK  bool
 	Err     error
 	Dur     time.Duration
+
+	// Apply is the step's first `Using:` application, when it made one. See
+	// Application.
+	Apply *Application
+
+	// Foreign is the step's first foreign block execution, when it made one.
+	// See ForeignExec.
+	Foreign *ForeignExec
+}
+
+// ForeignExec is one recorded execution of a foreign-language block, and how
+// many the step made in all.
+//
+// Only the first is kept, for the reason Application keeps only the first: a
+// block inside a `Map Each` body runs once per element, and a recording holding
+// every one of them would be the input again, several times over. Unlike an
+// application it cannot be replayed to recover the rest — a subprocess is not a
+// pure expression — so what is here is what was captured while it ran.
+type ForeignExec struct {
+	Run   ir.ForeignRun
+	Count int
+}
+
+// Application is one application of a `Using:` lambda: the expression, and what
+// it was applied to.
+//
+// It is the seed of the expression breakdown, not the breakdown itself. The
+// expression layer is pure, so (lambda, arguments) is enough to reproduce every
+// intermediate value on demand (eval.TraceLambda) — which means a recording can
+// stay this small and still answer, for any step, what its expression actually
+// computed.
+//
+// Only the first application a step made is kept, because that is the one a
+// reader can be shown: a `Map Each` over ten thousand elements applies its
+// lambda ten thousand times, and a recording holding all of them would be the
+// data, not a trace of it. Count says how many there were.
+type Application struct {
+	Lambda *ast.Lambda
+	Types  []*ir.Type
+	Args   []ir.Value
+	Count  int
 }
 
 // Recorded is one captured value: the renderings a reader shows, and the size
@@ -152,6 +202,7 @@ type Recorder struct {
 
 	maxSteps  int
 	budget    int
+	fgnBudget int
 	steps     int
 	truncated bool
 
@@ -159,6 +210,18 @@ type Recorder struct {
 	pending  []*TraceNode // top-level frames awaiting their enclosing step
 	orphans  *TraceNode   // the synthetic row for pending frames, built once
 	orphaned int          // how many frames the orphan row was last built for
+
+	// apply is the first lambda application seen since the last step reported,
+	// and applies how many there have been. A lambda runs inside a node's Eval,
+	// so the next step to report is the node that ran it.
+	apply   *Application
+	applies int
+	// foreign is the foreign block execution the step in progress made, and
+	// how many it made in total. Same shape as apply and for the same reason:
+	// a subprocess is run under a node's Eval, not beside it, so it is caught
+	// by a watcher and attached to whichever step reports next.
+	foreign  *ir.ForeignRun
+	foreigns int
 }
 
 // NewRecorder returns a recorder keeping at most maxSteps steps (0 means
@@ -167,7 +230,7 @@ func NewRecorder(maxSteps int) *Recorder {
 	if maxSteps <= 0 {
 		maxSteps = DefaultMaxSteps
 	}
-	return &Recorder{maxSteps: maxSteps, budget: defaultValueBudget}
+	return &Recorder{maxSteps: maxSteps, budget: defaultValueBudget, fgnBudget: defaultForeignBudget}
 }
 
 // Step records one node evaluation.
@@ -193,6 +256,18 @@ func (r *Recorder) Step(e ir.StepEvent) {
 		Err:     e.Err,
 		Dur:     e.Dur,
 	}
+	// Whatever lambda applications have happened since the last step were run
+	// by this node's Eval, so they belong to this step — and are cleared either
+	// way, so a step that ran no lambda never inherits an earlier one's.
+	if r.apply != nil {
+		r.apply.Count = r.applies
+		st.Apply = r.apply
+	}
+	r.apply, r.applies = nil, 0
+	if r.foreign != nil {
+		st.Foreign = &ForeignExec{Run: *r.foreign, Count: r.foreigns}
+	}
+	r.foreign, r.foreigns = nil, 0
 
 	// A step owns whatever frames were opened during its Eval, at whatever
 	// level it reported on: a loop nested inside another loop's body opened its
@@ -307,6 +382,44 @@ func (r *Recorder) capture(v ir.Value) Recorded {
 	rec.Full, rec.FullOK = full, true
 	r.budget -= len(full)
 	return rec
+}
+
+// Applied records one `Using:` application. It has the signature of
+// eval.Applied, so a caller that wants expression detail in its recording wires
+// the two together (eval.WatchApplications) and needs to know nothing else.
+//
+// The lambda layer sits below the trace hook — a `Using:` is applied inside a
+// primitive, where no node evaluation reports — so this is the only way the
+// recorder can learn an expression ran at all.
+func (r *Recorder) Applied(l *ast.Lambda, types []*ir.Type, args []ir.Value) {
+	r.applies++
+	// Only the first is kept (see Application), and past the step cap the
+	// recording has stopped storing: a loop that runs a lambda a million more
+	// times must not grow it.
+	if r.apply != nil || r.steps >= r.maxSteps {
+		return
+	}
+	// Kept as given: eval hands over copies (see eval.Applied).
+	r.apply = &Application{Lambda: l, Types: types, Args: args}
+}
+
+// ForeignRan records a foreign block execution. It is prims.ForeignWatcher,
+// structurally — interp does not import prims, exactly as it does not import
+// eval for Applied; the caller wires the two together.
+func (r *Recorder) ForeignRan(run ir.ForeignRun) {
+	r.foreigns++
+	if r.foreign != nil || r.steps >= r.maxSteps {
+		return
+	}
+	// The streams are the expensive part and the first to go; the run itself
+	// still gets recorded, so a reader past the budget is told a block ran and
+	// what it cost rather than not told at all.
+	if cost := len(run.Stdin.Text) + len(run.Stdout.Text) + len(run.Stderr.Text); cost > r.fgnBudget {
+		run.Stdin.Text, run.Stdout.Text, run.Stderr.Text = "", "", ""
+	} else {
+		r.fgnBudget -= cost
+	}
+	r.foreign = &run
 }
 
 // PushFrame opens a frame. It is not attached anywhere yet: where it belongs

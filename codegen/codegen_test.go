@@ -1299,6 +1299,127 @@ Reveal: stdout
 `,
 			input: "1 2\n3 4",
 		},
+		// `Consider` bindings. A constant and a function binding are gone by
+		// the time the backend sees the program — folded into the lambda and
+		// inlined at their call sites — so what these pin is the third kind:
+		// a Consider node, its value compiled once per scope, read by name
+		// from inside the lambdas the scope covers.
+		{
+			name: "consider: an Of binding read by a lambda",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Filter
+    Consider mean Of (xs) -> sum(xs) / length(xs)
+    Using: (x) -> x > mean
+Reveal: stdout
+`,
+			input: "1\n2\n3\n4\n5",
+		},
+		{
+			name: "consider: an Of binding written as an operation",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Consider total Of Sum
+    Using: (x) -> x + total
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			name: "consider: an Of binding written as a sub-pipeline",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Consider scaled Of
+        Maximum Technique: Sum
+        Cursed Technique: Apply
+            Using: (s) -> s * 10
+    Using: (x) -> x + scaled
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			name: "consider: mixed kinds, and a binding of a binding",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: All Pairs
+    Mode: Count
+    Consider accum As 3
+    Consider double As (x) -> x * 2
+    Consider total Of Sum
+    Consider bar As total - accum
+    Using: (a, b) -> double(a) + b + accum > bar
+Reveal: stdout
+`,
+			input: "1\n2\n3\n4\n5",
+		},
+		{
+			name: "consider: a value with no literal form",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Consider ds As list(10, 20, 30)
+    Using: (x) -> x + item(ds, 1)
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			// The binding is a local of main; the body compiles to a top-level
+			// function, so it has to travel there as a parameter.
+			name: "consider: a binding read from inside a Using: body",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Consider bump Of Sum
+    Cursed Technique: Apply
+        Using: (x) -> x * 100 + bump
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			// Both rails at once: a For loop's ambient variable is positional,
+			// a binding is by name, and the lambda reads one of each.
+			name: "consider: a binding beside a For loop's ambient variable",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Channel "steps":
+    Cursed Technique: Apply
+        Using: (xs) -> list(1, 2)
+Simple Domain: For k in steps
+    Consider total Of Sum
+    Cursed Technique: Map Each
+        Using: (x, k) -> x + k * total
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			name: "consider: a binding inside a Shikigami body",
+			src: `Shikigami "Bumped" (k: Int) : List<Int> -> List<Int>
+    Consider bump Of Sum
+    Cursed Technique: Map Each
+        Using: (x) -> x + bump + k
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Shikigami: Bumped
+    k: 100
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
 	}
 	for _, p := range progs {
 		for _, optimize := range []bool{true, false} {

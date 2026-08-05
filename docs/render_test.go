@@ -27,7 +27,8 @@ import (
 // manifest; the tests only need the ids.
 var docIndex = map[string]map[string]string{
 	"README": {"id": "README"}, "getting-started": {"id": "getting-started"},
-	"language": {"id": "language"}, "primitives": {"id": "primitives"},
+	"walkthroughs": {"id": "walkthroughs"}, "language": {"id": "language"},
+	"primitives":  {"id": "primitives"},
 	"expressions": {"id": "expressions"}, "aoc-toolbox": {"id": "aoc-toolbox"},
 	"data-model": {"id": "data-model"}, "match-pattern": {"id": "match-pattern"},
 	"cli": {"id": "cli"}, "diagnostics": {"id": "diagnostics"},

@@ -367,3 +367,52 @@ func mangle(src string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// `Consider x As/Of …` lines: the head is canonical either way, an expression
+// or lambda value is re-rendered like any argument's, and an operation phrase
+// after `Of` is left exactly as written — the same rule statements follow, and
+// for the same reason (a phrase is read as a Shikigami name and as a path).
+func TestBindingLinesFormatted(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"head canonicalized and value re-rendered",
+			"Cursed Energy: x\nCursed Technique: Map Each\n  consider   n   as   3+4\n  Using: (v) -> v + n\n",
+			"Cursed Energy: x\nCursed Technique: Map Each\n    Consider n As 3 + 4\n    Using: (v) -> v + n\n",
+		},
+		{
+			"a lambda value is expression-layer text",
+			"Cursed Energy: x\nCursed Technique: Map Each\n    Consider f As (a,b)->a*b\n    Using: (v) -> f(v, 2)\n",
+			"Cursed Energy: x\nCursed Technique: Map Each\n    Consider f As (a, b) -> a * b\n    Using: (v) -> f(v, 2)\n",
+		},
+		{
+			"an Of lambda too",
+			"Cursed Energy: x\nCursed Technique: Map Each\n    Consider t of (xs)->sum(xs)\n    Using: (v) -> v + t\n",
+			"Cursed Energy: x\nCursed Technique: Map Each\n    Consider t Of (xs) -> sum(xs)\n    Using: (v) -> v + t\n",
+		},
+		{
+			"an Of phrase is verbatim",
+			"Cursed Energy: x\nCursed Technique: Map Each\n  Consider t of Split Text by \"\\n\"\n  Using: (v) -> v\n",
+			"Cursed Energy: x\nCursed Technique: Map Each\n    Consider t Of Split Text by \"\\n\"\n    Using: (v) -> v\n",
+		},
+		{
+			"an Of sub-pipeline keeps its body",
+			"Cursed Energy: x\nCursed Technique: Map Each\n  Consider t of\n     Maximum Technique: Sum\n  Using: (v) -> v + t\n",
+			"Cursed Energy: x\nCursed Technique: Map Each\n    Consider t Of\n        Maximum Technique: Sum\n    Using: (v) -> v + t\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := mustFormat(t, c.in)
+			if got != c.want {
+				t.Errorf("Format:\n got %q\nwant %q", got, c.want)
+			}
+			if again := mustFormat(t, got); again != got {
+				t.Errorf("not idempotent: %q then %q", got, again)
+			}
+		})
+	}
+}

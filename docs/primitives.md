@@ -1135,6 +1135,102 @@ How many connected regions of matching cells the grid contains (union-find
 under the hood), with `Mode: 4` (default) or `Mode: 8`. `0` for a grid with no
 matching cells.
 
+### Foreign Block — `T -> Text`, or a declared `In -> Out`
+
+```domain
+Cursed Energy: input.txt
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Domain Expansion: Python : List<Int> -> Int
+    import sys
+    print(sum(int(x) for x in sys.stdin))
+Reveal: stdout
+```
+
+A stage written in another language. The indented block is **not Domain** —
+it is source in `Python`, `Go`, `rask`, or `cRust`, captured verbatim — and it
+runs as a subprocess with the current value on its stdin. What it prints
+becomes the next stage's value.
+
+The block is dedented to column zero, so it is written at whatever indentation
+reads well, with its own comment character, its own braces, and tabs if that
+is what the language wants. It ends where the indentation returns to the
+statement that opened it.
+
+**The wire format.** A foreign stage exchanges lines of text, so only the
+types that have one obvious spelling as lines can cross it:
+
+| Type | On the wire |
+|---|---|
+| `Text` | the text itself |
+| `Int` / `Float` / `Bool` | its ordinary rendering, the one `Reveal` prints |
+| `List<T>` (T scalar) | one element per line |
+| `Grid<T>` (T scalar) | one row per line — going in only |
+
+with a single closing newline on a non-empty value. Anything else — a `Map`,
+a `Set`, a `Record`, a `Sparse` plane — is refused when the program is
+resolved, by name, rather than failing later as a decode error. A `Grid` can
+be shown to a foreign program but not received from one, because its rows have
+no cell separator to split on; `Convert To Grid` is one stage away.
+
+**Types.** Without a declared signature the block takes whatever is flowing
+and produces `Text` — the shell-pipe reading, and the common case, since the
+existing vocabulary can reshape text from there. A declared `: In -> Out`
+replaces both halves and is checked against the pipeline exactly as a
+Shikigami's signature is. It is the only way to get a non-`Text` value back,
+because nothing else can know what the foreign program meant by its output.
+
+**Running it.** Each language is started by the first of its usual binaries
+found on `PATH` — `python3`/`python`, `go`, `rask`, `crust` — and each can be
+pointed somewhere else with an environment variable, which may name a command
+with arguments:
+
+| Language | Variable | How it runs |
+|---|---|---|
+| `Python` | `DOMAIN_PYTHON` | `python3 program.py` |
+| `Go` | `DOMAIN_GO` | `go run .` over a throwaway module; the block is a whole `package main` |
+| `rask` | `DOMAIN_RASK` | `rask program.rask` — the block reads `input`/`lines`/`blocks` |
+| `cRust` | `DOMAIN_CRUST` | `crust program.crust` — the block reads `unbox`/`lines`, prints with `deliver` |
+
+A block that fails takes the program down with it, reporting the runtime's own
+words: a Python traceback, a Go compile error. Line numbers in that report are
+line numbers in the dedented block, so they count from the statement that
+opened it. A block that succeeds has its stderr passed through to the
+program's own, so print-debugging inside one reaches the terminal without
+disturbing the value in the pipeline.
+
+**What it costs.** Three things, all of them deliberate:
+
+- **The optimizer stops here.** `Domain Expansion` elsewhere names a result the
+  compiler may reach any way it likes; this one names an implementation and is
+  honored literally. Nothing fuses through a foreign block, reorders around
+  it, or substitutes for it.
+- **A compiled binary stops being self-contained.** `domain build` embeds the
+  block, not the runtime that runs it, so the binary needs `python3` (or the
+  toolchain, or `rask`, or `crust`) wherever it runs — and, for `Go`, at run
+  time rather than build time.
+- **It is a subprocess per evaluation.** A foreign block inside a `Map Each`
+  body starts one process per element. Put it where the whole pipeline value
+  passes through it once.
+
+The tooling treats it as one opaque stage, which is what it is. `--stats` and
+`expansion: visualize` show it as a single row with its own cost — usually most
+of the run, since starting a process dwarfs anything the rest of the pipeline
+does — and the profile attributes that cost to the statement that opened the
+block, not to the lines of foreign source beneath it. A block that fails shows
+up as a failed step carrying its runtime's whole report, so the visualizer
+stays a debugger for the parts of the program written in another language.
+
+Opaque is not the same as invisible. Pressing `x` on a foreign stage — the key
+that breaks a `Using:` expression into its parts everywhere else — shows what
+this stage has instead: the program it ran, the runtime that ran it, and the
+bytes that crossed in each direction. That last part is where a wire-format
+mistake is actually visible, and it is
+[documented with the other panes](cli.md#inside-a-foreign-block).
+
+The documentation playground cannot run foreign blocks at all: it is compiled
+to WebAssembly, where there are no subprocesses.
+
 ---
 
 ## Reverse Cursed Technique — inversions
