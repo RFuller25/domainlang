@@ -45,12 +45,30 @@ type BlockPipeline interface {
 	BlockNodes() []*ir.Node
 }
 
+// BlockBind is one of a block body's extra parameters: the user's name for it,
+// and the synthesized lambda parameter it takes its value from.
+//
+// A body computes one value from one value, so a lambda of two or more
+// parameters has exactly one it can be the body *of* — and the rest have to
+// arrive some other way. They arrive as bindings, which is the mechanism
+// `Consider` already uses: typecheck pushes their types, eval pushes their
+// values, and the compiler threads them into the block's function beside the
+// bindings that were already in scope. Nothing downstream learns a new shape.
+type BlockBind struct {
+	Name  string // what the body's expressions call it
+	Param string // the synthesized lambda parameter holding its value
+}
+
 // BlockBody is a lambda body that is a sub-pipeline rather than an expression.
 type BlockBody struct {
 	// Param is the name of the synthesized lambda parameter the body's input
 	// comes from. typecheck and eval look it up in their environments, so a
 	// block works in whichever parameter slot the primitive binds first.
 	Param string
+	// Extra are the lambda's other parameters, named by a `Params:` argument
+	// and in scope for every expression in the body. Empty for the
+	// one-parameter case, which is every body written before this existed.
+	Extra []BlockBind
 	// Stmts is the body as written, kept so tooling that walks the program
 	// sees the same statements the source does.
 	Stmts []*Statement

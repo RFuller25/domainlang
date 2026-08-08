@@ -22,11 +22,38 @@ import (
 // may map two distinct elements onto the same value, and silently
 // deduplicating would lose data the program asked for.
 func listElem(in *ir.Type, prim string, pos token.Position) (*ir.Type, error) {
-	if in == nil || (in.Kind != ir.KList && in.Kind != ir.KSet) {
-		return nil, &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("%s expects a List input, got %s", prim, in)}
+	if in != nil {
+		switch in.Kind {
+		case ir.KList, ir.KSet:
+			return in.Elem, nil
+		case ir.KMap:
+			// A Map reads as its entries, in insertion order — the order it
+			// already renders and iterates in, and the shape Convert To
+			// Entries produces. Group By and Count By are among the most
+			// reached-for reductions, so without this almost every program
+			// that uses one spends a Convert To Entries getting back to a
+			// shape the rest of the language accepts.
+			return ir.Tuple(in.Key, in.Elem), nil
+		}
 	}
-	return in.Elem, nil
+	return nil, &ResolveError{Pos: pos,
+		Msg: fmt.Sprintf("%s expects a List input, got %s", prim, in)}
+}
+
+// seqOut is the output type of a primitive that keeps its input's *shape* —
+// Filter, Unique, Sort By, Take/Drop While, Merge Ranges, Partition.
+//
+// For a List that is the input type unchanged. For a Set or a Map it is a
+// List of the element type, because these operations are list-producing:
+// Filter drops elements and Sort By imposes an order, neither of which a Set
+// or a Map has a place to put. Claiming the input type back was a lie the
+// interpreter already told — it rendered a filtered Set as a list — and one
+// the compiler could not tell, so it emitted Go that did not build.
+func seqOut(in, elem *ir.Type) *ir.Type {
+	if in != nil && in.Kind == ir.KList {
+		return in
+	}
+	return ir.List(elem)
 }
 
 // requireLambda fetches the Using: lambda and checks its arity. An indented
@@ -37,7 +64,7 @@ func requireLambda(args ArgSet, arity int, prim string, pos token.Position) (*as
 	lam, ok := args.Lambda("Using")
 	if !ok {
 		if args.hasBlock() {
-			blockLam, err := args.res.blockLambda(args.block, arity, prim, pos)
+			blockLam, err := args.res.blockLambda(args, args.block, arity, prim, pos)
 			if err != nil {
 				return nil, err
 			}
@@ -59,6 +86,14 @@ func requireLambda(args ArgSet, arity int, prim string, pos token.Position) (*as
 	if len(lam.Params) != wantArity {
 		return nil, &ResolveError{Pos: pos,
 			Msg: fmt.Sprintf("%s lambda must take %d parameter(s), got %d", prim, wantArity, len(lam.Params))}
+	}
+	// Params: names a *body's* parameters. Beside a written lambda it names
+	// nothing, and silently ignoring it would let a program say one thing and
+	// do another.
+	if _, ok := args.Idents("Params"); ok {
+		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"%s: Params: names the parameters of an indented body, and this Using: is a "+
+				"lambda that already names its own", prim)}
 	}
 	return lam, nil
 }
@@ -144,7 +179,7 @@ var filter = &Primitive{
 		return &ir.Node{
 			Prim:    "Filter",
 			In:      in,
-			Out:     in,
+			Out:     seqOut(in, elem),
 			Display: "Filter",
 			Meta:    map[string]any{"lambda": lam},
 			Pos:     pos,
@@ -191,7 +226,7 @@ var unique = &Primitive{
 		return &ir.Node{
 			Prim:    "Unique",
 			In:      in,
-			Out:     in,
+			Out:     seqOut(in, elem),
 			Display: "Unique",
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
@@ -265,8 +300,11 @@ var count = &Primitive{
 			!hasWord(op, "Cells") && !hasWord(op, "By")
 	},
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
-		if in == nil || (in.Kind != ir.KList && in.Kind != ir.KSet) {
-			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("Count expects a List or Set input, got %s", in)}
+		// Count reads the length rather than the elements, so it takes any
+		// sequence — the Map case is what makes `len(m)` in the toolbox
+		// spelled the way that page always claimed it was.
+		if _, err := listElem(in, "Count", pos); err != nil {
+			return nil, err
 		}
 		return &ir.Node{
 			Prim:    "Count",
@@ -280,8 +318,10 @@ var count = &Primitive{
 					return int64(len(x)), nil
 				case *ir.SetValue:
 					return int64(x.Len()), nil
+				case *ir.MapValue:
+					return int64(x.Len()), nil
 				default:
-					return nil, runtimeErr("Count", pos, "expected List or Set, got %s", ir.DescribeValue(v))
+					return nil, runtimeErr("Count", pos, "expected a List, Set or Map, got %s", ir.DescribeValue(v))
 				}
 			},
 		}, nil
@@ -394,6 +434,7 @@ var fold = &Primitive{
 				if err != nil {
 					return nil, err
 				}
+				acc = ownAccumulator(lam, acc)
 				for i, e := range items {
 					acc, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{seedType, elem}, ambientTypes()...), append([]ir.Value{acc, e}, ambientArgs()...)...)
 					if err != nil {
@@ -572,4 +613,23 @@ func evalPredicate(lam *ast.Lambda, elem *ir.Type, e ir.Value) (bool, error) {
 		return false, fmt.Errorf("predicate did not return a Bool (got %s)", ir.DescribeValue(r))
 	}
 	return b, nil
+}
+
+// ownAccumulator gives a fold's accumulator storage of its own when the
+// optimizer marked any update in the lambda as in-place.
+//
+// The analysis in optimizer/linear.go proves that nothing *inside* the lambda
+// reads the copied-from value after an update. It says nothing about who else
+// holds the seed, and that is a real question: a Part or a Channel branches
+// from one upstream value, `FoldOver`'s seed *is* the current pipeline value,
+// and `Reduce`'s accumulator starts as an element of the input list. One copy
+// here, amortized over every write the fold makes, closes all three.
+//
+// Without a marked update this is the identity, so the naive pipeline keeps
+// exactly the allocation profile it had.
+func ownAccumulator(lam *ast.Lambda, acc ir.Value) ir.Value {
+	if lam == nil || !ast.HasInPlace(lam.Body) {
+		return acc
+	}
+	return ir.CloneCollection(acc)
 }

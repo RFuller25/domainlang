@@ -18,7 +18,8 @@ quickselect. `--explain` prints every step of the chain.
 
 ## The pass catalog
 
-Thirty passes in four families. "Cost" is what the rewrite saves.
+Thirty passes in four families, plus one that runs after the rest. "Cost" is
+what the rewrite saves.
 
 ### Algorithm substitutions
 
@@ -116,6 +117,52 @@ folding `1 = 2` to `false` is what arms passes 24 and 27.
 [explain] Domain simplified the Using: lambda of Filter (boolean short-circuit, constant folding). Guaranteed hit.
 ```
 
+### Linear accumulators — the pass that runs last
+
+`insert`, `put` and `setat` are **functional**: each returns a new collection
+and leaves its argument untouched, which is what makes a lambda safe to apply
+twice (see [expressions.md](expressions.md#building-and-updating-a-collection)).
+They were implemented by copying, so a `Fold` that built a collection one
+write at a time was quadratic in the *collection*, not linear in the writes —
+20,000 inserts into a Map took 30 s interpreted, and 20,000 `setat`s on a
+300×300 grid took 44 s, because each one copied all 90,000 cells.
+
+The semantics do not change. What the pass observes is that a fold's
+accumulator is dead the moment the lambda returns, so where nothing can read
+the copied-from value after an update, the copy is unobservable. Those sites
+are marked, and both backends write through instead of copying.
+
+| # | Pattern | Cost |
+|---|---------|------|
+| 31 | an update rooted at a `Fold`/`Reduce`/`Fold From:` accumulator, with no read of it afterwards | O(size) per write → O(1) |
+
+```
+[explain] Domain made 1 accumulator update(s) in Fold write in place — the copy was never read. Guaranteed hit.
+```
+
+Three things make it safe rather than merely plausible:
+
+- **The last-use test is path-sensitive.** `if wanted(x) then insert(acc, k, x)
+  else acc` is the ordinary shape of a conditional record, and a positional
+  "is this the textually last mention" rule refuses it, because the `else acc`
+  comes after. Conditional arms are mutually exclusive, so a use in one is not
+  a use after a site in the other.
+- **The accumulator is cloned once on entry.** The analysis proves nothing
+  *inside* the lambda reads the copied-from value; it proves nothing about who
+  else holds the seed, and a `Part` or a `Channel` branches from one value —
+  `Fold From:`'s accumulator *is* the current pipeline value, and `Reduce`'s
+  is an element of the input list. One copy, amortized over every write.
+- **It runs after the cascade has settled**, so no later pass can duplicate an
+  annotated call. Constant folding applies a lambda twice, which is exactly
+  what an in-place update must not have done to it.
+
+`Scan`, `Iterate` and `Iterate Until Fixed Point` are excluded by
+construction: the first two keep every intermediate accumulator in their
+output, and the third compares the previous value against the new one to
+detect convergence. `del` is excluded too — removing a key shifts the key
+order, which a list taken from the accumulator earlier *would* see, unlike an
+append. See `optimizer/linear.go`.
+
 ## The safety rules every pass obeys
 
 1. **Types are preserved.** A rewritten node keeps the pipeline's In/Out
@@ -187,6 +234,28 @@ literal, because its rewrite is valid *because of what the literal is*:
 The guard is the default, so a measured argument added later to a primitive a
 pass has never heard of is refused rather than mis-folded, and enabling a pass
 is a deliberate change at one call site.
+
+## Lambdas that update a binding
+
+A lambda containing a `:=` (see
+[expressions.md](expressions.md#updating-a-local--)) is not a function of its
+arguments: applying it writes to a binding that outlives the application. Every
+pass here assumes the opposite, and in ways a write would notice — fusion turns
+"all of `f`, then all of `g`" into "`f` then `g`, per element", an algorithm
+substitution applies the lambda to different elements a different number of
+times, and the expression rules drop and duplicate subexpressions.
+
+So **every** rewrite stands down on such a lambda, and it is one guard rather
+than twenty: `nodeLambda` reports an updating lambda as *absent*, and a pass
+that cannot see a lambda does not fire. The expression simplifier, which reads
+`Meta` directly because it wants lambdas no other pass may have, repeats the
+check itself. `isTotal` also reports a write as non-total — not because it can
+fail, but because its callers use that answer to decide what may be discarded,
+and discarding a write loses it.
+
+The cost lands on the stage that writes, not on the program: a pipeline where
+one `Map Each` updates a counter still gets every rewrite its other stages
+earn.
 
 ## Local bindings and node lists
 

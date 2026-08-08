@@ -20,6 +20,17 @@ func AsList(v Value) ([]Value, error) {
 	if s, ok := v.(*SetValue); ok {
 		return s.Elems(), nil
 	}
+	// A Map reads as its entries, in insertion order — the same shape and
+	// order Convert To Entries produces, so a Group By or Count By flows
+	// straight into the list vocabulary instead of detouring through it.
+	if m, ok := v.(*MapValue); ok {
+		out := make([]Value, 0, m.Len())
+		for _, k := range m.Keys() {
+			val, _ := m.Get(k)
+			out = append(out, []Value{k, val})
+		}
+		return out, nil
+	}
 	return nil, fmt.Errorf("expected a list, got %s", DescribeValue(v))
 }
 
@@ -166,7 +177,111 @@ func FormatValue(v Value) string {
 	}
 }
 
-func formatGrid(g *GridValue) string {
+// FormatValueTyped renders a value for the Reveal sink in the field order its
+// static type declares, and is otherwise FormatValue exactly.
+//
+// The two differ for records and only for records. A RecordValue carries the
+// order it was *built* in, which is the order the source wrote; a type carries
+// the order it *declares*. Those are the same thing until two record types with
+// the same fields in different orders meet — an `if` whose arms build the
+// fields in different orders, a list holding both — at which point one value in
+// the list renders `{b: …, a: …}` and its neighbour `{a: …, b: …}`.
+//
+// The compiled backend cannot reproduce that: a record is an unboxed struct
+// with one field order, so it renders every value of a type the same way. Since
+// stdout has to match byte for byte, the type is what both backends read the
+// order from, and this is the interpreter's side of that. No program whose
+// records all declare their fields in one order is affected — for those, the
+// value's order *is* the type's.
+//
+// A type that does not describe the value (nil, or a shape mismatch that only a
+// bug could produce) falls back to FormatValue rather than guessing.
+func FormatValueTyped(v Value, t *Type) string {
+	if t == nil {
+		return FormatValue(v)
+	}
+	switch x := v.(type) {
+	case []Value:
+		switch t.Kind {
+		case KList:
+			parts := make([]string, len(x))
+			for i, e := range x {
+				parts[i] = FormatValueTyped(e, t.Elem)
+			}
+			return "[" + strings.Join(parts, ", ") + "]"
+		case KTuple:
+			if len(t.Elems) != len(x) {
+				break
+			}
+			parts := make([]string, len(x))
+			for i, e := range x {
+				parts[i] = FormatValueTyped(e, t.Elems[i])
+			}
+			return "[" + strings.Join(parts, ", ") + "]"
+		}
+	case *RecordValue:
+		if t.Kind != KRecord || len(t.Fields) != len(x.Fields) {
+			break
+		}
+		parts := make([]string, len(t.Fields))
+		for i, f := range t.Fields {
+			fv, ok := x.Vals[f.Name]
+			if !ok {
+				return FormatValue(v)
+			}
+			parts[i] = f.Name + ": " + FormatValueTyped(fv, f.Type)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case *MapValue:
+		if t.Kind != KMap {
+			break
+		}
+		parts := make([]string, 0, x.Len())
+		for _, k := range x.Keys() {
+			val, _ := x.Get(k)
+			parts = append(parts, FormatValueTyped(k, t.Key)+": "+FormatValueTyped(val, t.Elem))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case *SetValue:
+		if t.Kind != KSet {
+			break
+		}
+		parts := make([]string, 0, x.Len())
+		for _, e := range x.Elems() {
+			parts = append(parts, FormatValueTyped(e, t.Elem))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case *GridValue:
+		if t.Kind != KGrid {
+			break
+		}
+		return formatGridTyped(x, t.Elem)
+	case *SparseValue:
+		if t.Kind != KSparse {
+			break
+		}
+		var sb strings.Builder
+		sb.WriteByte('{')
+		for i, p := range x.Points() {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteByte('[')
+			sb.WriteString(strconv.FormatInt(p[0], 10))
+			sb.WriteString(", ")
+			sb.WriteString(strconv.FormatInt(p[1], 10))
+			sb.WriteString("]: ")
+			sb.WriteString(FormatValueTyped(x.At(p[0], p[1]), t.Elem))
+		}
+		sb.WriteByte('}')
+		return sb.String()
+	}
+	return FormatValue(v)
+}
+
+func formatGrid(g *GridValue) string { return formatGridTyped(g, nil) }
+
+func formatGridTyped(g *GridValue, cellType *Type) string {
 	rows := make([]string, g.Rows)
 	for r := range g.Rows {
 		var sb strings.Builder
@@ -177,7 +292,7 @@ func formatGrid(g *GridValue) string {
 					sb.WriteByte(' ')
 				}
 			}
-			sb.WriteString(FormatValue(cell))
+			sb.WriteString(FormatValueTyped(cell, cellType))
 		}
 		rows[r] = sb.String()
 	}

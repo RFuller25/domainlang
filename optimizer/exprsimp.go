@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
@@ -47,6 +48,14 @@ func simplifyLambdaBodies(p *ir.Pipeline) []Rewrite {
 			if lam == nil || seen[lam] {
 				continue
 			}
+			// Read from Meta directly rather than through nodeLambda, because
+			// this pass wants the lambda even when no other pass may have it —
+			// so the stand-down for an updating body is stated here too. The
+			// rules below drop and duplicate subexpressions, which is exactly
+			// what a write must not have done to it.
+			if effectful(lam) {
+				continue
+			}
 			// Float-typed nodes are exempt: the integer identities below
 			// (x*0 → 0, x+0 → x, constant folding to IntLit) are wrong or
 			// type-changing under IEEE arithmetic, and the simplifier has no
@@ -85,7 +94,7 @@ func (s *simplifier) simplify(e ast.Expr) ast.Expr {
 		for i, a := range x.Args {
 			args[i] = s.simplify(a)
 		}
-		e = &ast.CallExpr{Fn: x.Fn, Args: args, Pos: x.Pos}
+		e = &ast.CallExpr{Fn: x.Fn, Args: args, Pos: x.Pos, InPlace: x.InPlace}
 	case *ast.CondExpr:
 		e = &ast.CondExpr{
 			Cond: s.simplify(x.Cond),
@@ -139,6 +148,17 @@ func (s *simplifier) rewriteBinary(x *ast.BinaryExpr) (ast.Expr, bool) {
 		if b, ok := foldIntCmp(x.Op, li.Value, ri.Value); ok {
 			s.mark("constant folding")
 			return &ast.BoolLit{Value: b, Pos: x.Pos}, true
+		}
+	}
+
+	// Text orders lexicographically, so two string literals fold the same way
+	// two integer ones do. Byte-wise, matching ir.Compare and Go's own `<`.
+	if ls, ok := x.Left.(*ast.StringLit); ok {
+		if rs, ok := x.Right.(*ast.StringLit); ok {
+			if b, ok := foldCmp(x.Op, strings.Compare(ls.Value, rs.Value)); ok {
+				s.mark("constant folding")
+				return &ast.BoolLit{Value: b, Pos: x.Pos}, true
+			}
 		}
 	}
 
@@ -283,17 +303,26 @@ func foldIntOp(op token.Kind, a, b int64) (int64, bool) {
 }
 
 func foldIntCmp(op token.Kind, a, b int64) (bool, bool) {
-	switch op {
-	case token.EQ:
+	if op == token.EQ {
 		return a == b, true
+	}
+	return foldCmp(op, cmp.Compare(a, b))
+}
+
+// foldCmp turns a three-way comparison into the answer a relational operator
+// would give. `=` is deliberately absent: two values can compare 0 without
+// being equal (a Float NaN does, matching ir.Compare), so equality folds
+// through its own literal cases rather than through an ordering.
+func foldCmp(op token.Kind, c int) (bool, bool) {
+	switch op {
 	case token.LT:
-		return a < b, true
+		return c < 0, true
 	case token.GT:
-		return a > b, true
+		return c > 0, true
 	case token.LE:
-		return a <= b, true
+		return c <= 0, true
 	case token.GE:
-		return a >= b, true
+		return c >= 0, true
 	}
 	return false, false
 }

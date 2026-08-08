@@ -7,10 +7,13 @@ import (
 
 // Binding powers for the Pratt expression parser. Higher binds tighter.
 const (
-	bpNone = 0
-	bpOr   = 4 // or
-	bpAnd  = 6 // and
-	bpNot  = 8 // ikke x   (tighter than `and`, looser than a comparison,
+	bpNone   = 0
+	bpAssign = 2 // x := e   (right-associative, and looser than every operator,
+	//                          so `x := a + b` writes the sum and `x := y := 3`
+	//                          writes 3 to both)
+	bpOr  = 4 // or
+	bpAnd = 6 // and
+	bpNot = 8 // ikke x   (tighter than `and`, looser than a comparison,
 	//                          so `ikke a = b` reads as `ikke (a = b)`)
 	bpCompare = 10 // = < > <= >=
 	bpSum     = 20 // + -
@@ -25,6 +28,8 @@ const (
 func (p *parser) infixOp() (token.Kind, int) {
 	t := p.cur()
 	switch t.Kind {
+	case token.ASSIGN:
+		return t.Kind, bpAssign
 	case token.EQ, token.LT, token.GT, token.LE, token.GE:
 		return t.Kind, bpCompare
 	case token.PLUS, token.MINUS:
@@ -42,6 +47,46 @@ func (p *parser) infixOp() (token.Kind, int) {
 	return token.ILLEGAL, bpNone
 }
 
+// parseTopExpr parses an expression in a position where an `also` list is
+// unambiguous — a lambda body, a `Consider … As` value, or the inside of a
+// parenthesis. Everywhere else (a call's argument list) the clause commas
+// would be indistinguishable from the argument commas, so `also` is refused
+// there with a message asking for the parentheses that settle it.
+func (p *parser) parseTopExpr() (ast.Expr, error) {
+	body, err := p.parseExpr(0)
+	if err != nil {
+		return nil, err
+	}
+	if !p.atWord("also") {
+		return body, nil
+	}
+	alsoTok := p.advance()
+	var clauses []ast.Expr
+	for {
+		c, err := p.parseExpr(0)
+		if err != nil {
+			return nil, err
+		}
+		clauses = append(clauses, c)
+		if p.cur().Kind != token.COMMA {
+			break
+		}
+		p.advance()
+	}
+	// A second `also` at the same level has no reading that is not a guess:
+	// the clause list is already open and commas continue it.
+	if p.atWord("also") {
+		return nil, p.errf("this `also` list is already open; write `(a also b) also c` to nest one inside another")
+	}
+	return &ast.AlsoExpr{Body: body, Clauses: clauses, Pos: alsoTok.Pos}, nil
+}
+
+// atWord reports whether the current token is the contextual keyword w.
+func (p *parser) atWord(w string) bool {
+	t := p.cur()
+	return t.Kind == token.IDENT && t.Literal == w
+}
+
 // parseExpr is a precedence-climbing parser for the plain expression layer.
 func (p *parser) parseExpr(minBP int) (ast.Expr, error) {
 	left, err := p.parseUnary()
@@ -54,7 +99,21 @@ func (p *parser) parseExpr(minBP int) (ast.Expr, error) {
 			break
 		}
 		opPos := p.cur().Pos
-		p.advance()                       // consume the operator (or the and/or IDENT)
+		p.advance() // consume the operator (or the and/or IDENT)
+		if opKind == token.ASSIGN {
+			// Right-associative, and the target is a name rather than an
+			// arbitrary expression: Domain has no lvalues, only bindings.
+			id, ok := left.(*ast.Ident)
+			if !ok {
+				return nil, &Error{Pos: opPos, Msg: "the left side of := must be a name"}
+			}
+			right, err := p.parseExpr(bp)
+			if err != nil {
+				return nil, err
+			}
+			left = &ast.AssignExpr{Name: id.Name, Value: right, Pos: opPos}
+			continue
+		}
 		right, err := p.parseExpr(bp + 1) // left-associative
 		if err != nil {
 			return nil, err
@@ -125,6 +184,10 @@ func (p *parser) parsePostfix() (ast.Expr, error) {
 					if err != nil {
 						return nil, err
 					}
+					if p.atWord("also") {
+						return nil, p.errf("an `also` list inside a call's arguments is ambiguous " +
+							"with the argument commas; parenthesize it: f((a also b), c)")
+					}
 					args = append(args, a)
 					if p.cur().Kind == token.COMMA {
 						p.advance()
@@ -174,7 +237,10 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		return &ast.Ident{Name: t.Literal, Pos: t.Pos}, nil
 	case token.LPAREN:
 		p.advance()
-		inner, err := p.parseExpr(0)
+		// A parenthesis is one of the positions where an `also` list reads
+		// unambiguously — the closing paren ends it — and it is the spelling
+		// that puts one inside a larger expression.
+		inner, err := p.parseTopExpr()
 		if err != nil {
 			return nil, err
 		}
@@ -226,7 +292,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 	// Reject the keywords outright: `consider as ...` is a missing name, and
 	// saying so beats a confusing failure further along.
 	switch nameTok.Literal {
-	case "as", "in", "if", "then", "else", "consider":
+	case "as", "in", "if", "then", "else", "consider", "also":
 		return nil, p.errf("expected a name after \"consider\", got the keyword %q", nameTok.Literal)
 	}
 	p.advance()

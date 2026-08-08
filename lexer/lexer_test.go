@@ -117,6 +117,38 @@ func TestOperators(t *testing.T) {
 	}
 }
 
+// TestAssignToken pins `:=` as one token, and pins the adjacency rule that
+// keeps it from swallowing a statement's colon: `Mode: First` is a COLON, and
+// only the two characters written together are an ASSIGN.
+func TestAssignToken(t *testing.T) {
+	cases := []struct {
+		src  string
+		want []token.Kind
+	}{
+		{"n := 1\n", []token.Kind{token.IDENT, token.ASSIGN, token.INT, token.NEWLINE, token.EOF}},
+		{"Mode: First\n", []token.Kind{token.IDENT, token.COLON, token.IDENT, token.NEWLINE, token.EOF}},
+		// A colon followed by `=` with a space between is still two tokens.
+		{"n : = 1\n", []token.Kind{token.IDENT, token.COLON, token.EQ, token.INT, token.NEWLINE, token.EOF}},
+		// `=` alone stays equality: there is exactly one assignment spelling.
+		{"a = b\n", []token.Kind{token.IDENT, token.EQ, token.IDENT, token.NEWLINE, token.EOF}},
+	}
+	for _, c := range cases {
+		toks, err := Lex(c.src)
+		if err != nil {
+			t.Fatalf("%q: %v", c.src, err)
+		}
+		got := kinds(toks)
+		if len(got) != len(c.want) {
+			t.Fatalf("%q: got %v, want %v", c.src, got, c.want)
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Fatalf("%q: token %d: got %s want %s", c.src, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
 // TestColumnTrackingWithMultiByteRunes is a regression test: advance() used
 // to increment the column once per byte, not once per rune, so any line
 // containing a multi-byte UTF-8 character (string literals are documented

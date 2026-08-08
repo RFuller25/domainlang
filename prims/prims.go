@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"domain/ast"
+	"domain/eval"
 	"domain/ir"
 	"domain/token"
 	"domain/typecheck"
@@ -251,15 +252,33 @@ func (a ArgSet) Idents(name string) ([]string, bool) {
 	return nil, false
 }
 
+// Cases returns every `Case: <tag> "<template>"` argument, in the order
+// written — which is the order they are tried, so the program controls
+// priority when two templates could both match a line.
+func (a ArgSet) Cases(name string) []ast.CaseArg {
+	var out []ast.CaseArg
+	for _, arg := range a.args {
+		if arg.Name != name {
+			continue
+		}
+		if c, ok := arg.Value.(ast.CaseArg); ok {
+			arg.Used = true
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // argNames is every named argument the vocabulary reads, for the linter's
 // "did you mean" on a misspelled one. It is documentation, not dispatch:
 // nothing consults it to decide whether an argument is valid (ArgSet records
 // the reads that actually happen), so a name missing here costs a suggestion
 // and nothing else. A test pins it against the names the registry looks up.
 var argNames = []string{
-	"By", "Col", "Count", "Default", "Fill", "From", "Height", "High", "Index",
-	"Low", "Mark", "Mode", "Row", "Seed", "Size", "Step", "Thickness", "Times",
-	"Until", "Using", "While", "Width", "With", "Zip",
+	"By", "Col", "Combine", "Cost", "Count", "Default", "Fill", "From",
+	"Height", "High", "Index", "Low", "Mark", "Mode", "Params", "Row", "Seed",
+	"Case", "Size", "Step", "Thickness", "Times", "Until", "Using", "Value", "While",
+	"Width", "With", "Zip",
 }
 
 // ArgNames returns the named arguments the vocabulary understands, sorted.
@@ -474,12 +493,55 @@ func ResolveWith(prog *ast.Program, opts ResolveOptions) (*ir.Pipeline, error) {
 		return nil, err
 	}
 
+	// Whether anything in the program writes to a name, which is what decides
+	// how the interpreter represents a binding (eval.SetUpdates). Asked once,
+	// here, of everything that can reach the run: the program's own statements
+	// and every definition it could call — the prelude's, the imports', its
+	// own — since a Shikigami body is inlined into the pipeline and its
+	// expressions run like any other.
+	if programUpdates(prog, r.shikigamis) {
+		eval.EnableUpdates()
+	}
+
 	nodes, _, err := r.resolveSequence(prog.Statements, nil, scopeTop)
 	if err != nil {
 		// The partial pipeline rides along with the error; see resolveSequence.
 		return &ir.Pipeline{Nodes: nodes}, err
 	}
 	return &ir.Pipeline{Nodes: nodes}, nil
+}
+
+// programUpdates reports whether any expression that could run contains a
+// `:=`. It is deliberately a whole-program question with a whole-program
+// answer: the interpreter boxes every binding or none, because deciding
+// per-binding would mean re-deriving the answer on every application.
+func programUpdates(prog *ast.Program, defs map[string]*ast.ShikigamiDef) bool {
+	if len(updatedInStatements(prog.Statements)) > 0 {
+		return true
+	}
+	for _, d := range defs {
+		if d == nil {
+			continue
+		}
+		if len(updatedInStatements(d.Body)) > 0 {
+			return true
+		}
+		for _, b := range d.Binds {
+			if b == nil {
+				continue
+			}
+			names := map[string]bool{}
+			if b.Value != nil {
+				ast.UpdatedNames(b.Value, names)
+			}
+			updatedInLambda(b.Lambda, names)
+			collectUpdated(b.Body, names)
+			if len(names) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // callableNames is the set of Shikigami names a bare phrase may resolve to.
@@ -497,7 +559,8 @@ const (
 	scopeTop     scope = iota // Channel definitions, Part blocks, From: consumers
 	scopePart                 // From: consumers only
 	scopeChannel              // From: consumers only — a Channel body
-	scopeNested               // neither: loop, Shikigami and Using: bodies
+	scopeLoop                 // From: consumers only — a loop body
+	scopeNested               // neither: Shikigami and Using: bodies
 )
 
 // describe names a scope for an error message, so a refusal says which body
@@ -508,8 +571,10 @@ func (s scope) describe() string {
 		return "a Part"
 	case scopeChannel:
 		return "a Channel body"
+	case scopeLoop:
+		return "a loop body"
 	case scopeNested:
-		return "a loop, Shikigami, or Using: body"
+		return "a Shikigami or Using: body"
 	default:
 		return "the top level"
 	}
@@ -546,7 +611,7 @@ func (r *resolver) resolveStatement(stmt *ast.Statement, cur *ir.Type, sc scope)
 	if len(stmt.Binds) == 0 {
 		return r.resolveStatementBody(stmt, cur, sc)
 	}
-	rts, pop, err := r.pushBinds(stmt.Binds, cur)
+	rts, pop, err := r.pushBinds(stmt.Binds, cur, updatedInStatements([]*ast.Statement{stmt}))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -610,9 +675,22 @@ func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc sc
 		// enters r.channels only once its own body has resolved, so a
 		// self- or forward-reference is already an unknown-channel error
 		// and declaration order gives the dependency DAG for free.
+		// A loop body may consume them too. A Channel is fully computed
+		// before the loop starts and its value never changes, so there is no
+		// ordering hazard — and without this a simulation has to smuggle its
+		// read-only environment through the loop state, which (because a loop
+		// body must preserve its value type) it then carries for every lap.
+		//
+		// A Shikigami or a `Using:` body still may not, and the reason is
+		// structural rather than conservative: a Shikigami is inlined at call
+		// sites that need not share a scope, and a `Using:` body compiles to a
+		// top-level function where a channel's local is not in scope. Both
+		// would be a promise the compiler could not keep.
 		if sc == scopeNested {
 			return nodes, nil, &ResolveError{Pos: stmt.Pos,
-				Msg: "From: consumers are not allowed inside a loop, Shikigami, or Using: body"}
+				Msg: "From: consumers are not allowed inside " + sc.describe() +
+					" — a Shikigami is inlined wherever it is called and a Using: body " +
+					"compiles to a function of its own, so neither can see a Channel's value"}
 		}
 		node, err := r.resolveConsumer(stmt, cur)
 		if err != nil {

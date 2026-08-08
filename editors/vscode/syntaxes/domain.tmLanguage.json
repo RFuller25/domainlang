@@ -215,9 +215,9 @@
           "match": "\\\\[nt\\\\\"]"
         },
         {
-          "comment": "Match Pattern typed holes: {a:int}, {word}, {name:text}",
+          "comment": "Match Pattern typed holes: {a:int}, {word}, {?flag}, and a repeated group whose inner template has holes of its own.",
           "name": "constant.other.placeholder.domain",
-          "match": "\\{[^}]*\\}"
+          "match": "\\{(?:[^{}]|\\{[^{}]*\\})*\\}"
         }
       ]
     },
@@ -228,11 +228,11 @@
     "builtin": {
       "comment": "Expression-layer builtin functions (call position only).",
       "name": "support.function.builtin.domain",
-      "match": "\\b(occurrences|cellpoints|difference|fromdigits|neighbors4|neighbors8|startswith|trimprefix|trimsuffix|chebyshev|factorial|intersect|manhattan|contains|divisors|emptymap|emptyset|endswith|frombase|inbounds|padright|popcount|solve2x2|textjoin|around4|around8|entries|frombin|fromhex|indexof|isalpha|isdigit|islower|isprime|isupper|padleft|repeats|replace|reverse|testbit|tofloat|charat|choose|concat|digits|divmod|haskey|insert|length|maxcol|maxrow|mincol|minrow|modinv|modpow|pscale|record|repeat|sparse|tobase|tolist|totext|values|atan2|cells|chars|clamp|dirs4|dirs8|first|floor|getor|hypot|isqrt|log10|lower|point|range|round|setat|slice|split|tobin|tohex|toint|tomap|toset|trunc|tuple|union|upper|words|band|bnot|bxor|ceil|cols|drop|fill|item|keys|last|list|log2|padd|pcol|prow|psub|rotl|rotr|rows|sign|size|sqrt|take|trim|with|abs|bor|chr|col|cos|crt|del|exp|gcd|get|has|lcm|log|max|min|mod|ord|pow|put|row|set|shl|shr|sin|sum|tan|at)(?=\\s*\\()"
+      "match": "\\b(occurrences|cellpoints|difference|fromdigits|neighbors4|neighbors8|startswith|trimprefix|trimsuffix|chebyshev|emptylist|enumerate|factorial|intersect|manhattan|transpose|contains|divisors|emptymap|emptyset|endswith|frombase|inbounds|padright|popcount|solve2x2|textjoin|around4|around8|bandall|bxorall|entries|flatten|frombin|fromhex|indexof|isalpha|isdigit|islower|isprime|isupper|padleft|product|repeats|replace|reverse|testbit|tofloat|windows|borall|charat|choose|concat|digits|divmod|haskey|insert|length|maxcol|maxrow|mincol|minrow|modinv|modpow|pscale|record|repeat|sparse|tobase|tolist|totext|unique|values|atan2|cells|chars|chunk|clamp|dirs4|dirs8|first|floor|getor|hypot|isqrt|log10|lower|point|range|round|setat|slice|split|tobin|tohex|toint|tomap|toset|trunc|tuple|union|upper|words|band|bnot|bxor|ceil|cols|drop|fill|item|keys|last|list|log2|padd|pcol|prow|psub|rotl|rotr|rows|sign|size|sort|sqrt|take|trim|with|abs|and|bor|chr|col|cos|crt|del|exp|gcd|get|has|lcm|log|max|min|mod|not|ord|pow|put|row|set|shl|shr|sin|sum|tan|xor|zip|at|or)(?=\\s*\\()"
     },
     "mode-value": {
-      "comment": "The variant selector after Mode: (One/Each/Filter/Count/First/Map).",
-      "match": "(?<=Mode:)\\s*(One|Each|Filter|Count|First|Map)\\b",
+      "comment": "The variant selector after Mode: (One/Each/Try/Scan/Filter/Count/First/Map).",
+      "match": "(?<=Mode:)\\s*(One|Each|Try|Scan|Filter|Count|First|Map)\\b",
       "captures": {
         "1": {
           "name": "constant.language.mode.domain"
@@ -250,11 +250,11 @@
     },
     "logical-operator": {
       "name": "keyword.operator.logical.domain",
-      "match": "\\b(and|or|not|if|then|else)\\b"
+      "match": "\\b(and|or|not|if|then|else|also)\\b"
     },
     "operator": {
       "name": "keyword.operator.domain",
-      "match": "<=|>=|!=|[-+*/%=<>]"
+      "match": ":=|<=|>=|!=|[-+*/%=<>]"
     },
     "number": {
       "name": "constant.numeric.integer.domain",

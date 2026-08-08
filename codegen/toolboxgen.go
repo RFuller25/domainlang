@@ -144,7 +144,7 @@ func (g *gen) emitFoldOver(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.wl("var %s %s = %s", acc, accGo, in)
+	g.wl("var %s %s = %s", acc, accGo, g.ownAccumulator(lam, n.Out, in))
 	g.wl("for _, %s := range %s {", e, cv.v)
 	g.in()
 	g.wl("%s = %s", acc, body)

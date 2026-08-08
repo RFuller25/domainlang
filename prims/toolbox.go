@@ -347,7 +347,7 @@ var mergeRanges = &Primitive{
 		return &ir.Node{
 			Prim:    "Merge Ranges",
 			In:      in,
-			Out:     in,
+			Out:     seqOut(in, elem),
 			Display: "Merge Ranges",
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {

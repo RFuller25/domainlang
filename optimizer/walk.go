@@ -97,9 +97,11 @@ func lambdaBodyNodes(n *ir.Node) []*ir.Node {
 
 // substIdent returns e with every free occurrence of the identifier name
 // replaced by repl. Builtin names in call position are left alone. Shared
-// subtrees are fine: the expression layer is side-effect free, and repl is
-// inserted by reference (not cloned), so later in-place simplification of a
-// shared subtree stays sound.
+// subtrees are fine when neither tree updates a binding: repl is inserted by
+// reference (not cloned), so a duplicated subtree is evaluated once per
+// occurrence, and every pass that substitutes has already refused a body
+// carrying a `:=` (see effectful) — where duplicating one would turn one
+// write into two.
 func substIdent(e ast.Expr, name string, repl ast.Expr) ast.Expr {
 	switch x := e.(type) {
 	case *ast.Ident:
@@ -122,7 +124,7 @@ func substIdent(e ast.Expr, name string, repl ast.Expr) ast.Expr {
 		for i, a := range x.Args {
 			args[i] = substIdent(a, name, repl)
 		}
-		return &ast.CallExpr{Fn: x.Fn, Args: args, Pos: x.Pos}
+		return &ast.CallExpr{Fn: x.Fn, Args: args, Pos: x.Pos, InPlace: x.InPlace}
 	case *ast.CondExpr:
 		return &ast.CondExpr{
 			Cond: substIdent(x.Cond, name, repl),
@@ -144,9 +146,39 @@ func substIdent(e ast.Expr, name string, repl ast.Expr) ast.Expr {
 			Body:  body,
 			Pos:   x.Pos,
 		}
+	case *ast.AssignExpr:
+		// The target is a binding, never the lambda parameter being
+		// substituted (a parameter cannot be written to), so only the value
+		// is rewritten.
+		return &ast.AssignExpr{Name: x.Name, Value: substIdent(x.Value, name, repl), Pos: x.Pos}
+	case *ast.AlsoExpr:
+		clauses := make([]ast.Expr, len(x.Clauses))
+		for i, c := range x.Clauses {
+			clauses[i] = substIdent(c, name, repl)
+		}
+		return &ast.AlsoExpr{Body: substIdent(x.Body, name, repl), Clauses: clauses, Pos: x.Pos}
 	default:
 		return e // literals
 	}
+}
+
+// effectful reports whether a lambda writes to a binding, which is the
+// question every rewrite in this package has to ask before it fires.
+//
+// The passes here are written against a pure expression layer, and they are
+// aggressive in exactly the ways a write would notice: fusion turns "all of f,
+// then all of g" into "f then g, per element", algorithm substitution replaces
+// a scan with one that applies the lambda to different elements a different
+// number of times, and constant folding applies a lambda twice to see what it
+// does. All of that is sound for a function of its arguments and none of it is
+// sound for one that also updates a stage binding, so a lambda that does is
+// left exactly as written.
+//
+// A lambda body written as a sub-pipeline (BlockBody) carries no expression to
+// look at and no `:=` to find: the statements inside it have their own lambdas,
+// which are checked wherever they are reached.
+func effectful(l *ast.Lambda) bool {
+	return l != nil && ast.HasUpdate(l.Body)
 }
 
 // isTotal reports whether evaluating e can never fail at runtime (assuming it
@@ -200,6 +232,13 @@ func isTotal(e ast.Expr) bool {
 		return isTotal(x.Cond) && isTotal(x.Then) && isTotal(x.Else)
 	case *ast.LetExpr:
 		return isTotal(x.Value) && isTotal(x.Body)
+	case *ast.AssignExpr, *ast.AlsoExpr:
+		// Not because either can fail — an update is as total as the value it
+		// writes — but because the callers use this answer to decide whether a
+		// subexpression may be dropped or left unevaluated, and dropping a
+		// write loses the write. Stated rather than left to the default below,
+		// since the default's reason is the other one.
+		return false
 	default:
 		return false
 	}

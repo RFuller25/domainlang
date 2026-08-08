@@ -212,8 +212,8 @@
   {
     "id": "Transpose",
     "keyword": "Cursed Technique",
-    "signature": "Grid\u003cT\u003e → Grid\u003cT\u003e",
-    "summary": "Swaps rows and columns.",
+    "signature": "Grid\u003cT\u003e → Grid\u003cT\u003e | List\u003cList\u003cT\u003e\u003e → List\u003cList\u003cT\u003e\u003e",
+    "summary": "Swaps rows and columns; a ragged list of rows is an error.",
     "anchor": "transpose"
   },
   {
@@ -401,8 +401,8 @@
   {
     "id": "Max By",
     "keyword": "Maximum Technique",
-    "signature": "List\u003cT\u003e × (T → Int) → T",
-    "summary": "The element whose Int key is largest (first wins ties).",
+    "signature": "List\u003cT\u003e × (T → K) → T",
+    "summary": "The element whose ordered key is largest (first wins ties).",
     "anchor": "min-by--max-by"
   },
   {
@@ -422,8 +422,8 @@
   {
     "id": "Min By",
     "keyword": "Maximum Technique",
-    "signature": "List\u003cT\u003e × (T → Int) → T",
-    "summary": "The element whose Int key is smallest (first wins ties).",
+    "signature": "List\u003cT\u003e × (T → K) → T",
+    "summary": "The element whose ordered key is smallest (first wins ties).",
     "anchor": "min-by--max-by"
   },
   {
@@ -520,8 +520,8 @@
   {
     "id": "Explore",
     "keyword": "Domain Expansion",
-    "signature": "S × (S → List\u003cS\u003e) → List\u003cS\u003e | Int | Map\u003cS,Int\u003e",
-    "summary": "Breadth-first search over an implicit state graph; the answer to a problem that seems to need recursion.",
+    "signature": "S × (S → List\u003cS\u003e) → List\u003cS\u003e | Int | Map\u003cS,Int\u003e | V",
+    "summary": "Search over an implicit state graph — breadth-first, cheapest-first with a Cost:, or folded with Tally; the answer to a problem that seems to need recursion.",
     "anchor": "explore"
   },
   {

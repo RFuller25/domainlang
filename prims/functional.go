@@ -72,7 +72,9 @@ var reduce = &Primitive{
 					return nil, runtimeErr("Reduce", pos,
 						"Reduce of an empty list is undefined (Fold with a Seed: has an answer for it)")
 				}
-				acc := items[0]
+				// Reduce is seedless, so the accumulator starts as an
+				// element of the input list — which the caller still holds.
+				acc := ownAccumulator(lam, items[0])
 				for i, e := range items[1:] {
 					acc, err = eval.EvalLambdaTyped(lam, params, acc, e)
 					if err != nil {

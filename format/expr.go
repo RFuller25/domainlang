@@ -28,8 +28,12 @@ func Expr(e ast.Expr) string { return expr(e, 0) }
 // right as they can, so they sit below every operator and are parenthesized
 // wherever an operator would otherwise capture their tail.
 const (
-	bpLowest  = 0
-	bpSpread  = 1 // if … then … else …, consider … as … in …
+	bpLowest = 0
+	bpAlso   = 1 // e also c1, c2   (looser than everything, and the commas mean
+	//                                 it is parenthesized wherever it is not
+	//                                 the whole of what is being written)
+	bpSpread  = 2 // if … then … else …, consider … as … in …
+	bpAssign  = 3 // x := e
 	bpOr      = 4
 	bpAnd     = 6
 	bpNot     = 8
@@ -73,7 +77,10 @@ func render(e ast.Expr) (string, int) {
 	case *ast.CallExpr:
 		args := make([]string, len(x.Args))
 		for i, a := range x.Args {
-			args[i] = expr(a, bpLowest)
+			// One power above `also`, because an argument list is the one
+			// place its clause commas cannot be told from the argument commas
+			// — the parser refuses a bare one there, so this never writes one.
+			args[i] = expr(a, bpAlso+1)
 		}
 		return expr(x.Fn, bpAtom) + "(" + strings.Join(args, ", ") + ")", bpAtom
 	case *ast.UnaryExpr:
@@ -92,6 +99,21 @@ func render(e ast.Expr) (string, int) {
 	case *ast.LetExpr:
 		return "consider " + x.Name + " as " + expr(x.Value, bpSpread) +
 			" in " + expr(x.Body, bpSpread), bpSpread
+	case *ast.AssignExpr:
+		// The value is written at the spread power rather than at `:=`'s own:
+		// `:=` is right-associative and looser than every operator, so an `if`,
+		// a `consider` and a further `:=` all read correctly unparenthesized
+		// after it. Only an `also` list has to be bracketed.
+		return x.Name + " := " + expr(x.Value, bpSpread), bpAssign
+	case *ast.AlsoExpr:
+		// Everything is written one power above `also` itself, which is what
+		// puts the parentheses around a nested one: `(a also b) also c` is the
+		// only reading its own parser accepts, so it is the only one written.
+		clauses := make([]string, len(x.Clauses))
+		for i, c := range x.Clauses {
+			clauses[i] = expr(c, bpAlso+1)
+		}
+		return expr(x.Body, bpAlso+1) + " also " + strings.Join(clauses, ", "), bpAlso
 	case *ast.BlockBody:
 		// A body is a sub-pipeline, not an expression; there is no expression
 		// source to give back, so it says what it is.

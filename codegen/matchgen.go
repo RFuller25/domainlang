@@ -35,8 +35,22 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) > 0 && hasMeasured(nodes[0], "sep") {
 		return 0, "", false, nil
 	}
+	// Mode: Try and Mode: Scan are deliberately not fusible: every fused path
+	// below assumes each line parses to exactly one value and calls dmFail when
+	// one does not, which is the whole behaviour those two modes exist to
+	// replace. Standing the fusion down leaves the ordinary per-node path,
+	// which honours them.
 	matchEach := func(n *ir.Node) bool {
 		if n.Prim != "Match Pattern" {
+			return false
+		}
+		if try, _ := n.Meta["try"].(bool); try {
+			return false
+		}
+		// Scan stands fusion down for the same reason Try does, one step
+		// further: a fused loop produces exactly one value per line, and Scan
+		// produces however many the line contains — including none.
+		if scan, _ := n.Meta["scan"].(bool); scan {
 			return false
 		}
 		each, _ := n.Meta["each"].(bool)
@@ -509,8 +523,29 @@ func (g *gen) emitParseMapSum(sep string, matchNode, mapNode, sumNode *ir.Node, 
 }
 
 func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
-	tmplStr, _ := n.Meta["template"].(string)
 	each, _ := n.Meta["each"].(bool)
+
+	// Case: alternatives carry no single template, so their element type comes
+	// from the node the resolver already typed rather than from re-deriving it.
+	if cases, _ := n.Meta["cases"].([][2]string); len(cases) > 0 {
+		elemType := n.Out
+		if each {
+			elemType = n.Out.Elem
+		}
+		elemGo, err := g.goType(elemType)
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		g.helper("dmFail", declFail, "fmt", "os")
+		fn, err := g.matchCaseFunc(cases, elemType, elemGo)
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		return g.emitMatchOver(n, fn, elemGo, in,
+			fmt.Sprintf("matches none of the %d Case: templates", len(cases)))
+	}
+
+	tmplStr, _ := n.Meta["template"].(string)
 	tmpl, err := pattern.ParseTemplate(tmplStr)
 	if err != nil {
 		return "", unsupported(n, "template: %v", err)
@@ -522,35 +557,78 @@ func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 
+	if scan, _ := n.Meta["scan"].(bool); scan {
+		// Scan concatenates every occurrence from every line, so a line
+		// contributes as many values as it contains rather than exactly one.
+		g.helper("dmFail", declFail, "fmt", "os")
+		fn, err := g.matchScanFunc(tmpl, elemType, elemGo)
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		v, s := g.fresh("v"), g.fresh("s")
+		g.wl("%s := []%s{}", v, elemGo)
+		g.wl("for _, %s := range %s {", s, in)
+		g.in()
+		g.wl("%s = append(%s, %s(%s)...)", v, v, fn, s)
+		g.out()
+		g.wl("}")
+		return v, nil
+	}
+
 	fn, err := g.matchParseFunc(tmpl, elemType, elemGo)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
 
+	return g.emitMatchOver(n, fn, elemGo, in, "does not match template %q", goStr(tmplStr))
+}
+
+// emitMatchOver applies a generated `(T, bool)` parse function to the current
+// value the way the node's mode says: once for Mode: One, over every line for
+// Each, and over every line skipping the misses for Try.
+//
+// `what` completes the refusal message — a Case: stage says what it actually
+// tried — and `extra` carries any operands it needs. The template goes through
+// as an *operand* rather than being pasted into the message, because a
+// template contains quotes and may contain a `%`, either of which turns the
+// generated dmFail call into Go that does not parse.
+func (g *gen) emitMatchOver(n *ir.Node, fn, elemGo, in, what string, extra ...string) (string, error) {
+	tail := ""
+	for _, e := range extra {
+		tail += ", " + e
+	}
+	each, _ := n.Meta["each"].(bool)
 	if !each {
 		v, ok := g.fresh("v"), g.fresh("ok")
 		g.wl("%s, %s := %s(%s)", v, ok, fn, in)
 		g.wl("if !%s {", ok)
 		g.in()
-		g.wl(`dmFail("input %%q does not match template %%q", %s, %s)`, in, goStr(tmplStr))
+		g.wl(`dmFail("input %%q %s", %s%s)`, what, in, tail)
 		g.out()
 		g.wl("}")
 		return v, nil
 	}
 
-	v, i, s := g.fresh("v"), g.fresh("i"), g.fresh("s")
+	try, _ := n.Meta["try"].(bool)
+	v, s := g.fresh("v"), g.fresh("s")
 	r, ok := g.fresh("r"), g.fresh("ok")
-	g.wl("%s := make([]%s, len(%s))", v, elemGo, in)
-	g.wl("for %s, %s := range %s {", i, s, in)
+	g.wl("%s := make([]%s, 0, len(%s))", v, elemGo, in)
+	g.wl("for _, %s := range %s {", s, in)
 	g.in()
 	g.wl("%s, %s := %s(%s)", r, ok, fn, s)
 	g.wl("if !%s {", ok)
 	g.in()
-	g.wl(`dmFail("input %%q does not match template %%q", %s, %s)`, s, goStr(tmplStr))
+	if try {
+		// Mode: Try keeps the lines that fit and drops the rest, which is what
+		// makes a file of two shapes parseable at all — one pass per shape.
+		g.wl("continue")
+	} else {
+		g.wl(`dmFail("input %%q %s", %s%s)`, what, s, tail)
+	}
 	g.out()
 	g.wl("}")
-	g.wl("%s[%s] = %s", v, i, r)
+	g.wl("%s = append(%s, %s)", v, v, r)
 	g.out()
 	g.wl("}")
 	return v, nil
@@ -560,14 +638,17 @@ func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
 func (g *gen) matchParseFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
 	g.parsen++
 	name := fmt.Sprintf("dmParse%d", g.parsen)
-	hasInt := false
-	for _, seg := range tmpl.Segments {
-		if seg.Hole != nil && seg.Hole.Type == pattern.HoleInt {
-			hasInt = true
-		}
-	}
 	var src string
 	if fastEligible(tmpl, elemType) {
+		// tmpl.Holes rather than the segments: an int hole inside a group is
+		// still an int hole, and reading the segments only ever saw the ones
+		// at the top level.
+		hasInt := false
+		for _, h := range tmpl.Holes {
+			if h.Group == nil && !h.Flag && h.Type == pattern.HoleInt {
+				hasInt = true
+			}
+		}
 		src = genFastParser(name, tmpl, elemType, elemGo)
 		if hasInt {
 			g.imp("strconv") // int holes re-parse overflowing runs via strconv
@@ -579,14 +660,14 @@ func (g *gen) matchParseFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo s
 			g.imp("strings")
 		}
 	} else {
+		// The regex path declares its own imports as it emits each conversion,
+		// so a hole kind that needs strconv or strings cannot be added to
+		// emitCapture and forgotten here.
 		var err error
 		if src, err = g.genRegexParser(name, tmpl, elemType, elemGo); err != nil {
 			return "", err
 		}
 		g.imp("regexp")
-		if hasInt {
-			g.imp("strconv")
-		}
 	}
 	g.decls = append(g.decls, src)
 	return name, nil
@@ -614,10 +695,32 @@ func isWSByte(b byte) bool {
 // Adjacent holes always need backtracking, so any hole immediately followed by
 // another hole disqualifies the template.
 func fastEligible(tmpl *pattern.Template, elemType *ir.Type) bool {
+	// An optional group is a run the scan may or may not have to consume, and
+	// a greedy left-to-right scan has no way to decide which; a repeated group
+	// is a run of unknown length with structure inside it. Both take the regex
+	// engine. Checked before the loop because an optional group's segment
+	// carries no hole of its own, and the loop below would walk straight past
+	// it and pronounce the template eligible.
+	if len(tmpl.Opts) > 0 {
+		return false
+	}
+	for _, h := range tmpl.Holes {
+		if h.Group != nil {
+			return false
+		}
+	}
 	segs := tmpl.Segments
 	for i, seg := range segs {
 		if seg.Hole == nil {
 			continue
+		}
+		if seg.Hole.Space {
+			return false // a {~} gap is a run the scan would have to size
+		}
+		if seg.Hole.Rep {
+			// A repeated hole is a run with its own internal separators; the
+			// greedy scan has no notion of where one element ends.
+			return false
 		}
 		switch seg.Hole.Type {
 		case pattern.HoleInt:
@@ -630,7 +733,10 @@ func fastEligible(tmpl *pattern.Template, elemType *ir.Type) bool {
 				return false
 			}
 		default:
-			return false // Text (.*) needs the regex engine
+			// Text (.*), and the classes the scanner has no hand-written
+			// reader for: hex, digits, char, and a {~} gap. Each is a
+			// correctness-neutral fallback to the documented regex path.
+			return false
 		}
 		if i+1 < len(segs) {
 			next := segs[i+1]
@@ -736,7 +842,13 @@ func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemG
 		// A run of 19+ digits may overflow int64; re-parse those exactly (and
 		// preserve strconv's out-of-range rejection). Short runs stay inline.
 		tv := fmt.Sprintf("t%d", holeIdx)
-		fmt.Fprintf(&b, "\tif %s-%s > 18 {\n\t\t%s, %s := strconv.ParseInt(s[i:%s], 10, 64)\n\t\tif %s != nil {\n\t\t\treturn out, false\n\t\t}\n\t\t%s = %s\n\t} else if %s {\n\t\t%s = -%s\n\t}\n", j, d, tv, ev, j, ev, nv, tv, ng, nv, nv)
+		// A capture that fits the template's shape and then fails to convert is
+		// a broken line, not a different kind of line: it stops the program in
+		// every mode, exactly as prims/match.go does it. Returning false here
+		// would report it as a shape mismatch, which Mode: Try then drops —
+		// turning a corrupt input into a quietly short answer that the
+		// interpreter refuses to produce.
+		fmt.Fprintf(&b, "\tif %s-%s > 18 {\n\t\t%s, %s := strconv.ParseInt(s[i:%s], 10, 64)\n\t\tif %s != nil {\n\t\t\tdmFail(\"captured %%q is not a valid integer\", s[i:%s])\n\t\t}\n\t\t%s = %s\n\t} else if %s {\n\t\t%s = -%s\n\t}\n", j, d, tv, ev, j, ev, j, nv, tv, ng, nv, nv)
 		if elemType.Kind == ir.KRecord {
 			fmt.Fprintf(&b, "\tout.%s = %s\n", fieldName(seg.Hole.Name), nv)
 		} else {
@@ -754,58 +866,240 @@ func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemG
 // exact same lowering the interpreter uses (pattern.Template.CompileRegex),
 // minus group names.
 func (g *gen) genRegexParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
-	var re strings.Builder
-	re.WriteString("^")
-	for _, seg := range tmpl.Segments {
-		if seg.Hole == nil {
-			re.WriteString(regexp.QuoteMeta(seg.Literal))
-			continue
-		}
-		switch seg.Hole.Type {
-		case pattern.HoleInt:
-			re.WriteString(`(-?\d+)`)
-		case pattern.HoleWord:
-			re.WriteString(`(\S+)`)
-		default:
-			re.WriteString(`(.*)`)
-		}
-	}
-	re.WriteString("$")
-	if _, err := regexp.Compile(re.String()); err != nil {
+	// The template's own lowering, unnamed. Building a second one here is how
+	// the compiled parse and the interpreted one would drift apart.
+	src := tmpl.RegexSource(false)
+	if _, err := regexp.Compile(src); err != nil {
 		return "", fmt.Errorf("template regex: %v", err)
 	}
 
 	reVar := name + "Re"
 	var b strings.Builder
-	fmt.Fprintf(&b, "var %s = regexp.MustCompile(%s)\n\n", reVar, goStr(re.String()))
+	fmt.Fprintf(&b, "var %s = regexp.MustCompile(%s)\n\n", reVar, goStr(src))
 	fmt.Fprintf(&b, "func %s(s string) (%s, bool) {\n", name, elemGo)
 	if elemType.Kind == ir.KRecord || elemType.Kind == ir.KTuple {
 		fmt.Fprintf(&b, "\tvar out %s\n", elemGo)
 	} else {
 		fmt.Fprintf(&b, "\tout := make(%s, %d)\n", elemGo, len(tmpl.Holes))
 	}
-	fmt.Fprintf(&b, "\tm := %s.FindStringSubmatch(s)\n", reVar)
+	// Indices, not FindStringSubmatch: an optional group that did not
+	// participate has to be told from one that matched the empty string, and
+	// the text form reports both as "". Same reason prims/match.go reads the
+	// match this way — a divergence here is a program that parses differently
+	// once compiled.
+	fmt.Fprintf(&b, "\tm := %s.FindStringSubmatchIndex(s)\n", reVar)
 	b.WriteString("\tif m == nil {\n\t\treturn out, false\n\t}\n")
-	for i, h := range tmpl.Holes {
-		var target string
-		switch elemType.Kind {
-		case ir.KRecord:
-			target = "out." + fieldName(h.Name)
-		case ir.KTuple:
-			target = "out." + tupleField(i)
-		default:
-			target = fmt.Sprintf("out[%d]", i)
-		}
-		if h.Type == pattern.HoleInt {
-			nv := fmt.Sprintf("n%d", i)
-			ev := fmt.Sprintf("e%d", i)
-			fmt.Fprintf(&b, "\t%s, %s := strconv.ParseInt(m[%d], 10, 64)\n", nv, ev, i+1)
-			fmt.Fprintf(&b, "\tif %s != nil {\n\t\treturn out, false\n\t}\n", ev)
-			fmt.Fprintf(&b, "\t%s = %s\n", target, nv)
-		} else {
-			fmt.Fprintf(&b, "\t%s = m[%d]\n", target, i+1)
-		}
+
+	if err := g.emitCaptures(&b, tmpl, elemType, "out", "\t", "return out, false"); err != nil {
+		return "", err
 	}
 	b.WriteString("\treturn out, true\n}")
 	return b.String(), nil
 }
+
+// emitCaptures writes the whole per-capture assembly for one match: every hole
+// converted into its slot of outVar, and every optional group's flag set from
+// whether its own capture participated.
+//
+// It is shared by the anchored parse function and the unanchored scan one, so
+// the two cannot come to disagree about which capture holds what — they already
+// share the capture plan, and this is the other half of reading it.
+// onFail is the statement a conversion that cannot proceed runs: the parse
+// function reports it to its caller, while the scan function has no caller to
+// report to and stops the program.
+func (g *gen) emitCaptures(b *strings.Builder, tmpl *pattern.Template, elemType *ir.Type,
+	outVar, ind, onFail string) error {
+	target := func(slot int) string {
+		switch elemType.Kind {
+		case ir.KRecord:
+			return outVar + "." + fieldName(tmpl.Holes[slot].Name)
+		case ir.KTuple:
+			return outVar + "." + tupleField(slot)
+		default:
+			return fmt.Sprintf("%s[%d]", outVar, slot)
+		}
+	}
+	for i, c := range tmpl.Captures() {
+		lo := fmt.Sprintf("m[%d]", 2*c.Group)
+		hi := fmt.Sprintf("m[%d]", 2*c.Group+1)
+		if c.Kind == pattern.CapOpt {
+			// The flag is the only thing a group's own capture carries; the
+			// holes inside have captures of their own.
+			if c.Slot >= 0 {
+				fmt.Fprintf(b, "%s%s = %s >= 0\n", ind, target(c.Slot), lo)
+			}
+			continue
+		}
+		// A hole whose optional group stood down keeps its zero, which is what
+		// the freshly declared out value already holds.
+		inner := ind
+		if c.Opt != nil {
+			fmt.Fprintf(b, "%sif %s >= 0 {\n", ind, lo)
+			inner = ind + "\t"
+		}
+		capExpr := fmt.Sprintf("s[%s:%s]", lo, hi)
+		if err := g.emitCapture(b, inner, target(c.Slot), capExpr, *c.Hole, i, onFail); err != nil {
+			return err
+		}
+		if c.Opt != nil {
+			fmt.Fprintf(b, "%s}\n", ind)
+		}
+	}
+	return nil
+}
+
+// genScanFunc emits `Mode: Scan`'s reader: every occurrence of the template
+// inside a line, in order. The pattern is the template's own lowering with the
+// anchors left off — pattern.Template.ScanSource, from the same walk, rather
+// than this file trimming "^" and "$" off a string and hoping.
+func (g *gen) genScanFunc(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
+	src := tmpl.ScanSource(false)
+	if _, err := regexp.Compile(src); err != nil {
+		return "", fmt.Errorf("template regex: %v", err)
+	}
+	reVar := name + "Re"
+	var b strings.Builder
+	fmt.Fprintf(&b, "var %s = regexp.MustCompile(%s)\n\n", reVar, goStr(src))
+	fmt.Fprintf(&b, "func %s(s string) []%s {\n", name, elemGo)
+	fmt.Fprintf(&b, "\tvar out []%s\n", elemGo)
+	fmt.Fprintf(&b, "\tfor _, m := range %s.FindAllStringSubmatchIndex(s, -1) {\n", reVar)
+	if elemType.Kind == ir.KRecord || elemType.Kind == ir.KTuple {
+		fmt.Fprintf(&b, "\t\tvar v %s\n", elemGo)
+	} else {
+		fmt.Fprintf(&b, "\t\tv := make(%s, %d)\n", elemGo, len(tmpl.Holes))
+	}
+	if err := g.emitCaptures(&b, tmpl, elemType, "v", "\t\t",
+		`dmFail("input %q does not match template %q", s, `+goStr(tmpl.Raw)+`)`); err != nil {
+		return "", err
+	}
+	b.WriteString("\t\tout = append(out, v)\n\t}\n\treturn out\n}")
+	return b.String(), nil
+}
+
+// matchScanFunc interns the scan function for one template.
+func (g *gen) matchScanFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
+	g.parsen++
+	name := fmt.Sprintf("dmScan%d", g.parsen)
+	src, err := g.genScanFunc(name, tmpl, elemType, elemGo)
+	if err != nil {
+		return "", err
+	}
+	g.imp("regexp")
+	g.decls = append(g.decls, src)
+	return name, nil
+}
+
+// numericHole reports a hole whose capture converts to an Int.
+func numericHole(h pattern.Hole) bool {
+	_, numeric := pattern.CaptureBase(h.Type)
+	return numeric
+}
+
+// emitCapture writes the conversion of one capture into its target: a scalar,
+// the list a repeated hole holds, or the list of values a repeated group holds.
+// It mirrors prims/match.go's convertHole case for case.
+func (g *gen) emitCapture(b *strings.Builder, ind, target, capExpr string, h pattern.Hole, i int, onFail string) error {
+	switch {
+	case h.Group != nil:
+		// A repeated group is the scalar repetition one level down: split the
+		// run, then run the inner template's own parse function over each
+		// element. Generating that function by recursion is what keeps the two
+		// levels from being two implementations.
+		inner := h.Group.OutputType()
+		innerGo, err := g.goType(inner)
+		if err != nil {
+			return err
+		}
+		fn, err := g.matchParseFunc(h.Group, inner, innerGo)
+		if err != nil {
+			return err
+		}
+		g.imp("strings")
+		pv, jv, ev, ov := fmt.Sprintf("p%d", i), fmt.Sprintf("j%d", i),
+			fmt.Sprintf("e%d", i), fmt.Sprintf("o%d", i)
+		fmt.Fprintf(b, "%s%s := strings.Split(%s, %s)\n", ind, pv, capExpr, goStr(h.Sep))
+		fmt.Fprintf(b, "%s%s := make([]%s, len(%s))\n", ind, ov, innerGo, pv)
+		fmt.Fprintf(b, "%sfor %s := range %s {\n", ind, jv, pv)
+		fmt.Fprintf(b, "%s\t%s, ok%d := %s(%s[%s])\n", ind, ev, i, fn, pv, jv)
+		fmt.Fprintf(b, "%s\tif !ok%d {\n%s\t\t%s\n%s\t}\n", ind, i, ind, onFail, ind)
+		fmt.Fprintf(b, "%s\t%s[%s] = %s\n%s}\n", ind, ov, jv, ev, ind)
+		fmt.Fprintf(b, "%s%s = %s\n", ind, target, ov)
+
+	case h.Rep:
+		// The regex captured the whole run — a Go regexp keeps only the last
+		// match of a repeated group — so the split happens here, exactly as
+		// prims/match.go's convertHole does it.
+		g.imp("strings")
+		pv := fmt.Sprintf("p%d", i)
+		fmt.Fprintf(b, "%s%s := strings.Split(%s, %s)\n", ind, pv, capExpr, goStr(h.Sep))
+		if base, numeric := pattern.CaptureBase(h.Type); numeric {
+			g.imp("strconv")
+			fmt.Fprintf(b, "%s%s = make([]int64, len(%s))\n", ind, target, pv)
+			fmt.Fprintf(b, "%sfor j%d, q%d := range %s {\n", ind, i, i, pv)
+			fmt.Fprintf(b, "%s\tn%d, e%d := strconv.ParseInt(q%d, %d, 64)\n", ind, i, i, i, base)
+			fmt.Fprintf(b, "%s\tif e%d != nil {\n%s\t\tdmFail(\"captured %%q is not a valid integer\", q%d)\n%s\t}\n",
+				ind, i, ind, i, ind)
+			fmt.Fprintf(b, "%s\t%s[j%d] = n%d\n%s}\n", ind, target, i, i, ind)
+			return nil
+		}
+		fmt.Fprintf(b, "%s%s = %s\n", ind, target, pv)
+
+	case numericHole(h):
+		base, _ := pattern.CaptureBase(h.Type)
+		g.imp("strconv")
+		nv, ev := fmt.Sprintf("n%d", i), fmt.Sprintf("e%d", i)
+		fmt.Fprintf(b, "%s%s, %s := strconv.ParseInt(%s, %d, 64)\n", ind, nv, ev, capExpr, base)
+		fmt.Fprintf(b, "%sif %s != nil {\n%s\tdmFail(\"captured %%q is not a valid integer\", %s)\n%s}\n",
+			ind, ev, ind, capExpr, ind)
+		fmt.Fprintf(b, "%s%s = %s\n", ind, target, nv)
+
+	default:
+		fmt.Fprintf(b, "%s%s = %s\n", ind, target, capExpr)
+	}
+	return nil
+}
+
+// matchCaseFunc interns the parse function for a `Case:` stage: one regexp per
+// alternative, tried in the order the program wrote them, each assembling the
+// same output type plus the `kind` field naming which one won.
+//
+// The alternatives share a Go function rather than one per case with a
+// dispatcher, because every case produces the *same* type — that is the rule
+// the resolver enforces — so there is exactly one struct to fill.
+func (g *gen) matchCaseFunc(cases [][2]string, elemType *ir.Type, elemGo string) (string, error) {
+	g.parsen++
+	name := fmt.Sprintf("dmCase%d", g.parsen)
+
+	var b strings.Builder
+	var body strings.Builder
+	fmt.Fprintf(&body, "func %s(s string) (%s, bool) {\n", name, elemGo)
+	fmt.Fprintf(&body, "\tvar out %s\n", elemGo)
+	for i, c := range cases {
+		tag, src := c[0], c[1]
+		tmpl, err := pattern.ParseTemplate(src)
+		if err != nil {
+			return "", fmt.Errorf("case %q: %v", tag, err)
+		}
+		re := tmpl.RegexSource(false)
+		if _, err := regexp.Compile(re); err != nil {
+			return "", fmt.Errorf("case %q regex: %v", tag, err)
+		}
+		reVar := fmt.Sprintf("%sRe%d", name, i)
+		fmt.Fprintf(&b, "var %s = regexp.MustCompile(%s)\n\n", reVar, goStr(re))
+		fmt.Fprintf(&body, "\tif m := %s.FindStringSubmatchIndex(s); m != nil {\n", reVar)
+		fmt.Fprintf(&body, "\t\tout.%s = %s\n", fieldName(kindFieldName), goStr(tag))
+		if err := g.emitCaptures(&body, tmpl, elemType, "out", "\t\t", "return out, false"); err != nil {
+			return "", err
+		}
+		body.WriteString("\t\treturn out, true\n\t}\n")
+	}
+	body.WriteString("\treturn out, false\n}")
+	b.WriteString(body.String())
+	g.imp("regexp")
+	g.decls = append(g.decls, b.String())
+	return name, nil
+}
+
+// kindFieldName is the field a Case: stage adds, naming which alternative
+// matched. It mirrors prims.kindField; the two are one contract.
+const kindFieldName = "kind"

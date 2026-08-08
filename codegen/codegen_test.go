@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"domain/codegen"
@@ -20,7 +21,22 @@ import (
 
 // frontEnd runs the shared front end (lex → parse → resolve → optionally
 // optimize) over program source.
+// resolveMu serializes the front end. prims.Resolve keeps its binding and
+// ambient scopes at package level and says so — "prims.Resolve / interp.Run
+// are never called concurrently within one process" (prims/ambient.go) — while
+// the oracle tests below run their subtests in parallel. Most programs never
+// notice, because most have no Consider binding and no For loop to leak; one
+// that does resolves against another test's scope and fails with an unknown
+// identifier, intermittently and only under the full suite.
+//
+// The lock belongs here rather than in prims: serializing the resolver for
+// every caller would be a change to its threading model, and the tests are the
+// only thing that ever asked for concurrency.
+var resolveMu sync.Mutex
+
 func frontEnd(src string, optimize bool) (*ir.Pipeline, error) {
+	resolveMu.Lock()
+	defer resolveMu.Unlock()
 	toks, err := lexer.Lex(src)
 	if err != nil {
 		return nil, fmt.Errorf("lex: %w", err)
@@ -1499,6 +1515,61 @@ Reveal: stdout
 	}
 	if !strings.Contains(src, "regexp.MustCompile") {
 		t.Errorf("text-hole template should fall back to regexp, generated source:\n%s", src)
+	}
+
+	// A repeated hole matches a run of unknown length, which a left-to-right
+	// scan over fixed literals cannot bound — so it takes the regexp path even
+	// though every element is an int.
+	repeat := `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{ns:int+ sep=\",\"}"
+Cursed Technique: Map Each
+    Using: (r) -> sum(r.ns)
+Maximum Technique: Sum
+Reveal: stdout
+`
+	pipe = compilePipeline(t, repeat, true)
+	src, err = codegen.EmitProgram(pipe, codegen.Options{})
+	if err != nil {
+		t.Fatalf("EmitProgram: %v", err)
+	}
+	if !strings.Contains(src, "regexp.MustCompile") {
+		t.Errorf("repeated-hole template should fall back to regexp, generated source:\n%s", src)
+	}
+}
+
+// Fusion is the other path selection Match Pattern makes, and Mode: Try opts
+// out of it: every fused loop assumes each line parses and fails the program
+// when one does not, which is the behavior Try exists to replace. The
+// observable is the `[]string` — under fusion the Split never materializes one,
+// and under Try it must.
+func TestModeTryStandsFusionDown(t *testing.T) {
+	prog := func(mode string) string {
+		return `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: ` + mode + `
+    Using: "{a:int}-{b:int}"
+Maximum Technique: Count Matching
+    Using: (r) -> r.a <= r.b
+Reveal: stdout
+`
+	}
+	emit := func(mode string) string {
+		src, err := codegen.EmitProgram(compilePipeline(t, prog(mode), true), codegen.Options{})
+		if err != nil {
+			t.Fatalf("Mode: %s: EmitProgram: %v", mode, err)
+		}
+		return src
+	}
+	if got := emit("Each"); strings.Contains(got, "strings.Split(") {
+		t.Errorf("Split + Match Pattern (Each) + Count Matching should fuse into one loop, "+
+			"but the generated source still splits:\n%s", got)
+	}
+	if got := emit("Try"); !strings.Contains(got, "strings.Split(") {
+		t.Errorf("Mode: Try must not fuse — the fused loop cannot drop a line — "+
+			"but the generated source fused anyway:\n%s", got)
 	}
 }
 

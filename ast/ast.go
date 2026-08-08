@@ -225,6 +225,13 @@ type Binding struct {
 	Body   []*Statement
 	Used   bool
 	Pos    token.Position
+
+	// Identity marks `Consider x Of Itself`: the binding is the value
+	// entering the scope, unchanged. It is a word rather than a bare
+	// `Consider x Of`, because that spelling is how the REPL knows an
+	// indented sub-pipeline is still coming — making it complete on its own
+	// would cost `Consider mean Of` + a body its continuation prompt.
+	Identity bool
 }
 
 // ArgValue is the value of a named argument.
@@ -237,12 +244,21 @@ type IdentArg struct{ Value string }
 type IdentListArg struct{ Values []string } // e.g. From: moves, stacks
 type LambdaArg struct{ Lambda *Lambda }
 
+// CaseArg is `Case: <tag> "<template>"` — one alternative of a Match Pattern
+// that accepts several line shapes. The tag names which one matched; the
+// argument may repeat, and order is priority order.
+type CaseArg struct {
+	Tag      string
+	Template string
+}
+
 func (StringArg) argValue()    {}
 func (IntArg) argValue()       {}
 func (FloatArg) argValue()     {}
 func (IdentArg) argValue()     {}
 func (IdentListArg) argValue() {}
 func (LambdaArg) argValue()    {}
+func (CaseArg) argValue()      {}
 
 // Lambda is `(params) -> body`, the only construct that crosses into the
 // expression layer from the pipeline layer.
@@ -309,6 +325,20 @@ type CallExpr struct {
 	Fn   Expr
 	Args []Expr
 	Pos  token.Position
+
+	// InPlace marks a collection update (insert, del, put, setat) whose
+	// receiver the optimizer proved dead: nothing can read the copied-from
+	// value after this call, so both backends may write through it instead of
+	// copying it. Every update in Domain is *semantically* functional and this
+	// does not change that — see optimizer/linear.go for what has to be true
+	// before it is set, and why a Fold clones its accumulator once on entry.
+	//
+	// It is set by the last pass to run, after the rewrite cascade has reached
+	// its fixpoint, because a pass that duplicates or reorders a subexpression
+	// would invalidate the proof. The two places the optimizer rebuilds a
+	// CallExpr carry the flag across anyway, so that ordering is a policy
+	// rather than the only thing keeping this correct.
+	InPlace bool
 }
 
 // CondExpr is `if cond then a else b`. Both arms are lazy: only the selected
@@ -331,6 +361,39 @@ type LetExpr struct {
 	Pos   token.Position
 }
 
+// AssignExpr is `NAME := VALUE`: an update to a local already in scope, whose
+// own value is the value written. Domain has no declaration form — the name
+// must already be bound by a `consider … as … in …` (LetExpr) or by a
+// pipeline-layer `Consider … As/Of …` binding, and everything else (a lambda
+// parameter, a function binding, a Shikigami parameter, a builtin) is refused
+// at resolve time.
+//
+// Which of the two it is decides how long the write lives. A `consider` local
+// dies with the expression it was written in, so the mutation cannot escape
+// one evaluation of the lambda. A stage binding lives for the whole stage, so
+// a write is visible to the *next* element and across the laps of a loop —
+// which is what makes it real state, and why the resolver stops folding such a
+// binding into a literal and the optimizer stands its rewrites down (see
+// prims/locals.go and optimizer/walk.go).
+type AssignExpr struct {
+	Name  string
+	Value Expr
+	Pos   token.Position
+}
+
+// AlsoExpr is `BODY also C1, C2, …`: the clauses are evaluated after the body,
+// in written order, and their values are discarded — the expression's value is
+// the body's. Written for the effects of the assignments inside them.
+//
+// It is deliberately not an argument-position form: the clause list is
+// comma-separated, so inside a call's argument list it would be ambiguous with
+// the arguments' own commas, and the parser says so rather than guessing.
+type AlsoExpr struct {
+	Body    Expr
+	Clauses []Expr
+	Pos     token.Position
+}
+
 func (*IntLit) expr()      {}
 func (*FloatLit) expr()    {}
 func (*BoolLit) expr()     {}
@@ -342,3 +405,5 @@ func (*FieldAccess) expr() {}
 func (*CallExpr) expr()    {}
 func (*CondExpr) expr()    {}
 func (*LetExpr) expr()     {}
+func (*AssignExpr) expr()  {}
+func (*AlsoExpr) expr()    {}

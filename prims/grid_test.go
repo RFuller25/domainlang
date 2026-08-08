@@ -147,3 +147,70 @@ func TestGridResolveErrors(t *testing.T) {
 		}
 	}
 }
+
+// Transpose also takes the List<List<T>> shape Extract Integers, Split Fields
+// and a positional Match Pattern produce. Requiring a Grid meant a column-wise
+// question had to detour through Convert To Grid, which additionally demands
+// one element type across the whole thing — a constraint transposition does
+// not need.
+func TestTransposeRows(t *testing.T) {
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \"\\n\"\n" +
+		"Cursed Technique: Extract Integers\n" +
+		"Cursed Technique: Transpose\n"
+	v, _ := runPipeline(t, src, "1 2 3\n4 5 6")
+	if got := ir.FormatValue(v); got != "[[1, 4], [2, 5], [3, 6]]" {
+		t.Fatalf("transpose rows: got %s", got)
+	}
+}
+
+// Transposing twice is the identity over the list shape too, and the empty
+// cases have to survive it: no rows at all, and rows with no columns.
+func TestTransposeRowsEdgeCases(t *testing.T) {
+	head := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \"\\n\"\n" +
+		"Cursed Technique: Extract Integers\n"
+	for _, tc := range []struct{ input, once, twice string }{
+		{"1 2 3\n4 5 6", "[[1, 4], [2, 5], [3, 6]]", "[[1, 2, 3], [4, 5, 6]]"},
+		// One row: a column each, and back.
+		{"7 8", "[[7], [8]]", "[[7, 8]]"},
+		// Rows with no integers in them have no columns to transpose into, so
+		// the row count is lost — the one place the round trip is not an
+		// identity, and it is the same for any zero-width matrix.
+		{"x\ny", "[]", "[]"},
+	} {
+		v, _ := runPipeline(t, head+"Cursed Technique: Transpose\n", tc.input)
+		if got := ir.FormatValue(v); got != tc.once {
+			t.Errorf("transpose %q: got %s, want %s", tc.input, got, tc.once)
+		}
+		v, _ = runPipeline(t, head+"Cursed Technique: Transpose\nCursed Technique: Transpose\n", tc.input)
+		if got := ir.FormatValue(v); got != tc.twice {
+			t.Errorf("transpose twice %q: got %s, want %s", tc.input, got, tc.twice)
+		}
+	}
+}
+
+// A ragged row is an error rather than a truncation, with the wording
+// Convert To Grid uses for the same shape problem.
+func TestTransposeRowsRefusesRagged(t *testing.T) {
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \"\\n\"\n" +
+		"Cursed Technique: Extract Integers\n" +
+		"Cursed Technique: Transpose\n" +
+		"Reveal: stdout\n"
+	_, err := runErr(t, src, "1 2\n3")
+	if err == nil || !strings.Contains(err.Error(), "not rectangular") {
+		t.Fatalf("expected a non-rectangular error, got %v", err)
+	}
+}
+
+func TestTransposeRefusesOtherShapes(t *testing.T) {
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \"\\n\"\n" +
+		"Cursed Technique: Transpose\n" +
+		"Reveal: stdout\n"
+	_, err := runErr(t, src, "ab\ncd")
+	if err == nil || !strings.Contains(err.Error(), "expects a Grid or a List<List<T>>") {
+		t.Fatalf("expected a shape error naming both, got %v", err)
+	}
+}

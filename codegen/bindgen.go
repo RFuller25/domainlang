@@ -51,7 +51,7 @@ func (g *gen) emitConsider(n *ir.Node, in string) (string, error) {
 		g.wl("_ = %s", v)
 		// Registered after its own value is compiled, so a binding written in
 		// terms of an earlier one sees that one and never itself.
-		scoped[b.Name()] = exprBinding{expr: v, typ: b.Type()}
+		scoped[b.Name()] = exprBinding{expr: v, typ: b.Type(), cell: "&" + v}
 	}
 	return g.emitSequence(body, in)
 }

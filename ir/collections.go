@@ -300,15 +300,48 @@ func (g *GridValue) SetAt(r, c int, v Value) {
 	}
 }
 
+// Clone returns a grid with its own cell storage. The cells themselves are
+// shared, like every other Clone here: only the top-level collection is ever
+// written through, so a deep copy would be paying for a guarantee nothing
+// needs.
+func (g *GridValue) Clone() *GridValue {
+	out := &GridValue{Rows: g.Rows, Cols: g.Cols, Cells: make([]Value, len(g.Cells))}
+	copy(out.Cells, g.Cells)
+	return out
+}
+
 // With returns a copy of g with cell (r, c) set to v — the functional update
 // the expression layer's setat needs. Out of bounds is the caller's to reject:
 // the dense grid is finite, so unlike SparseValue.Put there is no cell to
 // write. One allocation, sized exactly.
 func (g *GridValue) With(r, c int, v Value) *GridValue {
-	out := &GridValue{Rows: g.Rows, Cols: g.Cols, Cells: make([]Value, len(g.Cells))}
-	copy(out.Cells, g.Cells)
+	out := g.Clone()
 	out.Cells[r*g.Cols+c] = v
 	return out
+}
+
+// CloneCollection gives a value its own top-level storage, for the callers
+// that are about to hand it to something allowed to write through it. Anything
+// that is not one of the four writable collections is returned unchanged,
+// because nothing can write through it either.
+//
+// This is the firewall behind the optimizer's in-place accumulator updates
+// (see optimizer/linear.go): the analysis proves nothing *inside* a Fold
+// lambda can read the copied-from value, and says nothing about who else holds
+// the seed — a Part or a Channel branches from one value. One copy on entry,
+// amortized over every write the fold makes.
+func CloneCollection(v Value) Value {
+	switch x := v.(type) {
+	case *MapValue:
+		return x.Clone()
+	case *SetValue:
+		return x.Clone()
+	case *GridValue:
+		return x.Clone()
+	case *SparseValue:
+		return x.Clone()
+	}
+	return v
 }
 
 // Neighbors returns the in-bounds neighbor coordinates of (r, c). With

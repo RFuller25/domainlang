@@ -287,7 +287,9 @@ func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, 
 			if err != nil {
 				return nil, runtimeErr("FoldOver", pos, "channel %q: %v", name, err)
 			}
-			acc := in
+			// FoldOver's seed *is* the current pipeline value, which a Part
+			// or a sibling Channel may also be holding.
+			acc := ownAccumulator(lam, in)
 			for i, x := range xs {
 				acc, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{cur, over.Elem}, ambientTypes()...), append([]ir.Value{acc, x}, ambientArgs()...)...)
 				if err != nil {

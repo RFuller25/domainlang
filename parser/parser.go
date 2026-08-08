@@ -791,6 +791,12 @@ func (p *parser) parseArgValue() (ast.ArgValue, error) {
 		return ast.LambdaArg{Lambda: lam}, nil
 	case token.IDENT:
 		first := p.advance().Literal
+		// An identifier followed by a string is a tagged case
+		// (e.g. Case: toggle "toggle {a:int},{b:int}").
+		if p.cur().Kind == token.STRING {
+			tmpl := p.advance().Literal
+			return ast.CaseArg{Tag: first, Template: tmpl}, nil
+		}
 		// A comma after the first identifier makes this an ident list
 		// (e.g. From: moves, stacks).
 		if p.cur().Kind == token.COMMA {
@@ -843,9 +849,26 @@ func (p *parser) parseLambda() (*ast.Lambda, error) {
 	if _, err := p.expect(token.ARROW); err != nil {
 		return nil, err
 	}
-	body, err := p.parseExpr(0)
+	body, err := p.parseTopExpr()
 	if err != nil {
 		return nil, err
+	}
+	// A parameter is bound per application by whatever applies the lambda, so
+	// there is nothing behind it for a `:=` to write to. It is refused here
+	// because here is where the two are visible together — the parameter list
+	// is a few characters to the left of the body writing to it — and because
+	// the question is entirely syntactic: `ast.UpdatedNames` already discounts
+	// a write to a `consider` local that shadows the parameter's name.
+	written := map[string]bool{}
+	ast.UpdatedNames(body, written)
+	for _, prm := range params {
+		if written[prm] {
+			return nil, &Error{Pos: startPos, Msg: fmt.Sprintf(
+				"%q is a lambda parameter, so `%s :=` has nothing to write to. "+
+					"Name the updated value with `consider %s as …`, or bind it with "+
+					"`Consider %s As …` above the statement if the update has to "+
+					"outlive this element", prm, prm, prm, prm)}
+		}
 	}
 	return &ast.Lambda{Params: params, Body: body, Pos: startPos}, nil
 }

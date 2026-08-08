@@ -86,6 +86,8 @@ Cursed Technique: Apply
             totext(size(insert(a, 1000))),
             totext(size(del(a, 2))),
             totext(size(emptyset(0))),
+            totext(length(emptylist(0))),
+            totext(length(concat(emptylist(0), tolist(a)))),
             textjoin(list(totext(first(tolist(intersect(a, b)))), totext(last(tolist(union(a, b))))), ",")
         ), "|")
 Reveal: stdout
@@ -338,7 +340,7 @@ func TestCompiledTypeWitnessesAreStillEvaluated(t *testing.T) {
 Cursed Technique: Split Text by "\n"
 Channeled Energy: Convert List to Integers
 Cursed Technique: Apply
-    Using: (xs) -> size(emptyset(first(drop(xs, 99))))
+    Using: (xs) -> size(emptyset(first(drop(xs, 99)))) + length(emptylist(0))
 Reveal: stdout
 `
 	pipe := compilePipeline(t, src, false)

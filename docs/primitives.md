@@ -104,16 +104,65 @@ Order-preserving deduplication (first occurrence wins).
 
 ```domain
 Cursed Technique: Match Pattern
-    Mode: Each                       # or One; inferred from input if omitted
+    Mode: Each                       # One | Each | Try | Scan; One/Each inferred
     Using: "{a:int}-{b:int},{c:int}-{d:int}"
 ```
 
 Parses each line against a typed-hole template. Named holes produce a Record
 (`V = {a:Int, b:Int, ...}`); positional holes produce a `List<T>` when all
-holes share one type, otherwise a Tuple. Hole types: `int`, `word`
-(non-space run), `text` (rest of field). Named and positional holes cannot
-mix. A non-matching input line is a runtime error naming the line and the
-template. Full template grammar: [match-pattern.md](match-pattern.md).
+holes share one type, otherwise a Tuple. Hole types: `int`, `hex` (base-16,
+captured as `Int`), `digits` (`Text`, leading zeros kept), `word` (non-space
+run), `char` (exactly one), `text` (rest of field). `{~}` matches a run of
+whitespace and owns no field, for column-aligned input. Named and positional
+holes cannot mix. A non-matching input line is a runtime error naming the line and the
+template.
+
+An `int` or `word` hole may **repeat**: `{ns:int+ sep=", "}` captures one or
+more elements and yields a `List` of them, which is how `Time: 7 15 30` parses
+in one stage. The separator is required (a default would be right about half
+the time), `+` is one-or-more, and `text` cannot repeat.
+
+A run of *structure* is a **group**. `[? … ]` makes one optional — its holes
+take their type's zero when it is absent, and `{?name}` inside adds a `Bool`
+saying whether it matched. `( … )+` repeats one, yielding a `List` of the inner
+template's own type:
+
+```domain
+Cursed Technique: Match Pattern
+    Using: "{name:word} ({w:int})[? -> {kids:word+ sep=\", \"}]"
+```
+```domain
+Cursed Technique: Match Pattern
+    Using: "Game {id:int}: {draws:( {n:int} {color:word} )+ sep=\", \"}"
+```
+
+Only `[?` opens a group — a bare `[` is a literal — and groups do not nest.
+
+`Mode: Try` keeps the lines that match and drops the rest — one pass per line
+shape over a file that mixes them. It is never inferred, and it only swallows a
+*shape* mismatch: a capture that fails to convert still stops the program.
+
+`Mode: Scan` reads the template as a *fragment* rather than a whole line and
+takes every occurrence inside each one, concatenated — `mul({a:int},{b:int})`
+over a line of noise. A line holding none contributes nothing. Also never
+inferred.
+
+`Case:` carries several templates on one stage instead of `Using:`, tried in
+the order written, with a `kind` field naming the one that matched:
+
+```domain
+Cursed Technique: Match Pattern
+    Mode: Each
+    Case: on     "turn on {a:int},{b:int} through {c:int},{d:int}"
+    Case: toggle "toggle {a:int},{b:int} through {c:int},{d:int}"
+```
+
+Every case must produce the same fields — that is what keeps the output one
+type — and they must use named holes, so `kind` has somewhere to live. This is
+the ordered one-pass answer to what `Mode: Try` can only do as one pass per
+shape, concatenating by shape and losing the input's own order.
+
+Full template grammar: [match-pattern.md](match-pattern.md).
 
 ### Split Fields — `Text -> List<Text>` or `List<Text> -> List<List<Text>>`
 
@@ -414,9 +463,29 @@ default** (the whole infinite plane is transformed), producing `Sparse<U>`;
 the positional form is dense-only — densify first if the body needs
 coordinates.
 
-### Transpose — `Grid<T> -> Grid<T>`
+### Transpose — `Grid<T> -> Grid<T>` | `List<List<T>> -> List<List<T>>`
 
 Swaps rows and columns.
+
+Two input shapes. A `Grid<T>` transposes to a `Grid<T>`; a **list of rows**
+transposes to a list of columns, which is the shape `Extract Integers`,
+`Split Fields`, `Split Each` and a positional `Match Pattern` all produce.
+Without the second, a column-wise question had to detour through
+`Convert To Grid` — which additionally demands one element type across the
+whole thing, a constraint transposition does not need.
+
+```domain ignore
+Cursed Technique: Extract Integers   # List<List<Int>>
+Cursed Technique: Transpose          # the columns, as rows
+Cursed Technique: Map Each
+    Using: (col) -> sum(col)
+```
+
+A **ragged** list of rows is a runtime error naming the row and both lengths,
+the same one `Convert To Grid` raises — transposing it would have to invent
+or drop cells. Rows with no columns transpose to the empty list, so that
+round trip is the one place `Transpose` twice is not the identity: a matrix
+with no columns has no rows to remember.
 
 ### Range — `-> List<Int>`
 
@@ -816,15 +885,25 @@ Maximum Technique: Count By
 
 Frequency map of the lambda's key, keys in first-seen order.
 
-### Min By / Max By — `List<T> × (T -> Int) -> T`
+### Min By / Max By — `List<T> × (T -> K) -> T` (K ordered)
 
 ```domain
 Maximum Technique: Max By
     Using: (r) -> r.n
 ```
 
-The element whose Int key is smallest/largest (the first wins ties; the
-empty list is a runtime error).
+The element whose key is smallest/largest (the first wins ties; the empty
+list is a runtime error).
+
+`K` is any **ordered** type — Int, Float, Text, or a Tuple of them — exactly
+as [`Sort By`](#sort-by--listt--t---k---listt-k-ordered)'s is, and over the
+same ordering: whatever `Min By` picks, a `Sort By` on the same key puts
+first. A tuple key tiebreaks, so "the earliest of the shortest" is one pass:
+
+```domain
+Maximum Technique: Min By
+    Using: (w) -> tuple(length(w), w)
+```
 
 ### Intersect / Union / Difference — `List<List<T>> -> Set<T>` (T keyable)
 
@@ -1025,30 +1104,95 @@ empty set comes first and the full list last; each subset preserves element
 order. **Unbounded**, for the same reason as `Permutations` (`2^n` still
 explodes; `prims.MaxSubsetInput` restores a ceiling if you want one).
 
-### Explore — `S × (S -> List<S>) -> List<S> | Int | Map<S,Int>` (S keyable)
+### Explore — `S × (S -> List<S>) -> List<S> | Int | Map<S,Int> | V` (S keyable)
 
 ```domain
 Domain Expansion: Explore
-    Mode: Steps                        # Collect (default) | Count | Distances | Steps
+    Mode: Steps                        # see the table below
     Until: (s) -> s = target
     Using: (s) -> successors(s)
 ```
 
-Breadth-first search over the **implicit** graph the successor lambda
-describes. The seed is the current pipeline value, and the visited set both
-bounds the search over a cyclic space and answers "how many distinct
-configurations". BFS order rather than depth-first is what makes the step
+Search over the **implicit** graph the successor lambda describes. The seed is
+the current pipeline value, and the visited set both bounds the search over a
+cyclic space and answers "how many distinct configurations".
+
+| Mode | Result | Extra arguments |
+|---|---|---|
+| `Collect` (default) | `List<S>` — every reachable state, in BFS order, seed first | |
+| `Count` | `Int` — how many distinct states | |
+| `Distances` | `Map<S, Int>` — shortest step count from the seed to each | |
+| `Steps` | `Int` — steps to the first state satisfying `Until:`, or `-1` | `Until:` |
+| `Cheapest` | `Int` — cheapest total `Cost:` to the first `Until:` hit, or `-1` | `Cost:`, `Until:` |
+| `Costs` | `Map<S, Int>` — cheapest total `Cost:` to each state | `Cost:` |
+| `Tally` | `V` — the reachable states folded to one value | `Value:`, `Combine:` |
+
+`Until:` is required by `Steps` and `Cheapest`, and optional elsewhere, where
+it prunes: a satisfying state is recorded but never expanded.
+
+**The step-counting modes are breadth-first**, which is what makes their step
 counts the *shortest* ones.
 
-| Mode | Result |
-|---|---|
-| `Collect` (default) | `List<S>` — every reachable state, in BFS order, seed first |
-| `Count` | `Int` — how many distinct states |
-| `Distances` | `Map<S, Int>` — shortest step count from the seed to each |
-| `Steps` | `Int` — steps to the first state satisfying `Until:`, or `-1` |
+#### `Cost:` — the weighted search
 
-`Until:` is required by `Steps` and optional elsewhere, where it prunes: a
-satisfying state is recorded but never expanded.
+`Cheapest` and `Costs` are Dijkstra over the same implicit graph: the frontier
+is a min-heap keyed by cost so far, and a state is **settled** the first time
+it is popped rather than the first time it is seen.
+
+```domain ignore
+Domain Expansion: Explore
+    Mode: Cheapest
+    Cost: (t) -> weight(t)             # entering t costs this
+    Until: (s) -> s = goal
+    Using: (s) -> successors(s)
+```
+
+`Cost:` comes in two arities, because both questions get asked:
+
+- **`(t) -> Int`** is the cost of *entering* a state — the convention grid
+  [`Dijkstra`](#dijkstra--gridint---gridint) already follows, where the start's
+  own value is not paid.
+- **`(s, t) -> Int`** is the cost of the *edge*, which a graph with weighted
+  edges needs and a node weight cannot express.
+
+A **negative** cost is a runtime error rather than a wrong answer: Dijkstra
+settles a state the first time it pops it, which a negative edge can
+invalidate after the fact. Grid `Dijkstra` refuses negative cells for the same
+reason.
+
+This is the half of graph search that had no spelling: `Dijkstra` takes a
+`Grid<Int>` and nothing else, so the cheapest path through a graph whose nodes
+are *not* grid cells — `(position, facing, run length)`, `(valve set, minute)`,
+a whole room configuration — could not be asked for at all.
+
+#### `Tally` — the counting DP
+
+`Tally` **folds** the reachable states instead of walking them: a state with no
+successors contributes `Value:`, and every other state is its successors'
+values folded with `Combine:`. That is what a memo table is, which is why this
+is the mode that answers "how many ways".
+
+```domain ignore
+Domain Expansion: Explore
+    Mode: Tally
+    Until: (s) -> s = goal             # a satisfying state is a leaf
+    Value: (s) -> 1                    # what a leaf contributes
+    Combine: (a, b) -> a + b           # how successors fold together
+    Using: (s) -> successors(s)
+```
+
+`Value:` may produce any type; `Combine:` folds two of them into one, and its
+result is the primitive's output type.
+
+Each state is folded **once** however many paths reach it, which is the whole
+point: a lattice with 61 states and four trillion paths through it is 61 folds.
+`Until:` marks a leaf here — a satisfying state is never expanded, so "count
+the paths that reach the goal" is the natural spelling.
+
+The search must be **acyclic**: a cycle has no finite fold, and the error names
+a state on it rather than only reporting that one exists — the same reason
+[`Topological Sort`](#topological-sort--mapk-listk--listk-k---listk-k-keyable)
+names a blocked node.
 
 **This is what Domain has instead of recursion.** A Shikigami is inlined at
 its call site, so a self-referential one has no finite expansion and is

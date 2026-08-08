@@ -202,6 +202,9 @@ func (g *gen) emitMapCells(n *ir.Node, in string) (string, error) {
 }
 
 func (g *gen) emitTranspose(n *ir.Node, in string) (string, error) {
+	if n.In != nil && n.In.Kind == ir.KList {
+		return g.emitTransposeRows(n, in)
+	}
 	gridGo, err := g.goType(n.In)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
@@ -218,6 +221,47 @@ func (g *gen) emitTranspose(n *ir.Node, in string) (string, error) {
 	g.wl("for %s := 0; %s < %s.cols; %s++ {", c, c, in, c)
 	g.in()
 	g.wl("%s.cells[%s*%s.cols+%s] = %s.cells[%s*%s.cols+%s]", v, c, v, r, in, r, in, c)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+	return v, nil
+}
+
+// emitTransposeRows is Transpose over the List<List<T>> shape: the same swap,
+// over a slice of slices rather than a dmGrid. A ragged row aborts with the
+// wording the interpreter uses, so the two backends fail on the same input
+// with the same message.
+func (g *gen) emitTransposeRows(n *ir.Node, in string) (string, error) {
+	rowGo, err := g.goType(n.In.Elem)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	elemGo, err := g.goType(n.In.Elem.Elem)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.helper("dmFail", declFail, "fmt", "os")
+	v, cols, r, c := g.fresh("v"), g.fresh("cols"), g.fresh("r"), g.fresh("c")
+	g.wl("%s := 0", cols)
+	g.wl("if len(%s) > 0 { %s = len(%s[0]) }", in, cols, in)
+	g.wl("for %s := range %s {", r, in)
+	g.in()
+	g.wl("if len(%s[%s]) != %s {", in, r, cols)
+	g.in()
+	g.wl(`dmFail("grid is not rectangular: row %%d has %%d cells, expected %%d", %s, len(%s[%s]), %s)`,
+		r, in, r, cols)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+	g.wl("%s := make([]%s, %s)", v, rowGo, cols)
+	g.wl("for %s := range %s {", c, cols)
+	g.in()
+	g.wl("%s[%s] = make([]%s, len(%s))", v, c, elemGo, in)
+	g.wl("for %s := range %s {", r, in)
+	g.in()
+	g.wl("%s[%s][%s] = %s[%s][%s]", v, c, r, in, r, c)
 	g.out()
 	g.wl("}")
 	g.out()

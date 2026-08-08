@@ -99,9 +99,10 @@ func TestFieldName(t *testing.T) {
 }
 
 // TestRecordStructInterning pins the intern rules across nodes: the same
-// structural type shares one generated struct, and two record types with the
-// same fields in a different order intern to distinct structs (which is why
-// `=` between them is rejected rather than miscompiled).
+// structural type shares one generated struct, and so do two record types that
+// declare the same fields in a different order — Type.Equal, KeyOf and
+// DeepEqual all treat those as one type, so the backend has to as well or the
+// two cannot meet in an `if`'s arms, a list, or a Map value.
 func TestRecordStructInterning(t *testing.T) {
 	g := &gen{}
 	ab := ir.Record(ir.Field{Name: "a", Type: ir.Int()}, ir.Field{Name: "b", Type: ir.Text()})
@@ -123,11 +124,17 @@ func TestRecordStructInterning(t *testing.T) {
 	if n1 != n2 {
 		t.Errorf("structurally equal records interned to different structs: %q vs %q", n1, n2)
 	}
-	if n1 == n3 {
-		t.Errorf("field order must distinguish records, both interned to %q", n1)
+	if n1 != n3 {
+		t.Errorf("records with the same fields in a different order interned to %q and %q; "+
+			"Type.Equal says they are one type", n1, n3)
 	}
-	if len(g.decls) != 2 {
-		t.Errorf("expected exactly 2 struct declarations (one per distinct type), got %d: %v", len(g.decls), g.decls)
+	if len(g.decls) != 1 {
+		t.Errorf("expected exactly 1 struct declaration (one per distinct type), got %d: %v", len(g.decls), g.decls)
+	}
+	// The struct declares its fields by name, so the layout does not depend on
+	// which of the two the emitter reached first.
+	if want := "type R1 struct {\n\ta int64\n\tb string\n}"; g.decls[0] != want {
+		t.Errorf("struct fields are not in canonical order:\ngot  %q\nwant %q", g.decls[0], want)
 	}
 
 	// Tuples intern on the same rule.

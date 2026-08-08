@@ -129,7 +129,7 @@ Things to notice:
   language. `and`/`or` short-circuit.
 - `if cond then a else b` is an expression with lazy arms, so
   `if length(xs) = 0 then -1 else first(xs)` is safe.
-- There are 144 builtin functions available inside lambdas — list ops
+- There are 161 builtin functions available inside lambdas — list ops
   (`length`, `item`, `take`, `sum`, …), math (`gcd`, `modpow`, …), text
   (`toint`, `totext`, …), bits (`band`, `frombin`, …), points and grids
   (`point`, `manhattan`, `at`, `neighbors4`, …), and sparse grids (`put`,

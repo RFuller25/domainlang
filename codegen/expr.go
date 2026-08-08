@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,18 @@ import (
 type exprBinding struct {
 	expr string
 	typ  *ir.Type
+	// cell, when non-empty, is a Go expression of type *T pointing at the
+	// variable behind expr: `&dmBind1` for a local of the enclosing function,
+	// or the parameter itself for a binding a block function already reaches
+	// through a pointer. Two things need it, and nothing else may have it: a
+	// `:=` writes through `expr` (which is an lvalue exactly when there is a
+	// cell), and a pipeline body takes the cell as its parameter so a write
+	// inside it lands on the binding rather than on a copy.
+	//
+	// A lambda parameter, an ambient `For` variable and a channel's value are
+	// bound without one — they are not variables this package owns, and the
+	// resolver refuses a write to any of them long before the backend runs.
+	cell string
 }
 
 type exprEnv map[string]exprBinding
@@ -43,6 +56,25 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 		b, ok := env[x.Param]
 		if !ok {
 			return "", nil, fmt.Errorf("block body has no input binding")
+		}
+		// A lambda of two or more parameters has one the body is *over*; the
+		// rest are in scope by name inside it. Putting them in g.bindNames is
+		// the whole implementation: emitBlockCall already passes every binding
+		// in scope into the block's function, because a `Consider` in an outer
+		// scope had the same problem first.
+		if len(x.Extra) > 0 {
+			saved := g.bindNames
+			scoped := make(exprEnv, len(saved)+len(x.Extra))
+			maps.Copy(scoped, saved)
+			for _, e := range x.Extra {
+				eb, ok := env[e.Param]
+				if !ok {
+					return "", nil, fmt.Errorf("block body has no binding for %q", e.Name)
+				}
+				scoped[e.Name] = eb
+			}
+			g.bindNames = scoped
+			defer func() { g.bindNames = saved }()
 		}
 		return g.emitBlockCall(x, b.expr, b.typ)
 	case *ast.Ident:
@@ -97,9 +129,129 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 		return g.compileCond(x, env)
 	case *ast.LetExpr:
 		return g.compileLet(x, env)
+	case *ast.AssignExpr:
+		return g.compileAssign(x, env)
+	case *ast.AlsoExpr:
+		return g.compileAlso(x, env)
 	default:
 		return "", nil, fmt.Errorf("unsupported expression %T", e)
 	}
+}
+
+// ordered wraps a compiled operand in an immediately-invoked function, which
+// makes it a *function call* — and function calls are the one thing Go's
+// evaluation order does guarantee, left to right in lexical order. Wrapping an
+// operand that would otherwise be a bare variable read is how an expression
+// containing a write gets the same order out of both backends.
+//
+// It is applied only where a write is actually present, so every program that
+// does not use `:=` compiles to exactly the Go it compiled to before.
+func (g *gen) ordered(code string, t *ir.Type) (string, error) {
+	goT, err := g.goType(t)
+	if err != nil {
+		return "", err
+	}
+	return "func() " + goT + " { return " + code + " }()", nil
+}
+
+// orderArgs forces left-to-right evaluation across an argument list, in place.
+// One writing argument puts *every* argument under the rule, in both
+// directions: an argument to its left must be read before the write, and one
+// to its right after it.
+func (g *gen) orderArgs(exprs []ast.Expr, args []string, types []*ir.Type) error {
+	writes := false
+	for _, a := range exprs {
+		if ast.HasUpdate(a) {
+			writes = true
+			break
+		}
+	}
+	if !writes || len(args) < 2 {
+		return nil
+	}
+	for i := range args {
+		w, err := g.ordered(args[i], types[i])
+		if err != nil {
+			return err
+		}
+		args[i] = w
+	}
+	return nil
+}
+
+// compileAssign lowers `n := v` to an assignment to the Go local the name is
+// bound to, wrapped in an immediately-invoked function so the whole thing is
+// still an *expression* — which is what every caller here wants — and so its
+// value is the value written.
+//
+// The local is whatever the name resolves to: compileLet's `dmLet…` for a
+// `consider`, emitConsider's `dmBind…` for a stage binding, or a block
+// function's `*T` parameter for a binding written to from inside a pipeline
+// body. All three are variables this package owns, and each carries a cell
+// saying so, which is what makes its `expr` an lvalue. The names that are
+// *not* variables — a lambda parameter, an inlined function binding, a
+// substituted Shikigami parameter — were refused at resolve time and reach
+// here without a cell.
+func (g *gen) compileAssign(x *ast.AssignExpr, env exprEnv) (string, *ir.Type, error) {
+	b, ok := env[x.Name]
+	if !ok {
+		if b, ok = g.bindNames[x.Name]; !ok {
+			return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+		}
+	}
+	// Nothing else in an environment is a variable: a parameter may be an
+	// element of a slice being ranged over, an ambient loop variable is the
+	// loop's own. Writing to either would be legal Go and wrong, so the cell is
+	// checked rather than assumed — the resolve-time refusals mean this cannot
+	// fire, and if one of them ever stops covering a case the compiler must
+	// stop, not diverge.
+	if b.cell == "" {
+		return "", nil, fmt.Errorf("%q is not a binding this backend can update", x.Name)
+	}
+	v, vt, err := g.compileExpr(x.Value, env)
+	if err != nil {
+		return "", nil, err
+	}
+	t := b.typ
+	if t == nil {
+		t = vt
+	}
+	goT, err := g.goType(t)
+	if err != nil {
+		return "", nil, err
+	}
+	return "func() " + goT + " {\n\t\t" + b.expr + " = " + v +
+		"\n\t\treturn " + b.expr + "\n\t}()", t, nil
+}
+
+// compileAlso lowers `body also c1, c2` to an immediately-invoked function
+// that takes the body's value first and then runs the clauses for their
+// effects. The body's value is held in a local before a clause can run,
+// which is what makes a clause that updates what the body read change the
+// *next* reader rather than this one.
+func (g *gen) compileAlso(x *ast.AlsoExpr, env exprEnv) (string, *ir.Type, error) {
+	body, bodyT, err := g.compileExpr(x.Body, env)
+	if err != nil {
+		return "", nil, err
+	}
+	goT, err := g.goType(bodyT)
+	if err != nil {
+		return "", nil, err
+	}
+	local := g.fresh("dmAlso")
+	var b strings.Builder
+	b.WriteString("func() " + goT + " {\n\t\tvar " + local + " " + goT + " = " + body + "\n")
+	for _, c := range x.Clauses {
+		cv, _, err := g.compileExpr(c, env)
+		if err != nil {
+			return "", nil, err
+		}
+		// Assigned to the blank identifier: Go has no expression statements,
+		// and the clause is written to be evaluated rather than used.
+		b.WriteString("\t\t_ = " + cv + "\n")
+	}
+	b.WriteString("\t\treturn " + local + "\n\t}()")
+	return b.String(), bodyT, nil
 }
 
 // compileLet lowers `consider n as v in body` to a Go local inside an
@@ -126,7 +278,7 @@ func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) 
 	for k, v := range env {
 		inner[k] = v
 	}
-	inner[x.Name] = exprBinding{expr: local, typ: valT}
+	inner[x.Name] = exprBinding{expr: local, typ: valT, cell: "&" + local}
 	body, bodyT, err := g.compileExpr(x.Body, inner)
 	if err != nil {
 		return "", nil, err
@@ -193,6 +345,12 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		}
 		args[i], types[i] = av, at
 	}
+	// Same ordering hazard as compileBinary's, one argument list wider: an
+	// argument that writes must not be able to run before an argument written
+	// to its left has been read.
+	if err := g.orderArgs(x.Args, args, types); err != nil {
+		return "", nil, err
+	}
 	listElem := func(i int) (*ir.Type, error) {
 		if types[i] == nil || types[i].Kind != ir.KList {
 			return nil, fmt.Errorf("%s needs a List argument, got %s", name, types[i])
@@ -243,6 +401,104 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		}
 		g.helper("dmDrop", declDrop)
 		return "dmDrop(" + args[0] + ", " + args[1] + ")", types[0], nil
+	// -- first-order list operations ---------------------------------------------
+	case "sort":
+		elem, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		fn, err := g.sortFn(elem)
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ")", types[0], nil
+	case "unique":
+		if _, err := listElem(0); err != nil {
+			return "", nil, err
+		}
+		g.helper("dmUniqueList", declUniqueList)
+		return "dmUniqueList(" + args[0] + ")", types[0], nil
+	case "flatten":
+		elem, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmFlatten", declFlatten)
+		return "dmFlatten(" + args[0] + ")", elem, nil
+	case "bandall", "borall", "bxorall":
+		if _, err := listElem(0); err != nil {
+			return "", nil, err
+		}
+		g.helper("dm"+strings.Title(name), declBitReduce(name))
+		return "dm" + strings.Title(name) + "(" + args[0] + ")", ir.Int(), nil
+	case "and", "or":
+		// A *function*, so both arguments are evaluated before it runs — the
+		// interpreter evaluates every argument before dispatching, and a
+		// compiled `&&` would skip a failure the interpreter raises. Passing
+		// them to a helper is what forces that; Go's non-short-circuiting `&`
+		// and `|` are not defined on the untyped bool a comparison produces.
+		// The infix operators keep `&&`/`||` and keep short-circuiting — that
+		// difference is the point, and docs/expressions.md states it.
+		fn := "dmAnd"
+		decl := declAnd
+		if name == "or" {
+			fn, decl = "dmOr", declOr
+		}
+		g.helper(fn, decl)
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+	case "xor":
+		return "(" + args[0] + " != " + args[1] + ")", ir.Bool(), nil
+	case "not":
+		return "(!" + args[0] + ")", ir.Bool(), nil
+	case "product":
+		elem, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmProduct", declProduct)
+		return "dmProduct(" + args[0] + ")", elem, nil
+	case "zip":
+		a, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		b, err := listElem(1)
+		if err != nil {
+			return "", nil, err
+		}
+		fn, err := g.pairFn("zip", a, b)
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(ir.Tuple(a, b)), nil
+	case "enumerate":
+		elem, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		fn, err := g.pairFn("enumerate", ir.Int(), elem)
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ")", ir.List(ir.Tuple(ir.Int(), elem)), nil
+	case "chunk", "windows":
+		if _, err := listElem(0); err != nil {
+			return "", nil, err
+		}
+		g.helper("dmFail", declFail, "fmt", "os")
+		decl, fn := declChunk, "dmChunk"
+		if name == "windows" {
+			decl, fn = declWindows, "dmWindows"
+		}
+		g.helper(fn, decl)
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0]), nil
+	case "transpose":
+		if _, err := listElem(0); err != nil {
+			return "", nil, err
+		}
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmTransposeList", declTransposeList)
+		return "dmTransposeList(" + args[0] + ")", types[0], nil
 	case "reverse":
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.helper("dmReverseText", declReverseText)
@@ -362,6 +618,11 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "", nil, fmt.Errorf("put needs a Sparse argument, got %s", types[0])
 		}
 		g.helper("dmSparse", declSparse, "slices")
+		if x.InPlace {
+			g.helper("dmSparsePutIn", declSparsePutIn)
+			return "dmSparsePutIn(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
+				types[0], nil
+		}
 		g.helper("dmSparsePut", declSparsePut)
 		return "dmSparsePut(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
 			types[0], nil
@@ -863,6 +1124,16 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmSet", declSet)
 		return "func(" + elemGo + ") dmSet[" + elemGo + "] { return dmNewSet[" + elemGo +
 			"]() }(" + args[0] + ")", ir.Set(types[0]), nil
+	case "emptylist":
+		// Same witness discipline as emptyset: the value is discarded but still
+		// evaluated, so `emptylist(first(xs))` on an empty list fails in both
+		// backends rather than one.
+		elemGo, err := g.goType(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		return "func(" + elemGo + ") []" + elemGo + " { return []" + elemGo +
+			"{} }(" + args[0] + ")", ir.List(types[0]), nil
 	case "emptymap":
 		keyGo, err := g.goType(types[0])
 		if err != nil {
@@ -921,8 +1192,16 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 				"{f0: k, f1: m.vals[k]}) }; return out }(" + args[0] + ")",
 			ir.List(pairT), nil
 	case "insert":
+		// x.InPlace is the optimizer's proof that nothing reads the
+		// copied-from value after this call, so the clone is unobservable —
+		// see optimizer/linear.go. The in-place helper is the functional one
+		// minus the clone.
 		if types[0] != nil && types[0].Kind == ir.KSet {
 			g.helper("dmSet", declSet)
+			if x.InPlace {
+				g.helper("dmSetAddIn", declSetAddIn)
+				return "dmSetAddIn(" + args[0] + ", " + args[1] + ")", types[0], nil
+			}
 			g.helper("dmSetClone", declSetClone)
 			g.helper("dmSetWith", declSetWith)
 			return "dmSetWith(" + args[0] + ", " + args[1] + ")", types[0], nil
@@ -931,6 +1210,10 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "", nil, fmt.Errorf("insert needs a Set or Map argument, got %s", types[0])
 		}
 		g.helper("dmMap", declMap)
+		if x.InPlace {
+			g.helper("dmMapPutIn", declMapPutIn)
+			return "dmMapPutIn(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		}
 		g.helper("dmMapClone", declMapClone)
 		g.helper("dmMapWith", declMapWith)
 		return "dmMapWith(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
@@ -966,6 +1249,11 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmGrid", declGrid)
+		if x.InPlace {
+			g.helper("dmGridSetIn", declGridSetIn)
+			return "dmGridSetIn(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
+				types[0], nil
+		}
 		g.helper("dmGridWith", declGridWith)
 		return "dmGridWith(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
 			types[0], nil
@@ -1343,8 +1631,12 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 }
 
 func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, error) {
-	if fused, ft, ok := g.tryMaxCompare(x, env); ok {
-		return fused, ft, nil
+	// The fusion below rewrites the comparison into a different shape; an
+	// operand that writes to a binding must be compiled as written.
+	if !ast.HasUpdate(x) {
+		if fused, ft, ok := g.tryMaxCompare(x, env); ok {
+			return fused, ft, nil
+		}
 	}
 	l, lt, err := g.compileExpr(x.Left, env)
 	if err != nil {
@@ -1353,6 +1645,23 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 	r, rt, err := g.compileExpr(x.Right, env)
 	if err != nil {
 		return "", nil, err
+	}
+	// Go orders the *function calls* in an expression left to right, but says
+	// nothing about when a bare variable is read relative to them. With a
+	// write anywhere in the operands that is a real disagreement in both
+	// directions: `x + (x := 3)` could read x after the write, and
+	// `(x := 3) + x` could read it before. Making both operands calls puts
+	// them both under the rule Go does guarantee.
+	//
+	// and/or are exempt: Go evaluates a binary logical operation's operands in
+	// order and short-circuits, exactly as eval does.
+	if x.Op != token.AND && x.Op != token.OR && (ast.HasUpdate(x.Left) || ast.HasUpdate(x.Right)) {
+		if l, err = g.ordered(l, lt); err != nil {
+			return "", nil, err
+		}
+		if r, err = g.ordered(r, rt); err != nil {
+			return "", nil, err
+		}
 	}
 	switch x.Op {
 	case token.AND:
@@ -1407,28 +1716,24 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 		if lt == nil || rt == nil || !lt.Equal(rt) {
 			return "", nil, fmt.Errorf("cannot compile = over %s and %s", lt, rt)
 		}
-		if !scalarKind(lt.Kind) {
-			// Structural type equality is field-order-insensitive for
-			// records, but the generated structs are not — require the two
-			// sides to share one Go representation.
-			lg, err := g.goType(lt)
-			if err != nil {
-				return "", nil, err
-			}
-			rg, err := g.goType(rt)
-			if err != nil {
-				return "", nil, err
-			}
-			if lg != rg {
-				return "", nil, fmt.Errorf("cannot compile = over %s and %s (same fields, different declaration order)", lt, rt)
-			}
-		}
 		eq, err := g.eqExpr(l, r, lt)
 		if err != nil {
 			return "", nil, err
 		}
 		return eq, ir.Bool(), nil
 	case token.LT, token.GT, token.LE, token.GE:
+		op := map[token.Kind]string{token.LT: "<", token.GT: ">", token.LE: "<=", token.GE: ">="}[x.Op]
+		// A tuple orders lexicographically, which Go has no operator for, so
+		// it goes through an interned three-way compare. Int, Float and Text
+		// all order with Go's own operator — byte-wise for strings, which is
+		// what ir.Compare's strings.Compare does too.
+		if lt != nil && lt.Kind == ir.KTuple {
+			c, err := g.cmpExpr(l, r, lt)
+			if err != nil {
+				return "", nil, err
+			}
+			return "(" + c + " " + op + " 0)", ir.Bool(), nil
+		}
 		if isFloatType(lt) != isFloatType(rt) {
 			if !isFloatType(lt) {
 				l = "float64(" + l + ")"
@@ -1437,7 +1742,6 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 				r = "float64(" + r + ")"
 			}
 		}
-		op := map[token.Kind]string{token.LT: "<", token.GT: ">", token.LE: "<=", token.GE: ">="}[x.Op]
 		return "(" + l + " " + op + " " + r + ")", ir.Bool(), nil
 	default:
 		return "", nil, fmt.Errorf("unsupported operator %s", x.Op)

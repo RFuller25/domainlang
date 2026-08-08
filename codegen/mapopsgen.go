@@ -109,3 +109,24 @@ func (g *gen) emitFilterEntries(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	return m, nil
 }
+
+// mapEntries materializes a Map as a slice of entry tuples, in key order, for
+// the sequence primitives that accept a Map wherever they accept a List (see
+// seqConsumers). It is emitConvertToEntries' lowering without a node of its
+// own: the entry type comes from the *input* Map rather than from an output
+// type, because here the conversion is implicit.
+func (g *gen) mapEntries(n *ir.Node, in string) (string, error) {
+	pairGo, err := g.goType(ir.Tuple(n.In.Key, n.In.Elem))
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.helper("dmMap", declMap)
+	v, k := g.fresh("v"), g.fresh("k")
+	g.wl("%s := make([]%s, 0, len(%s.keys))", v, pairGo, in)
+	g.wl("for _, %s := range %s.keys {", k, in)
+	g.in()
+	g.wl("%s = append(%s, %s{%s, %s.vals[%s]})", v, v, pairGo, k, in, k)
+	g.out()
+	g.wl("}")
+	return v, nil
+}

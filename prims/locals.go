@@ -107,7 +107,12 @@ func (r *resolver) lookupLocal(name string) *localBind {
 //
 // Bindings are resolved in written order and each sees the ones above it, so
 // `Consider half As accum / 2` is legal and a cycle is not expressible.
-func (r *resolver) pushBinds(binds []*ast.Binding, cur *ir.Type) ([]*runtimeBind, func(), error) {
+//
+// updated is the set of names the expressions under this scope write to with
+// `:=`. It reaches resolveBind, where it decides how a binding is lowered: a
+// name that is written to keeps a cell to write to instead of being folded
+// into the literals that read it.
+func (r *resolver) pushBinds(binds []*ast.Binding, cur *ir.Type, updated map[string]bool) ([]*runtimeBind, func(), error) {
 	pushed, typePushed := 0, 0
 	pop := func() {
 		r.locals = r.locals[:len(r.locals)-pushed]
@@ -123,7 +128,7 @@ func (r *resolver) pushBinds(binds []*ast.Binding, cur *ir.Type) ([]*runtimeBind
 		}
 		seen[b.Name] = true
 
-		lb, rt, err := r.resolveBind(b, cur)
+		lb, rt, err := r.resolveBind(b, cur, updated[b.Name])
 		if err != nil {
 			pop()
 			return nil, nil, err
@@ -139,6 +144,63 @@ func (r *resolver) pushBinds(binds []*ast.Binding, cur *ir.Type) ([]*runtimeBind
 		}
 	}
 	return rts, pop, nil
+}
+
+// updatedInStatements collects every name written with `:=` by the
+// expressions of these statements and everything nested beneath them — the
+// scope a binding written above them covers.
+//
+// It runs *before* the bindings are resolved, which is the whole reason it
+// exists: how a binding is lowered depends on whether anything writes to it,
+// and that is only knowable by looking ahead at the bodies it scopes over.
+func updatedInStatements(stmts []*ast.Statement) map[string]bool {
+	names := map[string]bool{}
+	collectUpdated(stmts, names)
+	return names
+}
+
+func collectUpdated(stmts []*ast.Statement, names map[string]bool) {
+	for _, s := range stmts {
+		if s == nil {
+			continue
+		}
+		for _, a := range s.Args {
+			if lam, ok := a.Value.(ast.LambdaArg); ok {
+				updatedInLambda(lam.Lambda, names)
+			}
+		}
+		for _, b := range s.Binds {
+			if b == nil {
+				continue
+			}
+			// A binding may be written in terms of the ones above it, so its
+			// own value can perfectly well update one of them.
+			if b.Value != nil {
+				ast.UpdatedNames(b.Value, names)
+			}
+			updatedInLambda(b.Lambda, names)
+			collectUpdated(b.Body, names)
+		}
+		collectUpdated(s.Block, names)
+	}
+}
+
+// updatedInLambda collects a lambda body's writes, minus the ones that land on
+// its own parameters — a parameter shadows a binding of the same name, so a
+// write there is not a write to the binding. (Such a write does not typecheck
+// either; this keeps the two layers agreeing about which name is meant.)
+func updatedInLambda(lam *ast.Lambda, names map[string]bool) {
+	if lam == nil {
+		return
+	}
+	inner := map[string]bool{}
+	ast.UpdatedNames(lam.Body, inner)
+	for _, p := range lam.Params {
+		delete(inner, p)
+	}
+	for n := range inner {
+		names[n] = true
+	}
 }
 
 // checkBindName rejects the names a binding may not take.
@@ -159,7 +221,15 @@ func checkBindName(b *ast.Binding, seen map[string]bool) error {
 
 // resolveBind lowers one binding, returning its resolved form and — when its
 // value is only known at runtime — the payload for the Bind node.
-func (r *resolver) resolveBind(b *ast.Binding, cur *ir.Type) (localBind, *runtimeBind, error) {
+//
+// written says something in the binding's scope updates it with `:=`. That
+// turns off the constant path: a folded binding is substituted into the
+// lambdas that read it as a literal, and a literal has nowhere to put a new
+// value. Such a binding becomes a runtime one, computed when its scope opens
+// exactly as `Of` bindings always were, and pays what that costs — the
+// optimizer's body patterns no longer see a constant where the name is, so the
+// stage stands its rewrites down (see optimizer/walk.go).
+func (r *resolver) resolveBind(b *ast.Binding, cur *ir.Type, written bool) (localBind, *runtimeBind, error) {
 	fail := func(format string, a ...any) (localBind, *runtimeBind, error) {
 		return localBind{}, nil, &ResolveError{Pos: b.Pos, Msg: fmt.Sprintf(format, a...)}
 	}
@@ -176,6 +246,20 @@ func (r *resolver) resolveBind(b *ast.Binding, cur *ir.Type) (localBind, *runtim
 			return fail("`Consider %s Of`: %v", b.Name, err)
 		}
 		rt := &runtimeBind{name: b.Name, typ: out, body: body, in: cur, pos: b.Pos}
+		return localBind{name: b.Name, src: b, rt: rt}, rt, nil
+
+	// `Of Itself`: the value entering the scope, unchanged.
+	//
+	// Lowered to a synthesized identity lambda rather than to a case of its
+	// own, so it *is* the program the identity Apply used to spell — the
+	// typer, the evaluator, the optimizer and the compiler all see what they
+	// already handled, and nothing downstream learns a new shape.
+	case b.Of && b.Identity:
+		if cur == nil {
+			return fail("`Consider %s Of Itself` has no current value to name", b.Name)
+		}
+		lam := identityLambda(b.Pos)
+		rt := &runtimeBind{name: b.Name, typ: cur, lam: lam, in: cur, pos: b.Pos}
 		return localBind{name: b.Name, src: b, rt: rt}, rt, nil
 
 	// `Of` a lambda: applied to the current value, like a measured argument.
@@ -201,6 +285,10 @@ func (r *resolver) resolveBind(b *ast.Binding, cur *ir.Type) (localBind, *runtim
 
 	// `As` a lambda: a function, inlined at its call sites.
 	case b.Lambda != nil:
+		if written {
+			return fail("`%s` is a function binding, so `%s :=` has nothing to write to: "+
+				"a function is inlined at each call site rather than stored", b.Name, b.Name)
+		}
 		lam, err := r.rewriteLambda(b.Lambda)
 		if err != nil {
 			return localBind{}, nil, err
@@ -216,7 +304,7 @@ func (r *resolver) resolveBind(b *ast.Binding, cur *ir.Type) (localBind, *runtim
 		if err != nil {
 			return localBind{}, nil, err
 		}
-		if lit, ok := foldLiteral(e); ok {
+		if lit, ok := foldLiteral(e); ok && !written {
 			return localBind{name: b.Name, src: b, lit: lit}, nil, nil
 		}
 		typ, err := typecheck.ExprType(e, typecheck.BindingEnv())
@@ -240,6 +328,13 @@ func foldLiteral(e ast.Expr) (ast.Expr, bool) {
 	switch e.(type) {
 	case *ast.IntLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit:
 		return e, true
+	}
+	// Folding means *evaluating*, here, while the program is still being
+	// lowered. An expression that writes to a name would do its writing at
+	// resolve time and then again on every pass, so it is left alone to be
+	// computed where it was written.
+	if ast.HasUpdate(e) {
+		return nil, false
 	}
 	v, err := eval.EvalExpr(e, nil)
 	if err != nil {
@@ -402,6 +497,49 @@ func (r *resolver) rewriteExpr(e ast.Expr, shadowed map[string]bool) (ast.Expr, 
 		}
 		return &ast.LetExpr{Name: x.Name, Value: v, Body: body, Pos: x.Pos}, nil
 
+	case *ast.AssignExpr:
+		// The target is a name, not a subexpression, so it is not rewritten:
+		// substituting a constant into it would leave `3 := …`. What happens
+		// instead is that a binding something writes to is never a constant in
+		// the first place (resolveBind), and the kinds that cannot be written
+		// to say so here.
+		if !shadowed[x.Name] {
+			if b := r.lookupLocal(x.Name); b != nil {
+				b.src.Used = true
+				if b.lam != nil {
+					return nil, &ResolveError{Pos: x.Pos, Msg: fmt.Sprintf(
+						"%q is a function binding, so `%s :=` has nothing to write to: "+
+							"a function is inlined at each call site rather than stored", x.Name, x.Name)}
+				}
+				if b.lit != nil {
+					// resolveBind keeps a written binding off the constant
+					// path, so reaching here means the write is somewhere that
+					// scan does not cover.
+					return nil, &ResolveError{Pos: x.Pos, Msg: fmt.Sprintf(
+						"%q was folded to a constant and cannot be updated here", x.Name)}
+				}
+			}
+		}
+		v, err := r.rewriteExpr(x.Value, shadowed)
+		if err != nil || v == x.Value {
+			return x, err
+		}
+		return &ast.AssignExpr{Name: x.Name, Value: v, Pos: x.Pos}, nil
+
+	case *ast.AlsoExpr:
+		body, err := r.rewriteExpr(x.Body, shadowed)
+		if err != nil {
+			return nil, err
+		}
+		clauses, changed, err := r.rewriteArgs(x.Clauses, shadowed)
+		if err != nil {
+			return nil, err
+		}
+		if body == x.Body && !changed {
+			return x, nil
+		}
+		return &ast.AlsoExpr{Body: body, Clauses: clauses, Pos: x.Pos}, nil
+
 	default:
 		// Literals, and the BlockBody standing in for a sub-pipeline: a body's
 		// statements are resolved through the resolver, which has the same
@@ -542,6 +680,16 @@ func collectIdents(e ast.Expr, into map[string]bool) {
 		into[x.Name] = true
 		collectIdents(x.Value, into)
 		collectIdents(x.Body, into)
+	case *ast.AssignExpr:
+		// The written name counts as used: freshName must not hand it out for
+		// an inlined parameter, or the rename would silently retarget a write.
+		into[x.Name] = true
+		collectIdents(x.Value, into)
+	case *ast.AlsoExpr:
+		collectIdents(x.Body, into)
+		for _, c := range x.Clauses {
+			collectIdents(c, into)
+		}
 	}
 }
 
@@ -587,6 +735,23 @@ func renameIdents(e ast.Expr, sub map[string]string, shadowed map[string]bool) a
 		return &ast.LetExpr{Name: x.Name,
 			Value: renameIdents(x.Value, sub, shadowed),
 			Body:  renameIdents(x.Body, sub, inner), Pos: x.Pos}
+	case *ast.AssignExpr:
+		// The target is renamed with everything else: a write to a name that
+		// is being renamed has to follow it, or it would land on whatever the
+		// old spelling now means.
+		name := x.Name
+		if !shadowed[name] {
+			if to, ok := sub[name]; ok {
+				name = to
+			}
+		}
+		return &ast.AssignExpr{Name: name, Value: renameIdents(x.Value, sub, shadowed), Pos: x.Pos}
+	case *ast.AlsoExpr:
+		clauses := make([]ast.Expr, len(x.Clauses))
+		for i, c := range x.Clauses {
+			clauses[i] = renameIdents(c, sub, shadowed)
+		}
+		return &ast.AlsoExpr{Body: renameIdents(x.Body, sub, shadowed), Clauses: clauses, Pos: x.Pos}
 	default:
 		return e
 	}
@@ -632,6 +797,10 @@ func exprPos(e ast.Expr) token.Position {
 	case *ast.CondExpr:
 		return x.Pos
 	case *ast.LetExpr:
+		return x.Pos
+	case *ast.AssignExpr:
+		return x.Pos
+	case *ast.AlsoExpr:
 		return x.Pos
 	}
 	return token.Position{}
@@ -723,4 +892,20 @@ func (b *runtimeBind) BlockNodes() []*ir.Node {
 		return nil
 	}
 	return b.body.BlockNodes()
+}
+
+// identityLambda is `($self, ...) -> $self` at the arity an `Of` lambda takes
+// here: one parameter for the current value plus one per enclosing For loop,
+// which it ignores exactly as a written lambda would. The names are spelled to
+// be unwritable in source, like blockLambda's.
+func identityLambda(pos token.Position) *ast.Lambda {
+	params := make([]string, 1+ambientDepth())
+	for i := range params {
+		params[i] = fmt.Sprintf("$self%d", i)
+	}
+	return &ast.Lambda{
+		Params: params,
+		Body:   &ast.Ident{Name: params[0], Pos: pos},
+		Pos:    pos,
+	}
 }

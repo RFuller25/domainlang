@@ -1846,3 +1846,117 @@ func dmForeignRun(s dmForeignSpec, stdin string) string {
 	}
 	return out.String()
 }`
+
+// The in-place halves of the functional updates above: each is its own With
+// minus the clone, which is what makes the two agree by inspection rather than
+// by a second implementation. Both backends reach them only where
+// optimizer/linear.go proved the copied-from value dead, and only after the
+// fold that drives them has cloned its accumulator once on entry.
+//
+// They take and return the collection by value because a dmMap/dmSet/dmGrid is
+// a struct: the maps and slices inside are shared, but an append that
+// reallocates has to travel back out, so the caller must use the result.
+
+const declMapPutIn = `func dmMapPutIn[K comparable, V any](m dmMap[K, V], k K, v V) dmMap[K, V] {
+	m.put(k, v)
+	return m
+}`
+
+const declSetAddIn = `func dmSetAddIn[T comparable](s dmSet[T], v T) dmSet[T] {
+	s.add(v)
+	return s
+}`
+
+const declGridSetIn = `func dmGridSetIn[T any](g dmGrid[T], r, c int64, v T) dmGrid[T] {
+	if r < 0 || r >= int64(g.rows) || c < 0 || c >= int64(g.cols) {
+		dmFail("setat: position (%d, %d) out of range (grid %dx%d)", r, c, g.rows, g.cols)
+	}
+	g.cells[r*int64(g.cols)+c] = v
+	return g
+}`
+
+const declSparsePutIn = `func dmSparsePutIn[T any](s dmSparse[T], r, c int64, v T) dmSparse[T] {
+	s.put(r, c, v)
+	return s
+}`
+
+// The clones a fold makes once on entry, so the accumulator has storage of its
+// own before anything writes through it. dmMapClone and dmSetClone are already
+// declared above for the functional path; these two are the rest of the set.
+
+const declGridClone = `func dmGridClone[T any](g dmGrid[T]) dmGrid[T] {
+	out := dmGrid[T]{rows: g.rows, cols: g.cols, cells: make([]T, len(g.cells))}
+	copy(out.cells, g.cells)
+	return out
+}`
+
+const declSparseClone = `func dmSparseClone[T any](s dmSparse[T]) dmSparse[T] {
+	out := dmSparse[T]{def: s.def, cells: make(map[dmSPt]T, len(s.cells)),
+		minR: s.minR, maxR: s.maxR, minC: s.minC, maxC: s.maxC}
+	for k, e := range s.cells {
+		out.cells[k] = e
+	}
+	return out
+}`
+
+// dmPQ is the min-heap Explore's weighted modes settle states with, mirroring
+// ir.PQ. The insertion-order tiebreak is not decoration: Mode: Costs renders
+// its Map in settle order, so two equal-cost states have to come out in the
+// same order here as in the interpreter or the two backends print different
+// text for the same answer.
+const declPQ = `type dmPQItem[T any] struct {
+	v   T
+	pri int64
+	seq int64
+}
+
+type dmPQ[T any] struct {
+	h   []dmPQItem[T]
+	seq int64
+}
+
+func (q *dmPQ[T]) less(a, b dmPQItem[T]) bool {
+	if a.pri != b.pri {
+		return a.pri < b.pri
+	}
+	return a.seq < b.seq
+}
+
+func (q *dmPQ[T]) push(v T, pri int64) {
+	q.h = append(q.h, dmPQItem[T]{v, pri, q.seq})
+	q.seq++
+	for i := len(q.h) - 1; i > 0; {
+		p := (i - 1) / 2
+		if !q.less(q.h[i], q.h[p]) {
+			break
+		}
+		q.h[p], q.h[i] = q.h[i], q.h[p]
+		i = p
+	}
+}
+
+func (q *dmPQ[T]) pop() (T, int64, bool) {
+	if len(q.h) == 0 {
+		var zero T
+		return zero, 0, false
+	}
+	top := q.h[0]
+	n := len(q.h) - 1
+	q.h[0] = q.h[n]
+	q.h = q.h[:n]
+	for i := 0; ; {
+		l, r, m := 2*i+1, 2*i+2, i
+		if l < n && q.less(q.h[l], q.h[m]) {
+			m = l
+		}
+		if r < n && q.less(q.h[r], q.h[m]) {
+			m = r
+		}
+		if m == i {
+			break
+		}
+		q.h[i], q.h[m] = q.h[m], q.h[i]
+		i = m
+	}
+	return top.v, top.pri, true
+}`

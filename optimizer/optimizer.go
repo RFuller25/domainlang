@@ -115,6 +115,13 @@ func Optimize(p *ir.Pipeline, enabled bool) []Rewrite {
 			break
 		}
 	}
+	// Linear accumulators run once, *after* the cascade has settled, rather
+	// than inside it. The pass annotates expressions instead of rewriting the
+	// pipeline, so it could never feed the cascade — and it must not be fed
+	// back into: expression simplification folds a constant by applying a
+	// lambda twice, which is precisely what an in-place update must not have
+	// done to it. See optimizer/linear.go.
+	rewrites = append(rewrites, markLinearAccumulators(p)...)
 	return rewrites
 }
 

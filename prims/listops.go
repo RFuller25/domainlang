@@ -49,7 +49,7 @@ func prefixPrim(id, verb string) *Primitive {
 			return &ir.Node{
 				Prim:    id,
 				In:      in,
-				Out:     in,
+				Out:     seqOut(in, elem),
 				Display: id,
 				Meta:    map[string]any{"lambda": lam},
 				Pos:     pos,
@@ -168,7 +168,7 @@ var partition = &Primitive{
 		return &ir.Node{
 			Prim:    "Partition",
 			In:      in,
-			Out:     ir.List(in),
+			Out:     ir.List(seqOut(in, elem)),
 			Display: "Partition",
 			Meta:    map[string]any{"lambda": lam},
 			Pos:     pos,

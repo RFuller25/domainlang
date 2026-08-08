@@ -40,7 +40,13 @@ func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (st
 	if err != nil {
 		return "", nil, err
 	}
-	fn, err := g.blockFunc(bb, nodes, argType, outType)
+	// The bindings this body writes to travel as pointers rather than values,
+	// so a `:=` inside it lands on the binding itself — which is what the
+	// interpreter's one shared binding stack does. Everything else is still
+	// passed by value, so a body that writes nothing emits the Go it always
+	// emitted.
+	writes := blockUpdates(nodes, g.bindNames)
+	fn, err := g.blockFunc(bb, nodes, argType, outType, writes)
 	if err != nil {
 		return "", nil, err
 	}
@@ -52,7 +58,19 @@ func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (st
 		call += ", " + a.v
 	}
 	for _, name := range g.bindOrder() {
-		call += ", " + g.bindNames[name].expr
+		b := g.bindNames[name]
+		if !writes[name] {
+			call += ", " + b.expr
+			continue
+		}
+		if b.cell == "" {
+			// A binding with no cell is not a variable this package owns, so
+			// there is nothing to point at. The resolver refuses a write to
+			// every such name, so this is a backstop rather than a path.
+			return "", nil, fmt.Errorf("this Using: is an indented pipeline that updates %q "+
+				"with `:=`, which is not a binding this backend can address", name)
+		}
+		call += ", " + b.cell
 	}
 	return call + ")", outType, nil
 }
@@ -60,7 +78,7 @@ func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (st
 // blockFunc emits the function for one block body and returns its name.
 // Memoized per BlockBody, so a body used by a node the compiler visits twice
 // (a fusion that recompiles a lambda, say) is emitted once.
-func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type) (string, error) {
+func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, writes map[string]bool) (string, error) {
 	if name, ok := g.blocks[bb]; ok {
 		return name, nil
 	}
@@ -101,7 +119,10 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type) (
 
 	// The bindings in scope travel the same way, and for the same reason: a
 	// lambda inside the body may read one, and the local holding it belongs to
-	// the function the body was written in.
+	// the function the body was written in. One in `writes` travels as a
+	// pointer instead, so that the body's reads and its writes both reach the
+	// caller's variable — the interpreter's bindings are one shared stack, and
+	// a copy here would silently disagree with it.
 	savedBinds := g.bindNames
 	reboundBinds := make(exprEnv, len(savedBinds))
 	for _, bname := range g.bindOrder() {
@@ -111,6 +132,13 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type) (
 		if terr != nil {
 			g.main, g.indent, g.ambient = savedMain, savedIndent, savedAmbient
 			return "", terr
+		}
+		if writes[bname] {
+			sig += fmt.Sprintf(", %s *%s", p, bindGo)
+			// The deref is the read *and* the write target, and it is already
+			// parenthesized, so it composes wherever a plain variable did.
+			reboundBinds[bname] = exprBinding{expr: "(*" + p + ")", typ: b.typ, cell: p}
+			continue
 		}
 		sig += fmt.Sprintf(", %s %s", p, bindGo)
 		reboundBinds[bname] = exprBinding{expr: p, typ: b.typ}
@@ -138,6 +166,59 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type) (
 	}
 	g.blocks[bb] = name
 	return name, nil
+}
+
+// blockUpdates is the set of enclosing bindings a block body writes to — the
+// ones that have to reach its function as pointers rather than copies. A
+// binding the body opens *itself* is not one of them: it is a local of the
+// block's own function, so a write to it already lands where its readers look,
+// and it is not in outer.
+//
+// A nested body is walked through its resolved nodes rather than through
+// ast.UpdatedNames, which stops at a BlockBody because `:=` is an
+// expression-layer operator and a sub-pipeline's statements are not
+// expressions. Missing one would not miscompile — the inner call would find no
+// cell for the name and stop — but it would refuse a program this now
+// compiles, so the walk goes all the way down.
+func blockUpdates(nodes []*ir.Node, outer exprEnv) map[string]bool {
+	if len(outer) == 0 {
+		return nil
+	}
+	found := map[string]bool{}
+	var walk func([]*ir.Node)
+	walk = func(list []*ir.Node) {
+		for _, n := range list {
+			if lam, _ := n.Meta["lambda"].(*ast.Lambda); lam != nil {
+				if bb, ok := lam.Body.(*ast.BlockBody); ok {
+					walk(bb.Pipe.BlockNodes())
+				} else {
+					names := map[string]bool{}
+					ast.UpdatedNames(lam.Body, names)
+					for _, p := range lam.Params {
+						delete(names, p)
+					}
+					for name := range names {
+						if _, ok := outer[name]; ok {
+							found[name] = true
+						}
+					}
+				}
+			}
+			if sub, _ := n.Meta["nodes"].([]*ir.Node); sub != nil {
+				walk(sub)
+			}
+			if subs, _ := n.Meta[ir.MetaBindNodes].([][]*ir.Node); subs != nil {
+				for _, s := range subs {
+					walk(s)
+				}
+			}
+		}
+	}
+	walk(nodes)
+	if len(found) == 0 {
+		return nil
+	}
+	return found
 }
 
 // bindOrder is the names of the `Consider` bindings in scope, in a fixed order

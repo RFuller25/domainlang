@@ -107,11 +107,41 @@ The body's result type is the lambda's result type, so the usual rule applies
 unchanged: a predicate position needs a body ending in `Bool`, `Map Each`
 produces `List<body type>`.
 
-**What it cannot do.** A body computes one value from one value, so it cannot
-stand in for a lambda that takes two or more parameters — `Fold`, `Reduce`,
-`Scan` and `All Pairs`/`Combinations k` need the lambda written out, and say
-so with the arity named. A stage with no `Using:` lambda at all refuses a body
-rather than ignoring it. Supplying both a lambda and a body is an error.
+**More than one parameter: `Params:`.** A body still computes one value from
+one value, so a lambda of two or more parameters has exactly one it can be the
+body *of* — and `Params:` says what the rest are called:
+
+```domain ignore
+Maximum Technique: Fold            # a fold whose step needs a primitive
+    Seed: (xs) -> 0
+    Params: acc, row
+    Domain Expansion: Sort
+    Cursed Technique: Apply
+        Using: (r) -> acc + first(r)
+```
+
+The **last** name is what the body is over. For a fold that reads the way the
+lambda does: the body is a pipeline over the element, producing the new
+accumulator, and `acc` is the value carried in rather than the one being
+transformed.
+
+**Every** name is also readable, the last one included — it is the body's
+current value *and* in scope by name, so a `Params:` name never turns out to
+be decoration. They arrive through the same machinery
+[`Consider`](#stage-bindings--consider--as--consider--of) uses, so an outer
+binding and a body parameter sit side by side and shadow in the usual order,
+and a `Params:` name obeys the rules a binding name does: it may not shadow an
+expression builtin, and two parameters may not share a spelling.
+
+Without this, a `Fold` whose step needed to sort, group or search could not be
+written at all: the expression layer has no lambda-taking builtins, so there
+was nothing to reach for inside the lambda either.
+
+**What it cannot do.** A stage with no `Using:` lambda at all refuses a body
+rather than ignoring it. Supplying both a lambda and a body is an error, and so
+is a `Params:` beside a written lambda — that lambda already names its own
+parameters, and silently ignoring the line would let a program say one thing
+and do another.
 
 A body is a nested scope like a loop's: bodies nest, an enclosing `For` loop's
 ambient variable is in scope inside one, and `Channel` definitions and `From:`
@@ -126,11 +156,13 @@ identifiers (lambda parameters), parenthesized expressions, field access
 (`expr.name`), and builtin calls (`name(args...)`). Unary minus negates an
 Int.
 
-Binary operators, loosest-binding first (all left-associative):
+Binary operators, loosest-binding first (left-associative unless noted):
 
 | Precedence | Operators | Operands | Result |
 |---|---|---|---|
-| 1 (loosest) | `or` | Bool | Bool |
+| 0 (loosest) | `also` (postfix) | any | the body's type |
+| 0.5 | `:=` (**right**-associative) | the name's type | the value written |
+| 1 | `or` | Bool | Bool |
 | 2 | `and` | Bool | Bool |
 | 2.5 | `ikke` (prefix) | Bool | Bool |
 | 3 | `=` `<` `>` `<=` `>=` | see below | Bool |
@@ -139,7 +171,8 @@ Binary operators, loosest-binding first (all left-associative):
 
 Notes:
 
-- **There is no assignment.** `=` is equality, always.
+- **`=` is equality, always.** Assignment is spelled `:=`, and it writes to a
+  name that is already bound rather than introducing one.
 - **`ikke` is negation** (Norwegian for "not"). It binds looser than a
   comparison and tighter than `and`, so `ikke a = b` reads as `ikke (a = b)`
   and `ikke a and b` as `(ikke a) and b`.
@@ -152,8 +185,16 @@ Notes:
   binds like `*` and `/`, so `0 - 1 % 5` is `0 - (1 % 5)`. Modulo by zero is a
   clean runtime error. `mod(a, b)` is the same operation as a builtin.
 - `=` compares any two values of the same static type — scalars by value,
-  composites (List/Record/Tuple/Grid/Map/Set) structurally. `<` `<=` `>` `>=`
-  are Int-only.
+  composites (List/Record/Tuple/Grid/Map/Set) structurally.
+- `<` `<=` `>` `>=` compare any two values of the same **ordered** type: Int,
+  Float, Text, or a Tuple of those (plus mixed Int/Float, which compares
+  through the numeric tower's promotion). That is exactly the reach of
+  `Sort`/`Sort By`/`Min By`/`Max By`, over the same ordering — Text
+  lexicographically (byte-wise, which agrees with rune order), a Tuple by its
+  first differing element. Anything else — Bool, Record, List, Map, Set, Grid,
+  Sparse — is a resolve error saying so. Ordered is deliberately narrower than
+  keyable: a Record is a legal Map key but has no ordering, because its fields
+  have names rather than positions.
 - `and` / `or` short-circuit, so guard idioms are safe:
   `n = 0 or 10 / n = 5` never divides by zero.
 - `/` is integer division truncating toward zero; division by zero is a
@@ -195,6 +236,102 @@ right as possible, and an inner binding shadows an outer one (and a lambda
 parameter) for its body only. The compiler lowers it to a Go local, so it
 costs nothing at runtime.
 
+## Updating a local — `:=`
+
+`NAME := VALUE` writes to a name already in scope and **yields the value it
+wrote**, so the update can sit in the middle of the expression that needs it:
+
+```
+consider t as x * 2 in (t := t + 1) * 10
+```
+
+Two kinds of name can be written to, and the difference is how long the write
+lives:
+
+| Target | The write lives |
+|---|---|
+| a `consider` local | until the expression ends — it cannot escape one evaluation of the lambda |
+| a `Consider … As/Of` **stage binding** | for the whole stage: the next element sees it, and so does the next lap of a loop |
+
+Everything else is refused where it is written, because in each case there is
+nothing to write *to*: a **lambda parameter** is bound afresh by whatever
+applies the lambda, a **function binding** (`Consider f As (x) -> …`) is
+inlined at its call sites, and a **Shikigami parameter** is substituted into
+the body as a literal. Each says so, and says what to write instead.
+
+The type may not change. A binding's type is fixed when its scope opens and is
+what every other expression in that scope was typed against, so `n := 1.5` on
+an `Int` binding is an error rather than a widening — widen at the binding.
+
+**Order is defined and it matters.** Operands and arguments are evaluated left
+to right, so `n + (n := x) + n` reads the old `n`, writes, and reads the new
+one. Both backends agree on this; the compiler emits explicit sequencing to
+guarantee it, since Go's own evaluation order does not.
+
+**A write that is not reached does not happen.** `and`/`or` short-circuit and
+`if` arms are lazy in both backends, so the write in `x > 100 and (n := 1) > 0`
+never runs when the left side is false. That is the same laziness the guard
+idiom depends on; it is worth knowing when the right-hand side is doing work
+rather than answering a question.
+
+### What it gives up
+
+A stage whose lambdas write to a binding is no longer a pure function of its
+input, and the optimizer stands its rewrites down for that stage: no algorithm
+substitution, no fusion with a neighbour, no expression simplification (see
+[optimizer.md](optimizer.md)). The binding itself also stops being folded into
+the lambdas that read it — a constant substituted as a literal has nowhere to
+put a new value — which is the same trade a `Consider … Of` binding has always
+made. Stages that do not write are untouched.
+
+`domain expansion: visualize --expressions` replays an application to show what
+each subexpression came to, so it declines a lambda that writes: re-running the
+body would do the writing a second time.
+
+## Running an expression for its effect — `also`
+
+`BODY also C1, C2, …` evaluates the body, then each clause in written order,
+**discards the clauses' values**, and yields the body's. Its type is the body's
+type; the clauses may be any type but still have to typecheck, and one that
+fails at runtime fails the expression.
+
+```domain
+Cursed Technique: Map Each          # each element, and how many came before it
+    Consider seen As 0
+    Using: (x) -> x + seen also seen := seen + 1
+```
+
+The body's value is taken *before* the clauses run, which is the whole point of
+the ordering: a clause updates what the **next** reader of the name sees, not
+what this expression already yielded. Written inside a parenthesis, that next
+reader can be the rest of the same expression:
+
+```
+(x also n := n + 1) + n      # the old x, plus the new n
+```
+
+`also` binds looser than everything, and its clause list runs to the end of the
+expression. That leaves two places it cannot be read without guessing, and both
+are refused rather than guessed:
+
+- **inside a call's arguments**, where the clause commas and the argument
+  commas are the same character — write `f((a also b), c)`;
+- **twice at one level** — write `(a also b) also c`.
+
+So a bare `also` list is written where something else already ends it: at the
+end of a lambda body, a `Consider … As` value, or a parenthesis.
+
+`also` carries no update of its own — a clause that writes nothing is evaluated
+and discarded, which is legal and does nothing. It is the place to put the
+writes whose *value* is not what the expression is for.
+
+A `Using:` written as an [indented
+pipeline](#pipeline-bodies--a-using-that-needs-a-primitive) writes through like
+any other lambda. It compiles to a Go function of its own, and a binding it
+updates reaches that function as a pointer rather than a copy, so the write
+lands on the binding in both backends — including from a body nested inside
+another.
+
 ## Stage bindings — `Consider … As` / `Consider … Of`
 
 `consider` names a subexpression *inside* one expression. A **stage binding**
@@ -229,6 +366,7 @@ the current pipeline value. A binding has no slot to disambiguate it.
 | `Consider total Of Sum` | an operation applied to the current value | once per pass through the stage |
 | `Consider total Of (xs) -> sum(xs)` | the same, written as a lambda | once per pass through the stage |
 | `Consider total Of` + an indented pipeline | a whole sub-pipeline over that value | once per pass through the stage |
+| `Consider line Of Itself` | the value entering the scope, unchanged | once per pass through the stage |
 
 **`As` never sees the pipeline value; `Of` always does.** That is the whole
 rule. `Of` accepts an operation phrase, a lambda over the current value, or an
@@ -263,8 +401,28 @@ binding written at the top of a `Shikigami` body scopes over the whole body and
 may use the definition's parameters.
 
 An `Of` binding is computed once when its scope opens, from the value entering
-it — including at the head of a loop, where "the stage" is the whole loop
-rather than one lap.
+**the statement it is written on** — which for a `Map Each` is the whole list,
+not one element. That is worth stating outright, because it reads the other way
+round for exactly the stage people reach for most: to name the *element*, put
+the `Consider` on a statement inside the body, where the element is what
+arrives.
+
+At the head of a loop, "the stage" is the whole loop rather than one lap.
+
+`Of Itself` is the value itself, unchanged. It exists because naming the
+current value otherwise took an identity Apply —
+
+```domain ignore
+Consider line Of Apply          # the long way
+    Using: (l) -> l
+
+Consider line Of Itself         # the same binding
+```
+
+— which is pure ceremony, and exactly what a pipeline body needs to name its
+own element. `domain expansion: optimize` rewrites the first into the second.
+(It is a word rather than a bare `Consider line Of`, because that spelling is
+how the REPL knows an indented sub-pipeline is still coming.)
 
 ### What a binding cannot be
 
@@ -289,6 +447,11 @@ the *shape* of a lambda body, so `Consider target As 2020` + `(a, b) -> a + b =
 target` still becomes the hash-set scan, while an `Of` binding — a value that
 is not known until data arrives — stands the rewrite down the way a measured
 argument does (see [optimizer.md](optimizer.md)).
+
+A binding that something [updates with `:=`](#updating-a-local--) is the third
+case, and it costs what the second one does: it is computed when its scope
+opens rather than folded, because a literal substituted into a body has nowhere
+to put a new value.
 
 ## Builtin functions
 
@@ -318,6 +481,7 @@ point/tuple group compiles through the interned tuple structs (see
 | `at(g, r, c)` | `Grid<T> \| Sparse<T> × Int × Int -> T` | 0-based `(row, col)` cell. Dense: **error** out of bounds. Sparse: total — unset cells read the default. |
 | `inbounds(g, r, c)` | `Grid<T> × Int × Int -> Bool` | Whether `(r, c)` is a legal cell. Pairs with `at` under short-circuit `and`. |
 | `list(a, b, …)` | `T × … -> List<T>` (≥ 1 arg) | Construct a list; all elements must share one type. |
+| `emptylist(v)` | `T -> List<T>` | The empty list. `v` is a **type witness**, never stored — the same trick `emptyset`/`emptymap` play, and the reason `list()` is not the spelling: with no arguments there is nothing to read the element type from, and every expression's type is fixed at resolve time. |
 | `set(xs, i, v)` | `List<T> × Int × T -> List<T>` | Copy of `xs` with element `i` replaced (functional update). **Error** if `i` is out of range. |
 | `row(g, r)` | `Grid<T> × Int -> List<T>` | Row `r` as a list. **Error** out of range. |
 | `col(g, c)` | `Grid<T> × Int -> List<T>` | Column `c` as a list. **Error** out of range. |
@@ -329,6 +493,31 @@ point/tuple group compiles through the interned tuple structs (see
 | `fill(n, v)` | `Int × T -> List<T>` | `n` copies of `v`. Total: a negative count is the empty list, like `take`. |
 | `item(t, i)` | `(T1, …) × Int -> Ti` | Tuple element. The index must be a **literal**: the elements have different types, so the result type is only knowable when the position is. Compiles to a direct struct field. |
 | `length(t)` | `(T1, …) -> Int` | A tuple's arity. |
+
+### First-order list operations
+
+None of these takes a function argument, so none of them is a higher-order
+builtin — they were simply absent, and each absence forced a nested pipeline
+body where an expression would have done. Inside a `Fold`, where a body cannot
+stand in for a 2-parameter lambda at all, the absence was total.
+
+Each mirrors the primitive of the same job exactly, because the two spellings
+have to answer the same question the same way.
+
+| Builtin | Type | Behavior |
+|---|---|---|
+| `sort(xs)` | `List<T> -> List<T>` (T ordered) | Ascending, stable, over the ordering [`Sort`](primitives.md#sort--quicksort--listt---listt-t-ordered) and `<` share. |
+| `unique(xs)` | `List<T> -> List<T>` (T keyable) | Deduplicated, keeping first-seen order — `Unique`, inside a lambda. |
+| `flatten(xss)` | `List<List<T>> -> List<T>` | One level, left to right. |
+| `product(xs)` | `List<N> -> N` (N = Int or Float) | The product; `1` for the empty list, as `sum` is `0`. |
+| `zip(a, b)` | `List<A> × List<B> -> List<(A, B)>` | Element-wise pairs, truncated to the shorter — the `Zip` consumer without the channels. |
+| `enumerate(xs)` | `List<T> -> List<(Int, T)>` | Each element tupled with its 0-based index. |
+| `chunk(xs, n)` | `List<T> × Int -> List<List<T>>` | Non-overlapping blocks, **keeping a short final one**. **Error** if `n < 1`. |
+| `windows(xs, n)` | `List<T> × Int -> List<List<T>>` | Sliding windows of exactly `n`, so a trailing partial one is **dropped** — the difference from `chunk`. **Error** if `n < 1`. |
+| `transpose(xss)` | `List<List<T>> -> List<List<T>>` | Rows become columns. **Error** on a ragged input, naming the row. |
+
+A `Set` or a `Map` reaches these through `tolist` and `entries`, which is the
+same bridge the rest of the table uses.
 
 ### Maps and Sets
 
@@ -385,10 +574,20 @@ Maximum Technique: Fold                  # a frequency map, in one lambda
     Using: (acc, w) -> insert(acc, w, getor(acc, w, 0) + 1)
 ```
 
-Each update copies, so a fold over *n* elements is O(n·size). That is the price
-of a value-semantics accumulator and it is the right shape for the sizes these
-programs work at; a genuinely large aggregation still belongs in `Count By` or
-`Group By`, which build one collection in place.
+Every update is functional, but it is not always a copy. Where the optimizer
+can prove nothing reads the copied-from value after an update — which is the
+usual case in a `Fold`, whose accumulator is dead the moment the lambda
+returns — it marks the site and both backends write through instead, so the
+fold above is linear in its writes rather than quadratic in the map. The
+accumulator is cloned once on entry, because a `Part` or a `Channel` may be
+holding the same value; see
+[optimizer.md](optimizer.md#linear-accumulators--the-pass-that-runs-last) for
+what has to be true, and `--no-optimize` for the copying behaviour.
+
+The proof can fail, and then the copy stays: a body that still reads the
+accumulator *after* updating it needs the old value, so it gets it. `del` is
+never done in place. And a `Count By` or `Group By` still builds one
+collection in one pass, which beats any fold.
 
 ### Math / number theory
 
@@ -483,12 +682,43 @@ means the same thing in both layers on non-ASCII input.
 | `bnot(n)` | `Int -> Int` | Bitwise complement. |
 | `shl(a, n)` / `shr(a, n)` | `Int × Int -> Int` | Left / arithmetic right shift. **Error** on a negative shift count. |
 | `popcount(n)` | `Int -> Int` | Set bits in the two's-complement representation. |
+| `bandall(xs)` / `borall(xs)` / `bxorall(xs)` | `List<Int> -> Int` | Reduce a list with the operator, the way `sum` and `product` do. The empty list gives the operator's **identity**, so a later fold is unchanged by it: `0` for `or`/`xor` and **`-1`** for `and` (all bits set). `bxorall` is the "xor the whole column" one-liner. |
 | `testbit(n, i)` | `Int × Int -> Bool` | Whether bit `i` is set. **Error** outside `0`–`63`. |
 | `frombin(s)` | `Text -> Int` | Parse a binary string (whitespace-tolerant) — the 2021 D3 diagnostic parse. **Error** if not binary. |
 | `frombase(s, b)` | `Text × Int -> Int` | Parse in base `b` (2–36), sign allowed. **Error** on a bad base or an unparseable string. |
 | `fromhex(s)` | `Text -> Int` | Base 16, tolerating a `0x` prefix. |
 | `tobase(n, b)` | `Int × Int -> Text` | Render in base `b` (2–36). |
 | `tohex(n)` / `tobin(n)` | `Int -> Text` | Base 16 / base 2. |
+
+### Logic
+
+The infix connectives are `and`, `or` and `ikke` (prefix negation). These are
+their **function** spellings, plus the `xor` that has no infix form at all.
+
+| Builtin | Type | Behavior |
+|---|---|---|
+| `and(a, b)` / `or(a, b)` | `Bool × Bool -> Bool` | Conjunction / disjunction. |
+| `xor(a, b)` | `Bool × Bool -> Bool` | Exactly one of the two. No infix spelling exists. |
+| `not(a)` | `Bool -> Bool` | Negation — `ikke` as a function. |
+
+**The function forms do not short-circuit.** Every builtin evaluates all of its
+arguments before it runs, and these are builtins; the infix operators are
+syntax and keep their short-circuit. The difference is observable:
+
+```domain ignore
+x > 99 and item(xs, 5) > 0      # false — the right operand never runs
+and(x > 99, item(xs, 5) > 0)    # error: index 5 out of range
+```
+
+Prefer the infix operators when either operand can fail or is expensive. The
+function forms are for `xor`, and for reading a chain of conditions as a
+call — never for guarding one operand with another.
+
+`and` and `or` are recognized as operators only in **infix** position and as
+ordinary names elsewhere, so both spellings coexist:
+`a > 0 and and(b > 0, not(c < 0))` is one expression. The one ambiguous
+position — an infix `or` immediately followed by `(` — is a parse error rather
+than a silent reinterpretation.
 
 ### Number theory
 
@@ -595,12 +825,13 @@ wording in both backends.
 
 ## What the expression layer does not have (yet)
 
-- **Higher-order builtins.** Nothing here maps, filters, sorts or searches, so
-  the pure list transforms that need no function argument — `sort`, `unique`,
-  `flatten`, `product`, `zip`, `enumerate`, `chunk`, `windows`, `transpose` —
-  have no expression spelling either, even though they would not violate the
-  rule. Indent a pipeline where the lambda goes (above) and the primitives do
-  the work instead.
+- **Higher-order builtins.** Nothing here maps, filters or searches with a
+  function you supply. The pure list transforms that need *no* function
+  argument are no longer in that sentence — `sort`, `unique`, `flatten`,
+  `product`, `zip`, `enumerate`, `chunk`, `windows` and `transpose` all have
+  an expression spelling now ([above](#first-order-list-operations)). What
+  still has none is anything taking a lambda: indent a pipeline where the
+  lambda goes and the primitives do the work instead.
 - **User-defined functions.** Shikigami operate at the pipeline layer instead,
   and are not recursive — see `Domain Expansion: Explore` in
   [primitives.md](primitives.md) for the search that replaces recursion.
@@ -611,8 +842,11 @@ form of `Map Cells`/`Count Cells` with the `row`/`col`/`rows`/`cols`
 builtins; floats; number-to-text conversion (`totext`); modulo and the
 integer-math group; text access beyond parsing; the Map/Set escape hatches;
 heterogeneous tuples; boolean negation (`ikke`); local bindings
-(`consider`); and, in v0.6, **collection construction and update** — a Map,
-Set or dense Grid could be read but never built, so a fold could not
-accumulate one — along with list generation, text splitting and code points,
-the float tower past `sqrt`, named-field records, and the base/bit/number-theory
-group.)
+(`consider`); **collection construction and update** — a Map, Set or dense
+Grid could be read but never built, so a fold could not accumulate one —
+along with list generation, text splitting and code points, the float tower
+past `sqrt`, named-field records, and the base/bit/number-theory group; and,
+most recently, **updating a name** ([`:=`](#updating-a-local--) and
+[`also`](#running-an-expression-for-its-effect--also)), which is how a value
+carried between elements stops having to be threaded through a `Fold`
+accumulator.)

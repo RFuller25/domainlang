@@ -57,3 +57,11 @@ func BindingEnv() Env {
 	seedBindings(env)
 	return env
 }
+
+// Which names `:=` may write to is *not* decided here. Env answers what a
+// name's type is, not what kind of thing it names, and the one kind that
+// cannot be written to — a lambda parameter — is knowable from the syntax
+// alone: the parameters are written a few characters to the left of the body
+// that writes to them. parser.parseLambda refuses it there, which keeps this
+// package free of a scope stack it would have to keep balanced across the
+// resolutions that run side by side.

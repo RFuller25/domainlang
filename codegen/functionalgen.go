@@ -1,6 +1,9 @@
 package codegen
 
-import "domain/ir"
+import (
+	"domain/ast"
+	"domain/ir"
+)
 
 // Go lowerings for the functional trio in prims/functional.go: Reduce (the
 // seedless fold), Scan (the running fold), and Pairs (adjacent tuples). Each
@@ -28,7 +31,7 @@ func (g *gen) emitReduce(n *ir.Node, in string) (string, error) {
 	g.wl(`dmFail("Reduce of an empty list is undefined")`)
 	g.out()
 	g.wl("}")
-	g.wl("%s := %s[0]", acc, in)
+	g.wl("%s := %s", acc, g.ownAccumulator(lam, n.Out, in+"[0]"))
 	g.wl("for _, %s := range %s[1:] {", e, in)
 	g.in()
 	g.wl("%s = %s", acc, body)
@@ -108,4 +111,38 @@ func (g *gen) emitPairs(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	return v, nil
+}
+
+// ownAccumulator emits the one-time clone a fold makes when the optimizer
+// marked any update in its lambda as in-place, and returns the expression the
+// accumulator should be seeded from. It mirrors prims.ownAccumulator exactly,
+// because the two backends have to agree about which programs make the copy.
+//
+// The analysis proves nothing *inside* the lambda reads the copied-from value
+// after an update; it says nothing about who else holds the seed, and a Part
+// or a Channel branches from one value. Without a marked update this is the
+// identity, so the naive path keeps the allocation profile it had.
+func (g *gen) ownAccumulator(lam *ast.Lambda, accT *ir.Type, seed string) string {
+	if lam == nil || accT == nil || !ast.HasInPlace(lam.Body) {
+		return seed
+	}
+	switch accT.Kind {
+	case ir.KMap:
+		g.helper("dmMap", declMap)
+		g.helper("dmMapClone", declMapClone)
+		return "dmMapClone(" + seed + ")"
+	case ir.KSet:
+		g.helper("dmSet", declSet)
+		g.helper("dmSetClone", declSetClone)
+		return "dmSetClone(" + seed + ")"
+	case ir.KGrid:
+		g.helper("dmGrid", declGrid)
+		g.helper("dmGridClone", declGridClone)
+		return "dmGridClone(" + seed + ")"
+	case ir.KSparse:
+		g.helper("dmSparse", declSparse, "slices")
+		g.helper("dmSparseClone", declSparseClone)
+		return "dmSparseClone(" + seed + ")"
+	}
+	return seed
 }

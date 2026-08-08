@@ -65,7 +65,7 @@ func evalExprStep(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
 		}
-		return v, nil
+		return Deref(v), nil
 	case *ast.BlockBody:
 		// The sub-pipeline form of a lambda body: run the resolved body over
 		// the value bound to the parameter it reads.
@@ -73,7 +73,19 @@ func evalExprStep(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s: block body has no input binding", x.Pos)
 		}
-		return x.Pipe.RunBlock(v)
+		// The lambda's other parameters are in scope by name for the whole
+		// body, on the same stack `Consider` pushes to — so the body's own
+		// lambdas read them without any primitive knowing they exist.
+		for _, b := range x.Extra {
+			bv, ok := env[b.Param]
+			if !ok {
+				return nil, fmt.Errorf("%s: block body has no binding for %q", x.Pos, b.Name)
+			}
+			PushBinding(b.Name, Deref(bv), types[b.Param])
+		}
+		out, err := x.Pipe.RunBlock(Deref(v))
+		PopBindings(len(x.Extra))
+		return out, err
 	case *ast.UnaryExpr:
 		v, err := evalExpr(x.X, env, types)
 		if err != nil {
@@ -127,7 +139,15 @@ func evalExprStep(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		inner := make(Env, len(env)+1)
 		maps.Copy(inner, env)
-		inner[x.Name] = v
+		if updates.Load() {
+			// A box, so a `:=` anywhere in the body writes somewhere the rest
+			// of the body can see. It is this scope's own box: an inner
+			// `consider` of the same name gets another one, so shadowing keeps
+			// meaning what it means everywhere else in the language.
+			inner[x.Name] = &Cell{V: v}
+		} else {
+			inner[x.Name] = v
+		}
 		var innerTypes typecheck.Env
 		if types != nil {
 			innerTypes = make(typecheck.Env, len(types)+1)
@@ -137,6 +157,31 @@ func evalExprStep(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 			}
 		}
 		return evalExpr(x.Body, inner, innerTypes)
+	case *ast.AssignExpr:
+		// The value first, then the write, then the value again as the result:
+		// `n := n + 1` reads the old n while computing, and yields the new one.
+		v, err := evalExpr(x.Value, env, types)
+		if err != nil {
+			return nil, err
+		}
+		if err := assignTo(x, env, v); err != nil {
+			return nil, err
+		}
+		return v, nil
+	case *ast.AlsoExpr:
+		// The body's value is taken before the clauses run, so a clause that
+		// updates what the body read cannot change what the body already
+		// yielded — the clauses are for the *next* reader of the name.
+		v, err := evalExpr(x.Body, env, types)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range x.Clauses {
+			if _, err := evalExpr(c, env, types); err != nil {
+				return nil, err
+			}
+		}
+		return v, nil
 	default:
 		return nil, fmt.Errorf("unsupported expression %T", e)
 	}
@@ -203,6 +248,185 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return xs[:n], nil
 		}
 		return xs[n:], nil
+	// -- first-order list operations ---------------------------------------------
+	// Each one mirrors the primitive of the same job exactly: sort is the Sort
+	// ordering, unique keeps first-seen order like Unique, chunk keeps a short
+	// final block like Chunk, windows drops a trailing partial one like Window,
+	// and transpose refuses a ragged input like Transpose.
+	case "sort":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("sort: %v", err)
+		}
+		out := append([]ir.Value(nil), xs...)
+		slices.SortStableFunc(out, ir.Compare)
+		return out, nil
+	case "unique":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("unique: %v", err)
+		}
+		return ir.SetFromList(xs).Elems(), nil
+	case "flatten":
+		groups, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("flatten: %v", err)
+		}
+		out := []ir.Value{}
+		for i, g := range groups {
+			inner, err := ir.AsList(g)
+			if err != nil {
+				return fail("flatten: group %d: %v", i, err)
+			}
+			out = append(out, inner...)
+		}
+		return out, nil
+	case "bandall", "borall", "bxorall":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		// The identity of each operator, so the empty list is the value that
+		// leaves any later fold unchanged — the rule sum(0)/product(1) follow.
+		// For `and` that is all bits set, which is -1 in two's complement.
+		acc := int64(0)
+		if name == "bandall" {
+			acc = -1
+		}
+		for i, e := range xs {
+			n, err := ir.AsInt(e)
+			if err != nil {
+				return fail("%s: list element %d: %v", name, i, err)
+			}
+			switch name {
+			case "bandall":
+				acc &= n
+			case "borall":
+				acc |= n
+			default:
+				acc ^= n
+			}
+		}
+		return acc, nil
+	case "and", "or", "xor", "not":
+		bs := make([]bool, len(args))
+		for i, a := range args {
+			b, ok := a.(bool)
+			if !ok {
+				return fail("%s: expected Bool, got %s", name, ir.DescribeValue(a))
+			}
+			bs[i] = b
+		}
+		switch name {
+		case "and":
+			return bs[0] && bs[1], nil
+		case "or":
+			return bs[0] || bs[1], nil
+		case "xor":
+			return bs[0] != bs[1], nil
+		default:
+			return !bs[0], nil
+		}
+	case "product":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("product: %v", err)
+		}
+		if sumIsFloat(x.Args[0], types, xs) {
+			p := 1.0
+			for i, e := range xs {
+				f, err := ir.AsFloat(e)
+				if err != nil {
+					return fail("product: list element %d: %v", i, err)
+				}
+				p *= f
+			}
+			return p, nil
+		}
+		p := int64(1)
+		for i, e := range xs {
+			n, err := ir.AsInt(e)
+			if err != nil {
+				return fail("product: list element %d: %v", i, err)
+			}
+			p *= n
+		}
+		return p, nil
+	case "zip":
+		a, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("zip: %v", err)
+		}
+		b, err := ir.AsList(args[1])
+		if err != nil {
+			return fail("zip: %v", err)
+		}
+		n := min(len(a), len(b))
+		out := make([]ir.Value, n)
+		for i := range n {
+			out[i] = []ir.Value{a[i], b[i]}
+		}
+		return out, nil
+	case "enumerate":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("enumerate: %v", err)
+		}
+		out := make([]ir.Value, len(xs))
+		for i, v := range xs {
+			out[i] = []ir.Value{int64(i), v}
+		}
+		return out, nil
+	case "chunk", "windows":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		n, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		if n < 1 {
+			return fail("%s: size must be >= 1, got %d", name, n)
+		}
+		out := []ir.Value{}
+		if name == "chunk" {
+			for i := int64(0); i < int64(len(xs)); i += n {
+				out = append(out, append([]ir.Value(nil), xs[i:min(i+n, int64(len(xs)))]...))
+			}
+			return out, nil
+		}
+		for i := int64(0); i+n <= int64(len(xs)); i++ {
+			out = append(out, append([]ir.Value(nil), xs[i:i+n]...))
+		}
+		return out, nil
+	case "transpose":
+		rows, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("transpose: %v", err)
+		}
+		cells := make([][]ir.Value, len(rows))
+		cols := 0
+		for r, row := range rows {
+			if cells[r], err = ir.AsList(row); err != nil {
+				return fail("transpose: row %d: %v", r, err)
+			}
+			if r == 0 {
+				cols = len(cells[0])
+			} else if len(cells[r]) != cols {
+				return fail("transpose: grid is not rectangular: row %d has %d cells, expected %d",
+					r, len(cells[r]), cols)
+			}
+		}
+		out := make([]ir.Value, cols)
+		for c := range cols {
+			col := make([]ir.Value, len(cells))
+			for r := range cells {
+				col[r] = cells[r][c]
+			}
+			out[c] = col
+		}
+		return out, nil
 	case "reverse":
 		// By rune, like every other text position in the language.
 		if s, ok := args[0].(string); ok {
@@ -391,7 +615,10 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if err := firstErr(err1, err2); err != nil {
 			return fail("put: %v", err)
 		}
-		out := sp.Clone()
+		out := sp
+		if !x.InPlace {
+			out = sp.Clone()
+		}
 		out.Put(r, c, args[3])
 		return out, nil
 	case "has":
@@ -1085,6 +1312,8 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		return ir.SetFromList(xs), nil
 	case "emptyset":
 		return ir.NewSetValue(), nil
+	case "emptylist":
+		return []ir.Value{}, nil
 	case "emptymap":
 		return ir.NewMapValue(), nil
 	case "tomap":
@@ -1113,12 +1342,24 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		return out, nil
 	case "insert":
+		// x.InPlace is the optimizer's proof that nothing can read the
+		// copied-from value after this call, so the copy is unobservable —
+		// see optimizer/linear.go. Every branch below is its own functional
+		// form minus the Clone, which is what makes the two agree.
 		if s, ok := args[0].(*ir.SetValue); ok {
+			if x.InPlace {
+				s.Add(args[1])
+				return s, nil
+			}
 			return s.With(args[1]), nil
 		}
 		m, ok := args[0].(*ir.MapValue)
 		if !ok {
 			return fail("insert: expected a Set or Map, got %s", ir.DescribeValue(args[0]))
+		}
+		if x.InPlace {
+			m.Put(args[1], args[2])
+			return m, nil
 		}
 		return m.With(args[1], args[2]), nil
 	case "del":
@@ -1155,6 +1396,10 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		if !grid.InBounds(int(r), int(c)) {
 			return fail("setat: position (%d, %d) out of range (grid %dx%d)", r, c, grid.Rows, grid.Cols)
+		}
+		if x.InPlace {
+			grid.SetAt(int(r), int(c), args[3])
+			return grid, nil
 		}
 		return grid.With(int(r), int(c), args[3]), nil
 	case "cellpoints":
@@ -1686,6 +1931,31 @@ func isRepeatedPattern(s string) bool {
 	return strings.Contains(doubled, s)
 }
 
+// assignTo writes v to the name x updates. The environment is searched first
+// (a `consider` local, or a stage binding seeded into this application's
+// environment), and the binding stack second (a stage binding whose scope
+// opened outside the expression being evaluated — a binding's own value, say).
+//
+// Writing through the environment's box is what reaches the *right* one when a
+// name is bound twice: the innermost scope put its own cell in the map, so the
+// map lookup finds that one and the outer binding is untouched.
+func assignTo(x *ast.AssignExpr, env Env, v ir.Value) error {
+	if cur, ok := env[x.Name]; ok {
+		c, ok := cur.(*Cell)
+		if !ok {
+			// Reachable only if a name was bound without a cell while updates
+			// were off — i.e. the resolver did not see the := that is running.
+			return fmt.Errorf("%s: %q cannot be updated here", x.Pos, x.Name)
+		}
+		c.V = v
+		return nil
+	}
+	if assign(x.Name, v) {
+		return nil
+	}
+	return fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
+}
+
 // EvalLambda evaluates a lambda body with positional arguments bound to params.
 // Callers that know the statically inferred parameter types should use
 // EvalLambdaTyped instead, so type-ambiguous builtin results (sum of an empty
@@ -1733,7 +2003,7 @@ func EvalLambdaTyped(l *ast.Lambda, paramTypes []*ir.Type, args ...ir.Value) (ir
 	if len(bindings) > 0 {
 		bindTypes = make(typecheck.Env, len(bindings))
 		for _, b := range bindings {
-			env[b.name] = b.value
+			env[b.name] = b.bindValue()
 			bindTypes[b.name] = b.typ
 		}
 	}
@@ -1913,26 +2183,54 @@ func evalBinary(x *ast.BinaryExpr, env Env, types typecheck.Env) (ir.Value, erro
 				return a >= b, nil
 			}
 		}
-		a, err := ir.AsInt(lv)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", x.Pos, err)
+		if a, ok := lv.(int64); ok {
+			if b, ok := rv.(int64); ok {
+				switch x.Op {
+				case token.LT:
+					return a < b, nil
+				case token.GT:
+					return a > b, nil
+				case token.LE:
+					return a <= b, nil
+				case token.GE:
+					return a >= b, nil
+				}
+			}
 		}
-		b, err := ir.AsInt(rv)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", x.Pos, err)
-		}
-		switch x.Op {
-		case token.LT:
-			return a < b, nil
-		case token.GT:
-			return a > b, nil
-		case token.LE:
-			return a <= b, nil
-		case token.GE:
-			return a >= b, nil
-		}
+		// Text and tuples order through ir.Compare — the same ordering Sort
+		// and Sort By use, so `a < b` in a lambda and a Sort of the same
+		// values agree on what "before" means.
+		return compareOrdered(x.Op, lv, rv, x.Pos)
 	}
 	return nil, fmt.Errorf("%s: unsupported operator %s", x.Pos, x.Op)
+}
+
+// compareOrdered applies a relational operator to two values the resolver has
+// typed as one Ordered type. It guards the runtime shapes itself rather than
+// trusting that: ir.Compare answers 0 for anything it does not recognize, so
+// that a sort stays stable instead of panicking mid-run, and silently
+// reporting "equal" is the wrong answer for an operator.
+func compareOrdered(op token.Kind, lv, rv ir.Value, pos token.Position) (ir.Value, error) {
+	for _, v := range []ir.Value{lv, rv} {
+		switch v.(type) {
+		case int64, float64, string, []ir.Value:
+		default:
+			return nil, fmt.Errorf("%s: %s has no ordering, so it cannot be compared",
+				pos, ir.DescribeValue(v))
+		}
+	}
+	c := ir.Compare(lv, rv)
+	switch op {
+	case token.LT:
+		return c < 0, nil
+	case token.GT:
+		return c > 0, nil
+	case token.LE:
+		return c <= 0, nil
+	case token.GE:
+		return c >= 0, nil
+	}
+	return nil, fmt.Errorf("%s: unsupported operator %s", pos, op)
 }
 
 // valuesEqual implements the `=` operator. It defers to ir.DeepEqual so `=`

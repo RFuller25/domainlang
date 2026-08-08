@@ -381,7 +381,7 @@ Cursed Technique: Map Each
 Reveal: stdout
 `
 	_, err := resolveSrc(t, channelSrc)
-	if err == nil || !strings.Contains(err.Error(), "Channels cannot be nested inside a loop, Shikigami, or Using: body") {
+	if err == nil || !strings.Contains(err.Error(), "Channels cannot be nested inside a Shikigami or Using: body") {
 		t.Fatalf("expected a channel scope error, got %v", err)
 	}
 
@@ -396,7 +396,7 @@ Cursed Technique: Map Each
 Reveal: stdout
 `
 	_, err = resolveSrc(t, consumerSrc)
-	if err == nil || !strings.Contains(err.Error(), "From: consumers are not allowed inside a loop, Shikigami, or Using: body") {
+	if err == nil || !strings.Contains(err.Error(), "From: consumers are not allowed inside a Shikigami or Using: body") {
 		t.Fatalf("expected a consumer scope error, got %v", err)
 	}
 }

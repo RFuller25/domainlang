@@ -54,17 +54,42 @@ type argLabel struct {
 	Summary string
 }
 
+// argLabels documents the arguments worth explaining. It is a subset of
+// prims.ArgNames() on purpose — a dimension like `Row:` or `Width:` reads as
+// itself and a one-line gloss adds nothing — and TestArgLabelsAreRealArguments
+// pins that every entry here is an argument the vocabulary actually reads.
 var argLabels = []argLabel{
 	{"Using", "The lambda for this operation, e.g. `Using: (x) -> x > 2`."},
-	{"Mode", "Variant selector (One/Each for Match Pattern; Filter/Count/First/Map for combinatorics)."},
+	{"Mode", "Variant selector (One/Each/Try/Scan for Match Pattern; Filter/Count/First/Map for combinatorics; the search modes for Explore)."},
 	{"Seed", "The accumulator's initial value and type for Fold."},
+	{"Params", "Names the parameters an indented body stands in for, e.g. `Params: acc, row` on a Fold."},
+	{"Case", "One tagged alternative of a Match Pattern, e.g. `Case: toggle \"toggle {a:int},{b:int}\"`. Repeat it; order is priority order."},
 	{"From", "Names the channel(s) a consumer draws from (Combine, Zip, Difference, Fold)."},
+	{"Cost", "The per-step weight for Explore's Cheapest and Costs modes."},
+	{"Until", "The stopping condition for Explore and the loop drivers."},
+	{"Value", "The per-state value Explore's Tally folds."},
+	{"Combine", "How Explore's Tally folds two values reaching one state."},
+	{"While", "Unfold's predicate: it decides when the generated sequence stops."},
 	{"Default", "The background value (and element type) of a sparse plane."},
 	{"Mark", "The value written at each supplied point when building a sparse plane."},
+	{"Fill", "The value written into the border Pad Grid adds."},
 }
 
-// modeValues are the identifiers that follow `Mode:`.
-var modeValues = []string{"One", "Each", "Filter", "Count", "First", "Map"}
+// modeValues are the identifiers that follow `Mode:`, across every primitive
+// that takes one — the completion has no way to know which stage the cursor is
+// under, so it offers the union and lets the resolver reject a wrong one.
+//
+// Hand-maintained: each primitive validates its own values in its Build (a
+// switch, a map, an if), so there is no list to derive this from. Grouped by
+// the primitive that reads them, so a new mode has an obvious home.
+var modeValues = []string{
+	"One", "Each", "Try", "Scan", // Match Pattern
+	"Filter", "Count", "First", "Map", // All Pairs, Combinations
+	"Collect", "Distances", "Steps", "Cheapest", "Costs", "Tally", // Explore
+	"Sum", "Max", "Min", "Product", // Sliding Reduce
+	"Right", "Left", "Half", // Rotate Grid
+	"Horizontal", "Vertical", // Flip Grid
+}
 
 // completion returns context-aware completion items for the cursor position.
 func (s *Server) completion(params json.RawMessage) any {

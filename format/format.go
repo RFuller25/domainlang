@@ -508,7 +508,10 @@ func isWordOperator(t token.Token) bool {
 		// v0.5: `ikke x`, and `consider n as v in body`. Without these the
 		// call-hugging rule would read `ikke (x > 5)` as a function call and
 		// emit `ikke(x > 5)`.
-		"ikke", "consider", "as", "in":
+		"ikke", "consider", "as", "in",
+		// `e also c1, c2`. Without this the call-hugging rule below would read
+		// `also (x := 1)` as a call and emit `also(x := 1)`.
+		"also":
 		return true
 	}
 	return false

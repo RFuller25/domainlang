@@ -56,7 +56,7 @@ func (p *parser) parseBinding(prep string) (*ast.Binding, error) {
 	// rather than at resolve time — the parser is where "this is not a usable
 	// name" belongs.
 	switch strings.ToLower(b.Name) {
-	case "as", "of", "in", "if", "then", "else", "consider", "and", "or", "ikke":
+	case "as", "of", "in", "if", "then", "else", "consider", "and", "or", "ikke", "also":
 		return nil, p.errf("%q cannot be used as a binding name: it is an expression keyword", b.Name)
 	}
 
@@ -82,7 +82,7 @@ func (p *parser) parseAsValue(b *ast.Binding) error {
 		}
 		b.Lambda = lam
 	} else {
-		e, err := p.parseExpr(0)
+		e, err := p.parseTopExpr()
 		if err != nil {
 			return err
 		}
@@ -126,6 +126,17 @@ func (p *parser) parseOfSource(b *ast.Binding) error {
 		}
 		b.Body = body
 		return nil
+	}
+
+	// `Of Itself` is the value entering the scope, unchanged. Without it,
+	// naming the current value took an identity Apply —
+	// `Of Apply` + `Using: (l) -> l` — which is pure ceremony, and the one a
+	// pipeline body needs to name its own element.
+	if p.cur().Kind == token.IDENT && strings.EqualFold(p.cur().Literal, "itself") {
+		p.advance()
+		b.Identity = true
+		_, err := p.expect(token.NEWLINE)
+		return err
 	}
 
 	// Anything else on the line is an operation, keyworded or not — and it may

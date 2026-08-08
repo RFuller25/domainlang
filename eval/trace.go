@@ -122,6 +122,13 @@ func TraceLambda(l *ast.Lambda, paramTypes []*ir.Type, args ...ir.Value) (*ExprN
 	if _, ok := l.Body.(*ast.BlockBody); ok {
 		return nil, fmt.Errorf("this Using: is an indented pipeline, not an expression")
 	}
+	// The replay above rests on the expression layer being pure, and a `:=`
+	// makes this one not: re-running it would write to the binding a second
+	// time, so the reader's look at what happened would change what happened.
+	// Refused for the same reason a pipeline body is, one paragraph up.
+	if ast.HasUpdate(l.Body) {
+		return nil, fmt.Errorf("this Using: updates a binding with :=, so it cannot be replayed")
+	}
 	if tracing != nil {
 		return nil, fmt.Errorf("an expression replay is already in progress")
 	}

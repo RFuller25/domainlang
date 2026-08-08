@@ -44,15 +44,18 @@ the buttons.
 | [walkthroughs.md](walkthroughs.md) | Whole programs, start to finish: bindings, all four loops, Channels, Parts, pipeline bodies, Shikigami, the optimizer |
 | [language.md](language.md) | Source structure: the two layers, keywords, statements, arguments, Channels, Shikigami, loops, vows |
 | [primitives.md](primitives.md) | Every pipeline primitive: signature, arguments, errors, examples |
-| [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, typing, and all 144 builtin functions |
+| [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, typing, and all 161 builtin functions |
 | [aoc-toolbox.md](aoc-toolbox.md) | The classic AoC helper library (parsing, grids, searches, math, ranges, combinatorics) mapped onto Domain, item by item |
 | [data-model.md](data-model.md) | The value and type model (Int, Float, Text, Bool, List, Tuple, Record, Map, Set, Grid, Sparse): representation, construction, equality, rendering |
 | [match-pattern.md](match-pattern.md) | The `Match Pattern` typed-hole template language: syntax, output shapes, lowering, and failure modes |
 | [cli.md](cli.md) | The `domain` binary: implicit modes, subcommands, every flag, exit codes |
 | [diagnostics.md](diagnostics.md) | The error engine: rich diagnostics, "did you mean" suggestions, auto-fix, the linter, and the `domain expansion:` command family |
 | [tooling.md](tooling.md) | The REPL (`domain repl`) and the language server (`domain lsp`), with editor wiring |
-| [optimizer.md](optimizer.md) | The 30-pass catalog (algorithm substitution, dead code, fusion, expression simplification), `--explain`, and the oracle-testing discipline |
+| [optimizer.md](optimizer.md) | The 31-pass catalog (algorithm substitution, dead code, fusion, expression simplification, linear accumulators), `--explain`, and the oracle-testing discipline |
 | [compiler.md](compiler.md) | The Go compiler backend: what it emits, its guarantees, and its documented deltas |
+| [compiler-parity-plan.md](compiler-parity-plan.md) | The two program shapes `domain build` used to refuse: the survey that found them, how each was closed, and what it ruled out |
+| [aoc-gaps.md](aoc-gaps.md) | The other side of the toolbox: the AoC problems Domain still cannot express (or cannot express fast enough), each with a measurement and the smallest change that would close it |
+| [aoc-gaps-plan.md](aoc-gaps-plan.md) | The work that closes them, sequenced into six phases: what changes in which package, how each is tested, and what is deliberately deferred |
 
 ## Quick orientation
 

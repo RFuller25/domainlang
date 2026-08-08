@@ -28,7 +28,9 @@ func (g *gen) eqExpr(a, b string, t *ir.Type) (string, error) {
 
 // eqFunc interns a structural-equality function for a composite type.
 func (g *gen) eqFunc(t *ir.Type) (string, error) {
-	key := t.String()
+	// Canonical, so two Record declaration orders share one equality function
+	// exactly as they share one struct.
+	key := canonicalKey(t)
 	if name, ok := g.eqFns[key]; ok {
 		return name, nil
 	}

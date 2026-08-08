@@ -355,6 +355,53 @@ func diffCases() []diffCase {
 			// naive pair must therefore survive — and still be correct.
 			explainAbsent: "Cursed Quickselect",
 			extraInputs:   []string{"1", "9\n4\n6\n1\n7"}},
+
+		// --- linear accumulators ---
+		// The naive pipeline copies on every update, so it is the oracle for
+		// the whole pass: same answers, or the analysis proved something false.
+		{name: "frequency map fold updates in place",
+			src: listHeader + "Maximum Technique: Fold\n" +
+				"    Seed: (xs) -> emptymap(0, 0)\n" +
+				"    Using: (acc, x) -> insert(acc, x % 5, getor(acc, x % 5, 0) + 1)\n" +
+				"Channeled Energy: Convert To Entries\n" +
+				"Cursed Technique: Map Each\n    Using: (e) -> item(e, 0) * 1000 + item(e, 1)\n" +
+				"Reveal: stdout\n",
+			explain: "write in place"},
+		{name: "conditional record updates in place",
+			src: listHeader + "Maximum Technique: Fold\n" +
+				"    Seed: (xs) -> emptyset(0)\n" +
+				"    Using: (acc, x) -> if x % 2 = 0 then insert(acc, x) else acc\n" +
+				"Cursed Technique: Apply\n    Using: (s) -> tolist(s)\n" +
+				"Reveal: stdout\n",
+			explain: "write in place"},
+		{name: "a fold that reads the accumulator afterwards still copies",
+			src: listHeader + "Maximum Technique: Fold\n" +
+				"    Seed: (xs) -> emptymap(0, 0)\n" +
+				"    Using: (acc, x) -> tomap(list(tuple(size(insert(acc, x, 1)), 0), tuple(size(acc), 1)))\n" +
+				"Cursed Technique: Apply\n    Using: (m) -> size(m) * 100 + getor(m, 0, 0)\n" +
+				"Reveal: stdout\n",
+			explainAbsent: "write in place"},
+		{name: "sparse fold updates in place",
+			src: listHeader + "Maximum Technique: Fold\n" +
+				"    Seed: (xs) -> sparse(0)\n" +
+				"    Using: (acc, x) -> put(acc, x % 4, x % 3, x)\n" +
+				"Cursed Technique: Apply\n    Using: (g) -> cells(g) * 100 + at(g, 0, 0)\n" +
+				"Reveal: stdout\n",
+			explain: "write in place"},
+		{name: "chained inserts update in place",
+			src: listHeader + "Maximum Technique: Fold\n" +
+				"    Seed: (xs) -> emptyset(0)\n" +
+				"    Using: (acc, x) -> insert(insert(acc, x), 0 - x)\n" +
+				"Cursed Technique: Apply\n    Using: (s) -> size(s)\n" +
+				"Reveal: stdout\n",
+			explain: "write in place"},
+		{name: "Scan keeps every accumulator, so it still copies",
+			src: listHeader + "Cursed Technique: Scan\n" +
+				"    Seed: (xs) -> emptyset(0)\n" +
+				"    Using: (acc, x) -> insert(acc, x)\n" +
+				"Cursed Technique: Map Each\n    Using: (s) -> size(s)\n" +
+				"Reveal: stdout\n",
+			explainAbsent: "write in place"},
 	}
 }
 

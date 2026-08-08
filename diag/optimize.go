@@ -9,6 +9,7 @@
 package diag
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -107,10 +108,73 @@ func findRewrite(prog *ast.Program, src string) *rewriteOp {
 	if found != nil {
 		return found
 	}
+	if op := identityBindingRewrite(prog, src); op != nil {
+		return op
+	}
 	if op := deadCodeRewrite(prog); op != nil {
 		return op
 	}
 	return unusedChannelRewrite(prog)
+}
+
+// identityBindingRewrite collapses the identity Apply that naming the current
+// value used to require:
+//
+//	Consider line Of Apply          ->   Consider line Of Itself
+//	    Using: (l) -> l
+//
+// Two lines of pure ceremony become one, and the program is the same either
+// way — `Of Itself` lowers to exactly the lambda the long form spells out.
+func identityBindingRewrite(prog *ast.Program, src string) *rewriteOp {
+	var found *rewriteOp
+	var walk func(stmts []*ast.Statement)
+	walk = func(stmts []*ast.Statement) {
+		for _, s := range stmts {
+			for _, b := range s.Binds {
+				if found == nil && isIdentityApply(b) {
+					head := lineAt(src, b.Pos.Line)
+					indent := head[:len(head)-len(strings.TrimLeft(head, " "))]
+					_, end := stmtExtent(b.Body[0])
+					del := lineRange(b.Pos.Line, end)
+					delete(del, b.Pos.Line)
+					found = &rewriteOp{
+						info: SourceRewrite{Line: b.Pos.Line, Desc: fmt.Sprintf(
+							"replaced the identity Apply naming %q with `Of Itself`", b.Name)},
+						deleteLines: del,
+						replaceLine: map[int]string{
+							b.Pos.Line: indent + "Consider " + b.Name + " Of Itself",
+						},
+					}
+				}
+				walk(b.Body)
+			}
+			walk(s.Block)
+		}
+	}
+	walk(prog.Statements)
+	return found
+}
+
+// isIdentityApply reports the `Of Apply` + `Using: (x) -> x` shape: one
+// statement, an Apply, whose only argument is a one-parameter lambda whose
+// body is that parameter.
+func isIdentityApply(b *ast.Binding) bool {
+	if !b.Of || len(b.Body) != 1 {
+		return false
+	}
+	st := b.Body[0]
+	if st.Op == nil || len(st.Op.Words) != 1 || !strings.EqualFold(st.Op.Words[0], "Apply") {
+		return false
+	}
+	if len(st.Args) != 1 || st.Args[0].Name != "Using" || len(st.Block) > 0 {
+		return false
+	}
+	la, ok := st.Args[0].Value.(ast.LambdaArg)
+	if !ok || la.Lambda == nil || len(la.Lambda.Params) != 1 {
+		return false
+	}
+	id, ok := la.Lambda.Body.(*ast.Ident)
+	return ok && id.Name == la.Lambda.Params[0]
 }
 
 func rewriteInSequence(stmts []*ast.Statement, src string) *rewriteOp {

@@ -207,8 +207,7 @@ func TestChannelCannotReferenceItselfOrLater(t *testing.T) {
 	}
 }
 
-// Channels still cannot nest, and loop and Shikigami bodies still refuse
-// From: consumers — only the Channel-body restriction was lifted.
+// Channels still cannot nest, whatever body they are written in.
 func TestChannelsStillCannotNest(t *testing.T) {
 	src := "Cursed Energy: stdin\nShikigami: Lines\n" +
 		"Channel \"outer\":\n    Channel \"inner\":\n        Maximum Technique: Count\n"
@@ -218,13 +217,42 @@ func TestChannelsStillCannotNest(t *testing.T) {
 	}
 }
 
-func TestLoopBodyStillRefusesFromConsumers(t *testing.T) {
+// A loop body may consume a Channel: it is fully computed before the loop
+// starts and never changes, so there is no ordering hazard — and without it a
+// simulation has to smuggle its read-only environment through the loop state,
+// which a type-preserving body then carries for every lap.
+func TestLoopBodyConsumesAChannel(t *testing.T) {
 	src := "Cursed Energy: stdin\nShikigami: Lines\n" +
-		"Channel \"c\":\n    Maximum Technique: Count\n" +
+		"Channeled Energy: Convert To Integers\n" +
+		"Channel \"bump\":\n    Maximum Technique: Count\n" +
 		"Simple Domain: Repeat 2\n" +
+		"    Maximum Technique: Combine\n        From: bump\n" +
+		"        Using: (n) -> list(n)\n"
+	if _, err := resolveSrc(t, src); err != nil {
+		t.Fatalf("a loop body should be able to consume a channel: %v", err)
+	}
+}
+
+// A Shikigami and a `Using:` body still refuse one, and the reason is
+// structural rather than conservative: a Shikigami is inlined at call sites
+// that need not share a scope, and a body compiles to a top-level function
+// where a channel's local is not in scope. The message says which.
+func TestShikigamiAndBodiesStillRefuseFromConsumers(t *testing.T) {
+	body := "Cursed Energy: stdin\nShikigami: Lines\n" +
+		"Channel \"c\":\n    Maximum Technique: Count\n" +
+		"Cursed Technique: Map Each\n" +
 		"    Maximum Technique: Combine\n        From: c\n        Using: (x) -> x\n"
-	if _, err := resolveSrc(t, src); err == nil ||
-		!strings.Contains(err.Error(), "not allowed inside a loop") {
-		t.Fatalf("expected a scope error naming loops, got %v", err)
+	if _, err := resolveSrc(t, body); err == nil ||
+		!strings.Contains(err.Error(), "Shikigami or Using: body") {
+		t.Fatalf("expected a scope error naming the body kind, got %v", err)
+	}
+	shiki := "Shikigami \"Grab\"\n" +
+		"    Maximum Technique: Combine\n        From: c\n        Using: (x) -> x\n" +
+		"Cursed Energy: stdin\nShikigami: Lines\n" +
+		"Channel \"c\":\n    Maximum Technique: Count\n" +
+		"Shikigami: Grab\n"
+	if _, err := resolveSrc(t, shiki); err == nil ||
+		!strings.Contains(err.Error(), "Shikigami or Using: body") {
+		t.Fatalf("expected a scope error inside a Shikigami, got %v", err)
 	}
 }

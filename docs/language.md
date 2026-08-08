@@ -23,7 +23,10 @@
    keywords below and are the only place side effects (input, output) happen.
 2. **The expression layer** (plain, *not* themed). Inside `Using:` lambdas you
    write ordinary expressions over the current element(s):
-   `(a, b) -> a + b = 2020`. See [expressions.md](expressions.md).
+   `(a, b) -> a + b = 2020`. Expressions are values, with two exceptions that
+   are not: `:=` updates a name in scope and yields what it wrote, and `also`
+   runs expressions after the body for their updates and discards their values.
+   See [expressions.md](expressions.md).
 
 The pipeline is statically typed **before** anything runs: resolution matches
 each statement to a primitive, checks the incoming type, and computes the
@@ -167,7 +170,10 @@ argument instead of quietly becoming a local nobody reads.
 `As` binds an expression or a function and never sees the pipeline value; `Of`
 binds the result of applying an operation, a lambda, or a whole sub-pipeline to
 it. A binding is in scope for every lambda on its statement and for the
-statements nested under it. The full rules are in
+statements nested under it, and those lambdas may
+[update it with `:=`](expressions.md#updating-a-local--) — the one value in
+Domain that carries from one element to the next without being threaded through
+a `Fold`. The full rules are in
 [expressions.md](expressions.md#stage-bindings--consider--as--consider--of).
 
 An argument's value may run past its line. A newline inside a parenthesis is
@@ -593,6 +599,21 @@ Simple Domain: For x in deltas
     Cursed Technique: Filter
         Using: (v, x) -> v > x
 ```
+
+A loop body may also **consume a Channel** with `From:`. A channel is fully
+computed before the loop starts and its value never changes, so there is no
+ordering hazard — and without it a simulation has to smuggle its read-only
+environment through the loop state, which (because a body must preserve its
+value type) it then carries for every lap. The shape that benefits is
+`Fold From:`, which folds a channel's list into the state each lap; `Combine`
+and friends replace the value outright and so rarely satisfy a loop's type
+rule.
+
+A **Shikigami** and a **`Using:` body** still refuse one, and the reason is
+structural rather than conservative: a Shikigami is inlined at call sites that
+need not share a scope, and a body compiles to a top-level function where a
+channel's local is not in scope. Either would be a promise the compiler could
+not keep.
 
 `<source>` is a channel name (declared via `Channel "name": ...`, holding a
 `List<T>`) or an inline `range(N)` (`N` an Int literal, yielding `0..N-1`).

@@ -3,6 +3,7 @@ package codegen
 import (
 	"fmt"
 	gotoken "go/token"
+	"slices"
 	"strings"
 
 	"domain/ir"
@@ -70,15 +71,70 @@ func (g *gen) goType(t *ir.Type) (string, error) {
 	}
 }
 
+// canonicalKey is Type.String() with every Record's fields sorted by name — the
+// intern key for anything whose *shape* is what matters.
+//
+// Type.Equal compares records by field set, insensitive to declaration order
+// (ir/ir.go), and so do KeyOf and DeepEqual: order is a rendering detail of the
+// type, not part of its identity. Type.String() prints in declaration order, so
+// keying the generated structs on it would give `{a:Int, b:Int}` and
+// `{b:Int, a:Int}` two Go types for one Domain type — and then any place the
+// two meet (an `if`'s arms, a list literal, a Map value, a loop that threads
+// one) emits Go that does not compile. Keying on the canonical form is what
+// makes the backend's notion of record identity the same as the language's.
+func canonicalKey(t *ir.Type) string {
+	if t == nil {
+		return "<none>"
+	}
+	switch t.Kind {
+	case ir.KList:
+		return "List<" + canonicalKey(t.Elem) + ">"
+	case ir.KSet:
+		return "Set<" + canonicalKey(t.Elem) + ">"
+	case ir.KGrid:
+		return "Grid<" + canonicalKey(t.Elem) + ">"
+	case ir.KSparse:
+		return "Sparse<" + canonicalKey(t.Elem) + ">"
+	case ir.KMap:
+		return "Map<" + canonicalKey(t.Key) + ", " + canonicalKey(t.Elem) + ">"
+	case ir.KTuple:
+		parts := make([]string, len(t.Elems))
+		for i, e := range t.Elems {
+			parts[i] = canonicalKey(e)
+		}
+		return "(" + strings.Join(parts, ", ") + ")"
+	case ir.KRecord:
+		parts := make([]string, len(t.Fields))
+		for i, f := range t.Fields {
+			parts[i] = f.Name + ":" + canonicalKey(f.Type)
+		}
+		slices.Sort(parts)
+		return "{" + strings.Join(parts, ", ") + "}"
+	}
+	return t.String()
+}
+
+// canonicalFields is t's fields in the order the generated struct declares
+// them: by name, so the layout does not depend on which of two equal Record
+// types the emitter happened to reach first. Nothing observable rides on it —
+// every construction, access and comparison names its field — but determinism
+// does, and the golden snapshot would notice.
+func canonicalFields(t *ir.Type) []ir.Field {
+	fields := slices.Clone(t.Fields)
+	slices.SortFunc(fields, func(a, b ir.Field) int { return strings.Compare(a.Name, b.Name) })
+	return fields
+}
+
 // recordType interns a struct declaration for a Record type. The intern table
-// is an ir.Memo: the declaration is generated once per structural type key.
+// is an ir.Memo: the declaration is generated once per canonical type key.
 func (g *gen) recordType(t *ir.Type) (string, error) {
 	var err error
-	name := g.records.Get(t.String(), func() string {
-		name := fmt.Sprintf("R%d", g.records.Len()+1)
+	name := g.records.Get(canonicalKey(t), func() string {
+		g.recordn++
+		name := fmt.Sprintf("R%d", g.recordn)
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "type %s struct {\n", name)
-		for _, f := range t.Fields {
+		for _, f := range canonicalFields(t) {
 			ft, ferr := g.goType(f.Type)
 			if ferr != nil {
 				err = ferr
@@ -101,8 +157,9 @@ func (g *gen) recordType(t *ir.Type) (string, error) {
 // representation is a struct because the element types differ.)
 func (g *gen) tupleType(t *ir.Type) (string, error) {
 	var err error
-	name := g.tuples.Get(t.String(), func() string {
-		name := fmt.Sprintf("Tup%d", g.tuples.Len()+1)
+	name := g.tuples.Get(canonicalKey(t), func() string {
+		g.tuplen++
+		name := fmt.Sprintf("Tup%d", g.tuplen)
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "type %s struct {\n", name)
 		for i, et := range t.Elems {

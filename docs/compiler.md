@@ -53,6 +53,23 @@ quicksort or pair loop — the thesis survives compilation intact.
   loop variables are locals of `main`, so they are passed in as extra
   parameters rather than referenced freely. The cost is a call per invocation,
   which Go largely inlines back.
+
+  The bindings in scope travel the same way, by value — except the ones the
+  body [writes to with `:=`](expressions.md#updating-a-local--), which travel
+  as a `*T` instead. That pointer is the Go analogue of the interpreter's one
+  shared binding stack: a write inside the body reaches the caller's variable,
+  so the next element and the next lap see it in both backends. Only the
+  written bindings pay for it (an address taken is an escape); a body that
+  writes nothing emits exactly the signature it emitted before. A body nested
+  inside another passes the same pointer straight down.
+- **Updates are sequenced explicitly.** Go orders the *function calls* in an
+  expression left to right but says nothing about when a bare variable is read
+  relative to them, while Domain's expression layer is strictly left to right.
+  So when an operand or argument contains a `:=`, each sibling is wrapped in
+  `func() T { return … }()` — a call, and therefore ordered — which is what
+  makes `n + (n := x) + n` mean the same thing in both backends. Nothing is
+  wrapped in a program that never writes: those compile to exactly the Go they
+  compiled to before the operator existed.
 - **Match Pattern compiles to scanners.** A template whose holes are all
   ints (with literal separators a greedy scan provably cannot mis-split)
   becomes a hand-rolled string scanner — no regexp at runtime. Word/text
@@ -167,9 +184,11 @@ differences remain:
 
 ## Limits
 
-- `=` between two Record types that share fields but declare them in
-  different orders is rejected with a positioned error (they intern to
-  distinct Go structs) rather than miscompiled.
+- There is no program the interpreter runs and this backend refuses. The two
+  that used to be — a `:=` from inside a pipeline body, and two Record types
+  declaring the same fields in different orders — are closed; the survey that
+  found them, and what it ruled out, is
+  [compiler-parity-plan.md](compiler-parity-plan.md).
 - `While` / `Iterate Until Fixed Point` are **unbounded** in a compiled
   binary, matching the interpreter: `dmMaxLoopIterations` mirrors
   `prims.maxLoopIterations`, and both default to zero (no counter is emitted

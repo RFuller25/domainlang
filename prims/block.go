@@ -2,10 +2,12 @@ package prims
 
 import (
 	"fmt"
+	"slices"
 
 	"domain/ast"
 	"domain/ir"
 	"domain/token"
+	"domain/typecheck"
 )
 
 // Nested pipeline bodies: a `Using:` lambda written as an indented
@@ -41,6 +43,7 @@ type blockPipeline struct {
 	stmts []*ast.Statement
 	prim  string
 	pos   token.Position
+	extra []ast.BlockBind // the lambda's other parameters, in scope inside the body
 
 	// Memoized resolution. A Shikigami body containing a block is re-resolved
 	// per call site (requireLambda runs again, building a fresh blockPipeline),
@@ -123,23 +126,69 @@ func (b *blockPipeline) BlockNodes() []*ir.Node { return b.nodes }
 // body, and ignores them: the body's own lambdas pick the ambient values off
 // the same stacks they always do, so a `For` variable is in scope inside a body
 // without being threaded through it.
-func (r *resolver) blockLambda(stmts []*ast.Statement, arity int, prim string, pos token.Position) (*ast.Lambda, error) {
-	if arity != 1 {
+func (r *resolver) blockLambda(args ArgSet, stmts []*ast.Statement, arity int, prim string, pos token.Position) (*ast.Lambda, error) {
+	names, hasParams := args.Idents("Params")
+	switch {
+	case arity == 1 && !hasParams:
+	case arity == 1 && hasParams:
 		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-			"%s takes a %d-parameter Using: lambda, and a nested body computes one value from one value — write the lambda, or move the body to a stage that takes a 1-parameter lambda",
-			prim, arity)}
+			"%s takes a 1-parameter Using: lambda, so its body already has a name for the "+
+				"only value there is — drop the Params: line", prim)}
+	case !hasParams:
+		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"%s takes a %d-parameter Using: lambda, and a body computes one value from one "+
+				"value — name the parameters with `Params:` so the body knows which one it is "+
+				"over, or write the lambda out", prim, arity)}
+	case len(names) != arity:
+		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"%s takes %d parameter(s), but Params: names %d", prim, arity, len(names))}
 	}
-	params := make([]string, 1+ambientDepth())
+
+	// A Params: name becomes a binding inside the body, so it is subject to
+	// the rules a `Consider` name is: shadowing a builtin would change what a
+	// call means for every expression in scope, and two parameters of one name
+	// would leave the second with nothing to shadow.
+	seen := map[string]bool{}
+	for _, n := range names {
+		if slices.Contains(typecheck.Builtins, n) {
+			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+				"%q is an expression builtin and cannot be used as a Params: name", n)}
+		}
+		if seen[n] {
+			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+				"Params: names %q twice", n)}
+		}
+		seen[n] = true
+	}
+
+	params := make([]string, arity+ambientDepth())
 	for i := range params {
 		params[i] = fmt.Sprintf("$block%d", i)
+	}
+	// The **last** declared parameter is what the body is over. For a Fold
+	// written `Params: acc, row` that makes the body a pipeline over `row`
+	// producing the new accumulator, which is the shape the lambda has anyway
+	// — `acc` is the value carried in, not the one being transformed.
+	//
+	// Every declared name is also a binding, the last one included: it is the
+	// body's current value *and* readable by name, so a name in a `Params:`
+	// line never turns out to be decoration. That is the same thing
+	// `Consider … Of Itself` does one layer up.
+	inParam := params[arity-1]
+	var extra []ast.BlockBind
+	if hasParams {
+		for i := range arity {
+			extra = append(extra, ast.BlockBind{Name: names[i], Param: params[i]})
+		}
 	}
 	return &ast.Lambda{
 		Params: params,
 		Pos:    pos,
 		Body: &ast.BlockBody{
-			Param: params[0],
+			Param: inParam,
+			Extra: extra,
 			Stmts: stmts,
-			Pipe:  &blockPipeline{res: r, stmts: stmts, prim: prim, pos: pos},
+			Pipe:  &blockPipeline{res: r, stmts: stmts, prim: prim, pos: pos, extra: extra},
 			Pos:   pos,
 		},
 	}, nil

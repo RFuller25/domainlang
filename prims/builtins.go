@@ -540,7 +540,12 @@ var emit = &Primitive{
 					w = ctx.Stderr
 				}
 				if w != nil {
-					_, _ = fmt.Fprintln(w, ir.LabelledOutput(ctx.PartLabel, ir.FormatValue(v)))
+					// Rendered against the static type, so a Record's fields
+					// come out in the order the type declares rather than the
+					// order this particular value happened to be built in —
+					// which is the only order a compiled binary's struct can
+					// produce, and stdout has to match it byte for byte.
+					_, _ = fmt.Fprintln(w, ir.LabelledOutput(ctx.PartLabel, ir.FormatValueTyped(v, in)))
 				}
 				return v, nil
 			},

@@ -344,17 +344,21 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 	if err != nil {
 		return "", err
 	}
-	cmp := "<"
-	if extNode.Prim == "Max By" {
-		cmp = ">"
-	}
 	buf := g.fresh("buf")
-	kbody, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: buf, typ: extNode.In.Elem}})
+	kbody, keyT, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: buf, typ: extNode.In.Elem}})
 	if err != nil {
 		return "", unsupported(extNode, "lambda: %v", err)
 	}
+	keyGo, err := g.goType(keyT)
+	if err != nil {
+		return "", unsupported(extNode, "key: %v", err)
+	}
 	best, bestK, found := g.fresh("best"), g.fresh("bestK"), g.fresh("found")
 	ok, fields, s, k := g.fresh("ok"), g.fresh("fields"), g.fresh("s"), g.fresh("k")
+	beats, err := keyBeats(extNode.Prim, keyT, k, bestK)
+	if err != nil {
+		return "", unsupported(extNode, "%v", err)
+	}
 	emitBody := func(line string) {
 		g.wl("if r, %s := dmParseFieldsIntInto(%s, %s); %s {", ok, line, buf, ok)
 		g.in()
@@ -368,7 +372,7 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 		g.out()
 		g.wl("}")
 		g.wl("%s := %s", k, kbody)
-		g.wl("if !%s || %s %s %s {", found, k, cmp, bestK)
+		g.wl("if !%s || %s {", found, beats)
 		g.in()
 		g.wl("%s = append(%s[:0], %s...)", best, best, buf)
 		g.wl("%s = %s", bestK, k)
@@ -378,7 +382,7 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 	}
 	g.wl("var %s []int64", buf)
 	g.wl("var %s []int64", best)
-	g.wl("var %s int64", bestK)
+	g.wl("var %s %s", bestK, keyGo)
 	g.wl("%s := false", found)
 	if sep == "" {
 		line := g.fresh("line")
@@ -751,6 +755,17 @@ func (g *gen) emitCountBy(n *ir.Node, in string) (string, error) {
 	return v, nil
 }
 
+// keyBeats renders "candidate k beats the best so far" for Min By / Max By
+// over any ordered key, reusing the same lessExpr the Sort By emitter does so
+// there is one lowering of the ordering rather than two that can drift. Both
+// arguments must be plain locals: lessExpr repeats its operands for a tuple.
+func keyBeats(prim string, keyT *ir.Type, k, bestK string) (string, error) {
+	if prim == "Max By" {
+		return lessExpr(keyT, bestK, k)
+	}
+	return lessExpr(keyT, k, bestK)
+}
+
 // emitKeyedExtremum lowers Min By / Max By: linear scan tracking the best
 // key, first element winning ties.
 func (g *gen) emitKeyedExtremum(n *ir.Node, in string) (string, error) {
@@ -763,27 +778,34 @@ func (g *gen) emitKeyedExtremum(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	body, keyT, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	cmp := "<"
-	if n.Prim == "Max By" {
-		cmp = ">"
+	// The key is any ordered type, exactly as Sort By's is — a tuple key is
+	// how a tiebreak is written, and it compares lexicographically.
+	keyGo, err := g.goType(keyT)
+	if err != nil {
+		return "", unsupported(n, "key: %v", err)
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, bestK, i, k := g.fresh("v"), g.fresh("bestK"), g.fresh("i"), g.fresh("k")
+	// Strict on both sides, so the first element wins a tie.
+	beats, err := keyBeats(n.Prim, keyT, k, bestK)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("if len(%s) == 0 {", in)
 	g.in()
 	g.wl(`dmFail("%s of an empty list is undefined")`, n.Prim)
 	g.out()
 	g.wl("}")
 	g.wl("var %s %s", v, elemGo)
-	g.wl("var %s int64", bestK)
+	g.wl("var %s %s", bestK, keyGo)
 	g.wl("for %s, %s := range %s {", i, e, in)
 	g.in()
 	g.wl("%s := %s", k, body)
-	g.wl("if %s == 0 || %s %s %s {", i, k, cmp, bestK)
+	g.wl("if %s == 0 || %s {", i, beats)
 	g.in()
 	g.wl("%s, %s = %s, %s", v, bestK, e, k)
 	g.out()

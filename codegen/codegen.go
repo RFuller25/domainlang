@@ -49,8 +49,19 @@ type gen struct {
 	declSet map[string]bool         // names of helpers already declared
 	records ir.Memo[string, string] // interned Record struct names by type key
 	tuples  ir.Memo[string, string] // interned Tuple struct names by type key
+
+	// Struct names come from these counters rather than from the memos' own
+	// lengths. A record whose field is itself a record interns the inner one
+	// *while building the outer one's declaration*, before the outer has been
+	// inserted — so numbering from Len()+1 gave both the same name and emitted
+	// two `type R1 struct`. Nothing produced a nested record until template
+	// groups did, but record("a", record(...)) always could, and never built.
+	recordn int
+	tuplen  int
 	fmtFns  map[string]string
 	eqFns   map[string]string
+	cmpFns  map[string]string
+	listFns map[string]string
 	chans   map[string]chanVar
 	// blocks interns the top-level function emitted for each indented `Using:`
 	// body (see blockgen.go), so a body compiles once however many times the
@@ -163,6 +174,8 @@ func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Spa
 		declSet:  map[string]bool{},
 		fmtFns:   map[string]string{},
 		eqFns:    map[string]string{},
+		cmpFns:   map[string]string{},
+		listFns:  map[string]string{},
 		chans:    map[string]chanVar{},
 	}
 
@@ -396,10 +409,11 @@ func (g *gen) keepAlive(prev, next string, mark int) {
 // emitNode lowers one IR node. in is the Go variable holding the current
 // pipeline value ("" for the source node); the returned variable holds the
 // node's output. Passthrough nodes return in unchanged.
-// setConsumers are the primitives that read their input as a sequence and so
-// accept a Set wherever they accept a List (prims/higher_order.go's listElem
-// is the resolve-time counterpart). A Set compiles to dmSet, which cannot be
-// ranged over directly, so the emitted expression is its .elems slice.
+// seqConsumers are the primitives that read their input as a sequence and so
+// accept a Set or a Map wherever they accept a List (prims/higher_order.go's
+// listElem is the resolve-time counterpart). Neither dmSet nor dmMap can be
+// ranged over directly: a Set lowers to its .elems slice, and a Map to a
+// freshly built slice of entry tuples, in key order.
 //
 // The list is explicit rather than "everything except Count": passthroughs
 // (Channel, Part, Binding Vow) return their input variable unchanged, and
@@ -407,19 +421,61 @@ func (g *gen) keepAlive(prev, next string, mark int) {
 // as a Set.
 // It is exactly the set of primitives whose Build calls listElem — the ones
 // that reject anything else by type, like Join and Sum, still do.
-var setConsumers = map[string]bool{
-	"Chunk": true, "Convert To Set": true, "Count By": true,
-	"Count Matching": true, "Enumerate": true, "Filter": true,
-	"Find Cycle": true, "Fold": true, "Group By": true, "Map Each": true,
-	"Merge Ranges": true, "Pairs": true, "Partition": true,
-	"Permutations": true, "Reduce": true, "Scan": true, "Sort By": true,
-	"Subsets": true, "Take Item": true, "Unique": true, "Window": true,
+// TestEverySequencePrimitiveCompilesOverASet pins that correspondence: the
+// list drifted out of step with it once already, which left Take While, the
+// quantifiers and the keyed reductions emitting Go that did not build for an
+// input the resolver had accepted.
+var seqConsumers = map[string]bool{
+	"All": true, "Any": true, "Chunk": true, "Convert To Set": true,
+	"Count": true, "Count By": true, "Count Matching": true,
+	"Drop While": true, "Enumerate": true, "Filter": true, "Find": true,
+	"Find Cycle": true, "Find Index": true, "Fold": true, "Group By": true,
+	"Map Each": true, "Max By": true, "Merge Ranges": true, "Min By": true,
+	"Pairs": true, "Partition": true, "Permutations": true,
+	"Product By": true, "Reduce": true, "Scan": true, "Sort By": true,
+	"Subsets": true, "Sum By": true, "Take Item": true, "Take While": true,
+	"Unique": true, "Window": true,
+}
+
+// seqElem is the element type a sequence primitive sees, mirroring
+// prims/higher_order.go's listElem. It matters only for a Map: a Map's .Elem
+// is its *value* type, while the sequence it reads as is one of entry tuples,
+// so an emitter that typed a lambda parameter from .Elem would bind the wrong
+// half of the pair.
+func seqElem(t *ir.Type) *ir.Type {
+	if t != nil && t.Kind == ir.KMap {
+		return ir.Tuple(t.Key, t.Elem)
+	}
+	if t == nil {
+		return nil
+	}
+	return t.Elem
 }
 
 func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
-	if n.In != nil && n.In.Kind == ir.KSet && setConsumers[n.Prim] {
-		g.helper("dmSet", declSet)
-		in += ".elems"
+	if n.In != nil && seqConsumers[n.Prim] {
+		switch n.In.Kind {
+		case ir.KSet:
+			g.helper("dmSet", declSet)
+			in += ".elems"
+		case ir.KMap:
+			entries, err := g.mapEntries(n, in)
+			if err != nil {
+				return "", err
+			}
+			in = entries
+		}
+		if n.In.Kind == ir.KSet || n.In.Kind == ir.KMap {
+			// `in` is now a slice, so the emitters below must see a node whose
+			// input type says so. Retyping here rather than at each of them is
+			// the only way the two stay in step: for a Map the difference is
+			// not cosmetic — a Map's .Elem is its *value* type, while the
+			// sequence it reads as is one of entry tuples, so an emitter
+			// typing a lambda parameter from .Elem would bind half the pair.
+			retyped := *n
+			retyped.In = ir.List(seqElem(n.In))
+			n = &retyped
+		}
 	}
 	switch n.Prim {
 	case "Foreign Block":
@@ -1567,6 +1623,8 @@ func (g *gen) emitCount(n *ir.Node, in string) (string, error) {
 		g.wl("%s := int64(len(%s))", v, in)
 	case ir.KSet:
 		g.wl("%s := int64(len(%s.elems))", v, in)
+	case ir.KMap:
+		g.wl("%s := int64(len(%s.keys))", v, in)
 	default:
 		return "", unsupported(n, "Count over %s", n.In)
 	}
@@ -1589,7 +1647,7 @@ func (g *gen) emitFold(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	acc := g.fresh("acc")
-	g.wl("var %s %s = %s", acc, accGo, seed)
+	g.wl("var %s %s = %s", acc, accGo, g.ownAccumulator(lam, n.Out, seed))
 	e := g.fresh("e")
 	body, _, err := g.compileExpr(lam.Body, exprEnv{
 		lam.Params[0]: {expr: acc, typ: n.Out},

@@ -7,9 +7,9 @@ the hand-written Go with the **same** toolchain flags, checks the two agree
 byte for byte, and times them against each other.
 
 The question these numbers answer: **does `domain build` output stay within
-2× of what a competent Go programmer writes by hand?** On thirty-five of
-the thirty-six cases it does, sixteen of them faster than the hand-written
-Go; the thirty-sixth is documented below with the measured cost of the fix
+2× of what a competent Go programmer writes by hand?** On thirty-six of
+the thirty-seven cases it does, nineteen of them faster than the hand-written
+Go; the thirty-seventh is documented below with the measured cost of the fix
 it is waiting on.
 
 ## Running them
@@ -35,6 +35,8 @@ so drift lands on both.
 | `sliding_max` | **measured arguments** — a `Size:` lambda over the current list, streamed by `Sliding Reduce` |
 | `pipeline_body` | **pipeline bodies** — a `Map Each` whose `Using:` is an indented pipeline, over `Sum By` |
 | `text_builtins` | the v0.5 text builtins — `startswith`/`indexof`/`slice`/`upper` inside a lambda |
+| `fold_map_dp` | **linear accumulators** — a `Fold` that builds a Map with `insert`/`getor`, one write at a time |
+| `fold_grid_writes` | **linear accumulators** — `Fold From:` a channel, one `setat` per step, cloned once on entry |
 | `count_by_entries` | the Map vocabulary — `Count By`, `Convert To Entries`, tuple `item()` |
 | `partition_parts` | `Partition`, the early-exit `Find Index`, and `Part` blocks |
 | `topk_sum` | algorithm substitution — a requested `Quicksort` + `Select Top K` becomes a quickselect |
@@ -78,6 +80,8 @@ Best of five alternating runs each, Go 1.25, linux/amd64. Lower is better;
 | `sliding_max` | 73.0 ms | 236.8 ms | **0.31×** |
 | `pipeline_body` | 107.1 ms | 76.0 ms | 1.41× |
 | `text_builtins` | 91.1 ms | 62.3 ms | 1.46× |
+| `fold_map_dp` | 136.0 ms | 120.4 ms | 1.13× |
+| `fold_grid_writes` | 29.6 ms | 43.5 ms | **0.68×** |
 | `count_by_entries` | 67.3 ms | 62.6 ms | 1.07× |
 | `partition_parts` | 76.7 ms | 63.0 ms | 1.22× |
 | `topk_sum` | 80.0 ms | 397.9 ms | **0.20×** |
@@ -108,7 +112,7 @@ Best of five alternating runs each, Go 1.25, linux/amd64. Lower is better;
 | `for_loop` | 111.3 ms | 211.0 ms | **0.53×** |
 | `math_builtins` | 141.8 ms | 86.2 ms | 1.64× |
 
-Thirty-five of the thirty-six are inside the 2× target and sixteen are
+Thirty-six of the thirty-seven are inside the 2× target and nineteen are
 faster than the hand-written Go. `sparse_life` is not, knowingly: it carries
 an explicit budget in the case table with the reason and the measured cost
 of the fix (see [below](#the-one-case-still-over-target-sparse_life)), so

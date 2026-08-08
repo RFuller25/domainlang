@@ -48,7 +48,19 @@ func ExprType(e ast.Expr, env Env) (*ir.Type, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s: block body has no input binding", x.Pos)
 		}
-		return x.Pipe.BindBlock(in)
+		// A lambda of two or more parameters has one the body is *over*; the
+		// rest are in scope by name for every expression in it, through the
+		// binding stack `Consider` already uses.
+		for _, b := range x.Extra {
+			t, ok := env[b.Param]
+			if !ok {
+				return nil, fmt.Errorf("%s: block body has no binding for %q", x.Pos, b.Name)
+			}
+			PushBinding(b.Name, t)
+		}
+		out, err := x.Pipe.BindBlock(in)
+		PopBindings(len(x.Extra))
+		return out, err
 	case *ast.UnaryExpr:
 		return unaryType(x, env)
 	case *ast.BinaryExpr:
@@ -61,9 +73,54 @@ func ExprType(e ast.Expr, env Env) (*ir.Type, error) {
 		return condType(x, env)
 	case *ast.LetExpr:
 		return letType(x, env)
+	case *ast.AssignExpr:
+		return assignType(x, env)
+	case *ast.AlsoExpr:
+		return alsoType(x, env)
 	default:
 		return nil, fmt.Errorf("unsupported expression %T", e)
 	}
+}
+
+// assignType types `n := v`: the name must be in scope, and the value must
+// have exactly the type that name holds. Which *kinds* of name can be written
+// to is settled elsewhere — the parser refuses a write to a lambda parameter
+// and the resolver refuses one to a function binding or a Shikigami parameter,
+// each where the thing that makes it impossible is visible.
+//
+// The type may not change, and the rule is deliberately stricter than the
+// numeric tower's: a binding's type is fixed when its scope opens and is what
+// every other expression in that scope was typed against, so an Int binding
+// that took a Float halfway through a stage would make the *reader* of the
+// name wrong rather than the writer. Widen at the binding instead.
+func assignType(x *ast.AssignExpr, env Env) (*ir.Type, error) {
+	want, ok := env[x.Name]
+	if !ok {
+		return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
+	}
+	got, err := ExprType(x.Value, env)
+	if err != nil {
+		return nil, err
+	}
+	if !got.Equal(want) {
+		return nil, fmt.Errorf("%s: %q holds %s, so := cannot write %s to it", x.Pos, x.Name, want, got)
+	}
+	return want, nil
+}
+
+// alsoType types `body also c1, c2`: every clause must typecheck, none of them
+// contributes to the result, and the result is the body's type.
+func alsoType(x *ast.AlsoExpr, env Env) (*ir.Type, error) {
+	bt, err := ExprType(x.Body, env)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range x.Clauses {
+		if _, err := ExprType(c, env); err != nil {
+			return nil, err
+		}
+	}
+	return bt, nil
 }
 
 // letType types `consider n as v in body`: the body is typed in an
@@ -127,7 +184,7 @@ var Builtins = []string{
 	// with a constructor and a functional update, which is why a sparse
 	// automaton was writable as a Fold and a frequency map was not.
 	"toset", "tomap", "entries", "insert", "del", "union", "intersect",
-	"difference", "emptyset", "emptymap", "setat", "cellpoints",
+	"difference", "emptyset", "emptymap", "emptylist", "setat", "cellpoints",
 	// v0.6: list generation. Every list used to have to arrive from outside
 	// the expression.
 	"range", "fill",
@@ -139,10 +196,20 @@ var Builtins = []string{
 	"log", "log2", "log10", "exp", "sin", "cos", "tan", "atan2", "hypot", "trunc",
 	// v0.6: named-field construction and update.
 	"record", "with",
+	// v0.7: bitwise reducers, and the logical connectives as functions.
+	"bandall", "borall", "bxorall",
+	"and", "or", "xor", "not",
 	// v0.6: bases, bits and number theory.
 	"frombase", "tobase", "fromhex", "tohex", "tobin",
 	"bnot", "popcount", "testbit", "digits", "fromdigits",
 	"isprime", "divisors", "crt",
+	// The first-order list operations. None takes a function argument, so
+	// none of them is a higher-order builtin — they were simply absent, and
+	// each absence forced a nested pipeline body where an expression would
+	// have done. Inside a Fold, where a body cannot stand in for a
+	// 2-parameter lambda at all, the absence was total.
+	"sort", "unique", "flatten", "product", "zip", "enumerate",
+	"chunk", "windows", "transpose",
 }
 
 // PointType is the expression-layer representation of a 2D point: an
@@ -187,10 +254,15 @@ var builtinArity = map[string]int{
 	"band": 2, "bor": 2, "bxor": 2, "shl": 2, "shr": 2, "frombin": 1,
 	// collection construction, update and enumeration
 	"toset": 1, "tomap": 1, "entries": 1,
+	// first-order list operations
+	"sort": 1, "unique": 1, "flatten": 1, "product": 1, "zip": 2,
+	"enumerate": 1, "chunk": 2, "windows": 2, "transpose": 1,
 	"insert": -1, // 2 over a Set, 3 over a Map
 	"del":    2,  // Set × elem, or Map × key
 	"union":  2, "intersect": 2, "difference": 2,
-	"emptyset": 1, "emptymap": 2, "setat": 4, "cellpoints": 1,
+	"emptyset": 1, "emptymap": 2, "emptylist": 1, "setat": 4, "cellpoints": 1,
+	"bandall": 1, "borall": 1, "bxorall": 1,
+	"and": 2, "or": 2, "xor": 2, "not": 1,
 	// list generation
 	"range": 2, "fill": 2,
 	// text
@@ -311,6 +383,96 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		return args[0], nil
+	case "sort":
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		// The same reach as the Sort primitive and the relational operators:
+		// ir.Ordered, over ir.Compare. One ordering, however it is spelled.
+		if !ir.Ordered(elem) {
+			return nil, fmt.Errorf("%s: sort needs an ordered element type "+
+				"(Int, Float, Text, or a Tuple of them), got %s", x.Pos, elem)
+		}
+		return args[0], nil
+	case "unique":
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		if !ir.Keyable(elem) {
+			return nil, fmt.Errorf("%s: unique needs keyable elements "+
+				"(Int, Text, or Tuples/Records of them), got %s", x.Pos, elem)
+		}
+		return args[0], nil
+	case "flatten", "transpose":
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		if elem == nil || elem.Kind != ir.KList {
+			return nil, fmt.Errorf("%s: %s needs a List<List<T>>, got %s", x.Pos, name, args[0])
+		}
+		if name == "flatten" {
+			return elem, nil
+		}
+		return args[0], nil
+	case "bandall", "borall", "bxorall":
+		// The bitwise counterparts of sum/product: one reducer per operator,
+		// Int-only because a bit pattern is what they are about.
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		if elem.Kind != ir.KInt {
+			return nil, fmt.Errorf("%s: %s needs Int elements, got %s", x.Pos, name, elem)
+		}
+		return ir.Int(), nil
+	case "and", "or", "xor":
+		for i := range args {
+			if !args[i].Equal(ir.Bool()) {
+				return nil, fmt.Errorf("%s: %s needs Bool arguments, got %s", x.Pos, name, args[i])
+			}
+		}
+		return ir.Bool(), nil
+	case "not":
+		if !args[0].Equal(ir.Bool()) {
+			return nil, fmt.Errorf("%s: not needs a Bool argument, got %s", x.Pos, args[0])
+		}
+		return ir.Bool(), nil
+	case "product":
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		if !numeric(elem) {
+			return nil, fmt.Errorf("%s: product needs Int or Float elements, got %s", x.Pos, elem)
+		}
+		return elem, nil
+	case "zip":
+		a, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		b, err := needList(1)
+		if err != nil {
+			return nil, err
+		}
+		return ir.List(ir.Tuple(a, b)), nil
+	case "enumerate":
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		return ir.List(ir.Tuple(ir.Int(), elem)), nil
+	case "chunk", "windows":
+		if _, err := needList(0); err != nil {
+			return nil, err
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		return ir.List(args[0]), nil
 	case "reverse":
 		if args[0] != nil && args[0].Kind == ir.KText {
 			return ir.Text(), nil
@@ -794,6 +956,12 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		return ir.Set(args[0]), nil
+	case "emptylist":
+		// The same witness trick, and no keyable constraint: a list holds
+		// anything. `list()` cannot stand in for this — with no arguments there
+		// is nothing to read the element type from, and the output type of every
+		// expression is fixed at resolve time.
+		return ir.List(args[0]), nil
 	case "emptymap":
 		if err := needKeyable(x, name, args[0]); err != nil {
 			return nil, err
@@ -1171,8 +1339,21 @@ func binaryType(x *ast.BinaryExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Int(), nil
 	case token.LT, token.GT, token.LE, token.GE:
-		if !numeric(lt) || !numeric(rt) {
-			return nil, fmt.Errorf("%s: comparison needs Int or Float operands, got %s and %s", x.Pos, lt, rt)
+		// The relational operators reach exactly as far as ir.Ordered — the
+		// ordering Sort and Sort By already use. They used to stop at the
+		// numeric types, which left `Sort` able to order a List<Text> that no
+		// lambda could then compare, and made a text tiebreak inside a
+		// predicate unwritable.
+		if numeric(lt) && numeric(rt) {
+			return ir.Bool(), nil // mixed Int/Float compares through promotion
+		}
+		if !lt.Equal(rt) {
+			return nil, fmt.Errorf("%s: cannot compare %s %s %s (different types)",
+				x.Pos, lt, relSymbol(x.Op), rt)
+		}
+		if !ir.Ordered(lt) {
+			return nil, fmt.Errorf("%s: %s has no ordering, so %s cannot compare it "+
+				"(Int, Float, Text, and tuples of those do)", x.Pos, lt, relSymbol(x.Op))
 		}
 		return ir.Bool(), nil
 	case token.EQ:
@@ -1207,6 +1388,23 @@ func fieldType(x *ast.FieldAccess, env Env) (*ir.Type, error) {
 // numeric reports whether t participates in arithmetic: Int or Float.
 func numeric(t *ir.Type) bool {
 	return t != nil && (t.Kind == ir.KInt || t.Kind == ir.KFloat)
+}
+
+// relSymbol spells a relational operator the way it was written. token.Kind's
+// String is the symbolic name ("LT"), which is right for a parser trace and
+// wrong in a message a user reads next to their own source line.
+func relSymbol(op token.Kind) string {
+	switch op {
+	case token.LT:
+		return "<"
+	case token.GT:
+		return ">"
+	case token.LE:
+		return "<="
+	case token.GE:
+		return ">="
+	}
+	return op.String()
 }
 
 // promote is the numeric tower's single rule: mixing Int with Float yields

@@ -259,7 +259,15 @@ var findCells = &Primitive{
 }
 
 // ---------------------------------------------------------------------------
-// Cursed Technique: Transpose — Grid<T> -> Grid<T> (swap rows and columns).
+// Cursed Technique: Transpose — Grid<T> -> Grid<T>, or List<List<T>> ->
+// List<List<T>> (swap rows and columns).
+//
+// The list-of-lists shape is what Extract Integers, Split Fields and a
+// positional Match Pattern all produce, so requiring a Grid meant a column-wise
+// question had to detour through Convert To Grid — which additionally demands
+// one element type across the whole thing, a constraint transposition does not
+// need. Both shapes error on a ragged row rather than truncating, with the
+// wording Convert To Grid uses.
 // ---------------------------------------------------------------------------
 
 var transpose = &Primitive{
@@ -267,8 +275,13 @@ var transpose = &Primitive{
 	Keyword: "Cursed Technique",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "Transpose") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
-		if in == nil || in.Kind != ir.KGrid {
-			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("Transpose expects a Grid, got %s", in)}
+		if in == nil || (in.Kind != ir.KGrid && !isListOfLists(in)) {
+			return nil, &ResolveError{Pos: pos,
+				Msg: fmt.Sprintf("Transpose expects a Grid or a List<List<T>>, got %s", in)}
+		}
+		evalFn := transposeGrid(pos)
+		if in.Kind != ir.KGrid {
+			evalFn = transposeRows(pos)
 		}
 		return &ir.Node{
 			Prim:    "Transpose",
@@ -276,22 +289,62 @@ var transpose = &Primitive{
 			Out:     in,
 			Display: "Transpose",
 			Pos:     pos,
-			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-				g, ok := v.(*ir.GridValue)
-				if !ok {
-					return nil, runtimeErr("Transpose", pos, "expected Grid, got %s", ir.DescribeValue(v))
-				}
-				out := ir.NewGridValue(g.Cols, g.Rows)
-				for r := range g.Rows {
-					for c := range g.Cols {
-						cell, _ := g.At(r, c)
-						out.SetAt(c, r, cell)
-					}
-				}
-				return out, nil
-			},
+			Eval:    evalFn,
 		}, nil
 	},
+}
+
+// isListOfLists reports the List<List<T>> shape Transpose also accepts.
+func isListOfLists(t *ir.Type) bool {
+	return t != nil && t.Kind == ir.KList && t.Elem != nil && t.Elem.Kind == ir.KList
+}
+
+func transposeGrid(pos token.Position) func(*ir.Context, ir.Value) (ir.Value, error) {
+	return func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+		g, ok := v.(*ir.GridValue)
+		if !ok {
+			return nil, runtimeErr("Transpose", pos, "expected Grid, got %s", ir.DescribeValue(v))
+		}
+		out := ir.NewGridValue(g.Cols, g.Rows)
+		for r := range g.Rows {
+			for c := range g.Cols {
+				cell, _ := g.At(r, c)
+				out.SetAt(c, r, cell)
+			}
+		}
+		return out, nil
+	}
+}
+
+func transposeRows(pos token.Position) func(*ir.Context, ir.Value) (ir.Value, error) {
+	return func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+		rows, err := ir.AsList(v)
+		if err != nil {
+			return nil, runtimeErr("Transpose", pos, "%v", err)
+		}
+		cells := make([][]ir.Value, len(rows))
+		cols := 0
+		for r, rowVal := range rows {
+			if cells[r], err = ir.AsList(rowVal); err != nil {
+				return nil, runtimeErr("Transpose", pos, "row %d: %v", r, err)
+			}
+			if r == 0 {
+				cols = len(cells[0])
+			} else if len(cells[r]) != cols {
+				return nil, runtimeErr("Transpose", pos,
+					"grid is not rectangular: row %d has %d cells, expected %d", r, len(cells[r]), cols)
+			}
+		}
+		out := make([]ir.Value, cols)
+		for c := range cols {
+			col := make([]ir.Value, len(cells))
+			for r := range cells {
+				col[r] = cells[r][c]
+			}
+			out[c] = col
+		}
+		return out, nil
+	}
 }
 
 // ---------------------------------------------------------------------------

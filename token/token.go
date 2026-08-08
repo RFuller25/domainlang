@@ -42,7 +42,8 @@ const (
 	STAR    // *
 	SLASH   // /
 	PERCENT // %   (Euclidean modulo; see the `mod` builtin)
-	EQ      // =   (equality; there is no assignment in Domain)
+	EQ      // =   (equality, always: `=` never assigns — `:=` does)
+	ASSIGN  // :=  (update a name in scope; see docs/expressions.md)
 	LT      // <
 	GT      // >
 	LE      // <=
@@ -83,6 +84,7 @@ var kindNames = [...]string{
 	SLASH:   "SLASH",
 	PERCENT: "PERCENT",
 	EQ:      "EQ",
+	ASSIGN:  "ASSIGN",
 	LT:      "LT",
 	GT:      "GT",
 	LE:      "LE",

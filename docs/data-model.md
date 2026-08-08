@@ -200,7 +200,13 @@ type, and everything above reads the same.
 tracing use:
 
 - Tuple → `(v1, v2, …)`
-- Record → `{a: v1, b: v2}` (declared field order)
+- Record → `{a: v1, b: v2}` — the field order the **type** declares, which the
+  Reveal sink reads through `FormatValueTyped`. A `*RecordValue` remembers the
+  order it was built in and `FormatValue` uses that, which is the same order
+  until two record types with the same fields in different orders meet (an `if`
+  whose arms build them differently, a list holding both). At that point the
+  type is the only order a compiled binary's struct can produce, so it is the
+  one both backends print.
 - Map → `{k1: v1, k2: v2}` (insertion order; truncate in `FormatShort`)
 - Set → `{v1, v2, …}` (insertion order; truncate)
 - Grid → rows joined by newlines for `FormatValue`; `Grid RxC` summary for

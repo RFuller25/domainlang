@@ -1,0 +1,16 @@
+# A user-written accumulator: a Fold that builds a Map one insert at a time,
+# reading it in the same expression that writes it. Every update is
+# semantically functional; the optimizer's linear-accumulator pass proves the
+# copied-from value is dead and lets both backends write through instead.
+#
+# Without that pass this is quadratic in the map, not linear in the writes —
+# which is the difference between a benchmark and an unusable program.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Maximum Technique: Fold
+    Seed: (xs) -> emptymap(0, 0)
+    Using: (acc, x) -> insert(acc, x % 50000, getor(acc, x % 50000, 0) + 1)
+Cursed Technique: Apply
+    Using: (m) -> size(m) + max(values(m))
+Reveal: stdout

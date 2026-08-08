@@ -56,6 +56,16 @@ var cases = []benchCase{
 		gen:     genWords, size: 1_000_000, small: 1_000,
 	},
 	{
+		name:    "fold_map_dp",
+		feature: "a user-written Map accumulator — Fold + insert/getor, made linear by the linear-accumulator pass",
+		gen:     genInts, size: 2_000_000, small: 2_000,
+	},
+	{
+		name:    "fold_grid_writes",
+		feature: "in-place grid writes — Fold From: a channel, setat per step, cloned once on entry",
+		gen:     genGrid, size: 700, small: 40,
+	},
+	{
 		name:    "count_by_entries",
 		feature: "the Map vocabulary — Count By, Convert To Entries, tuple item()",
 		gen:     genWords, size: 1_000_000, small: 1_000,

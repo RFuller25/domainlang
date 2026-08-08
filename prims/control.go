@@ -156,7 +156,7 @@ func (r *resolver) loopNode(stmt *ast.Statement, cur *ir.Type, rewriteErr *error
 		return r.resolveForLoop(stmt, op, cur)
 	}
 
-	subNodes, bodyOut, err := r.resolveSequence(stmt.Block, cur, scopeNested)
+	subNodes, bodyOut, err := r.resolveSequence(stmt.Block, cur, scopeLoop)
 	if err != nil {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: "in loop body: " + err.Error()}
 	}
@@ -237,7 +237,7 @@ func (r *resolver) resolveForLoop(stmt *ast.Statement, op *ast.Operation, cur *i
 	}
 
 	pushAmbient(varName, elemType)
-	subNodes, bodyOut, err := r.resolveSequence(stmt.Block, cur, scopeNested)
+	subNodes, bodyOut, err := r.resolveSequence(stmt.Block, cur, scopeLoop)
 	popAmbient()
 	if err != nil {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: "in loop body: " + err.Error()}

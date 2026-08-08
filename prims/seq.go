@@ -236,14 +236,22 @@ var countBy = &Primitive{
 }
 
 // ---------------------------------------------------------------------------
-// Maximum Technique: Min By / Max By — List<T> x (T -> Int) -> T: the element
+// Maximum Technique: Min By / Max By — List<T> x (T -> K) -> T: the element
 // with the smallest/largest key (first wins on ties; empty list is an error).
+//
+// K is any ir.Ordered type, exactly as Sort By's is. The two reductions used
+// to disagree — Sort By took Text and tuple keys while these took Int only —
+// which made "the alphabetically first X" unwritable for no reason the user
+// could see, since it is the same notion of key over the same ordering.
 // ---------------------------------------------------------------------------
 
-var minBy = keyedExtremum("Min By", func(k, best int64) bool { return k < best })
-var maxBy = keyedExtremum("Max By", func(k, best int64) bool { return k > best })
+var minBy = keyedExtremum("Min By", func(c int) bool { return c < 0 })
+var maxBy = keyedExtremum("Max By", func(c int) bool { return c > 0 })
 
-func keyedExtremum(id string, better func(k, best int64) bool) *Primitive {
+// better decides from ir.Compare's answer whether a candidate key beats the
+// best so far. Strict on both sides, so the first element wins a tie and the
+// result is the same one Sort By would put at that end.
+func keyedExtremum(id string, better func(c int) bool) *Primitive {
 	words := splitID(id)
 	return &Primitive{
 		ID:      id,
@@ -264,16 +272,17 @@ func keyedExtremum(id string, better func(k, best int64) bool) *Primitive {
 			if err != nil {
 				return nil, &ResolveError{Pos: pos, Msg: id + ": " + err.Error()}
 			}
-			if !keyType.Equal(ir.Int()) {
+			if !ir.Ordered(keyType) {
 				return nil, &ResolveError{Pos: pos,
-					Msg: fmt.Sprintf("%s key lambda must return Int, got %s", id, keyType)}
+					Msg: fmt.Sprintf("%s key lambda must return an ordered type "+
+						"(Int, Float, Text, or a Tuple of them), got %s", id, keyType)}
 			}
 			return &ir.Node{
 				Prim:    id,
 				In:      in,
 				Out:     elem,
 				Display: id,
-				Meta:    map[string]any{"lambda": lam},
+				Meta:    map[string]any{"lambda": lam, "key": keyType.String()},
 				Pos:     pos,
 				Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
 					xs, err := ir.AsList(v)
@@ -284,16 +293,16 @@ func keyedExtremum(id string, better func(k, best int64) bool) *Primitive {
 						return nil, runtimeErr(id, pos, "%s of an empty list is undefined", id)
 					}
 					best := xs[0]
-					bestKey, err := intKey(lam, elem, xs[0])
+					bestKey, err := anyKey(lam, elem, xs[0])
 					if err != nil {
 						return nil, runtimeErr(id, pos, "item 0: %v", err)
 					}
 					for i, x := range xs[1:] {
-						k, err := intKey(lam, elem, x)
+						k, err := anyKey(lam, elem, x)
 						if err != nil {
 							return nil, runtimeErr(id, pos, "item %d: %v", i+1, err)
 						}
-						if better(k, bestKey) {
+						if better(ir.Compare(k, bestKey)) {
 							best, bestKey = x, k
 						}
 					}
@@ -369,7 +378,7 @@ var sortBy = &Primitive{
 		return &ir.Node{
 			Prim:      "Sort By",
 			In:        in,
-			Out:       in,
+			Out:       seqOut(in, elem),
 			Display:   "Sort By, " + order,
 			Swappable: true,
 			Meta:      map[string]any{"lambda": lam, "desc": desc, "key": keyType.String()},

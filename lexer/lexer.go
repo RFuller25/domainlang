@@ -326,6 +326,16 @@ func (l *lexer) lexOperator() error {
 		l.advance()
 		l.emit(token.GE, ">=", start)
 		return nil
+	case ":=":
+		// The two characters must be adjacent, so a statement's `Keyword: …`
+		// colon is never mistaken for one: every keyword and argument colon is
+		// followed by a space or a line break (and `domain fmt` writes it that
+		// way). `Mode:=First` is the one spelling that changes meaning, and it
+		// was never the spelling of anything.
+		l.advance()
+		l.advance()
+		l.emit(token.ASSIGN, ":=", start)
+		return nil
 	}
 
 	var k token.Kind

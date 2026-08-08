@@ -10,7 +10,9 @@ syn match domainComment "#.*$" contains=@Spell
 " Strings, with the standard escapes and Match Pattern typed holes.
 syn region domainString start=/"/ skip=/\\./ end=/"/ contains=domainEscape,domainHole
 syn match domainEscape /\\[nt\\"]/ contained
-syn match domainHole /{[^}]*}/ contained
+" One level of nesting: a repeated group's inner template has holes of its own,
+" `{ds:( {n:int} {c:word} )+ sep=", "}`, and /{[^}]*}/ stopped at the first one.
+syn match domainHole /{\%([^{}]\|{[^{}]*}\)*}/ contained
 
 " Themed pipeline keywords (statement heads). Matched with \ze so the colon
 " and operation phrase keep their own styling. Multi-word forms first.
@@ -58,16 +60,16 @@ syn keyword domainPreposition by from to with into of
 
 " The expression layer.
 syn match domainArrow /->/
-syn match domainOperator /<=\|>=\|!=\|[-+*/%=<>]/
-syn keyword domainLogical and or not if then else
+syn match domainOperator /:=\|<=\|>=\|!=\|[-+*/%=<>]/
+syn keyword domainLogical and or not if then else also
 syn match domainNumber /\<\d\+\>/
 
 " Builtin functions, only in call position (lowercase, so they never collide
 " with the Title Case operation words above).
-syn match domainBuiltin /\<\%(occurrences\|cellpoints\|difference\|fromdigits\|neighbors4\|neighbors8\|startswith\|trimprefix\|trimsuffix\|chebyshev\|factorial\|intersect\|manhattan\|contains\|divisors\|emptymap\|emptyset\|endswith\|frombase\|inbounds\|padright\|popcount\|solve2x2\|textjoin\|around4\|around8\|entries\|frombin\|fromhex\|indexof\|isalpha\|isdigit\|islower\|isprime\|isupper\|padleft\|repeats\|replace\|reverse\|testbit\|tofloat\|charat\|choose\|concat\|digits\|divmod\|haskey\|insert\|length\|maxcol\|maxrow\|mincol\|minrow\|modinv\|modpow\|pscale\|record\|repeat\|sparse\|tobase\|tolist\|totext\|values\|atan2\|cells\|chars\|clamp\|dirs4\|dirs8\|first\|floor\|getor\|hypot\|isqrt\|log10\|lower\|point\|range\|round\|setat\|slice\|split\|tobin\|tohex\|toint\|tomap\|toset\|trunc\|tuple\|union\|upper\|words\|band\|bnot\|bxor\|ceil\|cols\|drop\|fill\|item\|keys\|last\|list\|log2\|padd\|pcol\|prow\|psub\|rotl\|rotr\|rows\|sign\|size\|sqrt\|take\|trim\|with\|abs\|bor\|chr\|col\|cos\|crt\|del\|exp\|gcd\|get\|has\|lcm\|log\|max\|min\|mod\|ord\|pow\|put\|row\|set\|shl\|shr\|sin\|sum\|tan\|at\)\ze\s*(/
+syn match domainBuiltin /\<\%(occurrences\|cellpoints\|difference\|fromdigits\|neighbors4\|neighbors8\|startswith\|trimprefix\|trimsuffix\|chebyshev\|emptylist\|enumerate\|factorial\|intersect\|manhattan\|transpose\|contains\|divisors\|emptymap\|emptyset\|endswith\|frombase\|inbounds\|padright\|popcount\|solve2x2\|textjoin\|around4\|around8\|bandall\|bxorall\|entries\|flatten\|frombin\|fromhex\|indexof\|isalpha\|isdigit\|islower\|isprime\|isupper\|padleft\|product\|repeats\|replace\|reverse\|testbit\|tofloat\|windows\|borall\|charat\|choose\|concat\|digits\|divmod\|haskey\|insert\|length\|maxcol\|maxrow\|mincol\|minrow\|modinv\|modpow\|pscale\|record\|repeat\|sparse\|tobase\|tolist\|totext\|unique\|values\|atan2\|cells\|chars\|chunk\|clamp\|dirs4\|dirs8\|first\|floor\|getor\|hypot\|isqrt\|log10\|lower\|point\|range\|round\|setat\|slice\|split\|tobin\|tohex\|toint\|tomap\|toset\|trunc\|tuple\|union\|upper\|words\|band\|bnot\|bxor\|ceil\|cols\|drop\|fill\|item\|keys\|last\|list\|log2\|padd\|pcol\|prow\|psub\|rotl\|rotr\|rows\|sign\|size\|sort\|sqrt\|take\|trim\|with\|abs\|and\|bor\|chr\|col\|cos\|crt\|del\|exp\|gcd\|get\|has\|lcm\|log\|max\|min\|mod\|not\|ord\|pow\|put\|row\|set\|shl\|shr\|sin\|sum\|tan\|xor\|zip\|at\|or\)\ze\s*(/
 
 " Mode: values, order modifiers, and value-kind type names.
-syn match domainMode /\%(Mode:\s*\)\@<=\%(One\|Each\|Filter\|Count\|First\|Map\)\>/
+syn match domainMode /\%(Mode:\s*\)\@<=\%(One\|Each\|Try\|Scan\|Filter\|Count\|First\|Map\)\>/
 syn keyword domainOrder Ascending Descending
 syn keyword domainType Int Text Float Bool List Tuple Record Map Set Grid Sparse
 

@@ -337,7 +337,7 @@ func TestEveryPhraseWordInTheRepositoryIsHighlighted(t *testing.T) {
 	// values, order modifiers, type names, and the I/O targets.
 	add("Repeat", "While", "Iterate", "Until", "Fixed", "Point", "For", "in")
 	add("by", "from", "to", "with", "into", "of", "as")
-	add("One", "Each", "Filter", "Count", "First", "Map")
+	add("One", "Each", "Try", "Scan", "Filter", "Count", "First", "Map")
 	add("Ascending", "Descending")
 	add("Int", "Text", "Float", "Bool", "List", "Tuple", "Record", "Map", "Set", "Grid", "Sparse")
 	add("stdin", "stdout")

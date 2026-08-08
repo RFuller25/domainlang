@@ -42,8 +42,20 @@ func rewritePairs(p *ir.Pipeline, rule pairRewrite) []Rewrite {
 }
 
 // nodeLambda fetches a node's Using: lambda from Meta.
+// nodeLambda is the node's Using:/By:/While: lambda, or nil when it has none
+// to offer a rewrite.
+//
+// A lambda that writes to a binding is reported as *absent* rather than
+// returned, which is what stands every pass in this package down on it at
+// once: each one asks for the lambda before it fires and declines when there
+// is none, so the answer to "may this rewrite touch an updating stage" is
+// given here, once, instead of in each of the twenty guards. See effectful
+// (walk.go) for why none of them may.
 func nodeLambda(n *ir.Node) *ast.Lambda {
 	lam, _ := n.Meta["lambda"].(*ast.Lambda)
+	if effectful(lam) {
+		return nil
+	}
 	return lam
 }
 

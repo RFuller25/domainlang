@@ -23,7 +23,22 @@ with oracle tests pinning identical output ([compiler.md](compiler.md)).
 | `parseGrid(raw)` | `Channeled Energy: Convert To Grid` (chars) or prelude `Digit Grid` |
 | `splitOn(line, sep)` | `Cursed Technique: Split Text by "sep"` / `Split Each by "sep"` |
 | `atoi(s)` | expr `toint(s)`; whole lists via `Channeled Energy: Convert To Integers` |
+| `[]T{}` / an empty accumulator | expr `emptylist(v)` — `v` is a type witness, like `emptyset`/`emptymap` |
+| `xor` the whole column (2021 D3-ish, 2018 puzzle-input checksums) | expr `bxorall(xs)`; `bandall`/`borall` for the other two |
+| `a ^ b` on Bool | expr `xor(a, b)` — there is no infix spelling |
 | `fields(line)` | prim `Cursed Technique: Split Fields` — Text or per-line |
+| `sscanf(line, fmt)` | prim `Cursed Technique: Match Pattern` + `Using:` template — typed holes, static output type |
+| a label then a variable-length run (`Time: 7 15 30`) | a repeating hole: `Using: "{label:word}: {ns:int+ sep=\" \"}"` → `List<Int>` field |
+| a file whose lines are not all one shape | `Match Pattern` `Mode: Try` — one pass per shape, each keeping its own lines |
+| a line with an optional trailing clause (`fwft (72) -> a, b`) | an optional group: `"{name:word} ({w:int})[? -> {kids:word+ sep=\", \"}]"` — absent leaves `kids` empty |
+| a repeating pair on one line (`3 blue, 4 red`) | a repeated group: `"{draws:( {n:int} {c:word} )+ sep=\", \"}"` → `List<Record>` |
+| "was this optional part there at all?" | `{?name}` inside the group → a `Bool` field |
+| a pattern buried in noise (`mul(2,4)` amid junk) | `Match Pattern` `Mode: Scan` — every occurrence inside each line |
+| one file, several verbs, **in order** (`turn on` / `toggle`) | `Case: <tag> "<template>"` lines → a `kind` field naming the match |
+| column-aligned input (`Register A:   12`) | `{~}` — a run of whitespace, owning no field |
+| a hex literal (`#70c710`) | `{c:hex}` → an `Int`, parsed base 16 |
+| digits whose leading zeros matter | `{d:digits}` → `Text`, not `Int` |
+| exactly one character | `{c:char}` — `{word}` is a whole run |
 
 ## Grid / 2D
 
@@ -38,6 +53,7 @@ Points are `(Int, Int)` tuples of `(row, col)` — the grid coordinate system.
 | `Grid.SubGrid(r, c, h, w)` | prim `Cursed Technique: Subgrid r c h w` |
 | pad a border before a fill | prim `Cursed Technique: Pad Grid n` + `Fill:` |
 | `Grid.Rotate/Flip` | prim `Rotate Grid` / `Flip Grid` |
+| `Transpose(rows)` | prim `Transpose` — a `Grid<T>` or a `List<List<T>>`, so no `Convert To Grid` detour |
 | `Grid.Neighbors8(p)` | expr `neighbors8(g, r, c)` |
 | `Grid.Find(target)` | prim `Cursed Technique: Find Cells` + `Using:` predicate |
 | `Point.Add(o)` | expr `padd(p, q)` |
@@ -92,10 +108,11 @@ Life / origami / Minesweeper programs in
 | `_, ok := m[k]` | expr `haskey(m, k)` |
 | `len(m)` | expr `size(m)`, or `Maximum Technique: Count` |
 | iterate keys / values | expr `keys(m)` / `values(m)` |
+| iterate a map | pass it straight to `Map Each`/`Filter`/`Sort By`/… — the list-shaped primitives read a Map as its entries |
 | transform values | prim `Cursed Technique: Map Values` |
 | filter entries | prim `Cursed Technique: Filter Entries` |
 | `[]Pair` from a map | prim `Channeled Energy: Convert To Entries` (and `Convert To Map` back) |
-| "most common element" | `Count By` → `Convert To Entries` → `Sort By, Descending` → `Take Item 0` |
+| "most common element" | `Count By` → `Maximum Technique: Max By` on `item(e, 1)` — no `Convert To Entries` detour |
 
 ## Queue / Stack / Priority queue
 
@@ -122,6 +139,9 @@ optimizer is allowed to substitute.
 |---|---|
 | `BFS(start, isWalkable)` | `Domain Expansion: BFS from R C` + `Using:` walkable predicate → `Grid<Int>` step distances (−1 unreachable) |
 | `Dijkstra(start, cost)` | `Domain Expansion: Dijkstra from R C` over a `Grid<Int>` of cell entry costs → `Grid<Int>` min total costs |
+| `Dijkstra` over a **non-grid** graph | `Domain Expansion: Explore` `Mode: Cheapest` + `Cost:` — states, not cells |
+| cheapest cost to every state | `Domain Expansion: Explore` `Mode: Costs` → `Map<S, Int>` |
+| weighted edges rather than node weights | a 2-parameter `Cost: (s, t) -> Int` |
 | `FloodFill(grid, start, match)` | `Domain Expansion: Flood Fill from R C` + `Using:` region predicate → `Grid<Int>` 0/1 mask |
 | counting regions | `Domain Expansion: Connected Components` + `Using:` predicate → `Int` |
 | 8-connectivity (diagonals) | `Mode: 8` on any grid search; `Mode: 4` is the default |
@@ -137,6 +157,8 @@ optimizer is allowed to substitute.
 |---|---|
 | `Memo[K, V].Get(key, compute)` | runtime `ir.Memo` — compute-once keyed caching for primitive implementers (codegen uses it to intern generated struct declarations). |
 | memoized recursion / DP | `Domain Expansion: Explore` — Domain has no recursion, and a search over keyable states is what the visited set memoizes. |
+| "how many ways" over a DAG | `Domain Expansion: Explore` `Mode: Tally` + `Value:`/`Combine:` — each state folded once however many paths reach it |
+| linear DP over a sorted list | `Maximum Technique: Fold` with a `Map` accumulator (`insert`/`getor`) — linear, not quadratic, since [linear accumulators](optimizer.md#linear-accumulators--the-pass-that-runs-last) |
 
 ## Union-Find
 
@@ -201,6 +223,25 @@ All expression builtins; all compile.
 | `strings.Join` | expr `textjoin(xs, sep)` |
 | reverse a string | prim `Reverse Cursed Technique: Reverse` over Text, or expr `reverse(s)` |
 | `a + b` | the `+` operator over two Texts |
+| `a < b` (lexicographic) | the `<` `<=` `>` `>=` operators over two Texts — the same ordering `Sort` uses |
+
+## List operations inside a lambda
+
+Each of these is a primitive *and* an expression builtin, answering the same
+way. The expression spelling is what a `Fold` needs, since a pipeline body
+cannot stand in for its 2-parameter lambda.
+
+| Classic helper | In Domain |
+|---|---|
+| `sort(xs)` | expr `sort(xs)`, or prim `Domain Expansion: Sort` |
+| `unique(xs)` | expr `unique(xs)`, or prim `Cursed Technique: Unique` |
+| `flatten(xss)` | expr `flatten(xss)`, or prim `Cursed Technique: Flatten` |
+| `product(xs)` | expr `product(xs)`, or prim `Maximum Technique: Product` |
+| `zip(a, b)` | expr `zip(a, b)`, or prim `Maximum Technique: Zip` (channels) |
+| `enumerate(xs)` | expr `enumerate(xs)`, or prim `Cursed Technique: Enumerate` |
+| `chunk(xs, n)` | expr `chunk(xs, n)`, or prim `Cursed Technique: Chunk n` — keeps a short final block |
+| `windows(xs, n)` | expr `windows(xs, n)`, or prim `Cursed Technique: Window n` — drops a partial one |
+| `transpose(xss)` | expr `transpose(xss)`, or prim `Cursed Technique: Transpose` |
 
 ## Cycle detection
 

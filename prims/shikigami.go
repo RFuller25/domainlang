@@ -38,6 +38,13 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 	if err != nil {
 		return nil, nil, err
 	}
+	// A parameter is substituted into the body at each call site — the
+	// argument's literal takes the name's place — so there is no parameter
+	// left at runtime for a `:=` to write to. Caught here, against the call,
+	// because this is where the substitution that makes it impossible happens.
+	if err := checkParamNotUpdated(name, def, stmt.Pos); err != nil {
+		return nil, nil, err
+	}
 	body := substituteBody(def.Body, env)
 	binds := substituteBinds(def.Binds, env)
 
@@ -81,7 +88,7 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 	// they are pushed around resolving it — and, when their values are only
 	// known at runtime, the inlined nodes go inside a Consider node the same
 	// way a statement's own do.
-	rts, pop, err := r.pushBinds(binds, cur)
+	rts, pop, err := r.pushBinds(binds, cur, updatedInStatements(body))
 	if err != nil {
 		return nil, nil, r.wrapShikigamiErr(name, stmt.Pos, err)
 	}
@@ -455,6 +462,33 @@ func substituteArg(a *ast.Arg, env map[string]paramVal) *ast.Arg {
 	return &na
 }
 
+// checkParamNotUpdated refuses a Shikigami body that writes to one of the
+// definition's own parameters. The name a body writes to is the innermost one
+// in scope, so a lambda parameter or a `consider` of the same spelling has
+// already been discounted by the collectors.
+func checkParamNotUpdated(name string, def *ast.ShikigamiDef, pos token.Position) error {
+	if len(def.Params) == 0 {
+		return nil
+	}
+	updated := updatedInStatements(def.Body)
+	for _, b := range def.Binds {
+		if b != nil && b.Value != nil {
+			ast.UpdatedNames(b.Value, updated)
+		}
+	}
+	for _, p := range def.Params {
+		if updated[p.Name] {
+			return &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+				"Shikigami %q writes to its parameter %q with `:=`, which it cannot: "+
+					"a parameter is substituted into the body at each call site, so there is "+
+					"nothing to write to. Bind it with `Consider %s As %s` at the top of the "+
+					"body and update that instead",
+				name, p.Name, p.Name+"State", p.Name)}
+		}
+	}
+	return nil
+}
+
 func substituteLambda(lam *ast.Lambda, env map[string]paramVal) *ast.Lambda {
 	shadowed := make(map[string]bool, len(lam.Params))
 	for _, p := range lam.Params {
@@ -526,6 +560,17 @@ func substExpr(e ast.Expr, env map[string]paramVal, shadowed map[string]bool) as
 			Body:  substExpr(x.Body, env, inner),
 			Pos:   x.Pos,
 		}
+	case *ast.AssignExpr:
+		// The name being written is left alone — a parameter cannot be one
+		// (checkParamNotUpdated) and a binding is not substituted here — while
+		// the value substitutes like any other expression.
+		return &ast.AssignExpr{Name: x.Name, Value: substExpr(x.Value, env, shadowed), Pos: x.Pos}
+	case *ast.AlsoExpr:
+		clauses := make([]ast.Expr, len(x.Clauses))
+		for i, c := range x.Clauses {
+			clauses[i] = substExpr(c, env, shadowed)
+		}
+		return &ast.AlsoExpr{Body: substExpr(x.Body, env, shadowed), Clauses: clauses, Pos: x.Pos}
 	default:
 		return e
 	}

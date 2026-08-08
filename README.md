@@ -16,10 +16,10 @@ across both: parsing (`Match Pattern`), dense and sparse grids,
 pairs/combinations, sets/maps, higher-order lambda operations (with a `Using:`
 that may be an [indented pipeline](docs/expressions.md) rather than an
 expression), named dataflow `Channel`s, loops, measured arguments,
-user-defined `Shikigami` + a prelude, and a **30-pass optimizer** (algorithm
+user-defined `Shikigami` + a prelude, and a **31-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
 `domain build` compiles that same IR into a standalone, aggressively typed Go
-binary — every primitive and all 92 expression builtins have a codegen case,
+binary — every primitive and all 153 expression builtins have a codegen case,
 each pinned by an interpreter-vs-binary oracle test.
 
 **New here? Start with [docs/getting-started.md](docs/getting-started.md)** —
@@ -126,7 +126,7 @@ a Go toolchain, even on machines without Go installed.
 Syntax highlighting for VS Code (TextMate grammar) and Neovim/Vim (runtime
 plugin, also exported by the flake as `packages.<system>.domain-nvim`) lives
 in [`editors/`](editors/README.md). Both grammars are **generated from the
-language itself** — the primitives from the registry, all 144 expression
+language itself** — the primitives from the registry, all 153 expression
 builtins, the keywords — and a test fails if they fall behind it.
 
 The binary carries the VS Code extension and installs it for you:
@@ -246,6 +246,15 @@ Every keyword below is optional except where the row says otherwise — see
   lambdas that read it and a function is inlined at its call sites, so both are
   gone before either backend runs, and the optimizer still sees the body shapes
   it rewrites.
+- **Updating a binding** — `:=` writes to a `consider` local or a stage binding
+  and yields what it wrote, and `also` runs expressions after a lambda body for
+  their updates alone, discarding their values:
+  `(x) -> x + seen also seen := seen + 1` numbers the elements as they go by. A
+  write to a stage binding is the one value that carries from one element (or
+  one lap of a loop) to the next without a `Fold` accumulator to thread it
+  through. The stage that writes gives up its optimizer rewrites in exchange —
+  a lambda that updates is not a function of its arguments, and every pass here
+  assumes it is.
 - **Grids**: build from chars or digits, `Transpose`, `Map Cells`, `Count Cells`,
   neighbor walks.
 - **Sparse grids** (`Sparse<T>`): an infinite plane with a default value —
@@ -289,7 +298,7 @@ Every keyword below is optional except where the row says otherwise — see
   `solve2x2`, `manhattan`/`neighbors4`/`rotr`, `occurrences`/`repeats`).
   The full map from the canonical Go helper library lives in
   [`docs/aoc-toolbox.md`](docs/aoc-toolbox.md).
-- **A 30-pass optimizer** that fires even through Shikigami abstraction (below).
+- **A 31-pass optimizer** that fires even through Shikigami abstraction (below).
 
 Worked anchor programs live in [`testdata/`](testdata): AoC 2022 Days 1/4/5/8
 and AoC 2020 Day 1 (parts 1 & 2).
@@ -356,7 +365,7 @@ ir/         typed pipeline graph, value/type model, runtime collections
 typecheck/  static expression typer (lambda output-type inference)
 eval/       dynamic expression evaluator (lambda bodies, runtime field access)
 prims/      primitive vocabulary + resolver/typechecker + Shikigami + prelude
-optimizer/  30 rewrite passes: algorithm substitution, fusion, dead code, expression simplification
+optimizer/  31 rewrite passes: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
 interp/     tree-walking evaluator
 codegen/    Go compiler backend: optimized IR → typed Go source → `go build`
 cmd/domain/ CLI (bare file → interpret, extra args → compile; run/build, --help)
@@ -407,7 +416,7 @@ equality functions; tuple-shaped `Match Pattern` emits positional structs.
 A future primitive that ships without a codegen case fails `domain build`
 with a positioned error and keeps working under `domain run`. Nothing is in
 that state today: the whole surface — parsing/range/set primitives, the
-grid searches, the sparse grid type, and all 92 expression builtins
+grid searches, the sparse grid type, and all 153 expression builtins
 including the point group — compiles, with oracle tests pinning
 interpreter/binary parity (see [`docs/compiler.md`](docs/compiler.md)).
 A foreign block compiles too, with its source embedded as a constant and the
