@@ -74,15 +74,25 @@ domain expansion: fix day1.domain                # apply the unambiguous fixes (
 domain expansion: maximum compile day1.domain < input.txt   # fix → lint → optimize → compile → run
 domain expansion: visualize day1.domain          # step through the run, watching the data change shape
 domain expansion: visualize day1.domain --expressions   # …down to what each Using: expression computed
+domain expansion: development day1.domain        # write it in a terminal editor that knows the language
 domain expansion: documentation                  # serve the docs as a local website (port 4444)
 domain expansion: vscode                         # install the VS Code extension carried in the binary
 ```
 
-There is also an interactive REPL (`domain repl` — build a pipeline line by
-line, seeing the value and type after each statement) and a language server
-(`domain lsp` — live diagnostics, inlay type hints after every statement,
-hover types, go-to-Shikigami (across imported libraries), quick fixes in any
-LSP editor); see [docs/tooling.md](docs/tooling.md).
+There is also a terminal editor (`domain expansion: development` — types at the
+end of every line and errors in the gutter as you type, completion, run and
+interrupt, and the step-through visualizer over the buffer you are editing; see
+[docs/development.md](docs/development.md)), an interactive REPL (`domain repl`
+— build a pipeline line by line, seeing the value and type after each
+statement) and a language server (`domain lsp` — live diagnostics, inlay type
+hints after every statement, hover types, go-to-Shikigami (across imported
+libraries), quick fixes in any LSP editor); see
+[docs/tooling.md](docs/tooling.md).
+
+Choosing an input file in the editor reads its shape and offers the opening
+that would take it in — `Shikigami: Digit Grid` for a rectangle of digits, a
+`Match Pattern` template inferred from the lines, and so on — ranked, with the
+evidence for each.
 
 `domain run --stats` reports per-stage element counts and timings (with
 `--verbose` for the steps inside loops and Parts) — the interpreter's numbers,

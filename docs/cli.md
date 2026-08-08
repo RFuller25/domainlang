@@ -24,13 +24,15 @@ domain expansion: fix <file>              apply unambiguous fixes in place (orig
 domain expansion: optimize <file>         optimization report; rewrites the source where possible (.bak)
 domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
 domain expansion: visualize <file>        step through a run in a terminal UI (see below)
+domain expansion: development [file]      write a program in a terminal editor (see below)
 domain expansion: documentation [-p PORT] serve this documentation as a local website (default port 4444)
 domain expansion: vscode [--dir PATH]     install the VS Code extension carried in this binary
 ```
 
 `documentation` and `vscode` are the two expansion commands that take no
 program file — they hand you something the binary carries rather than
-analyzing something you wrote.
+analyzing something you wrote. `development` is the one whose file is
+*optional*: with none, it asks which program to open.
 
 `documentation` serves the browsable documentation site (this reference,
 rendered with search and cross-links) at `http://localhost:4444/` and opens it
@@ -38,6 +40,31 @@ in your browser. The optional `-p`/`--port` picks a different port. The whole
 site is embedded in the `domain` binary, so it works from any install —
 including the NixOS package — with no source checkout present. Press Ctrl+C to
 stop the server.
+
+### `domain expansion: development`
+
+The editor. Full reference in [development.md](development.md).
+
+```sh
+domain expansion: development day7.domain              # open a program
+domain expansion: development                          # pick one
+domain expansion: development day7.domain --input day7.txt
+```
+
+| Flag | Effect |
+|---|---|
+| `--input FILE` / `-i FILE` | bind the program's input before opening |
+
+Types at the end of every line and errors in the gutter, both from the buffer
+rather than a saved file; completion, inspect and go-to-definition from the
+same engines `domain lsp` serves; run with `ctrl+r` and interrupt with
+`ctrl+c`; and `ctrl+t` opens the same stepper `visualize` does, over the
+program on screen. Choosing an input file offers the opening that would read
+it.
+
+A file that does not exist is a new program under that name. Unlike every other
+command here it needs a terminal, and says so rather than failing later: an
+editor has nothing to do without a screen.
 
 ### `domain expansion: vscode`
 
@@ -194,32 +221,54 @@ Step through a run and watch the data change shape:
 ```sh
 domain expansion: visualize day1.domain                     # the program names its own input
 domain expansion: visualize day1.domain --input input.txt    # or say where it is
+domain expansion: visualize day1.domain --input-text "1,2,3" # or give it inline
+domain expansion: visualize day1.domain --watch              # re-record on every save
 domain expansion: visualize day1.domain --plain              # print the trace as text
-domain expansion: visualize life.domain --max-steps 200      # bound the capture
-domain expansion: visualize day1.domain --go                 # …and the Go it compiles to
-domain expansion: visualize day1.domain --expressions        # …and what each Using: computed
+domain expansion: visualize life.domain --max-steps 0        # record the whole run
+domain expansion: visualize day1.domain --go                 # open on the emitted Go
+domain expansion: visualize day1.domain --expressions        # open on the expression pane
 ```
 
 | Flag | Effect |
 |---|---|
 | `--input <file>`, `-i` | what the program reads |
-| `--max-steps N` | how many steps to keep (default 10,000) |
+| `--input-text <text>` | the same, given inline (a trailing newline is added) |
+| `--max-steps N` | how many steps to keep (default 250,000; `0` keeps the whole run) |
+| `--watch`, `-w` | re-record whenever the program or its input changes on disk |
 | `--plain` | print the trace as text instead of opening the UI |
+| `--depth N` | with `--plain`, how deep to nest before summarizing |
 | `--json` | print the recording as data (see [below](#--json)) |
-| `--go` | also print the Go the compiler backend emits (see [below](#the-code-screen-c)) |
-| `--expressions`, `--exprs` | also break every `Using:` expression down (see [below](#inside-an-expression-x)) |
-| `--expand-loops` | print every lap of a loop instead of folding them |
+| `--go` | open on the emitted Go (see [below](#the-code-screen-c)); text under `--plain` |
+| `--expressions`, `--exprs` | open on the expression pane (see [below](#inside-an-expression-x)) |
+| `--expand-loops` | start with every lap of every loop open |
 | `--no-optimize` | record the naive pipeline |
 
 The program is resolved, optimized and run **once** under a recording tracer;
-the UI then navigates what was recorded. Two consequences worth knowing:
+the UI then navigates what was recorded. Four consequences worth knowing:
 
 - **A failing run is still explorable.** The trace shows every step that ran
   and the error on the one that failed, which is what makes this a debugger
   rather than a demo.
+- **The whole program runs before anything is shown.** That is what makes the
+  recording walkable in both directions, and it means a slow program is a wait.
+  Past about half a second the command says so on stderr — `recording 84,000
+  steps · 1.2s elapsed` — and erases the line before the UI takes the screen.
+- **A long run is recorded in full by default.** The step cap is a memory bound
+  and nothing else; at 250,000 steps a real solution over its real input fits.
+  Where it does not, `--max-steps 0` removes the bound, and the header says
+  `capped` whenever it was reached rather than quietly showing you a prefix.
 - **The program's own `Reveal` output is captured**, not interleaved — a
   raw-mode terminal cannot take writes from underneath the UI. It is shown in
   the plain output under `revealed:`.
+
+### A failure is always in the recording
+
+A run that dies 400,000 steps in used to record its opening stretch, report
+`capped`, and leave `!` with nothing to jump to — the tool saying "this run
+failed" and "there is no failure here" in the same breath. A step that failed is
+now recorded **however far past the cap it happened**, and the frames around it
+are kept to hold it, so the failing row is reachable in every recording that has
+one.
 
 Loops, `Channel` bodies, `Part` bodies and nested `Using:` bodies are **frames
 you can step into**: `Repeat 4` collapses to one row and opens into `Repeat 4
@@ -283,22 +332,50 @@ legend wide enough to hold every key is the loudest thing on the screen.
 
 | | |
 |---|---|
-| `j`/`k`, arrows | move; `g`/`G` jump to the first and last row |
+| `j`/`k`, arrows | move; `ctrl+d`/`ctrl+u` by half a page; `g`/`G` to the ends |
 | `l`/`h` | open and close a frame; `enter` steps in |
+| `tab` | move the keys to the right-hand pane, to scroll it (see [below](#scrolling-a-pane-tab)) |
 | `H` | jump to the hottest row — the one with the most self time |
 | `!` | jump to the next failing step, wrapping |
+| `:` or `#` | go to a step by its number — the one `--json` prints |
 | `/` | search: narrows the tree live as you type, `enter` accepts, `esc` clears |
+| `n`/`N` | next and previous match, with the tree left whole |
+| `<`/`>` | give the tree less or more of the width |
 | `x` | the row's `Using:` expression, one parenthesis at a time |
+| `d` | what the stage changed — the value in against the value out |
 | `t` | the timing profile — call sites ranked by self time |
 | `s` | the program source, with each line's share of the run |
 | `e` | the optimizer's rewrites |
 | `c` | the emitted Go, full screen (see [below](#the-code-screen-c)) |
+| `r` | record the program again, keeping this view (see [below](#recording-again-r-and---watch)) |
+| `w` | write the recording beside the program as JSON |
+| `y` | copy the selected value to the system clipboard |
+| `o` | open the program at this stage's line in `$EDITOR` |
 | `?` | the key list |
-| `q` | quit; `esc` backs out of a filter, then a pane, then the program |
+| `q` | quit; `esc` backs out of the pane focus, then a filter, then a pane, then the program |
 
-`H` and `!` open whatever frames stand between the cursor and their target: on
-a recording deep enough to need them, the row you want is usually inside a
-collapsed loop, which is exactly why hunting for it by hand does not work.
+`H`, `!` and `:` open whatever frames stand between the cursor and their
+target: on a recording deep enough to need them, the row you want is usually
+inside a collapsed loop, which is exactly why hunting for it by hand does not
+work.
+
+`o` uses `$VISUAL`, then `$EDITOR`, then `vi`, and tells it which line to open:
+`+N` for the vi-family and `--goto file:line` for VS Code. An editor that
+understands neither still opens the file.
+
+### Scrolling a pane (`tab`)
+
+The tree owned the movement keys, which made every other pane a poster: the
+recorder keeps up to 64 KiB of a value and the pane showed the dozen lines that
+fit, with no way to reach the thirteenth. `tab` moves the keys to the right-hand
+pane; `j`/`k`, `ctrl+d`/`ctrl+u` and `g`/`G` scroll it, and `tab` or `esc`
+brings them back. The footer says which half they are driving.
+
+Two panes do more than scroll under focus. In the **profile** (`t`) and the
+**source** (`s`), `enter` takes the tree to the row at the top of the window —
+the call site you are looking at, or the first step recorded on that line. That
+is what turns the two panes that answer *what should I fix* into a way to get
+there.
 
 ### Where the time went
 
@@ -335,6 +412,82 @@ Percentages are shares of what was **recorded**: past `--max-steps` the run
 continues but the recording does not, and the header says `capped` when that
 happened. These are the tree-walking interpreter's timings, not a compiled
 binary's.
+
+### What the stage changed (`d`)
+
+Every other pane describes a value. This one describes the *difference*, which
+is what "watch the data change shape" was always supposed to mean: for a stage
+that maps two hundred elements to two hundred elements, the answer is not what
+came out, it is which of the two hundred moved.
+
+```
+what changed
+the value in, against the value out
+
+  8 in · 8 out · comparing elements
+
+    3 items unchanged
+  - 41
+  + 42
+    4 items unchanged
+```
+
+Both sides are broken into items the same way — lines for `Text`, rows for a
+`Grid`, elements for a list, set or map — and compared as a diff, so an
+*inserted* element reads as one insertion rather than as every element after it
+having changed. Runs of untouched items collapse to a count, since a diff that
+prints the hundred and eighty that stayed the same has buried its own answer. A
+scalar just says what it was and what it became.
+
+One caveat the pane states on itself when it applies. The recording keeps only
+a **short** rendering of each step's input, because in a pipeline the input is
+the previous step's output and keeping both would double every recording. So
+the full input comes from the step before, checked against what this step says
+it received. Where that check fails — the first stage, a branch, a body
+boundary — the pane says so and compares what it has.
+
+### Values in the shape they are
+
+The value pane renders by type rather than as a wall of text. A `Grid` gets row
+numbers and, when its cells are single characters, a column ruler — because a
+coordinate is the whole reason to open a grid in a debugger:
+
+```
+   0123456789
+ 0 ..#.......
+ 1 ...#......
+ 2 .###......
+```
+
+A list, set or map gets one element per line with its index, so the two
+hundredth element is somewhere you can scroll to rather than somewhere off the
+right edge. `Text` keeps its line structure and shows its trailing whitespace as
+`·`, which is the difference that most often explains why the next stage could
+not parse it.
+
+### Recording again (`r`, and `--watch`)
+
+`r` runs the program again without leaving the stepper, and `--watch` does it
+whenever the program or its input file changes on disk. What makes them worth
+having is what happens around the re-run.
+
+**The view survives it.** A new recording is a new tree, so the open frames and
+the cursor are carried over by *path* rather than by pointer: the row that was
+`Repeat 3 / iter 2/3 / Map Each` is that row again in the new recording. The
+pane you were reading, the filter you had typed and the width you had set all
+stay. When a row genuinely no longer exists — you deleted the stage — the cursor
+falls back to its nearest surviving ancestor and says so.
+
+**The difference is on screen.** Rows whose output changed are marked `●` in the
+tree, and the footer says what moved:
+
+```
+re-recorded +7 steps · -18% time · 3 rows changed · revealed 41 → 42
+```
+
+A program that no longer resolves — the normal state of a file halfway through
+being edited — leaves the recording you were reading on screen and puts the
+error in the footer, rather than tearing the trace down over a missing bracket.
 
 ### The profile (`t`)
 
@@ -387,10 +540,15 @@ Three things about what is and is not there:
   is frequently the answer on its own.
 - **Literals and bare names get no row.** `4` coming to `4` is noise, and what
   a parameter is bound to is the line above the rows.
-- **One application is shown.** A lambda applied to every element of a list ran
-  hundreds of times; the pane replays the first and says how many there were.
-  A `Using:` written as an indented pipeline has no expression to break down,
-  and says so — its stages are already rows of the tree.
+- **One application is shown, and on a failure it is the one that failed.** A
+  lambda applied to every element of a list ran hundreds of times. The pane
+  replays one of them and says which: the first on a stage that succeeded, and
+  on a stage that failed the application that raised the error — `application
+  900 of 900 — the one that failed`. Showing element 1's tidy arithmetic beside
+  a row marked ✗ at element 900 was the pane's most confident wrong answer, at
+  the exact moment it was most likely to be read. A `Using:` written as an
+  indented pipeline has no expression to break down, and says so — its stages
+  are already rows of the tree.
 
 The values are **recomputed on demand**, not recorded: the expression layer is
 pure, so the recording keeps only the arguments of each step's first
@@ -440,6 +598,14 @@ is shown as `·` and a stream with no final newline says so, for the same reason
 
 A block that failed keeps its `stderr` too — the traceback or compile error is
 in the step's own error, and the input that provoked it is here.
+
+**One run per stage is kept, and a failing one displaces the first.** A block
+inside a `Map Each` body runs once per element, and a recording holding every
+one of them would be the input again several times over. The first is the
+representative sample — until one fails, at which point that is the run shown
+(`run 41 of 200 — the one that failed`) and its `stderr` and its input are the
+ones kept. A block that works for forty elements and dies on the forty-first is
+the shape of the bug; its fortieth tidy `stdout` is not the answer.
 
 Unlike an expression breakdown this is **recorded, not replayed**: a subprocess
 is not a pure expression, so re-running one to recover its detail later is not

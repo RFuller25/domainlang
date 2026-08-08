@@ -57,6 +57,12 @@ func NewInterrupter(inner Tracer) *Interrupter { return &Interrupter{Inner: inne
 // from any goroutine, and safe to call after the run has already finished.
 func (i *Interrupter) Stop() { i.stopped.Store(true) }
 
+// Stopped reports whether Stop was called. A caller that reports the outcome
+// of a run needs it: a run someone interrupted and a run that failed on its
+// own are different things to say about a program, and the error alone cannot
+// tell them apart.
+func (i *Interrupter) Stopped() bool { return i.stopped.Load() }
+
 // Step forwards the event and then aborts if the run has been stopped. The
 // check is after the inner tracer, so a profile keeps the step that was
 // running when the interrupt arrived.

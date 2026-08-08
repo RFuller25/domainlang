@@ -33,9 +33,24 @@ import (
 // at all, and a byte budget for full value renderings. Past either limit the
 // recorder keeps going but stops storing, and says so — a visualizer that
 // silently showed a truncated run would be worse than one that admits it.
+//
+// The step cap has one exception, and it is the whole reason a debugger exists:
+// a *failing* step is recorded however far past the cap it happens. A run that
+// dies at step 400,000 would otherwise record its first stretch, say "capped",
+// and have nothing to jump to — the one row the reader opened the tool for.
 
 // DefaultMaxSteps is how many steps a recording keeps before it stops.
-const DefaultMaxSteps = 10000
+//
+// It is a memory bound and nothing more, so it is set where a recording of a
+// real program fits comfortably rather than where a cautious guess would put
+// it: the trace of an Advent of Code solution over its real input runs to
+// hundreds of thousands of steps, and a debugger that shows the first 10,000 of
+// them is answering a question nobody asked. Unlimited is one flag away
+// (`--max-steps 0`), and the header says so whenever the cap was reached.
+const DefaultMaxSteps = 250000
+
+// Unlimited, as a max-steps argument, records the whole run however long it is.
+const Unlimited = -1
 
 // defaultForeignBudget caps the total bytes spent on captured foreign streams.
 // A block inside a `Map Each` body runs once per element and each run may be
@@ -66,25 +81,39 @@ type Step struct {
 	Err     error
 	Dur     time.Duration
 
-	// Apply is the step's first `Using:` application, when it made one. See
-	// Application.
+	// Spent marks a value whose full rendering was never built because the
+	// recording's byte budget was gone — a different answer from a value too
+	// large to keep whole (FullOK), and one a reader has to be able to tell
+	// apart: the first says "ask for less", the second says "there is more".
+	Spent bool
+
+	// Apply is the `Using:` application this step is represented by, when it
+	// made one. See Application.
 	Apply *Application
 
-	// Foreign is the step's first foreign block execution, when it made one.
-	// See ForeignExec.
+	// Foreign is the foreign block execution this step is represented by, when
+	// it made one. See ForeignExec.
 	Foreign *ForeignExec
 }
 
-// ForeignExec is one recorded execution of a foreign-language block, and how
-// many the step made in all.
+// ForeignExec is one recorded execution of a foreign-language block, which one
+// of the step's executions it is, and how many the step made in all.
 //
-// Only the first is kept, for the reason Application keeps only the first: a
-// block inside a `Map Each` body runs once per element, and a recording holding
-// every one of them would be the input again, several times over. Unlike an
-// application it cannot be replayed to recover the rest — a subprocess is not a
-// pure expression — so what is here is what was captured while it ran.
+// Only one is kept, for the reason Application keeps only one: a block inside a
+// `Map Each` body runs once per element, and a recording holding every one of
+// them would be the input again, several times over. Unlike an application it
+// cannot be replayed to recover the rest — a subprocess is not a pure
+// expression — so what is here is what was captured while it ran.
+//
+// Which one is kept is the interesting part. The first, normally: it is
+// representative and it is the one a reader can be shown without being asked
+// which. But a run that *failed* displaces it, because a block that works for
+// the first forty elements and dies on the forty-first is exactly the shape of
+// the bug someone opens this pane to find, and showing them the healthy first
+// run and its tidy stdout is showing them the one thing that is not the answer.
 type ForeignExec struct {
 	Run   ir.ForeignRun
+	Index int // which execution this was, 1-based
 	Count int
 }
 
@@ -97,14 +126,23 @@ type ForeignExec struct {
 // stay this small and still answer, for any step, what its expression actually
 // computed.
 //
-// Only the first application a step made is kept, because that is the one a
-// reader can be shown: a `Map Each` over ten thousand elements applies its
-// lambda ten thousand times, and a recording holding all of them would be the
-// data, not a trace of it. Count says how many there were.
+// Only one of a step's applications is kept, because that is the one a reader
+// can be shown: a `Map Each` over ten thousand elements applies its lambda ten
+// thousand times, and a recording holding all of them would be the data, not a
+// trace of it. Index says which one it is and Count how many there were.
+//
+// Normally it is the first. On a step that *failed* it is the last one to
+// start, which is the one that failed: applications are reported on the way in
+// (see eval.EvalLambdaTyped), the failing one is what stopped the step, and so
+// nothing was applied after it. Without that swap the expression pane answers a
+// question about element 1 while the row beside it is marked failed at element
+// 900 — the pane showing its most confident wrong answer at the exact moment it
+// is most likely to be read.
 type Application struct {
 	Lambda *ast.Lambda
 	Types  []*ir.Type
 	Args   []ir.Value
+	Index  int // which application this was, 1-based
 	Count  int
 }
 
@@ -115,6 +153,7 @@ type Recorded struct {
 	Short  string // ir.FormatShort
 	Full   string // ir.FormatValue of the value, truncated; "" when not kept
 	FullOK bool   // whether Full holds the whole rendering
+	Spent  bool   // whether Full is empty because the byte budget was gone
 	Size   int
 	SizeOK bool
 
@@ -200,50 +239,102 @@ func (n *TraceNode) Label() string {
 type Recorder struct {
 	roots []*TraceNode
 
-	maxSteps  int
+	maxSteps  int // 0 or less: no bound
 	budget    int
 	fgnBudget int
 	steps     int
+	extra     int // failing steps recorded past the cap; see Step
 	truncated bool
+
+	// progress, when set, is called every progressEvery steps. It is how a
+	// command can say a long program is still running rather than leaving a
+	// blank terminal: the recorder is the only thing that knows how far the run
+	// has got, and calling out from here keeps it a synchronous integer
+	// compare instead of a second goroutine reading the count from under it.
+	progress func(Progress)
+	started  time.Time
 
 	stack    []*TraceNode // open frames, innermost last
 	pending  []*TraceNode // top-level frames awaiting their enclosing step
 	orphans  *TraceNode   // the synthetic row for pending frames, built once
 	orphaned int          // how many frames the orphan row was last built for
 
-	// apply is the first lambda application seen since the last step reported,
-	// and applies how many there have been. A lambda runs inside a node's Eval,
-	// so the next step to report is the node that ran it.
-	apply   *Application
-	applies int
-	// foreign is the foreign block execution the step in progress made, and
-	// how many it made in total. Same shape as apply and for the same reason:
-	// a subprocess is run under a node's Eval, not beside it, so it is caught
-	// by a watcher and attached to whichever step reports next.
+	// apply is the first lambda application seen since the last step reported
+	// and applyLast the most recent one, with applies counting them. A lambda
+	// runs inside a node's Eval, so the next step to report is the node that
+	// ran it — and which of the two it keeps depends on whether that step
+	// failed (see Application).
+	apply     *Application
+	applyLast *Application
+	applies   int
+	// foreign is the foreign block execution the step in progress is
+	// represented by, and how many it made in total. Same shape as apply and
+	// for the same reason: a subprocess is run under a node's Eval, not beside
+	// it, so it is caught by a watcher and attached to whichever step reports
+	// next.
 	foreign  *ir.ForeignRun
+	fgnIndex int
+	fgnCost  int // bytes the retained run was charged, refunded if it is replaced
 	foreigns int
 }
 
-// NewRecorder returns a recorder keeping at most maxSteps steps (0 means
-// DefaultMaxSteps).
+// Progress is how far a recording has got, for a caller showing a long program
+// is still running.
+type Progress struct {
+	Steps   int
+	Elapsed time.Duration
+	Capped  bool
+}
+
+// progressEvery is how many steps pass between progress reports. A caller that
+// wants a slower display throttles on its own clock; this only has to be often
+// enough that the first report comes quickly and rare enough to cost nothing.
+const progressEvery = 2000
+
+// NewRecorder returns a recorder keeping at most maxSteps steps. Zero means
+// DefaultMaxSteps; Unlimited (or any negative) records the whole run.
 func NewRecorder(maxSteps int) *Recorder {
-	if maxSteps <= 0 {
+	if maxSteps == 0 {
 		maxSteps = DefaultMaxSteps
+	}
+	if maxSteps < 0 {
+		maxSteps = 0 // no bound
 	}
 	return &Recorder{maxSteps: maxSteps, budget: defaultValueBudget, fgnBudget: defaultForeignBudget}
 }
 
+// OnProgress installs a callback reporting how far the run has got, called
+// every progressEvery steps while recording. Pass nil to turn it off.
+func (r *Recorder) OnProgress(f func(Progress)) { r.progress = f }
+
+// capped reports whether the step cap has been reached.
+func (r *Recorder) capped() bool { return r.maxSteps > 0 && r.steps >= r.maxSteps }
+
 // Step records one node evaluation.
 func (r *Recorder) Step(e ir.StepEvent) {
-	if r.steps >= r.maxSteps {
+	pastCap := false
+	if r.capped() {
+		pastCap = true
 		r.truncated = true
-		return
+		// A failing step is recorded anyway, however far past the cap it
+		// happened: it is the row the whole tool exists to get someone to, and
+		// dropping it leaves a recording that says "run failed" in the footer
+		// and has no failure in it. The frames it hangs under are kept for the
+		// same reason — PopFrame drops an empty frame past the cap, and this
+		// one is no longer empty.
+		if e.Err == nil {
+			r.pulse()
+			return
+		}
+		r.extra++
+	} else {
+		r.steps++
 	}
-	r.steps++
+	r.pulse()
 
 	out := r.capture(e.Out)
 	st := &Step{
-		Index:   r.steps - 1,
+		Index:   r.steps + r.extra - 1,
 		Node:    e.Node,
 		Depth:   e.Depth,
 		Frame:   e.Frame,
@@ -251,6 +342,7 @@ func (r *Recorder) Step(e ir.StepEvent) {
 		Short:   out.Short,
 		Full:    out.Full,
 		FullOK:  out.FullOK,
+		Spent:   out.Spent,
 		Size:    out.Size,
 		SizeOK:  out.SizeOK,
 		Err:     e.Err,
@@ -258,31 +350,48 @@ func (r *Recorder) Step(e ir.StepEvent) {
 	}
 	// Whatever lambda applications have happened since the last step were run
 	// by this node's Eval, so they belong to this step — and are cleared either
-	// way, so a step that ran no lambda never inherits an earlier one's.
-	if r.apply != nil {
-		r.apply.Count = r.applies
-		st.Apply = r.apply
+	// way, so a step that ran no lambda never inherits an earlier one's. On a
+	// failed step the *last* one is kept: it is the application that failed,
+	// for the reason Application documents.
+	if a := r.apply; a != nil {
+		if e.Err != nil && r.applyLast != nil {
+			a = r.applyLast
+		}
+		a.Count = r.applies
+		st.Apply = a
 	}
-	r.apply, r.applies = nil, 0
+	r.apply, r.applyLast, r.applies = nil, nil, 0
 	if r.foreign != nil {
-		st.Foreign = &ForeignExec{Run: *r.foreign, Count: r.foreigns}
+		st.Foreign = &ForeignExec{Run: *r.foreign, Index: r.fgnIndex, Count: r.foreigns}
 	}
-	r.foreign, r.foreigns = nil, 0
+	r.foreign, r.foreigns, r.fgnIndex, r.fgnCost = nil, 0, 0, 0
 
 	// A step owns whatever frames were opened during its Eval, at whatever
 	// level it reported on: a loop nested inside another loop's body opened its
 	// laps from inside that body, and they belong under the nested loop's row
 	// rather than beside it.
+	//
+	// That reasoning holds only while every step is recorded. Past the cap it
+	// does not: the steps that would have claimed the waiting frames were
+	// dropped, so the frames pending at this level were *not* all opened by this
+	// step's Eval. A failure recorded past the cap therefore adopts nothing —
+	// otherwise a dropped `Repeat 300`'s laps would hang under whichever later
+	// step happened to fail, and be reported as that step's own cost. They stay
+	// pending and surface under the "(incomplete)" row, which is what they are.
 	node := &TraceNode{Step: st}
 	if len(r.stack) > 0 {
 		parent := r.stack[len(r.stack)-1]
-		node.Children = fold(adopt(node, parent.pend))
-		parent.pend = nil
+		if !pastCap {
+			node.Children = fold(adopt(node, parent.pend))
+			parent.pend = nil
+		}
 		parent.Children = append(parent.Children, node)
 		return
 	}
-	node.Children = fold(adopt(node, r.pending))
-	r.pending = nil
+	if !pastCap {
+		node.Children = fold(adopt(node, r.pending))
+		r.pending = nil
+	}
 	r.roots = append(r.roots, node)
 }
 
@@ -364,22 +473,41 @@ func fold(children []*TraceNode) []*TraceNode {
 	}}
 }
 
+// pulse reports progress every progressEvery steps, for a caller showing that a
+// long program is still running.
+func (r *Recorder) pulse() {
+	if r.progress == nil {
+		return
+	}
+	if r.started.IsZero() {
+		r.started = time.Now()
+	}
+	if (r.steps+r.extra)%progressEvery != 0 {
+		return
+	}
+	r.progress(Progress{Steps: r.steps + r.extra, Elapsed: time.Since(r.started), Capped: r.truncated})
+}
+
 // capture renders a value for display, spending the byte budget on the full
 // form. FormatShort is always kept, so a value is never invisible — only its
 // detail is.
+//
+// The rendering is built *to* the limit rather than built and then cut
+// (ir.FormatValueLimit). The difference is not the 64 KiB that gets kept, it is
+// the rest: a step whose output is a list the program is midway through
+// building would otherwise render every element of it into a string — tens of
+// megabytes, once per step, thrown away except for the head.
 func (r *Recorder) capture(v ir.Value) Recorded {
 	size, sizeOK := ir.SizeOf(v)
 	rec := Recorded{Short: ir.FormatShort(v), Size: size, SizeOK: sizeOK}
 	if r.budget <= 0 {
+		rec.Spent = true
 		return rec
 	}
-	full := ir.FormatValue(v)
-	if len(full) > maxValueBytes {
-		rec.Full = full[:maxValueBytes]
-		r.budget -= maxValueBytes
-		return rec
-	}
-	rec.Full, rec.FullOK = full, true
+	// Never build more than can be kept: whichever of the per-value cap and
+	// what is left of the budget is smaller.
+	full, complete := ir.FormatValueLimit(v, min(maxValueBytes, r.budget))
+	rec.Full, rec.FullOK = full, complete
 	r.budget -= len(full)
 	return rec
 }
@@ -393,14 +521,18 @@ func (r *Recorder) capture(v ir.Value) Recorded {
 // recorder can learn an expression ran at all.
 func (r *Recorder) Applied(l *ast.Lambda, types []*ir.Type, args []ir.Value) {
 	r.applies++
-	// Only the first is kept (see Application), and past the step cap the
-	// recording has stopped storing: a loop that runs a lambda a million more
-	// times must not grow it.
-	if r.apply != nil || r.steps >= r.maxSteps {
-		return
-	}
+	// Past the step cap the recording has stopped storing values, but it has
+	// not stopped recording *failures* (see Step) — and a failing step's
+	// expression is the one thing that makes such a row worth reaching. So the
+	// latest application is still tracked; only the growth that would not be
+	// shown is skipped.
+	//
 	// Kept as given: eval hands over copies (see eval.Applied).
-	r.apply = &Application{Lambda: l, Types: types, Args: args}
+	a := &Application{Lambda: l, Types: types, Args: args, Index: r.applies}
+	r.applyLast = a
+	if r.apply == nil {
+		r.apply = a
+	}
 }
 
 // ForeignRan records a foreign block execution. It is prims.ForeignWatcher,
@@ -408,18 +540,28 @@ func (r *Recorder) Applied(l *ast.Lambda, types []*ir.Type, args []ir.Value) {
 // eval for Applied; the caller wires the two together.
 func (r *Recorder) ForeignRan(run ir.ForeignRun) {
 	r.foreigns++
-	if r.foreign != nil || r.steps >= r.maxSteps {
+	// One run is kept per step: the first, unless a later one failed, which
+	// displaces it (see ForeignExec). Unlike an application this is knowable
+	// here — a foreign run is reported once it is over, with its error.
+	if r.foreign != nil && (r.foreign.Err != nil || run.Err == nil) {
 		return
+	}
+	// A displaced run gives its bytes back, so a block that fails on its
+	// thousandth element is not refused capture by the budget its own healthy
+	// runs spent.
+	if r.foreign != nil {
+		r.fgnBudget += r.fgnCost
 	}
 	// The streams are the expensive part and the first to go; the run itself
 	// still gets recorded, so a reader past the budget is told a block ran and
 	// what it cost rather than not told at all.
-	if cost := len(run.Stdin.Text) + len(run.Stdout.Text) + len(run.Stderr.Text); cost > r.fgnBudget {
+	cost := len(run.Stdin.Text) + len(run.Stdout.Text) + len(run.Stderr.Text)
+	if cost > r.fgnBudget {
 		run.Stdin.Text, run.Stdout.Text, run.Stderr.Text = "", "", ""
-	} else {
-		r.fgnBudget -= cost
+		cost = 0
 	}
-	r.foreign = &run
+	r.fgnBudget -= cost
+	r.foreign, r.fgnIndex, r.fgnCost = &run, r.foreigns, cost
 }
 
 // PushFrame opens a frame. It is not attached anywhere yet: where it belongs
@@ -498,16 +640,32 @@ func (r *Recorder) Roots() []*TraceNode {
 	return append(slices.Clone(r.roots), r.orphans)
 }
 
-// Steps reports how many steps were recorded.
-func (r *Recorder) Steps() int { return r.steps }
+// Steps reports how many steps were recorded, including any failing ones kept
+// past the cap.
+func (r *Recorder) Steps() int { return r.steps + r.extra }
 
 // Truncated reports whether the step cap was reached, so a UI can say so.
 func (r *Recorder) Truncated() bool { return r.truncated }
 
-// Summary is a one-line description of the recording, for a status bar.
+// Summary is a one-line description of the recording, for a status bar. A
+// capped recording names the flag that lifts the cap: "capped" on its own tells
+// a reader their trace is incomplete and leaves them nowhere to go.
 func (r *Recorder) Summary() string {
-	if r.truncated {
-		return fmt.Sprintf("%d steps (capped — the run continued past this point)", r.steps)
+	if !r.truncated {
+		return fmt.Sprintf("%d steps", r.steps)
 	}
-	return fmt.Sprintf("%d steps", r.steps)
+	if r.extra > 0 {
+		return fmt.Sprintf("%d steps (capped at %d — %s past the cap kept; --max-steps 0 records it all)",
+			r.steps+r.extra, r.maxSteps, plural(r.extra, "failing step"))
+	}
+	return fmt.Sprintf("%d steps (capped at %d — the run continued past this point; "+
+		"--max-steps 0 records it all)", r.steps, r.maxSteps)
+}
+
+// plural renders a count with its noun, so a summary does not say "1 steps".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }

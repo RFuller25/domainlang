@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // AsList asserts that v is a list, returning a helpful error otherwise.
@@ -116,64 +117,209 @@ func FormatFloat(f float64) string {
 // FormatValue renders a value in full for the Reveal sink. It is the single
 // long-form renderer, shared by the Emit primitive.
 func FormatValue(v Value) string {
+	// A scalar is its own rendering, and scalars are most of what Reveal
+	// prints. They are answered here rather than through the writer because a
+	// Text would otherwise be copied into a builder and back out again — an
+	// allocation and a copy per line of output, for a value that was already
+	// the answer.
 	switch x := v.(type) {
+	case string:
+		return x
 	case int64:
 		return strconv.FormatInt(x, 10)
 	case float64:
 		return FormatFloat(x)
-	case string:
-		return x
 	case bool:
 		return strconv.FormatBool(x)
+	}
+	s, _ := FormatValueLimit(v, 0)
+	return s
+}
+
+// FormatValueLimit renders a value like FormatValue but stops once the
+// rendering reaches limit bytes, reporting whether it got to the end. A limit
+// of 0 means no limit, which is exactly what FormatValue asks for.
+//
+// It exists for a caller that is going to throw most of the answer away. The
+// visualizer's recorder keeps at most 64 KiB of any one value, and building the
+// whole rendering first — tens of megabytes for a list a program is midway
+// through building, once per step — is work spent to produce a string that is
+// immediately sliced. Stopping at the limit makes the cost proportional to what
+// is kept rather than to what the program is holding.
+//
+// The prefix returned is a real prefix of the full rendering, cut on a rune
+// boundary, so it is safe to display: it will be missing its closing bracket,
+// which is what `complete` is for.
+func FormatValueLimit(v Value, limit int) (s string, complete bool) {
+	w := valueWriter{limit: limit}
+	writeValue(&w, v)
+	return w.b.String(), !w.over
+}
+
+// valueWriter accumulates a rendering, refusing to grow past its limit. Every
+// writer checks over on the way in, so a value the limit was reached inside of
+// stops being walked rather than being walked and discarded.
+type valueWriter struct {
+	b     strings.Builder
+	limit int // 0 means no limit
+	over  bool
+}
+
+func (w *valueWriter) WriteString(s string) {
+	if w.over {
+		return
+	}
+	if w.limit > 0 && w.b.Len()+len(s) > w.limit {
+		// Partial: take what fits, back to a rune boundary so the prefix is
+		// still valid UTF-8 and a terminal does not paint a replacement
+		// character at the cut.
+		w.b.WriteString(truncateRunes(s, w.limit-w.b.Len()))
+		w.over = true
+		return
+	}
+	w.b.WriteString(s)
+}
+
+// writeByte appends one ASCII byte. It is deliberately not spelled WriteByte:
+// that name carries io.ByteWriter's error-returning signature, and a bounded
+// writer that silently drops past its limit is not that interface.
+func (w *valueWriter) writeByte(c byte) { w.WriteString(string(c)) }
+
+// truncateRunes returns the longest prefix of s that is at most n bytes and
+// ends on a rune boundary.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// writeValue is the one untyped long-form renderer: FormatValue and
+// FormatValueLimit are both this function, and so cannot disagree about what a
+// value looks like. (FormatValueTyped is deliberately separate — it renders
+// records in their declared field order, for the reason documented there.)
+func writeValue(w *valueWriter, v Value) {
+	if w.over {
+		return
+	}
+	switch x := v.(type) {
+	case int64:
+		w.WriteString(strconv.FormatInt(x, 10))
+	case float64:
+		w.WriteString(FormatFloat(x))
+	case string:
+		w.WriteString(x)
+	case bool:
+		w.WriteString(strconv.FormatBool(x))
 	case []Value:
-		parts := make([]string, len(x))
+		w.writeByte('[')
 		for i, e := range x {
-			parts[i] = FormatValue(e)
+			if w.over {
+				return
+			}
+			if i > 0 {
+				w.WriteString(", ")
+			}
+			writeValue(w, e)
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
+		w.writeByte(']')
 	case *RecordValue:
-		parts := make([]string, len(x.Fields))
+		w.writeByte('{')
 		for i, name := range x.Fields {
-			parts[i] = name + ": " + FormatValue(x.Vals[name])
+			if w.over {
+				return
+			}
+			if i > 0 {
+				w.WriteString(", ")
+			}
+			w.WriteString(name)
+			w.WriteString(": ")
+			writeValue(w, x.Vals[name])
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		w.writeByte('}')
 	case *MapValue:
-		parts := make([]string, 0, x.Len())
-		for _, k := range x.Keys() {
+		w.writeByte('{')
+		for i, k := range x.Keys() {
+			if w.over {
+				return
+			}
+			if i > 0 {
+				w.WriteString(", ")
+			}
 			val, _ := x.Get(k)
-			parts = append(parts, FormatValue(k)+": "+FormatValue(val))
+			writeValue(w, k)
+			w.WriteString(": ")
+			writeValue(w, val)
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		w.writeByte('}')
 	case *SetValue:
-		parts := make([]string, 0, x.Len())
-		for _, e := range x.Elems() {
-			parts = append(parts, FormatValue(e))
+		w.writeByte('{')
+		for i, e := range x.Elems() {
+			if w.over {
+				return
+			}
+			if i > 0 {
+				w.WriteString(", ")
+			}
+			writeValue(w, e)
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		w.writeByte('}')
 	case *GridValue:
-		return formatGrid(x)
+		writeGrid(w, x)
 	case *SparseValue:
 		// Map-style listing of the set cells, sorted row-major, keys rendered
 		// as points ([r, c]) — exactly how a Map<(Int, Int), V> renders. The
 		// picture form is one `Convert To Grid` away; keeping the raw render
 		// size-proportional means Reveal can never materialize a huge box.
-		var sb strings.Builder
-		sb.WriteByte('{')
+		w.writeByte('{')
 		for i, p := range x.Points() {
-			if i > 0 {
-				sb.WriteString(", ")
+			if w.over {
+				return
 			}
-			sb.WriteByte('[')
-			sb.WriteString(strconv.FormatInt(p[0], 10))
-			sb.WriteString(", ")
-			sb.WriteString(strconv.FormatInt(p[1], 10))
-			sb.WriteString("]: ")
-			sb.WriteString(FormatValue(x.At(p[0], p[1])))
+			if i > 0 {
+				w.WriteString(", ")
+			}
+			w.writeByte('[')
+			w.WriteString(strconv.FormatInt(p[0], 10))
+			w.WriteString(", ")
+			w.WriteString(strconv.FormatInt(p[1], 10))
+			w.WriteString("]: ")
+			writeValue(w, x.At(p[0], p[1]))
 		}
-		sb.WriteByte('}')
-		return sb.String()
+		w.writeByte('}')
 	default:
-		return fmt.Sprintf("%v", v)
+		w.WriteString(fmt.Sprintf("%v", v))
+	}
+}
+
+// writeGrid is formatGridTyped's untyped half, written into the bounded writer
+// so a million-cell grid stops at the limit rather than after the last cell.
+func writeGrid(w *valueWriter, g *GridValue) {
+	for r := range g.Rows {
+		if w.over {
+			return
+		}
+		if r > 0 {
+			w.writeByte('\n')
+		}
+		for c := range g.Cols {
+			if w.over {
+				return
+			}
+			cell := g.Cells[r*g.Cols+c]
+			if c > 0 {
+				if _, isStr := cell.(string); !isStr {
+					w.writeByte(' ')
+				}
+			}
+			writeValue(w, cell)
+		}
 	}
 }
 
@@ -279,8 +425,9 @@ func FormatValueTyped(v Value, t *Type) string {
 	return FormatValue(v)
 }
 
-func formatGrid(g *GridValue) string { return formatGridTyped(g, nil) }
-
+// formatGridTyped is the typed grid renderer. Its untyped counterpart is
+// writeGrid, which goes through the bounded writer; the two are kept in step by
+// TestWriteGridMatchesFormatGridTyped.
 func formatGridTyped(g *GridValue, cellType *Type) string {
 	rows := make([]string, g.Rows)
 	for r := range g.Rows {

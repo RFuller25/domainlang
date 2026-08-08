@@ -16,8 +16,14 @@ import "domain/ir"
 
 // Recording is a whole captured run.
 type Recording struct {
-	Steps    int           `json:"steps"`
-	Capped   bool          `json:"capped"`
+	Steps  int  `json:"steps"`
+	Capped bool `json:"capped"`
+	// CappedAt is the cap that was reached, so a reader of the document knows
+	// what to raise; 0 when the recording ran to the end of the program.
+	CappedAt int `json:"capped_at,omitempty"`
+	// PastCap counts the failing steps kept beyond the cap (see Recorder.Step),
+	// which is why a capped recording can still hold the failure.
+	PastCap  int           `json:"past_cap,omitempty"`
 	Total    string        `json:"total"`
 	TotalNs  int64         `json:"total_ns"`
 	Rows     []Row         `json:"rows"`
@@ -79,11 +85,15 @@ type HotspotJSON struct {
 func (r *Recorder) Export() Recording {
 	t := r.Timing()
 	rec := Recording{
-		Steps:   r.steps,
+		Steps:   r.Steps(),
 		Capped:  r.truncated,
+		PastCap: r.extra,
 		Total:   FormatDuration(t.Overall()),
 		TotalNs: t.Overall().Nanoseconds(),
 		Rows:    exportRows(r.Roots(), t),
+	}
+	if r.truncated {
+		rec.CappedAt = r.maxSteps
 	}
 	for _, h := range t.Hotspots(0) {
 		line, from := sourceOf(h.Node)

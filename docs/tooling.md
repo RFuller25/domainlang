@@ -3,7 +3,17 @@
 All of them live in the one `domain` binary, alongside the CLI and the
 [diagnostics engine](diagnostics.md). The step-by-step run visualizer
 (`domain expansion: visualize`) is documented with the other commands in
-[cli.md](cli.md#domain-expansion-visualize).
+[cli.md](cli.md#domain-expansion-visualize), and the terminal editor
+(`domain expansion: development`) has a page of its own in
+[development.md](development.md).
+
+**Which one to reach for.** The REPL builds a pipeline a statement at a time
+and shows the value after each — the fastest way to find out what an operation
+does to your data. The editor writes a program as a file, with the same
+knowledge on screen but nothing evaluated until you ask. The language server
+puts that knowledge in the editor you already use. All three share their
+engines, so none of them can disagree with the others about a type, a
+completion or an error.
 
 ## The REPL (`domain repl`)
 
@@ -192,6 +202,12 @@ is one keystroke away from the statement you just typed.
 
 Piped, `:visualize` prints the text trace instead, which is what `--plain`
 prints and for the same reason.
+
+Two of the stepper's keys mean something different inside a session. `r` and
+`--watch` re-record a *file*, and a session's program is not one, so `r` says so
+rather than doing nothing. `o` opens the program at a stage's line in `$EDITOR`,
+which is what `:edit` already does for the session as a whole — and unlike `o`,
+`:edit` adopts what comes back.
 
 ### `:doc` — the primitive catalog
 

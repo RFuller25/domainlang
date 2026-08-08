@@ -51,6 +51,8 @@ the buttons.
 | [cli.md](cli.md) | The `domain` binary: implicit modes, subcommands, every flag, exit codes |
 | [diagnostics.md](diagnostics.md) | The error engine: rich diagnostics, "did you mean" suggestions, auto-fix, the linter, and the `domain expansion:` command family |
 | [tooling.md](tooling.md) | The REPL (`domain repl`) and the language server (`domain lsp`), with editor wiring |
+| [development.md](development.md) | `domain expansion: development`, the terminal editor: types and errors on screen, completion, running, the stepper, and the opening it offers for an input file |
+| [development-plan.md](development-plan.md) | `domain expansion: development`, the in-binary editor: the v1 feature list, where the code goes, what changes around it, and the six phases that build it |
 | [optimizer.md](optimizer.md) | The 31-pass catalog (algorithm substitution, dead code, fusion, expression simplification, linear accumulators), `--explain`, and the oracle-testing discipline |
 | [compiler.md](compiler.md) | The Go compiler backend: what it emits, its guarantees, and its documented deltas |
 | [compiler-parity-plan.md](compiler-parity-plan.md) | The two program shapes `domain build` used to refuse: the survey that found them, how each was closed, and what it ruled out |

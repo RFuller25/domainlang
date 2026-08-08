@@ -474,6 +474,41 @@ against its starting point, bind it on the loop.
 
 ---
 
+## Writing one of these, start to finish
+
+Every program above is shown finished. This is the loop that produces one, in
+the editor that carries the rest of this documentation's engines:
+
+```sh
+domain expansion: development day7.domain --input day7.input
+```
+
+The input is read first, and its shape decides the opening. A file of
+`6,10` / `0,14` lines offers a `Match Pattern` template inferred from the lines
+themselves; a rectangle of digits offers `Shikigami: Digit Grid` *and*
+`Shikigami: Ints`, because that shape is genuinely two readings and the file
+cannot say which was meant. Accepting one puts it after the source stage, where
+it can see the value the source produced.
+
+From there the pipeline is written a statement at a time, and the thing that
+makes it quick is that the answers are already on screen: the type flowing out
+of each line at the end of it, so a stage that produced `List<List<Text>>` when
+you wanted `List<Int>` is visible immediately rather than at the next run; the
+error for the line the cursor is on in the status bar; `tab` for the primitive
+whose name you half-remember; `alt+k` for what it does to the type.
+
+`ctrl+r` runs it. `ctrl+t` records a run and opens the stepper from
+[cli.md](cli.md#domain-expansion-visualize) over the program on screen — the
+same panes, over a buffer that has never been saved. When a stage produced the
+wrong shape, the tree is where you find out which one, and the fix is two keys
+away rather than in another window.
+
+The whole of that is the same engines this page's programs were checked with:
+one resolver, one diagnostics engine, one recorder. See
+[development.md](development.md).
+
+---
+
 ## Where to go next
 
 - [getting-started.md](getting-started.md) — the ground-up tutorial, if you
@@ -483,3 +518,5 @@ against its starting point, bind it on the loop.
 - [expressions.md](expressions.md) — everything legal inside a `Using:`.
 - [../examples/](../examples/README.md) — twenty runnable programs, each
   showing one piece of the language, all golden-tested in both backends.
+- [development.md](development.md) — the editor the section above uses, in
+  full: every key, what it analyzes, and what it deliberately does not do.

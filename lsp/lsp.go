@@ -49,24 +49,27 @@ type document struct {
 	// resolve against the file's own directory. Unsaved buffers still work:
 	// resolveText reads library files through the open documents first.
 	path     string
-	resolved bool // pipe/prog computed for text
-	pipe     *ir.Pipeline
-	prog     *ast.Program
-	// sites records where each Shikigami was defined, so go-to-definition can
-	// follow an imported name into its library file.
-	sites map[string]prims.DefSite
+	resolved bool // analysis computed for text
+	// analysis is the shared front-end result (api.go). The server holds the
+	// same value the editor does, so the two cannot disagree about a type.
+	analysis *Analysis
 }
 
 // resolve returns the front-end result for the document's current text,
 // computing it on first use after each content change. The server is
 // single-threaded (one request at a time off one stdin), so no locking.
 func (d *document) resolve() (*ir.Pipeline, *ast.Program) {
+	a := d.analyze()
+	return a.Pipe, a.Prog
+}
+
+// analyze returns the shared analysis for the document's current text.
+func (d *document) analyze() *Analysis {
 	if !d.resolved {
-		d.sites = map[string]prims.DefSite{}
-		d.pipe, d.prog = resolveText(d.path, d.text, d.sites)
+		d.analysis = Analyze(d.path, d.text)
 		d.resolved = true
 	}
-	return d.pipe, d.prog
+	return d.analysis
 }
 
 // Serve runs the session until exit or EOF. Protocol errors on a single
@@ -311,64 +314,29 @@ func (s *Server) hover(params json.RawMessage) any {
 	if !ok {
 		return nil
 	}
-	pipe, prog := doc.resolve()
-	line := p.Position.Line + 1
-
-	// A primitive on this line: show its documentation from the catalog —
-	// keyword, signature, and a one-line definition drawn from primitives.md —
-	// plus the concrete type step when the program resolves. This works even
-	// when the program does not yet type-check, because prims.Lookup matches
-	// the statement without running the checker.
-	if prog != nil {
-		if stmt := statementOnLine(prog, line); stmt != nil {
-			if prim := prims.Lookup(stmt); prim != nil {
-				if doc, ok := prims.Doc(prim.ID); ok {
-					var b strings.Builder
-					fmt.Fprintf(&b, "**%s: %s** — `%s`\n\n%s", prim.Keyword, prim.ID, doc.Signature, doc.Summary)
-					if n := nodeOnLine(pipe, line); n != nil {
-						in := "(source)"
-						if n.In != nil {
-							in = n.In.String()
-						}
-						fmt.Fprintf(&b, "\n\n```\n%s → %s\n```", in, n.Out)
-					}
-					fmt.Fprintf(&b, "\n\n_primitives.md#%s_", doc.DocAnchor)
-					return markupHover(b.String())
-				}
-			}
-		}
+	ins, found := doc.analyze().InspectLine(p.Position.Line + 1)
+	if !found {
+		return nil
 	}
 
-	// A pipeline node on this line with no catalog entry (loops, channels,
-	// consumers): show what the statement does to the type.
-	if n := nodeOnLine(pipe, line); n != nil {
-		in := "(source)"
-		if n.In != nil {
-			in = n.In.String()
+	var b strings.Builder
+	switch {
+	case ins.Signature != "" && ins.DocAnchor != "":
+		// A primitive: keyword, declared signature, and the sentence from the
+		// catalog, then the concrete step this call makes.
+		fmt.Fprintf(&b, "**%s** — `%s`\n\n%s", ins.Title, ins.Signature, ins.Summary)
+		if ins.TypeStep != "" {
+			fmt.Fprintf(&b, "\n\n```\n%s\n```", ins.TypeStep)
 		}
-		return markupHover(fmt.Sprintf("```\n%s\n%s → %s\n```", n.Display, in, n.Out))
+		fmt.Fprintf(&b, "\n\n_primitives.md#%s_", ins.DocAnchor)
+	case ins.DocAnchor == "" && ins.Signature != "":
+		// A Shikigami definition header.
+		fmt.Fprintf(&b, "```\n%s : %s — %s\n```", ins.Title, ins.Signature, ins.Summary)
+	default:
+		// A pipeline node with no catalog entry: a loop, a channel, a consumer.
+		fmt.Fprintf(&b, "```\n%s\n%s\n```", ins.Title, ins.TypeStep)
 	}
-	// A Shikigami definition header: show its name and parameters.
-	if prog != nil {
-		for _, def := range prog.Shikigamis {
-			if def.Pos.Line != line {
-				continue
-			}
-			params := make([]string, len(def.Params))
-			for i, pr := range def.Params {
-				params[i] = pr.Name + ": " + prims.TypeString(pr.Type)
-			}
-			sig := ""
-			if def.Sig != nil {
-				sig = fmt.Sprintf(" : %s -> %s",
-					prims.TypeString(def.Sig.In), prims.TypeString(def.Sig.Out))
-			}
-			body := fmt.Sprintf("```\nShikigami %q (%s)%s — %d statement(s)\n```",
-				def.Name, strings.Join(params, ", "), sig, len(def.Body))
-			return markupHover(body)
-		}
-	}
-	return nil
+	return markupHover(b.String())
 }
 
 // markupHover wraps markdown text as an LSP hover result.
@@ -438,50 +406,21 @@ func (s *Server) definition(params json.RawMessage) any {
 	if !ok {
 		return nil
 	}
-	_, prog := doc.resolve()
-	if prog == nil {
+	loc, found := doc.analyze().DefinitionAt(p.Position.Line + 1)
+	if !found || loc.Origin == "prelude" {
+		// Prelude Shikigami live in embedded source, not a file: there is
+		// nowhere on disk to send the editor.
 		return nil
 	}
-	line := p.Position.Line + 1
-	name := ""
-	var walk func(stmts []*ast.Statement)
-	walk = func(stmts []*ast.Statement) {
-		for _, st := range stmts {
-			if st.Pos.Line == line && st.Keyword == "Shikigami" && st.Op != nil {
-				name = strings.TrimSpace(st.Op.Raw)
-			}
-			walk(st.Block)
-		}
+	uri := p.TextDocument.URI
+	if loc.Path != "" {
+		uri = "file://" + loc.Path
 	}
-	walk(prog.Statements)
-	for _, def := range prog.Shikigamis {
-		walk(def.Body)
+	pos := map[string]int{"line": loc.Pos.Line - 1, "character": loc.Pos.Col - 1}
+	return map[string]any{
+		"uri":   uri,
+		"range": map[string]any{"start": pos, "end": pos},
 	}
-	if name == "" {
-		return nil
-	}
-	for _, def := range prog.Shikigamis {
-		if def.Name == name {
-			pos := map[string]int{"line": def.Pos.Line - 1, "character": def.Pos.Col - 1}
-			return map[string]any{
-				"uri":   p.TextDocument.URI,
-				"range": map[string]any{"start": pos, "end": pos},
-			}
-		}
-	}
-	// An imported Shikigami lives in a library file: jump there. The definition
-	// site came back from the resolver, which is the only thing that knows which
-	// file on the search path actually answered the import.
-	if site, ok := doc.sites[name]; ok && site.Origin == "import" && site.Path != "" {
-		if def := importedDef(site.Path, name); def != nil {
-			pos := map[string]int{"line": def.Pos.Line - 1, "character": def.Pos.Col - 1}
-			return map[string]any{
-				"uri":   "file://" + def.file,
-				"range": map[string]any{"start": pos, "end": pos},
-			}
-		}
-	}
-	return nil // prelude Shikigami live in the embedded source, not a file
 }
 
 // importedDefSite is a definition found inside a library file.
