@@ -25,9 +25,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"domain/eval"
 	"domain/interp"
 	"domain/ir"
 	"domain/optimizer"
+	"domain/prims"
 )
 
 // visualize records the session's program and leaves the recording where the
@@ -48,6 +50,12 @@ func (r *repl) visualize() {
 	}
 
 	rec := interp.NewRecorder(0)
+	// The same two watchers `expansion: visualize` installs. Without them the
+	// stepper opens with an expression pane that reports no applications and a
+	// foreign block that reports no run — the panes are there either way, and
+	// only the recording knows whether they have anything to show.
+	defer eval.WatchApplications(rec.Applied)()
+	defer prims.WatchForeignRuns(rec.ForeignRan)()
 	ctx := r.context()
 	// The program's own Reveal output is captured rather than printed: a
 	// raw-mode terminal cannot take interleaved writes, and the trace is the
@@ -104,17 +112,18 @@ func (r *repl) takeTrace() *traceView {
 // stepperQuit converts the embedded stepper's "quit" into "close the overlay".
 //
 // The stepper does not know it is embedded: q and Esc-at-the-top return
-// tea.Quit, which in a session would end the session. Every command it returns
-// is one of those quits — it starts no work of its own — so running one here
-// to look at it is safe, and anything that is not a quit is passed along
-// untouched.
-func stepperQuit(cmd tea.Cmd) (quit bool, passthrough tea.Cmd) {
-	if cmd == nil {
-		return false, nil
-	}
-	msg := cmd()
-	if _, isQuit := msg.(tea.QuitMsg); isQuit {
+// tea.Quit, which in a session would end the session. So it also *records* that
+// it is quitting, and this reads the flag rather than the command.
+//
+// Reading the flag matters. This used to run the command and look at the
+// message, on the stated grounds that the stepper started no work of its own
+// and so every command it returned was a quit. That is no longer true — the
+// stepper now re-records, opens $EDITOR, sets the clipboard and schedules watch
+// ticks — and running one of those here, eagerly, inside the session's Update,
+// would run an editor to find out whether the user had pressed q.
+func stepperQuit(m *visualModel, cmd tea.Cmd) (quit bool, passthrough tea.Cmd) {
+	if m != nil && m.quitting {
 		return true, nil
 	}
-	return false, func() tea.Msg { return msg }
+	return false, cmd
 }

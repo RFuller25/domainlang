@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"domain/eval"
 	"domain/interp"
 	"domain/ir"
 )
@@ -46,7 +47,19 @@ func TestParseVisualizeArgs(t *testing.T) {
 		{"unknown flag", []string{"p.domain", "--wat"}, "", visualizeOptions{}, true},
 		{"max steps missing value", []string{"p.domain", "--max-steps"}, "", visualizeOptions{}, true},
 		{"max steps not a number", []string{"p.domain", "--max-steps", "x"}, "", visualizeOptions{}, true},
-		{"max steps zero", []string{"p.domain", "--max-steps", "0"}, "", visualizeOptions{}, true},
+		// Zero is not a mistake but the way to ask for the whole run: the cap
+		// bounds memory, and a long program's reader should be able to decline it.
+		{"max steps zero means all of it", []string{"p.domain", "--max-steps", "0"}, "p.domain",
+			visualizeOptions{Optimize: true, MaxSteps: interp.Unlimited}, false},
+		{"max steps negative", []string{"p.domain", "--max-steps", "-2"}, "", visualizeOptions{}, true},
+		{"input text", []string{"p.domain", "--input-text", "1,2,3"}, "p.domain",
+			visualizeOptions{Optimize: true, InputText: "1,2,3"}, false},
+		{"input and input-text together", []string{"p.domain", "-i", "a.txt", "--input-text", "x"},
+			"", visualizeOptions{}, true},
+		{"depth", []string{"p.domain", "--depth", "2"}, "p.domain",
+			visualizeOptions{Optimize: true, Depth: 2}, false},
+		{"watch", []string{"p.domain", "--watch"}, "p.domain",
+			visualizeOptions{Optimize: true, Watch: true}, false},
 		{"input missing value", []string{"p.domain", "--input"}, "", visualizeOptions{}, true},
 	}
 	for _, c := range cases {
@@ -244,6 +257,10 @@ func visModel(t *testing.T) *visualModel {
 		t.Fatal(err)
 	}
 	rec := interp.NewRecorder(0)
+	// The same wiring Visualize does, so a recorded run here carries the
+	// `Using:` applications the expression pane reads.
+	restore := eval.WatchApplications(rec.Applied)
+	defer restore()
 	var revealed strings.Builder
 	ctx := newVisCtx(t, prog, rec, &revealed)
 	if _, err := interp.Run(pipe, ctx); err != nil {
@@ -458,10 +475,17 @@ func visPlain(t *testing.T) []string {
 func pctOn(t *testing.T, line string) float64 {
 	t.Helper()
 	for _, f := range strings.Fields(line) {
-		if strings.HasSuffix(f, "%") && !strings.HasPrefix(f, "<") {
-			if v, err := strconv.ParseFloat(strings.TrimSuffix(f, "%"), 64); err == nil {
-				return v
-			}
+		if !strings.HasSuffix(f, "%") {
+			continue
+		}
+		// `<0.1%` is a share too small to print, not a missing one: on a fast
+		// enough machine any stage can land there, and treating it as zero is
+		// both true and what keeps the row sum within its tolerance.
+		if strings.HasPrefix(f, "<") {
+			return 0
+		}
+		if v, err := strconv.ParseFloat(strings.TrimSuffix(f, "%"), 64); err == nil {
+			return v
 		}
 	}
 	t.Fatalf("no percentage in row %q", line)
@@ -1451,16 +1475,42 @@ func TestVisualModelHelpScreen(t *testing.T) {
 		}
 	}
 	m = send(m, pressKey("?"))
-	help := m.View().Content
-	for _, want := range []string{"keys", "hottest", "the emitted Go", "N iterations", "search"} {
+	// The list outgrew a short terminal, so it scrolls; what it holds is the
+	// body, and what is on screen is a window onto it.
+	help := strings.Join(m.helpBody(), "\n")
+	for _, want := range []string{"hottest", "the emitted Go", "N iterations", "search"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("the key list should mention %q:\n%s", want, help)
 		}
 	}
-	// Any key returns — it is a reference, not a mode.
-	m = send(m, pressKey("j"))
-	if strings.Contains(m.View().Content, "any key returns") {
+	if !strings.Contains(m.View().Content, "keys") {
+		t.Error("the key list should be on screen")
+	}
+	// Any key that is not a scroll returns — it is a reference, not a mode.
+	m = send(m, pressKey("q"))
+	if strings.Contains(m.View().Content, "any other key returns") {
 		t.Error("a keystroke should leave the key list")
+	}
+}
+
+// A short terminal used to lose whole sections off the bottom of the key list,
+// which meant the keys a reader had not learned yet were the ones they could
+// not see. It scrolls now.
+func TestVisualModelHelpScrolls(t *testing.T) {
+	m := visModel(t)
+	m = send(m, tea.WindowSizeMsg{Width: 130, Height: 12}, pressKey("?"))
+	first := m.View().Content
+	m = send(m, pressKey("G"))
+	last := m.View().Content
+	if first == last {
+		t.Error("G should move the key list to its end")
+	}
+	if !strings.Contains(last, "N iterations") {
+		t.Errorf("the last section should be reachable on a short terminal:\n%s", last)
+	}
+	// And a scroll does not leave the screen the way any other key does.
+	if !strings.Contains(last, "keys") {
+		t.Error("scrolling should stay in the key list")
 	}
 }
 

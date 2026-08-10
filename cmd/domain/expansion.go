@@ -7,6 +7,8 @@
 //	domain expansion: optimize <file>         optimization report + source rewrites (.bak backup)
 //	domain expansion: maximum compile <file>  fix → lint → optimize → compile → run
 //	domain expansion: documentation [-p PORT] serve the docs website (default port 4444)
+//	domain expansion: development [file]      edit a program in a terminal editor
+//	domain expansion: vscode [--dir PATH]     install the VS Code extension this binary carries
 //
 // Both the shell-split form (`domain expansion: lint prog.domain`) and the
 // quoted form (`domain "expansion: lint" prog.domain`) are accepted.
@@ -28,6 +30,8 @@ import (
 var expansionCommands = [][]string{
 	{"maximum", "compile"},
 	{"documentation"},
+	{"development"},
+	{"vscode"},
 	{"visualize"},
 	{"diagnosis"},
 	{"lint"},
@@ -80,7 +84,7 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		} else {
 			fmt.Fprintf(stderr, "domain: unknown expansion command %q\n", strings.Join(rest, " "))
 		}
-		fmt.Fprintln(stderr, "known: maximum compile, documentation, visualize, lint, optimize, fix, diagnosis")
+		fmt.Fprintln(stderr, "known: maximum compile, documentation, development, vscode, visualize, lint, optimize, fix, diagnosis")
 		return 2
 	}
 
@@ -93,9 +97,26 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		fmt.Fprint(stdout, expansionBanner("documentation", isColorTerminal(stdout)))
 		return cmdDocumentation(rest, stdout, stderr)
 
+	// `vscode` installs the editor extension this binary carries. Like
+	// `documentation` it takes flags and no file.
+	case "vscode":
+		fmt.Fprint(stdout, expansionBanner("vscode", isColorTerminal(stdout)))
+		return cmdVSCode(rest, stdout, stderr)
+
 	// `visualize` also takes flags of its own (--input, --max-steps, --plain),
 	// so it is parsed before the shared "one file, no flags" rule below. It
 	// prints no banner: the stepper owns the screen.
+	// `development` is the editor. Like `visualize` it takes flags of its own
+	// and prints no banner, and unlike every other command here its file
+	// argument is optional — with none, it asks which program to open.
+	case "development":
+		path, opts, err := parseDevelopmentArgs(rest)
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		return Development(path, opts, stdin, stdout, stderr)
+
 	case "visualize":
 		path, opts, err := parseVisualizeArgs(rest)
 		if err != nil {

@@ -59,7 +59,15 @@ func highlightSource(src string, color bool) string {
 			continue
 		}
 		b.WriteString(gapText(src[prev:start]))
-		b.WriteString(styleFor(toks, i).Render(src[start:end]))
+		if t.Kind == token.RAW {
+			// A foreign block is not Domain source and has no Domain syntax to
+			// color. It is also the one multi-line token, and handing several
+			// lines to a renderer is how a style bleeds into the lines around
+			// it — so it is written through untouched.
+			b.WriteString(src[start:end])
+		} else {
+			b.WriteString(styleFor(toks, i).Render(src[start:end]))
+		}
 		prev = end
 	}
 	b.WriteString(gapText(src[prev:]))
@@ -85,22 +93,85 @@ func gapText(s string) string {
 
 // styleFor picks a token's color from its kind and its place in the line.
 func styleFor(toks []token.Token, i int) lipgloss.Style {
+	return faceStyle(faceFor(toks, i))
+}
+
+// face is a token's syntactic role, decided once and painted twice.
+//
+// The REPL wants a styled string; the editor (dev_highlight.go) wants a role
+// per byte, so that a cursor can be dropped on one byte without any ANSI
+// string being cut. Both need the same answer to "what is this token", and
+// that answer — which depends on the lexer, the keyword table and the token's
+// place in its line — is the part worth having exactly once.
+type face uint8
+
+const (
+	facePlain face = iota
+	faceKeyword
+	faceArgName
+	faceLabel
+	faceString
+	faceNumber
+	facePunct
+	faceComment
+	faceCursor
+	// The editor's decorations. They are faces rather than a separate mechanism
+	// because a selection, a search hit and the cursor are all the same kind of
+	// thing: a byte range that overrides the syntax underneath.
+	faceSelect
+	faceMatch
+	faceMatchCurrent
+)
+
+// faceFor picks a token's role from its kind and its place in the line.
+func faceFor(toks []token.Token, i int) face {
 	switch toks[i].Kind {
 	case token.STRING:
-		return styString
+		return faceString
 	case token.INT, token.FLOAT:
-		return styNumber
+		return faceNumber
 	case token.IDENT:
 		switch {
 		case inKeywordPhrase(toks, i):
-			return styKeyword
-		case toks[i+1].Kind == token.COLON && startsLine(toks, i):
-			return styArgName // an indented `Using:` / `From:` / `Seed:` label
+			return faceKeyword
+		case i+1 < len(toks) && toks[i+1].Kind == token.COLON && startsLine(toks, i):
+			return faceArgName // an indented `Using:` / `From:` / `Seed:` label
 		}
-		return styLabel
+		return faceLabel
 	default:
-		return styPunct
+		return facePunct
 	}
+}
+
+// faceStyle is the paint for a role. It is a function rather than a table
+// because useTheme reassigns the styles when the terminal reports its
+// background, and a table built at init would hold the palette from before.
+func faceStyle(f face) lipgloss.Style {
+	switch f {
+	case faceKeyword:
+		return styKeyword
+	case faceArgName:
+		return styArgName
+	case faceLabel:
+		return styLabel
+	case faceString:
+		return styString
+	case faceNumber:
+		return styNumber
+	case facePunct:
+		return styPunct
+	case faceComment:
+		return styComment
+	case faceCursor:
+		return styCursor
+	case faceSelect:
+		return stySelect
+	case faceMatch:
+		return styMatch
+	case faceMatchCurrent:
+		return styCursor
+	}
+	return lipgloss.NewStyle()
 }
 
 // startsLine reports whether the token at i is the first one on its line.

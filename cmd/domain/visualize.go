@@ -16,22 +16,29 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"domain/codegen"
+	"domain/eval"
 	"domain/interp"
 	"domain/ir"
 	"domain/optimizer"
+	"domain/prims"
 )
 
 // visualizeOptions are the parsed `visualize` arguments.
 type visualizeOptions struct {
-	Input    string // --input FILE: program input, since the terminal cannot be stdin
-	MaxSteps int    // --max-steps N: capture bound (0 = the recorder's default)
-	Plain    bool   // --plain: print the trace as text instead of opening the UI
-	JSON     bool   // --json: print the recording as data instead
-	Expand   bool   // --expand-loops: print every lap, rather than folding them
-	Go       bool   // --go: also print the Go the compiler backend would emit
-	Optimize bool
+	Input     string // --input FILE: program input, since the terminal cannot be stdin
+	InputText string // --input-text S: the same, given inline
+	MaxSteps  int    // --max-steps N: capture bound (0 = default, interp.Unlimited = all)
+	Depth     int    // --depth N: how deep the text trace nests (0 = all of it)
+	Plain     bool   // --plain: print the trace as text instead of opening the UI
+	JSON      bool   // --json: print the recording as data instead
+	Expand    bool   // --expand-loops: show every lap, rather than folding them
+	Go        bool   // --go: the Go the compiler backend would emit
+	Exprs     bool   // --expressions: break every Using: expression down
+	Watch     bool   // --watch: re-record whenever the program or its input changes
+	Optimize  bool
 }
 
 // parseVisualizeArgs parses `domain expansion: visualize` arguments.
@@ -49,6 +56,10 @@ func parseVisualizeArgs(args []string) (string, visualizeOptions, error) {
 			opts.Expand = true
 		case a == "--go":
 			opts.Go = true
+		case a == "--expressions" || a == "--exprs":
+			opts.Exprs = true
+		case a == "--watch" || a == "-w":
+			opts.Watch = true
 		case a == "--no-optimize":
 			opts.Optimize = false
 		case a == "--input" || a == "-i":
@@ -59,22 +70,46 @@ func parseVisualizeArgs(args []string) (string, visualizeOptions, error) {
 			opts.Input = args[i]
 		case strings.HasPrefix(a, "--input="):
 			opts.Input = strings.TrimPrefix(a, "--input=")
+		case a == "--input-text":
+			if i+1 >= len(args) {
+				return "", opts, fmt.Errorf("--input-text needs some text")
+			}
+			i++
+			opts.InputText = args[i]
+		case strings.HasPrefix(a, "--input-text="):
+			opts.InputText = strings.TrimPrefix(a, "--input-text=")
 		case a == "--max-steps":
 			if i+1 >= len(args) {
 				return "", opts, fmt.Errorf("--max-steps needs a number")
 			}
 			i++
-			n, err := strconv.Atoi(args[i])
-			if err != nil || n <= 0 {
-				return "", opts, fmt.Errorf("--max-steps needs a positive number, got %q", args[i])
+			n, err := parseMaxSteps(args[i])
+			if err != nil {
+				return "", opts, err
 			}
 			opts.MaxSteps = n
 		case strings.HasPrefix(a, "--max-steps="):
-			n, err := strconv.Atoi(strings.TrimPrefix(a, "--max-steps="))
-			if err != nil || n <= 0 {
-				return "", opts, fmt.Errorf("--max-steps needs a positive number")
+			n, err := parseMaxSteps(strings.TrimPrefix(a, "--max-steps="))
+			if err != nil {
+				return "", opts, err
 			}
 			opts.MaxSteps = n
+		case a == "--depth":
+			if i+1 >= len(args) {
+				return "", opts, fmt.Errorf("--depth needs a number")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n <= 0 {
+				return "", opts, fmt.Errorf("--depth needs a positive number, got %q", args[i])
+			}
+			opts.Depth = n
+		case strings.HasPrefix(a, "--depth="):
+			n, err := strconv.Atoi(strings.TrimPrefix(a, "--depth="))
+			if err != nil || n <= 0 {
+				return "", opts, fmt.Errorf("--depth needs a positive number")
+			}
+			opts.Depth = n
 		case strings.HasPrefix(a, "-"):
 			return "", opts, fmt.Errorf("unknown flag %q for visualize", a)
 		default:
@@ -87,64 +122,154 @@ func parseVisualizeArgs(args []string) (string, visualizeOptions, error) {
 	if path == "" {
 		return "", opts, fmt.Errorf("visualize needs a program file")
 	}
+	if opts.Input != "" && opts.InputText != "" {
+		return "", opts, fmt.Errorf("--input and --input-text both say what the program reads; pick one")
+	}
 	return path, opts, nil
+}
+
+// parseMaxSteps reads a capture bound. Zero is not a mistake to reject but the
+// way to ask for the whole run: the cap exists to bound memory, and a reader
+// who knows their program is long should be able to say so.
+func parseMaxSteps(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("--max-steps needs a number of steps, or 0 for the whole run, got %q", s)
+	}
+	if n == 0 {
+		return interp.Unlimited, nil
+	}
+	return n, nil
+}
+
+// recordSpec is everything needed to record a run: the program, what it reads,
+// and the bounds. It exists as a value rather than as arguments strewn through
+// Visualize because a recording is no longer made once — `r` in the stepper and
+// `--watch` both make it again, and "again" has to mean exactly the same run
+// (see visualize_record.go).
+type recordSpec struct {
+	path     string
+	input    string // the program's stdin, already read
+	maxSteps int
+	optimize bool
+
+	// progress, when set, is called while the run records. See
+	// visualize_progress.go.
+	progress func(interp.Progress)
+}
+
+// record runs the program once under the recording tracer.
+//
+// The program is run to completion before anything is displayed — that is the
+// whole model, and it is what makes a failing run explorable — so on a long
+// program this is where the time goes, and why the caller is given a progress
+// hook to prove the tool has not hung.
+func (spec recordSpec) record() (*traceView, error) {
+	pipe, rewrites, err := loadForVisualize(spec.path, spec.optimize)
+	if err != nil {
+		return nil, err
+	}
+
+	rec := interp.NewRecorder(spec.maxSteps)
+	rec.OnProgress(spec.progress)
+	// The recorder also wants the `Using:` applications, and those happen below
+	// the trace hook rather than beside it — inside a primitive, once per
+	// element, where no node evaluation reports. eval is where they all pass
+	// through, so that is where the recorder listens (see interp.Application).
+	defer eval.WatchApplications(rec.Applied)()
+	// And the foreign blocks, for the same reason and through the same kind of
+	// seam: a subprocess runs under a node's Eval, so nothing at the pipeline
+	// layer sees what crossed the wire (see prims.WatchForeignRuns).
+	defer prims.WatchForeignRuns(rec.ForeignRan)()
+
+	// The program's own Reveal output is captured rather than printed: the point
+	// of the visualizer is the trace, and a raw-mode terminal cannot take
+	// interleaved writes anyway.
+	var revealed strings.Builder
+	ctx := &ir.Context{
+		Stdin:   strings.NewReader(spec.input),
+		Stdout:  &revealed,
+		BaseDir: filepath.Dir(spec.path),
+		Trace:   rec,
+	}
+	_, runErr := interp.Run(pipe, ctx)
+
+	return &traceView{
+		path:     spec.path,
+		pipe:     pipe,
+		rec:      rec,
+		rewrites: rewrites,
+		revealed: strings.TrimRight(revealed.String(), "\n"),
+		runErr:   runErr,
+		recorded: time.Now(),
+	}, nil
 }
 
 // Visualize records a run of the program and hands it to the stepper.
 func Visualize(path string, opts visualizeOptions, stdin io.Reader, stdout, stderr io.Writer) int {
-	pipe, rewrites, err := loadForVisualize(path, opts.Optimize)
+	// Resolved once up front only to answer "where does this program's input
+	// come from"; record() front-ends it again for the run itself, so a
+	// re-record picks up an edited program rather than the one loaded here.
+	pipe, _, err := loadForVisualize(path, opts.Optimize)
 	if err != nil {
 		fmt.Fprintf(stderr, "domain: %v\n", err)
 		return 1
 	}
-
 	input, err := programInput(path, opts, stdin, pipe)
 	if err != nil {
 		fmt.Fprintf(stderr, "domain: %v\n", err)
 		return 2
 	}
 
-	rec := interp.NewRecorder(opts.MaxSteps)
-	// The program's own Reveal output is captured rather than printed: the point
-	// of the visualizer is the trace, and a raw-mode terminal cannot take
-	// interleaved writes anyway.
-	var revealed strings.Builder
-	ctx := &ir.Context{
-		Stdin:   strings.NewReader(input),
-		Stdout:  &revealed,
-		BaseDir: filepath.Dir(path),
-		Trace:   rec,
-	}
-	_, runErr := interp.Run(pipe, ctx)
+	spec := recordSpec{path: path, input: input, maxSteps: opts.MaxSteps, optimize: opts.Optimize}
+	// A long program is recorded to the end before anything is shown, so
+	// without this a terminal sits blank for however long the run takes. It
+	// goes to stderr, which leaves --json and --plain pipeable.
+	prog := newProgressPrinter(stderr)
+	spec.progress = prog.report
 
-	view := &traceView{
-		path:     path,
-		pipe:     pipe,
-		rec:      rec,
-		rewrites: rewrites,
-		revealed: strings.TrimRight(revealed.String(), "\n"),
-		runErr:   runErr,
-		expand:   opts.Expand,
+	view, err := spec.record()
+	prog.done()
+	if err != nil {
+		fmt.Fprintf(stderr, "domain: %v\n", err)
+		return 1
 	}
+	view.expand, view.depth = opts.Expand, opts.Depth
+	// The progress line belongs to *this* recording only. A re-record inside
+	// the stepper (`r`, `--watch`) happens with the alternate screen up, where
+	// writing to stderr would paint over the UI; the footer says "recording…"
+	// there instead.
+	spec.progress = nil
 
 	// --json is asked for explicitly, so it wins over both other forms.
 	if opts.JSON {
-		if err := view.writeJSON(stdout, opts.Go); err != nil {
+		if err := view.writeJSON(stdout, opts.Go, opts.Exprs); err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 1
 		}
 		return 0
 	}
 	// Without a terminal there is nothing to drive, so print the trace instead.
-	// That is also what makes the command testable.
-	if opts.Plain || opts.Go || !isColorTerminal(stdout) {
+	// That is also what makes the command testable. --go and --expressions do
+	// *not* land here any more: both have a better form inside the UI (the code
+	// screen, the expression pane), and answering an interactive request for
+	// them with a wall of text was the tool declining to do the thing it is
+	// for. --plain is how you ask for text.
+	if opts.Plain || !isColorTerminal(stdout) {
 		view.writePlain(stdout)
+		if opts.Exprs {
+			view.writeExprs(stdout)
+			// The inside of a foreign stage is its program and its wire
+			// traffic, which is the same question --expressions asks of every
+			// other stage (see visualize_foreign.go).
+			view.writeForeign(stdout)
+		}
 		if opts.Go {
 			view.writeGo(stdout)
 		}
 		return 0
 	}
-	return runVisualizeTUI(view, stdin, stdout, stderr)
+	return runVisualizeTUI(view, spec, opts, stdin, stdout, stderr)
 }
 
 // loadForVisualize front-ends the program and returns the optimized pipeline
@@ -163,11 +288,19 @@ func loadForVisualize(path string, optimize bool) (*ir.Pipeline, []optimizer.Rew
 // programInput decides what the program reads.
 //
 // An interactive terminal cannot double as program stdin — the same constraint
-// the REPL documents — so the input comes from --input, or from a non-terminal
-// stdin read in full before the UI starts, or from the program's own
-// `Cursed Energy:` file target (which the interpreter resolves itself, so an
-// empty string is the right answer).
+// the REPL documents — so the input comes from --input-text, or --input, or
+// from a non-terminal stdin read in full before the UI starts, or from the
+// program's own `Cursed Energy:` file target (which the interpreter resolves
+// itself, so an empty string is the right answer).
 func programInput(path string, opts visualizeOptions, stdin io.Reader, pipe *ir.Pipeline) (string, error) {
+	// Given inline, a trailing newline is almost always meant: a program that
+	// splits its input on lines would otherwise see one fewer than was typed.
+	if opts.InputText != "" {
+		if strings.HasSuffix(opts.InputText, "\n") {
+			return opts.InputText, nil
+		}
+		return opts.InputText + "\n", nil
+	}
 	if opts.Input != "" {
 		b, err := os.ReadFile(opts.Input)
 		if err != nil {
@@ -245,7 +378,15 @@ type traceView struct {
 	rewrites []optimizer.Rewrite
 	revealed string
 	runErr   error
-	expand   bool // print every lap of a folded loop rather than folding it
+	expand   bool      // print every lap of a folded loop rather than folding it
+	depth    int       // how deep the text trace nests; 0 is all of it
+	recorded time.Time // when this run was recorded, for the re-record status line
+
+	// srcLines is the program's text when it did not come from a file on disk.
+	// The editor records a buffer that may never have been saved, and the
+	// source pane has to show the program you are looking at rather than the
+	// one that happens to be on disk under the same name.
+	srcLines []string
 
 	// Derived on first use, so that every way of building a traceView — the
 	// command, and the tests that build one directly — gets the same answers
@@ -274,8 +415,13 @@ func (v *traceView) times() *interp.Timing {
 func (v *traceView) source() []string {
 	if !v.srcOnce {
 		v.srcOnce = true
-		if b, err := os.ReadFile(v.path); err == nil {
-			v.src = strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
+		switch {
+		case v.srcLines != nil:
+			v.src = v.srcLines
+		default:
+			if b, err := os.ReadFile(v.path); err == nil {
+				v.src = strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
+			}
 		}
 	}
 	return v.src
@@ -355,6 +501,17 @@ type visualizeJSON struct {
 	Revealed  string   `json:"revealed,omitempty"`
 	Go        string   `json:"go,omitempty"` // the emitted Go, with --go
 
+	// Expressions is one entry per step that ran a `Using:` expression, with
+	// --expressions. See traceView.expressions.
+	Expressions []exprJSON `json:"expressions,omitempty"`
+
+	// Foreign is the same for the stages whose inside is another language's
+	// program rather than an expression: its source, and the bytes that
+	// crossed to and from it. Always included when there are any — unlike an
+	// expression breakdown it cannot be recovered later by replaying, so a
+	// recording that left it out could not be asked again.
+	Foreign []foreignJSON `json:"foreign,omitempty"`
+
 	// Embedded, so the recording's own fields sit at the top level of the
 	// document rather than under a wrapper nobody would want to type.
 	interp.Recording
@@ -363,12 +520,16 @@ type visualizeJSON struct {
 // writeJSON prints the recording as JSON, for a reader that is not a terminal:
 // a CI job asserting a stage stayed under its share of the run, or a tool that
 // wants the trace without parsing a table.
-func (v *traceView) writeJSON(w io.Writer, withGo bool) error {
+func (v *traceView) writeJSON(w io.Writer, withGo, withExprs bool) error {
 	doc := visualizeJSON{
 		Program:   v.path,
 		Revealed:  v.revealed,
 		Recording: v.rec.Export(),
 	}
+	if withExprs {
+		doc.Expressions = v.expressions()
+	}
+	doc.Foreign = v.foreignDocs()
 	if v.runErr != nil {
 		doc.Failed = v.runErr.Error()
 	}
@@ -400,11 +561,30 @@ func (v *traceView) header() string {
 
 // writePlain prints the recorded trace as indented text. This is the no-terminal
 // form of the same information the stepper shows.
+// indentedError renders an error inside the step table, where every line has
+// to stay within the table's left margin.
+//
+// Most runtime errors are one line and this is just a prefix. A foreign block's
+// is not: it carries the traceback or compile error its runtime produced, and
+// those lines would otherwise break back to column zero through the middle of
+// an aligned table. They are indented under the first line instead, so the
+// table still reads as a table and the runtime's output still reads as its own.
+func indentedError(indent, label string, err error) string {
+	lines := strings.Split(strings.TrimRight(err.Error(), "\n"), "\n")
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%s%s\n", indent, label, lines[0])
+	cont := indent + strings.Repeat(" ", len([]rune(label)))
+	for _, l := range lines[1:] {
+		fmt.Fprintf(&b, "%s%s\n", cont, l)
+	}
+	return b.String()
+}
+
 func (v *traceView) writePlain(w io.Writer) {
 	t := v.times()
 	fmt.Fprintln(w, v.header())
 	if v.runErr != nil {
-		fmt.Fprintf(w, "run failed: %v\n", v.runErr)
+		fmt.Fprint(w, indentedError("", "run failed: ", v.runErr))
 	}
 	fmt.Fprintln(w, "% is the step's share of the run; self% excludes the work of its nested frames.")
 	// Said only where it applies: on a program with no blocks it would be two
@@ -419,6 +599,16 @@ func (v *traceView) writePlain(w io.Writer) {
 
 	var walk func(nodes []*interp.TraceNode, depth int)
 	walk = func(nodes []*interp.TraceNode, depth int) {
+		// --depth stops the walk short, for a reader whose trace is going into
+		// a CI log: the top two levels of a recording are the program, and the
+		// four hundred below them are one loop.
+		if v.depth > 0 && depth >= v.depth {
+			if steps, frames := hiddenBy(nodes); steps+frames > 0 || len(nodes) > 0 {
+				fmt.Fprintf(w, "%s… %s below this depth (--depth raises the limit)\n",
+					strings.Repeat("  ", depth), plural(len(nodes)+steps+frames, "row"))
+			}
+			return
+		}
 		for _, n := range nodes {
 			indent := strings.Repeat("  ", depth)
 			nt := t.Of(n)
@@ -437,7 +627,7 @@ func (v *traceView) writePlain(w io.Writer) {
 				interp.FormatDuration(nt.Total), pctText(nt.TotalPct, nt.Known),
 				selfPctText(nt))
 			if !n.IsFrame() && n.Step.Err != nil {
-				fmt.Fprintf(w, "%serror: %v\n", indent+"  ", n.Step.Err)
+				fmt.Fprint(w, indentedError(indent+"  ", "error: ", n.Step.Err))
 			}
 			// A folded run of laps prints its first lap and then says what it
 			// is standing in for: five hundred laps of the same three steps
