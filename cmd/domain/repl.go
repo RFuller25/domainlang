@@ -240,9 +240,16 @@ func (r *repl) commit(stmts []string) {
 
 // needsBlock reports whether an error means "the statement is fine so far, it
 // just wants indented lines" — the continuation-mode trigger. The front end
-// says so structurally (parser.Error.NeedsBlock, prims.ResolveError.NeedsBlock)
-// rather than in prose, so rewording an error cannot change what the REPL does.
+// says so structurally (lexer.Error.Incomplete, parser.Error.NeedsBlock,
+// prims.ResolveError.NeedsBlock) rather than in prose, so rewording an error
+// cannot change what the REPL does.
 func needsBlock(err error) bool {
+	// An open parenthesis is the lexer's version of the same situation: an
+	// expression broken across lines has not finished arriving.
+	var le *lexer.Error
+	if errors.As(err, &le) {
+		return le.Incomplete
+	}
 	var pe *parser.Error
 	if errors.As(err, &pe) {
 		return pe.NeedsBlock
@@ -318,7 +325,18 @@ func (r *repl) evalAndShow(pipe *ir.Pipeline, rollback bool) {
 		if errors.Is(err, ir.ErrInterrupted) {
 			fmt.Fprintln(r.out, "interrupted"+droppedSuffix(rollback))
 		} else {
-			fmt.Fprintf(r.out, "runtime error: %v%s\n", err, droppedSuffix(rollback))
+			// A foreign block's failure carries its runtime's whole report,
+			// so the note about the dropped statement goes on the first line
+			// rather than after somebody else's traceback.
+			head, rest := err.Error(), ""
+			var rte *ir.RuntimeError
+			if errors.As(err, &rte) {
+				head, rest, _ = strings.Cut(rte.Error(), "\n")
+			}
+			fmt.Fprintf(r.out, "runtime error: %s%s\n", head, droppedSuffix(rollback))
+			if rest != "" {
+				fmt.Fprintln(r.out, rest)
+			}
 		}
 		if rollback && len(r.stmts) > 0 {
 			r.stmts = r.stmts[:len(r.stmts)-1]

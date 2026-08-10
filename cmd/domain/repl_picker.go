@@ -38,6 +38,10 @@ type picker struct {
 	name string
 	err  string
 	keys pickerKeyMap
+	// anyFile lists every file rather than only programs. Choosing a program's
+	// *input* is the case: an input is whatever the puzzle gave you, and
+	// filtering it to .domain would hide all of them.
+	anyFile bool
 }
 
 // pickerEntry is one row: a directory to walk into, or a program to pick.
@@ -102,7 +106,7 @@ func (p *picker) setDir(dir string) {
 			p.entries = append(p.entries, pickerEntry{name: e.Name(), isDir: true})
 			continue
 		}
-		if strings.HasSuffix(e.Name(), ".domain") {
+		if p.anyFile || strings.HasSuffix(e.Name(), ".domain") {
 			files = append(files, pickerEntry{name: e.Name()})
 		}
 	}
@@ -189,8 +193,11 @@ func withDomainExt(name string) string {
 func (p *picker) view(width, height int) string {
 	var b strings.Builder
 	what := "load a program"
-	if p.saving() {
+	switch {
+	case p.saving():
 		what = "save the program as"
+	case p.anyFile:
+		what = "choose an input file"
 	}
 	b.WriteString(styTitle.Render("domain "+p.command) + styDim.Render("  "+what) + "\n")
 	b.WriteString(styDim.Render(truncateVis(p.dir, max(width, 20))) + "\n")
@@ -199,7 +206,11 @@ func (p *picker) view(width, height int) string {
 	case p.err != "":
 		b.WriteString(styErr.Render(p.err) + "\n")
 	case len(p.entries) == 0:
-		b.WriteString(styDim.Render("(no .domain files here)") + "\n")
+		what := "(no .domain files here)"
+		if p.anyFile {
+			what = "(nothing here)"
+		}
+		b.WriteString(styDim.Render(what) + "\n")
 	}
 
 	// Keep the cursor on screen in a directory taller than the window.

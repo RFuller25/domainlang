@@ -176,7 +176,9 @@ Expansion commands (the diagnostics engine):
   domain expansion: optimize <file>         optimization report; rewrites the source where possible (.bak)
   domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
   domain expansion: visualize <file>        step through a run and watch the data change shape
+  domain expansion: development [file]      write a program in a terminal editor that knows the language
   domain expansion: documentation [-p PORT] serve the browsable docs website locally (default port 4444)
+  domain expansion: vscode [--dir PATH]     install the VS Code extension carried inside this binary
 
 Shared flags (run and build):
   --explain      print the algorithm substitutions the optimizer made

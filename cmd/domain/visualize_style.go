@@ -38,6 +38,7 @@ var (
 
 	// Tree rows.
 	styCursor lipgloss.Style
+	stySelect lipgloss.Style // the editor's selection
 	styFrame  lipgloss.Style // structure, not data
 	styLabel  lipgloss.Style
 	styType   lipgloss.Style // Six Eyes cyan
@@ -101,6 +102,13 @@ func useTheme(light bool) {
 
 	styCursor = lipgloss.NewStyle().Bold(true)
 	styMatch = lipgloss.NewStyle().Bold(true)
+	// A selection is a background alone: it has to sit under syntax highlighting
+	// without replacing it, so unlike the cursor it never sets a foreground.
+	if light {
+		stySelect = lipgloss.NewStyle().Background(lipgloss.Color("253"))
+	} else {
+		stySelect = lipgloss.NewStyle().Background(lipgloss.Color("238"))
+	}
 	if light {
 		styCursor = styCursor.Foreground(lipgloss.Color("232")).Background(lipgloss.Color("189"))
 		styMatch = styMatch.Foreground(lipgloss.Color("232")).Background(lipgloss.Color("222"))

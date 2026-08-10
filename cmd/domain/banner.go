@@ -73,6 +73,7 @@ var expansionTechniques = map[string]technique{
 	"optimize":        {"黒閃", "BLACK FLASH", "struck within 0.000001 seconds of convergence.", jjkWhite},
 	"maximum compile": {"領域展開", "DOMAIN EXPANSION", "guaranteed hit.", jjkCrimson},
 	"documentation":   {"呪術高専", "JUJUTSU HIGH ARCHIVES", "everything a sorcerer needs to know.", jjkPurple},
+	"vscode":          {"式神召喚", "SHIKIGAMI SUMMONING", "bound to your editor, ready to serve.", jjkBlue},
 }
 
 // expansionBanner renders the small technique banner for one expansion

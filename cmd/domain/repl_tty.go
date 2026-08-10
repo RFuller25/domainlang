@@ -35,11 +35,19 @@ import (
 	"domain/ir"
 )
 
-// replMu serializes everything that resolves or runs a program. Resolution
-// and evaluation both read and write package-level state in prims (the
-// ambient-binding stacks a For loop pushes), so the live type preview running
-// in the background must never overlap the evaluation of a submitted line.
-var replMu sync.Mutex
+// frontEndMu serializes everything that resolves or runs a program.
+//
+// Resolution and evaluation both read and write package-level state — the
+// ambient-binding stacks a For loop pushes in prims, and the binding table
+// typecheck.ResetBindings clears — so two of them at once corrupt each other.
+// The REPL needs it because its live type preview runs in the background while
+// a submitted line evaluates. The editor needs it for the same reason and a
+// second one: it analyses on a command after every pause in typing and runs on
+// another, so two keystrokes close together are two overlapping resolves.
+//
+// It lives here rather than in either UI because the state it guards belongs to
+// neither: it is package prims', and every UI in this binary reaches it.
+var frontEndMu sync.Mutex
 
 // previewDelay is how long typing has to pause before the session resolves
 // what has been typed so far to show its type. Long enough that a fast typist
@@ -244,7 +252,7 @@ func (m replModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.stepper != nil {
 		next, cmd := m.stepper.Update(msg)
 		m.stepper, _ = next.(*visualModel)
-		quit, pass := stepperQuit(cmd)
+		quit, pass := stepperQuit(m.stepper, cmd)
 		if quit {
 			m.stepper = nil
 			return m, nil
@@ -578,8 +586,8 @@ func (m replModel) startEval(line string, force bool) (tea.Model, tea.Cmd) {
 
 	core, interrupt := m.core, m.interrupt
 	run := func() tea.Msg {
-		replMu.Lock()
-		defer replMu.Unlock()
+		frontEndMu.Lock()
+		defer frontEndMu.Unlock()
 		if force {
 			// Forced continuation: the statement is held for its block
 			// without asking the front end whether it wants one.
@@ -1013,8 +1021,8 @@ func (m replModel) previewCmd(gen int, line string) tea.Cmd {
 	}
 	baseDir := m.core.baseDir
 	return func() tea.Msg {
-		replMu.Lock()
-		defer replMu.Unlock()
+		frontEndMu.Lock()
+		defer frontEndMu.Unlock()
 		pipe, _, err := resolveStatements(stmts, baseDir)
 		if err != nil || len(pipe.Nodes) == 0 {
 			return previewMsg{gen: gen}
@@ -1121,9 +1129,9 @@ func (m replModel) finishEdit(msg editDoneMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("cannot read back %s: %v", msg.path, err)
 		return m, nil
 	}
-	replMu.Lock()
+	frontEndMu.Lock()
 	m.core.adopt(string(src))
-	replMu.Unlock()
+	frontEndMu.Unlock()
 
 	out := strings.TrimSuffix(m.buf.String()[m.seen:], "\n")
 	m.seen = m.buf.Len()
