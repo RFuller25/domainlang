@@ -1,5 +1,5 @@
 {
-  description = "Domain — a JJK-themed language for Advent of Code: tree-walking interpreter, optimizing Go compiler backend, language server, and full-screen editor, in one `domain` binary";
+  description = "Domain — a JJK-themed language for Advent of Code: tree-walking interpreter plus an optimizing Go compiler backend, in one `domain` binary";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
 
@@ -13,15 +13,11 @@
       packages = forAllSystems (system: pkgs: rec {
         domain = pkgs.buildGoModule {
           pname = "domain";
-          version = "0.9.0";
+          version = "0.3.0";
           src = self;
 
           # Vendor hash covers charm.land/bubbletea/v2, charm.land/bubbles/v2,
-          # and their transitive dependencies — the terminal UIs the binary
-          # ships: the REPL's line editor, the `expansion: development`
-          # editor, and the `expansion: visualize` stepper. Unchanged since
-          # 0.8: go.mod and go.sum are byte-identical, so the module graph
-          # this hash covers has not moved.
+          # and their transitive dependencies (the REPL's line editor).
           vendorHash = "sha256-BaaZD69s6Xmum7SRRUSK6YbiNWsg5w8ChtBxPirPINU=";
           subPackages = [ "cmd/domain" ];
 
@@ -46,7 +42,7 @@
           doCheck = false;
 
           meta = {
-            description = "Describe what, let the compiler choose how — AoC pipeline language with algorithm-substituting optimizer, Go codegen, and built-in editor tooling";
+            description = "Describe what, let the compiler choose how — AoC pipeline language with algorithm-substituting optimizer and Go codegen";
             homepage = "https://github.com/RFuller25/domain";
             license = pkgs.lib.licenses.mit;
             mainProgram = "domain";
@@ -56,7 +52,7 @@
         #   programs.neovim.plugins = [ domain.packages.${system}.domain-nvim ];
         domain-nvim = pkgs.vimUtils.buildVimPlugin {
           pname = "domain-nvim";
-          version = "0.9.0";
+          version = "0.3.0";
           src = ./editors/nvim;
         };
 
@@ -73,14 +69,7 @@
 
       devShells = forAllSystems (system: pkgs: {
         default = pkgs.mkShell {
-          # nodejs is here for the VS Code extension only. The extension
-          # itself is embedded in the binary and installed as an unpacked
-          # folder by `domain expansion: vscode` — no vsce, no .vsix, no
-          # registry. What still needs npm is the language client's one
-          # runtime dependency (vscode-languageclient), which the installer
-          # asks you to fetch with `npm install --omit=dev`. Nothing in the
-          # Go build touches it.
-          packages = [ pkgs.go pkgs.gopls pkgs.gotools pkgs.nodejs ];
+          packages = [ pkgs.go pkgs.gopls pkgs.gotools ];
         };
       });
 

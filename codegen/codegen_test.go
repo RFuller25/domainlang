@@ -1539,6 +1539,52 @@ Reveal: stdout
 	}
 }
 
+// A `%` whose divisor is a literal cannot divide by zero, so it must compile
+// to the unguarded helper. The guard is not merely a wasted branch: it is a
+// call, which puts the helper over Go's inlining budget, and a modulo that is
+// never inlined hides its constant divisor from the compiler — so a loop that
+// could multiply divides instead. Worth ~3x on a hot modulo loop, and nothing
+// in the output says so, which is why it is pinned here.
+func TestModByLiteralSkipsTheGuard(t *testing.T) {
+	emit := func(t *testing.T, expr string) string {
+		t.Helper()
+		src, err := codegen.EmitProgram(compilePipeline(t, `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> toint(s)
+Cursed Technique: Apply
+    Using: (x) -> `+expr+`
+Reveal: stdout
+`, true), codegen.Options{})
+		if err != nil {
+			t.Fatalf("EmitProgram: %v", err)
+		}
+		return src
+	}
+
+	// The divisor is a literal: no guard, and none of the guarded helper.
+	for _, expr := range []string{"x % 7", "mod(x, 7)"} {
+		src := emit(t, expr)
+		if !strings.Contains(src, "dmModNZ(") {
+			t.Errorf("%s: want the unguarded helper, generated source:\n%s", expr, src)
+		}
+		if strings.Contains(src, "func dmMod(") {
+			t.Errorf("%s: divisor is a literal, so the guarded helper should not be emitted:\n%s", expr, src)
+		}
+	}
+
+	// The divisor is computed, so zero is possible and the guard stays.
+	src := emit(t, "x % (x - 5)")
+	if !strings.Contains(src, "func dmMod(") {
+		t.Errorf("a computed divisor must keep the guard, generated source:\n%s", src)
+	}
+
+	// Whichever helper the guard path picks, the arithmetic must stay in one
+	// place — the guarded one is the unguarded one plus the check.
+	if !strings.Contains(src, "return dmModNZ(a, b)") {
+		t.Errorf("the guarded helper should delegate rather than restate the rule:\n%s", src)
+	}
+}
+
 // Fusion is the other path selection Match Pattern makes, and Mode: Try opts
 // out of it: every fused loop assumes each line parses and fails the program
 // when one does not, which is the behavior Try exists to replace. The

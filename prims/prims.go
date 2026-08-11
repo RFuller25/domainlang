@@ -446,7 +446,19 @@ func Resolve(prog *ast.Program) (*ir.Pipeline, error) {
 //
 // Definitions are registered weakest-first — prelude, then imports in load
 // order, then the program's own — so each layer shadows the one beneath it.
-func ResolveWith(prog *ast.Program, opts ResolveOptions) (*ir.Pipeline, error) {
+func ResolveWith(prog *ast.Program, opts ResolveOptions) (pipe *ir.Pipeline, err error) {
+	// Resolution runs against whatever an editor's buffer says right now, which
+	// is every incomplete program there is, and it runs in processes that must
+	// outlive one bad one — the language server, the dev TUI, the REPL. So a
+	// panic in the resolver becomes an ordinary error at this boundary, exactly
+	// as interp.Run does for the runtime half. It stays loud enough to report:
+	// nothing a program can contain is supposed to reach here.
+	defer func() {
+		if p := recover(); p != nil {
+			pipe, err = nil, fmt.Errorf("internal error during resolution: %v", p)
+		}
+	}()
+
 	// Resolution is a fresh start. A program that failed part-way through a
 	// binding's scope left its types on typecheck's stack, and the REPL, the
 	// language server and the diagnostics engine all resolve again in the same
@@ -711,7 +723,13 @@ func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc sc
 
 // resolveOne lowers a single ordinary (non-channel) statement.
 func (r *resolver) resolveOne(stmt *ast.Statement, cur *ir.Type) (*ir.Node, error) {
-	if stmt.Op == nil && len(stmt.Block) == 0 {
+	// No operation phrase, whatever else the statement carries. Every Build
+	// reads the phrase it was matched on, so this is checked before the lookup
+	// rather than left to a primitive to notice: `Cursed Energy:` alone matches
+	// Read Source (which reads any phrase at all) and used to hand it a nil one.
+	// An indented body does not stand in for the phrase — it is an argument to
+	// the operation, and there is no operation yet.
+	if stmt.Op == nil {
 		return nil, &ResolveError{Pos: stmt.Pos,
 			Msg: fmt.Sprintf("keyword %q has no operation", stmt.Keyword)}
 	}

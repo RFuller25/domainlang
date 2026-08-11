@@ -192,6 +192,22 @@ func truncateVis(s string, w int) string {
 	return ansi.Truncate(s, w, "…")
 }
 
+// truncateVisLeft shortens a line to w columns from the front, marking the cut
+// with a leading ellipsis. Used where the tail of the string — a binary's name,
+// not the directory it lives in — is the part worth keeping visible.
+func truncateVisLeft(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= w {
+		return s
+	}
+	if w == 1 {
+		return "…"
+	}
+	return "…" + ansi.TruncateLeft(s, ansi.StringWidth(s)-w+1, "")
+}
+
 // wrapVis breaks a message into lines of at most w columns, on word boundaries.
 func wrapVis(s string, w int) []string {
 	if w <= 0 {

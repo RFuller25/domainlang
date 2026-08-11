@@ -73,7 +73,7 @@ func (s *Server) inlayHints(params json.RawMessage) any {
 			tooltip = "the type of the value this binding holds"
 		}
 		hints = append(hints, map[string]any{
-			"position":    map[string]int{"line": h.Line - 1, "character": lineLength(doc.text, h.Line)},
+			"position":    map[string]int{"line": h.Line - 1, "character": lineEnd(doc.text, h.Line)},
 			"label":       h.Label,
 			"kind":        1, // Type
 			"paddingLeft": true,
@@ -125,22 +125,34 @@ func channelResultType(st *ast.Statement, outByLine map[int]*ir.Type) *ir.Type {
 	return last
 }
 
-// lineLength returns the length of a 1-based source line, where an end-of-line
-// hint is anchored.
-func lineLength(text string, line int) int {
+// lineText returns a 1-based source line, without its newline, or "" for a
+// line the text does not have.
+func lineText(text string, line int) string {
+	if line < 1 {
+		return ""
+	}
 	cur, start := 1, 0
 	for i := range len(text) {
 		if text[i] != '\n' {
 			continue
 		}
 		if cur == line {
-			return i - start
+			return text[start:i]
 		}
 		cur++
 		start = i + 1
 	}
 	if cur == line {
-		return len(text) - start
+		return text[start:]
 	}
-	return 0
+	return ""
+}
+
+// lineEnd is the end-of-line column an end-of-line hint anchors to, in the
+// UTF-16 code units the protocol counts — a line ending in emoji is two units
+// per character wide, so a hint placed at the rune count would sit inside the
+// line rather than after it.
+func lineEnd(text string, line int) int {
+	l := lineText(text, line)
+	return utf16Column(l, len([]rune(l))+1)
 }

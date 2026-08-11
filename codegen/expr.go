@@ -691,21 +691,19 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmModPow", declModPow)
 		return "dmModPow(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
 	case "mod":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMod", declMod)
-		return "dmMod(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		return g.modGo(args[0], args[1], x.Args[1]), ir.Int(), nil
 	case "divmod":
 		// Built inline rather than via a helper: the result is a generated
 		// tuple struct whose name is only known here.
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMod", declMod)
 		g.helper("dmDiv", declDiv)
 		pt, err := g.pointGo()
 		if err != nil {
 			return "", nil, err
 		}
 		a, b := args[0], args[1]
-		return pt + "{dmDiv(" + a + " - dmMod(" + a + ", " + b + "), " + b + "), dmMod(" + a + ", " + b + ")}",
+		mod := g.modGo(a, b, x.Args[1])
+		return pt + "{dmDiv(" + a + " - " + mod + ", " + b + "), " + mod + "}",
 			irPoint(), nil
 	case "pow":
 		// Follows the operators' promotion rule: integral unless an operand is
@@ -1630,6 +1628,20 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 	return call, ir.Bool(), true
 }
 
+// modGo emits Euclidean `a % b`, choosing between the guarded helper and the
+// unguarded one by whether the divisor can be zero. `divisor` is the source
+// expression b was compiled from; a literal is the case worth recognising,
+// because it is also the case where inlining buys the most — see declModNZ.
+func (g *gen) modGo(a, b string, divisor ast.Expr) string {
+	g.helper("dmModNZ", declModNZ)
+	if lit, ok := divisor.(*ast.IntLit); ok && lit.Value != 0 {
+		return "dmModNZ(" + a + ", " + b + ")"
+	}
+	g.helper("dmFail", declFail, "fmt", "os")
+	g.helper("dmMod", declMod)
+	return "dmMod(" + a + ", " + b + ")"
+}
+
 func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, error) {
 	// The fusion below rewrites the comparison into a different shape; an
 	// operand that writes to a binding must be compiled as written.
@@ -1700,9 +1712,7 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 		return "dmDiv(" + l + ", " + r + ")", res, nil
 	case token.PERCENT:
 		// Euclidean, and guarded — Go's % is truncated and panics on zero.
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMod", declMod)
-		return "dmMod(" + l + ", " + r + ")", ir.Int(), nil
+		return g.modGo(l, r, x.Right), ir.Int(), nil
 	case token.EQ:
 		if (isFloatType(lt) || isFloatType(rt)) && numericType(lt) && numericType(rt) {
 			if !isFloatType(lt) {

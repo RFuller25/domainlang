@@ -37,7 +37,7 @@ func intRange(lo, hi int64) ([]any, error) {
 	// math.MaxInt64) reports its size instead of overflowing to a negative
 	// count and silently building nothing.
 	n := uint64(hi) - uint64(lo)
-	if n > maxBuildable {
+	if n > uint64(buildLimit()) {
 		return nil, fmt.Errorf("range: [%d, %d) has %d elements, which is more than can be built", lo, hi, n)
 	}
 	out := make([]any, n)
@@ -73,16 +73,23 @@ func twoTexts(args []any, name string) (string, string, error) {
 // Runes, not bytes, because every other position in the language is runes —
 // padding by bytes would disagree with `length` on the very input that makes
 // padding worth doing.
-func padText(s string, width int64, pad string, left bool) string {
+func padText(s string, width int64, pad string, left bool) (string, error) {
 	if pad == "" || width <= 0 {
-		return s
+		return s, nil
 	}
 	have := int64(0)
 	for range s {
 		have++
 	}
 	if have >= width {
-		return s
+		return s, nil
+	}
+	// The width is a number in the program rather than the size of anything it
+	// was given, so it is the one input here that can ask for more than exists.
+	// Like fill and repeat it is answered with a message instead of an
+	// allocation Go would abort the process over.
+	if width-have > buildLimit() {
+		return "", fmt.Errorf("padding to %d is more than can be built", width)
 	}
 	need := int(width - have)
 	padRunes := []rune(pad)
@@ -103,7 +110,7 @@ func padText(s string, width int64, pad string, left bool) string {
 		b.WriteString(s)
 		b.WriteString(filled)
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // classify implements isdigit/isalpha/isupper/islower over a whole Text.
@@ -357,6 +364,14 @@ func isPrime(n int64) bool {
 func divisorsOf(n int64) ([]any, error) {
 	if n <= 0 {
 		return nil, fmt.Errorf("divisors: needs a positive number, got %d", n)
+	}
+	// The pass is √n long, which for a 19-digit Int is three billion steps: the
+	// one builtin whose cost is a number in the program rather than the size of
+	// a value. Written as a division so the comparison cannot overflow, this is
+	// the same budget the builders spend — unreachable at run time, and what
+	// stops a fold from stalling an editor mid-line.
+	if n/buildLimit() >= buildLimit() {
+		return nil, fmt.Errorf("divisors: %d is too large to factor here", n)
 	}
 	var small, large []int64
 	for d := int64(1); d <= n/d; d++ {

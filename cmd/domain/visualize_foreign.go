@@ -64,7 +64,7 @@ func (m *visualModel) foreignLines(w int) []string {
 		// the run failed earlier, or the capture bound was hit.
 		out = append(out, styDim.Render("  this stage did not run in the recording"), "")
 	} else {
-		out = append(out, field("ran", styValue.Render(truncateVis(shortCommand(exec.Run.Command), w-8))))
+		out = append(out, field("ran", styValue.Render(truncateVisLeft(shortCommand(exec.Run.Command), w-8))))
 		took := interp.FormatDuration(exec.Run.Dur)
 		if exec.Count > 1 {
 			// A block inside a Map Each body runs once per element, so the

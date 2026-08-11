@@ -292,6 +292,34 @@ var variadicArity = map[string][2]int{
 	"insert": {2, 3}, "record": {2, -1},
 }
 
+// CheckArity reports whether the builtin name accepts n arguments, wording the
+// error the one way both layers say it. The evaluator asks too: it indexes
+// args[0], args[1], … positionally, and it is not always reached through the
+// type checker — constant folding (prims.foldLiteral) evaluates an expression
+// *before* it is typed, so a miscounted call would panic there rather than be
+// reported. An unknown name is not this function's business (each caller words
+// that differently), so it passes.
+func CheckArity(name string, n int) error {
+	want, known := builtinArity[name]
+	if !known {
+		return nil
+	}
+	if want == -1 {
+		rng := variadicArity[name]
+		if n < rng[0] || (rng[1] != -1 && n > rng[1]) {
+			if rng[1] == -1 {
+				return fmt.Errorf("%s takes at least %d argument(s), got %d", name, rng[0], n)
+			}
+			return fmt.Errorf("%s takes %d or %d argument(s), got %d", name, rng[0], rng[1], n)
+		}
+		return nil
+	}
+	if n != want {
+		return fmt.Errorf("%s takes %d argument(s), got %d", name, want, n)
+	}
+	return nil
+}
+
 // callType types a builtin call. Several builtins are polymorphic in the
 // list element type, so the rules pattern-match on the argument types.
 func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
@@ -301,23 +329,12 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	}
 	name := id.Name
 
-	want, known := builtinArity[name]
-	if !known {
+	if _, known := builtinArity[name]; !known {
 		return nil, fmt.Errorf("%s: unknown function %q (builtins: %s)",
 			x.Pos, name, strings.Join(Builtins, ", "))
 	}
-	if want == -1 {
-		rng := variadicArity[name]
-		if len(x.Args) < rng[0] || (rng[1] != -1 && len(x.Args) > rng[1]) {
-			if rng[1] == -1 {
-				return nil, fmt.Errorf("%s: %s takes at least %d argument(s), got %d",
-					x.Pos, name, rng[0], len(x.Args))
-			}
-			return nil, fmt.Errorf("%s: %s takes %d or %d argument(s), got %d",
-				x.Pos, name, rng[0], rng[1], len(x.Args))
-		}
-	} else if len(x.Args) != want {
-		return nil, fmt.Errorf("%s: %s takes %d argument(s), got %d", x.Pos, name, want, len(x.Args))
+	if err := CheckArity(name, len(x.Args)); err != nil {
+		return nil, fmt.Errorf("%s: %v", x.Pos, err)
 	}
 	args := make([]*ir.Type, len(x.Args))
 	for i, a := range x.Args {

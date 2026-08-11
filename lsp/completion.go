@@ -127,6 +127,31 @@ func linePrefix(text string, line, char int) string {
 	return l[:utf16OffsetToBytes(l, char)]
 }
 
+// utf16Column is the other direction, and the one every position the server
+// *sends* has to go through: the lexer counts a column once per rune, and the
+// protocol counts UTF-16 code units. Those agree until a character outside the
+// BMP — an emoji, most of them — which is one rune but two units, so a
+// diagnostic after one lands a column short for each, and a line of them ends
+// well left of where it should.
+//
+// col is 1-based, as token positions are; the result is the 0-based offset the
+// protocol wants, clamped to the line — a position can come from an analysis
+// of a source the editor has since changed.
+func utf16Column(line string, col int) int {
+	if col <= 1 {
+		return 0
+	}
+	units, seen := 0, 0
+	for _, r := range line {
+		if seen >= col-1 {
+			return units
+		}
+		units += utf16.RuneLen(r)
+		seen++
+	}
+	return units
+}
+
 // utf16OffsetToBytes converts an LSP UTF-16 code-unit offset into a byte
 // offset into the UTF-8 string s, clamped to [0, len(s)] and never landing
 // inside a multi-byte rune. Runes outside the BMP count as two UTF-16 units

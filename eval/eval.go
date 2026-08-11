@@ -198,6 +198,14 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		return nil, fmt.Errorf("%s: only builtin functions can be called", x.Pos)
 	}
 	name := id.Name
+	// Every case below reads its arguments by position, so the count has to be
+	// right before any of them runs. The type checker enforces the same rule,
+	// but it is not always what got here first: constant folding evaluates an
+	// expression while the program is still being lowered, ahead of any typing,
+	// and an editor asks for that on every keystroke of a half-written call.
+	if err := typecheck.CheckArity(name, len(x.Args)); err != nil {
+		return nil, fmt.Errorf("%s: %v", x.Pos, err)
+	}
 	args := make([]ir.Value, len(x.Args))
 	for i, a := range x.Args {
 		v, err := evalExpr(a, env, types)
@@ -1435,7 +1443,7 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if n <= 0 {
 			return []ir.Value{}, nil
 		}
-		if n > maxBuildable {
+		if n > buildLimit() {
 			return fail("fill: %d elements is more than can be built", n)
 		}
 		out := make([]ir.Value, n)
@@ -1488,7 +1496,7 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if n <= 0 || s == "" {
 			return "", nil
 		}
-		if n > maxBuildable/int64(len(s)) {
+		if n > buildLimit()/int64(len(s)) {
 			return fail("repeat: %d copies of a %d-byte text is more than can be built", n, len(s))
 		}
 		return strings.Repeat(s, int(n)), nil
@@ -1505,7 +1513,11 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if !ok {
 			return fail("%s: pad must be Text, got %s", name, ir.DescribeValue(args[2]))
 		}
-		return padText(s, width, padding, name == "padleft"), nil
+		out, err := padText(s, width, padding, name == "padleft")
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		return out, nil
 	case "trimprefix", "trimsuffix":
 		s, p, err := twoTexts(args, name)
 		if err != nil {

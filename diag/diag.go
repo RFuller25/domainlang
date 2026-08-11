@@ -111,19 +111,26 @@ func Render(d *Diagnostic, path string, color bool) string {
 // underlineWidth picks how many carets to draw: the explicit range when the
 // diagnostic set one, else the length of the word starting at the position,
 // clamped to the line.
+//
+// Everything here counts in runes, because that is what a column is: the lexer
+// advances the column once per rune and never on a UTF-8 continuation byte, and
+// EndCol comes from the same counting. Measuring the word in bytes instead —
+// and, worse, indexing the line by a rune column to find it — read the wrong
+// text entirely on any line with a multi-byte character before the position,
+// and underlined one caret where a whole word was meant.
 func underlineWidth(d *Diagnostic) int {
-	limit := len(d.LineText) - (d.Pos.Col - 1)
-	if limit < 1 {
+	line := []rune(d.LineText)
+	start := d.Pos.Col - 1
+	limit := len(line) - start
+	if limit < 1 || start < 0 {
 		return 1
 	}
-	var w int
 	if d.EndCol > d.Pos.Col {
-		w = d.EndCol - d.Pos.Col
-	} else {
-		rest := d.LineText[d.Pos.Col-1:]
-		w = max(len(rest)-len(strings.TrimLeft(rest, wordChars(rest))), 1)
+		return min(d.EndCol-d.Pos.Col, limit)
 	}
-	return min(w, limit)
+	rest := string(line[start:])
+	word := len(rest) - len(strings.TrimLeft(rest, wordChars(rest)))
+	return min(max(len([]rune(rest[:word])), 1), limit)
 }
 
 // wordChars returns the cutset that extends the underlined word: identifier

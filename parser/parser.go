@@ -69,10 +69,38 @@ var singleWordThemed = map[string]bool{
 }
 
 type parser struct {
-	src  string
-	toks []token.Token
-	pos  int
+	src   string
+	toks  []token.Token
+	pos   int
+	depth int // live recursion depth; see enter
 }
+
+// maxNestDepth bounds how deeply expressions, blocks and types may nest. Every
+// later stage walks the tree this parser builds — the resolver, the type
+// checker, the evaluator, the formatter, the linter, the code generator — and
+// each of them recurses, so the tree's depth is the depth of every one of those
+// walks. Go grows a goroutine stack until it hits a limit and then kills the
+// process outright, which no recover() catches: a language server folding a
+// pasted machine-generated line would simply die. Bounding the tree at the one
+// place that builds it is what keeps that from being reachable at all.
+//
+// Programs people write nest a handful of levels; the limit is two orders of
+// magnitude past that, so it is only ever met by generated text.
+const maxNestDepth = 500
+
+// enter takes one level of recursion, refusing to go deeper than maxNestDepth.
+// It only counts a level it granted, so the parser's error recovery
+// (synchronize, up to maxParseErrors) cannot leak depth and start rejecting
+// well-formed statements later in the file.
+func (p *parser) enter() error {
+	if p.depth >= maxNestDepth {
+		return p.errf("this nests more than %d levels deep, which is deeper than Domain reads", maxNestDepth)
+	}
+	p.depth++
+	return nil
+}
+
+func (p *parser) leave() { p.depth-- }
 
 // Parse parses a whole program. src is the original source text, used to
 // recover exact operation-phrase text.
@@ -609,6 +637,13 @@ func (p *parser) parsePhrase() (*ast.Operation, error) {
 // contain both (e.g. `Simple Domain: While` carries a Using: predicate and a
 // body sub-pipeline); the resolver validates the combination per keyword.
 func (p *parser) parseBlock(stmt *ast.Statement) error {
+	// A block holds statements that may open blocks of their own, so this is
+	// the statement half of the nesting bound (see maxNestDepth).
+	if err := p.enter(); err != nil {
+		return err
+	}
+	defer p.leave()
+
 	if _, err := p.expect(token.INDENT); err != nil {
 		return err
 	}

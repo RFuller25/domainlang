@@ -53,10 +53,29 @@ const maxRepairRounds = 30
 // Analyze runs the intelligent front end over src. The user's file is never
 // written; fixes are applied only to the in-memory working copy so that the
 // analysis can see past each repaired error to the next one.
-func Analyze(path, src string) *Report {
-	r := &Report{Path: path, Src: src, FixedSrc: src}
+func Analyze(path, src string) (r *Report) {
+	r = &Report{Path: path, Src: src, FixedSrc: src}
 	working := src
 	seen := map[string]bool{}
+
+	// An editor re-analyzes on every keystroke, so it sees every half-written
+	// program there is — and a bug in the front end must cost one analysis, not
+	// the session. interp.Run makes the same bargain for the runtime: a panic
+	// becomes an ordinary error, reported where errors are already read. The
+	// text says "internal error" because it is one; a program cannot provoke a
+	// panic that is anything else.
+	defer func() {
+		if p := recover(); p != nil {
+			r.Diags = append(r.Diags, Diagnostic{
+				Severity: Error,
+				Code:     "internal",
+				Pos:      token.Position{Line: 1, Col: 1},
+				Msg:      fmt.Sprintf("internal error while analyzing this program: %v", p),
+				Help:     "this is a bug in Domain, not in the program — the rest of the file was not checked",
+			})
+			sortDiags(r.Diags)
+		}
+	}()
 
 	for range maxRepairRounds {
 		stage, prog, pipe := frontEnd(path, working)
@@ -82,8 +101,20 @@ func Analyze(path, src string) *Report {
 		if len(fixes) == 0 {
 			break // nothing more we can see past
 		}
-		working = applyFixes(working, fixes)
-		r.Applied += len(fixes)
+		// A round that changes nothing would produce the same diagnostics, the
+		// same fixes and the same nothing on the next pass, all the way to
+		// maxRepairRounds. A fix can land on no text at all — one that replaces
+		// a span with what it already said, one dropped for overlapping an
+		// earlier splice — so "there were fixes" is not the same as "the source
+		// moved", and it is the source moving that makes another round worth
+		// running. This is what makes the round cap the safety net it is
+		// documented to be rather than the usual number of rounds.
+		next, applied := applyFixes(working, fixes)
+		if applied == 0 {
+			break
+		}
+		working = next
+		r.Applied += applied
 	}
 
 	r.FixedSrc = working
@@ -121,19 +152,29 @@ func frontEnd(path, src string) ([]Diagnostic, *ast.Program, *ir.Pipeline) {
 }
 
 // applyFixes splices the replacements into src, right to left so earlier
-// offsets stay valid; overlapping fixes are dropped after the first.
-func applyFixes(src string, fixes []Fix) string {
+// offsets stay valid; overlapping fixes are dropped after the first. It returns
+// the new source and how many fixes actually changed it — which is what the
+// analyzer counts and reports, because a fix that was dropped, or one whose
+// replacement is the text already there, repaired nothing and saying otherwise
+// would put a number on the editor's "apply N automatic fixes" that the edit
+// does not contain.
+func applyFixes(src string, fixes []Fix) (string, int) {
 	// Sort by start descending.
 	sort.Slice(fixes, func(i, j int) bool { return fixes[i].Start > fixes[j].Start })
 	prevStart := len(src) + 1
+	applied := 0
 	for _, f := range fixes {
 		if f.Start < 0 || f.End > len(src) || f.End < f.Start || f.End > prevStart {
 			continue // out of bounds or overlapping the previous splice
 		}
+		if src[f.Start:f.End] == f.Replacement {
+			continue // already says what the fix would make it say
+		}
 		src = src[:f.Start] + f.Replacement + src[f.End:]
 		prevStart = f.Start
+		applied++
 	}
-	return src
+	return src, applied
 }
 
 // ---------------------------------------------------------------------------
@@ -267,8 +308,19 @@ func enrichDedent(d *Diagnostic, src string) {
 	d.Notes = append(d.Notes, fmt.Sprintf(
 		"this line is indented %d space(s); enclosing blocks sit at %v", got, widths))
 	// Nearest enclosing width strictly informs the fix; unique nearest → confident.
+	//
+	// The line's own width is not a candidate, even when it appears in the list.
+	// indentWidthsAbove is an approximation of the lexer's indent stack — it
+	// collects every width seen above, including blocks that have since closed —
+	// so it can report the width the lexer just rejected. Aligning a line to
+	// where it already is repairs nothing, and offering it as a confident fix
+	// used to send the analyzer around its repair loop until the round cap
+	// stopped it, re-lexing the same unchanged source thirty times.
 	best, bestDist, ties := -1, 1<<30, 0
 	for _, w := range widths {
+		if w == got {
+			continue
+		}
 		dist := max(got-w, w-got)
 		if dist < bestDist {
 			best, bestDist, ties = w, dist, 1

@@ -24,6 +24,13 @@ import (
 // signature's arrow, where that arrow belongs to the signature itself: in
 // `: (Int, Int) -> Int` the input is the tuple, not a lambda.
 func (p *parser) parseTypeExpr(allowLambda bool) (*ast.TypeExpr, error) {
+	// `List<List<List<…>>>` nests like an expression does, and lowerTypeExpr
+	// and TypeString walk it just as recursively (see maxNestDepth).
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
+
 	pos := p.cur().Pos
 
 	if p.cur().Kind == token.LPAREN {

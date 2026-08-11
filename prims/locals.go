@@ -336,7 +336,11 @@ func foldLiteral(e ast.Expr) (ast.Expr, bool) {
 	if ast.HasUpdate(e) {
 		return nil, false
 	}
-	v, err := eval.EvalExpr(e, nil)
+	// EvalConst rather than EvalExpr: a fold runs in the resolver, which runs in
+	// an editor on every keystroke, so it is budgeted (eval/fold.go). Over the
+	// budget the expression does not fold and is computed once at run time
+	// instead — the same answer, arrived at where there is time to arrive at it.
+	v, err := eval.EvalConst(e)
 	if err != nil {
 		return nil, false
 	}

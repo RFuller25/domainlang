@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"domain/ast"
@@ -106,6 +107,10 @@ type request struct {
 	Params json.RawMessage `json:"params,omitempty"`
 }
 
+// maxFrameBytes bounds one JSON-RPC message. 64 MiB is far past any source
+// file an editor holds open and far below a length that could exhaust memory.
+const maxFrameBytes = 64 << 20
+
 func (s *Server) read() ([]byte, error) {
 	length := -1
 	for {
@@ -125,6 +130,15 @@ func (s *Server) read() ([]byte, error) {
 	}
 	if length < 0 {
 		return nil, errors.New("missing Content-Length header")
+	}
+	// The header is a number from outside that decides an allocation, which is
+	// the one shape of input that can end the process before any of this code
+	// runs again: Go aborts on an allocation it cannot serve, and no recover
+	// sees it. A frame this large is a desynchronized stream or a broken
+	// client, never a document — the largest file anyone edits is orders of
+	// magnitude below it — so it is refused rather than reserved.
+	if length > maxFrameBytes {
+		return nil, fmt.Errorf("message of %d bytes is larger than the %d-byte limit", length, maxFrameBytes)
 	}
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(s.in, buf); err != nil {
@@ -162,7 +176,22 @@ func (s *Server) notify(method string, params any) {
 // dispatch
 // ---------------------------------------------------------------------------
 
+// dispatch handles one message. A panic anywhere below it ends the request,
+// not the session: the client's own recovery is to restart the server, and a
+// few restarts in a row make it give up and leave the editor with no language
+// support at all. So the request answers (a null result keeps the client from
+// waiting on a reply that will never come), the crash goes to the log where it
+// can be reported, and the next keystroke is served.
 func (s *Server) dispatch(req *request) {
+	defer func() {
+		if p := recover(); p != nil {
+			s.logf("lsp: internal error handling %s: %v\n%s", req.Method, p, debug.Stack())
+			if len(req.ID) > 0 {
+				s.reply(req.ID, nil)
+			}
+		}
+	}()
+
 	switch req.Method {
 	case "initialize":
 		s.reply(req.ID, map[string]any{
@@ -264,7 +293,7 @@ func (s *Server) publishDiagnostics(uri string) {
 			msg += " — " + d.Help
 		}
 		out = append(out, map[string]any{
-			"range":    diagRange(d),
+			"range":    diagRange(d, doc.text),
 			"severity": lspSeverity(d.Severity),
 			"code":     d.Code,
 			"source":   "domain",
@@ -285,12 +314,21 @@ func lspSeverity(sev diag.Severity) int {
 	}
 }
 
-func diagRange(d *diag.Diagnostic) map[string]any {
+// diagRange places a diagnostic in the document the editor is holding. The
+// analyzer counts columns in runes; the protocol counts UTF-16 code units, so
+// both ends are converted against the line they land on.
+//
+// Converting against the *live* line also keeps the range inside the document
+// when the two sources are not quite the same text: a diagnostic found after a
+// repair round is positioned in the repaired copy, which can be a few
+// characters longer than what the user typed.
+func diagRange(d *diag.Diagnostic, text string) map[string]any {
 	line := max(d.Pos.Line-1, 0)
-	col := max(d.Pos.Col-1, 0)
+	src := lineText(text, line+1)
+	col := max(d.Pos.Col, 1)
 	return map[string]any{
-		"start": map[string]int{"line": line, "character": col},
-		"end":   map[string]int{"line": line, "character": col + d.Width()},
+		"start": map[string]int{"line": line, "character": utf16Column(src, col)},
+		"end":   map[string]int{"line": line, "character": utf16Column(src, col+d.Width())},
 	}
 }
 
@@ -412,11 +450,28 @@ func (s *Server) definition(params json.RawMessage) any {
 		// nowhere on disk to send the editor.
 		return nil
 	}
+	// The column is converted against the text the definition lives in, which
+	// is this document unless the definition came from a library — and then it
+	// is that file, read the way importedDef already reads it. A file that
+	// cannot be read still gets a location, at the start of the line: sending
+	// the editor to the right line of the right file is the point, and a column
+	// counted in the wrong units is worse than none.
+	text := doc.text
+	if loc.Path != "" {
+		if b, err := os.ReadFile(loc.Path); err == nil {
+			text = string(b)
+		} else {
+			text = ""
+		}
+	}
 	uri := p.TextDocument.URI
 	if loc.Path != "" {
 		uri = "file://" + loc.Path
 	}
-	pos := map[string]int{"line": loc.Pos.Line - 1, "character": loc.Pos.Col - 1}
+	pos := map[string]int{
+		"line":      loc.Pos.Line - 1,
+		"character": utf16Column(lineText(text, loc.Pos.Line), loc.Pos.Col),
+	}
 	return map[string]any{
 		"uri":   uri,
 		"range": map[string]any{"start": pos, "end": pos},
@@ -476,10 +531,15 @@ func (s *Server) codeActions(params json.RawMessage) any {
 	}
 	// One whole-document edit: the multi-round fixes in FixedSrc are only
 	// guaranteed consistent as a set, so they are offered as a set.
-	lines := strings.Count(doc.text, "\n") + 1
+	//
+	// The end is the position after the document's last character — the line
+	// index is the newline count, since a file ending in a newline has one more
+	// (empty) line after it. Naming a line past that one leaves the edit
+	// depending on the client to clamp it back into range.
+	last := strings.Count(doc.text, "\n")
 	fullRange := map[string]any{
 		"start": map[string]int{"line": 0, "character": 0},
-		"end":   map[string]int{"line": lines, "character": 0},
+		"end":   map[string]int{"line": last, "character": lineEnd(doc.text, last+1)},
 	}
 	return []any{map[string]any{
 		"title": fmt.Sprintf("Domain: apply %d automatic fix(es)", rep.Applied),

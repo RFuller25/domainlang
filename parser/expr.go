@@ -98,6 +98,17 @@ func (p *parser) parseExpr(minBP int) (ast.Expr, error) {
 		if bp == bpNone || bp < minBP {
 			break
 		}
+		// `a + b + c + …` is left-associative, so each operator hangs the whole
+		// expression so far off the left of a new node: the loop is flat but the
+		// tree it builds is not, and it is the tree every later walk recurses
+		// over. So a chain costs the same depth a nest does. The levels are
+		// released when this expression is finished and handed back, which is
+		// what keeps sibling chains from adding up.
+		if err := p.enter(); err != nil {
+			return nil, err
+		}
+		defer p.leave()
+
 		opPos := p.cur().Pos
 		p.advance() // consume the operator (or the and/or IDENT)
 		if opKind == token.ASSIGN {
@@ -124,6 +135,14 @@ func (p *parser) parseExpr(minBP int) (ast.Expr, error) {
 }
 
 func (p *parser) parseUnary() (ast.Expr, error) {
+	// Every nested expression — a parenthesis, a call argument, an operand —
+	// reaches its operand through here, so this is where expression nesting is
+	// counted (see maxNestDepth).
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
+
 	// `ikke` is prefix negation. Like `and`/`or` it arrives as an IDENT and is
 	// rewritten here, so it stays a legal identifier anywhere else. Its operand
 	// is parsed at bpNot, which pulls in a whole comparison (`ikke a = b`) but
@@ -167,7 +186,18 @@ func (p *parser) parsePostfix() (ast.Expr, error) {
 		return nil, err
 	}
 	for {
-		switch p.cur().Kind {
+		k := p.cur().Kind
+		if k != token.DOT && k != token.LPAREN {
+			return expr, nil
+		}
+		// `a.b.c…` and `f(x)(y)…` chain to the left the same way an operator
+		// chain does, so they are counted the same way.
+		if err := p.enter(); err != nil {
+			return nil, err
+		}
+		defer p.leave()
+
+		switch k {
 		case token.DOT:
 			dot := p.advance()
 			field, err := p.expect(token.IDENT)
@@ -200,8 +230,6 @@ func (p *parser) parsePostfix() (ast.Expr, error) {
 				return nil, err
 			}
 			expr = &ast.CallExpr{Fn: expr, Args: args, Pos: lp.Pos}
-		default:
-			return expr, nil
 		}
 	}
 }

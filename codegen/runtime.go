@@ -698,17 +698,31 @@ const declAbs = `func dmAbs[T int64 | float64](n T) T {
 	return n
 }`
 
-// dmMod mirrors eval.euclidMod exactly, including the failure wording: the
-// result is non-negative for a positive modulus whatever the sign of a.
-const declMod = `func dmMod(a, b int64) int64 {
-	if b == 0 {
-		dmFail("mod by zero")
-	}
+// dmModNZ mirrors eval.euclidMod for a divisor already known not to be zero:
+// the result is non-negative for a positive modulus whatever the sign of a.
+//
+// It is split out from dmMod because of its size. Go inlines a function whose
+// body costs at most 80 points; the guard below is a call, and a call alone is
+// 57, which puts the guarded version out of reach. That costs more than the
+// call it leaves behind: a modulus the caller wrote as a constant is invisible
+// inside a function that is never inlined, so the compiler emits a hardware
+// divide every lap where it could have emitted a multiply. Unguarded, this
+// costs 22 and folds into its caller.
+const declModNZ = `func dmModNZ(a, b int64) int64 {
 	r := a % b
 	if r != 0 && (r < 0) != (b < 0) {
 		r += b
 	}
 	return r
+}`
+
+// dmMod is dmModNZ with the guard eval performs, including its failure
+// wording. Emitted where the divisor is not a literal, so zero is possible.
+const declMod = `func dmMod(a, b int64) int64 {
+	if b == 0 {
+		dmFail("mod by zero")
+	}
+	return dmModNZ(a, b)
 }`
 
 const declPow = `func dmPow(b, e int64) int64 {
