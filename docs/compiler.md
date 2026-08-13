@@ -7,10 +7,11 @@ to the `codegen` package, which emits one fully typed, self-contained Go
 `go build -trimpath -ldflags "-s -w"` (CGO disabled). The result is a
 static binary around 1.5 MB that needs nothing at runtime.
 
-The one exception is a [foreign block](primitives.md#foreign-block--t---text-or-a-declared-in---out). Its
+The one exception is a [foreign block](ref-expansions.md#foreign-block--t---text-or-a-declared-in---out). Its
 source is embedded as a string constant and run as a subprocess exactly as the
 interpreter runs it, so a binary containing one needs that language's runtime
-— `python3`, the Go toolchain, `rask`, `crust` — on the machine it runs on.
+— `python3`, the Go toolchain, `rask`, `crust`, `weave` — on the machine it
+runs on.
 Everything else about the binary is unchanged, including the parity oracle:
 the compiled program's stdout matches the interpreter's byte for byte.
 
@@ -188,14 +189,17 @@ differences remain:
   that used to be — a `:=` from inside a pipeline body, and two Record types
   declaring the same fields in different orders — are closed; the survey that
   found them, and what it ruled out, is
-  [compiler-parity-plan.md](compiler-parity-plan.md).
-- `While` / `Iterate Until Fixed Point` are **unbounded** in a compiled
-  binary, matching the interpreter: `dmMaxLoopIterations` mirrors
-  `prims.maxLoopIterations`, and both default to zero (no counter is emitted
-  at all). A non-terminating loop therefore spins in a binary exactly as it
-  does under the interpreter. The interpreter's bound is a `var` a test can
-  lower; the compiled one is a build-time constant, so a binary cannot be
-  asked for a ceiling after the fact.
+  this page's guarantees section.
+- `While` / `Iterate Until Fixed Point` / `Unfold` stop after **1,000,000,000**
+  iterations in a compiled binary, matching the interpreter:
+  `dmMaxLoopIterations` mirrors `prims.maxLoopIterations`, and
+  `maxUnfoldElements` is defined as the former so the three cannot drift. They
+  did drift once — the compiled `Unfold` bound stayed at 1,000,000 after the
+  loop ceiling was lifted, so a 40,000,000-element unfold ran interpreted and
+  died compiled, which is exactly the divergence this section exists to deny.
+  The interpreter's bound is a `var` a test can lower; the compiled one is a
+  build-time constant, so a binary cannot be asked for a ceiling after the
+  fact.
 - A primitive added to the language without a codegen case fails
   `domain build` with a positioned error naming it and pointing back at
   `domain run`.

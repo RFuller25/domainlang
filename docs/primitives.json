@@ -4,594 +4,679 @@
     "keyword": "Cursed Energy",
     "signature": "(nothing) → Text",
     "summary": "Reads the named file (falling back to stdin when it is absent); must be the first stage.",
-    "anchor": "read-source"
+    "anchor": "read-source",
+    "page": "ref-sources.md"
   },
   {
     "id": "Reverse",
     "keyword": "Reverse Cursed Technique",
     "signature": "List\u003cT\u003e → List\u003cT\u003e",
     "summary": "Reverses element order.",
-    "anchor": "reverse"
+    "anchor": "reverse",
+    "page": "ref-structure.md"
   },
   {
     "id": "Apply",
     "keyword": "Cursed Technique",
     "signature": "T × (T → U) → U",
     "summary": "The scalar analogue of Map Each: transforms the whole current value.",
-    "anchor": "apply"
+    "anchor": "apply",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Chunk",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e → List\u003cList\u003cT\u003e\u003e",
     "summary": "Consecutive blocks of a fixed or measured size, keeping a short final block.",
-    "anchor": "chunk"
+    "anchor": "chunk",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Drop While",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → List\u003cT\u003e",
     "summary": "Everything from the first element that fails the predicate onward.",
-    "anchor": "take-while--drop-while"
+    "anchor": "take-while--drop-while",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Enumerate",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e → List\u003c(Int, T)\u003e",
     "summary": "Pairs every element with its 0-based index.",
-    "anchor": "enumerate"
+    "anchor": "enumerate",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Extract Integers",
     "keyword": "Cursed Technique",
     "signature": "Text → List\u003cInt\u003e | List\u003cText\u003e → List\u003cList\u003cInt\u003e\u003e",
     "summary": "Mines every integer out of messy text — the AoC parse-ints workhorse.",
-    "anchor": "extract-integers"
+    "anchor": "extract-integers",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Filter",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → List\u003cT\u003e",
     "summary": "Keeps the elements for which the Using: predicate is true.",
-    "anchor": "filter"
+    "anchor": "filter",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Filter Entries",
     "keyword": "Cursed Technique",
     "signature": "Map\u003cK,V\u003e × ((K, V) → Bool) → Map\u003cK,V\u003e",
     "summary": "Keeps the entries whose key and value satisfy the predicate.",
-    "anchor": "filter-entries"
+    "anchor": "filter-entries",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Find Cells",
     "keyword": "Cursed Technique",
     "signature": "Grid\u003cT\u003e | Sparse\u003cT\u003e × (T → Bool) → List\u003c(Int, Int)\u003e",
     "summary": "The (row, col) positions of every cell satisfying the predicate, row-major.",
-    "anchor": "find-cells"
+    "anchor": "find-cells",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Flatten",
     "keyword": "Cursed Technique",
     "signature": "List\u003cList\u003cT\u003e\u003e → List\u003cT\u003e",
     "summary": "Concatenates the groups in order.",
-    "anchor": "flatten"
+    "anchor": "flatten",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Flip Grid",
     "keyword": "Cursed Technique",
     "signature": "Grid\u003cT\u003e → Grid\u003cT\u003e",
     "summary": "Mirrors left-right or top-bottom (Mode: Horizontal | Vertical).",
-    "anchor": "flip-grid"
+    "anchor": "flip-grid",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Iterate",
     "keyword": "Cursed Technique",
     "signature": "T × (T → T) → List\u003cT\u003e",
     "summary": "The value after each of n applications of the step lambda.",
-    "anchor": "iterate"
+    "anchor": "iterate",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Map Cells",
     "keyword": "Cursed Technique",
     "signature": "Grid\u003cT\u003e × (T → U) → Grid\u003cU\u003e",
     "summary": "Transforms every grid cell; a 3-parameter lambda binds (grid, row, col).",
-    "anchor": "map-cells"
+    "anchor": "map-cells",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Map Each",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e × (T → U) → List\u003cU\u003e",
     "summary": "Applies the Using: lambda to every element.",
-    "anchor": "map-each"
+    "anchor": "map-each",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Map Values",
     "keyword": "Cursed Technique",
     "signature": "Map\u003cK,V\u003e × (V → W) → Map\u003cK,W\u003e",
     "summary": "Transforms every value, keys and order unchanged — the reduce half of a Group By.",
-    "anchor": "map-values"
+    "anchor": "map-values",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Match Pattern",
     "keyword": "Cursed Technique",
     "signature": "Text → V | List\u003cText\u003e → List\u003cV\u003e",
     "summary": "Parses each line against a typed-hole template into a Record, Tuple, or List.",
-    "anchor": "match-pattern"
+    "anchor": "match-pattern",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Pad Grid",
     "keyword": "Cursed Technique",
     "signature": "Grid\u003cT\u003e → Grid\u003cT\u003e",
     "summary": "Adds a border of Fill: cells — the standard move before a flood fill.",
-    "anchor": "pad-grid"
+    "anchor": "pad-grid",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Pairs",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e → List\u003c(T, T)\u003e",
     "summary": "Every element tupled with the one after it (n elements give n-1 pairs).",
-    "anchor": "pairs"
+    "anchor": "pairs",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Partition",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → List\u003cList\u003cT\u003e\u003e",
     "summary": "One pass splitting into [matching, non-matching]; Take Item 0/1 picks a half.",
-    "anchor": "partition"
+    "anchor": "partition",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Ragged Columns",
     "keyword": "Cursed Technique",
     "signature": "List\u003cText\u003e → List\u003cList\u003cText\u003e\u003e",
     "summary": "The character columns of a block of lines, tolerating ragged line lengths.",
-    "anchor": "ragged-columns"
+    "anchor": "ragged-columns",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Range",
     "keyword": "Cursed Technique",
     "signature": "→ List\u003cInt\u003e",
     "summary": "The half-open integer range [lo, hi), matching range(N) in a For header.",
-    "anchor": "range"
+    "anchor": "range",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Rotate Grid",
     "keyword": "Cursed Technique",
     "signature": "Grid\u003cT\u003e → Grid\u003cT\u003e",
     "summary": "Quarter or half turn (Mode: Right | Left | Half).",
-    "anchor": "rotate-grid"
+    "anchor": "rotate-grid",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Scan",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e × Seed? × (Acc, T → Acc) → List\u003cAcc\u003e",
     "summary": "The running fold: one accumulator per element. Without a Seed: the first element starts it.",
-    "anchor": "scan"
+    "anchor": "scan",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Split",
     "keyword": "Cursed Technique",
     "signature": "Text → List\u003cText\u003e",
     "summary": "Splits text on a required separator string (an empty separator splits into characters).",
-    "anchor": "split"
+    "anchor": "split",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Split Each",
     "keyword": "Cursed Technique",
     "signature": "List\u003cText\u003e → List\u003cList\u003cText\u003e\u003e",
     "summary": "Split applied to every element of a list.",
-    "anchor": "split-each"
+    "anchor": "split-each",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Split Fields",
     "keyword": "Cursed Technique",
     "signature": "Text → List\u003cText\u003e | List\u003cText\u003e → List\u003cList\u003cText\u003e\u003e",
     "summary": "Splits on runs of whitespace, discarding empty fields — the classic fields() helper.",
-    "anchor": "split-fields"
+    "anchor": "split-fields",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Subgrid",
     "keyword": "Cursed Technique",
     "signature": "Grid\u003cT\u003e → Grid\u003cT\u003e",
     "summary": "A rectangular crop: Subgrid ROW COL HEIGHT WIDTH. Out of bounds is an error, not a clamp.",
-    "anchor": "subgrid"
+    "anchor": "subgrid",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Take Item",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e → T",
     "summary": "Picks the element at a 0-based index (out of range is a runtime error).",
-    "anchor": "take-item"
+    "anchor": "take-item",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Take While",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → List\u003cT\u003e",
     "summary": "The longest leading run whose elements all satisfy the predicate.",
-    "anchor": "take-while--drop-while"
+    "anchor": "take-while--drop-while",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Transpose",
     "keyword": "Cursed Technique",
     "signature": "Grid\u003cT\u003e → Grid\u003cT\u003e | List\u003cList\u003cT\u003e\u003e → List\u003cList\u003cT\u003e\u003e",
     "summary": "Swaps rows and columns; a ragged list of rows is an error.",
-    "anchor": "transpose"
+    "anchor": "transpose",
+    "page": "ref-transforms-grid.md"
   },
   {
     "id": "Unfold",
     "keyword": "Cursed Technique",
     "signature": "T × (T → Bool) × (T → T) → List\u003cT\u003e",
     "summary": "The dual of Fold: grows a value into a list while the While: predicate holds.",
-    "anchor": "unfold"
+    "anchor": "unfold",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Unique",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e → List\u003cT\u003e",
     "summary": "Order-preserving deduplication (first occurrence wins); T must be keyable.",
-    "anchor": "unique"
+    "anchor": "unique",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Window",
     "keyword": "Cursed Technique",
     "signature": "List\u003cT\u003e → List\u003cList\u003cT\u003e\u003e",
     "summary": "Fully-contained sliding windows of a fixed size or a measured Size:/Step: (with an optional step).",
-    "anchor": "window"
+    "anchor": "window",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Convert To Entries",
     "keyword": "Channeled Energy",
     "signature": "Map\u003cK,V\u003e → List\u003c(K, V)\u003e",
     "summary": "Drops a Map back into the list vocabulary, in insertion order — how a Count By reaches Sort By.",
-    "anchor": "convert-to-entries"
+    "anchor": "convert-to-entries",
+    "page": "ref-coercions.md"
   },
   {
     "id": "Convert To Floats",
     "keyword": "Channeled Energy",
     "signature": "List\u003cText|Int\u003e → List\u003cFloat\u003e",
     "summary": "Parses or widens each field to a Float (form chosen by input type).",
-    "anchor": "convert-to-floats"
+    "anchor": "convert-to-floats",
+    "page": "ref-coercions.md"
   },
   {
     "id": "Convert To Grid",
     "keyword": "Channeled Energy",
     "signature": "List\u003cList\u003cT\u003e\u003e | List\u003cText\u003e | Sparse\u003cT\u003e → Grid\u003cT\u003e",
     "summary": "Materializes a dense Grid from rows, characters, or a sparse plane.",
-    "anchor": "convert-to-grid"
+    "anchor": "convert-to-grid",
+    "page": "ref-coercions.md"
   },
   {
     "id": "Convert To Integers",
     "keyword": "Channeled Energy",
     "signature": "List\u003cText\u003e → List\u003cInt\u003e | List\u003cList\u003cText\u003e\u003e → List\u003cList\u003cInt\u003e\u003e",
     "summary": "Parses each field to an Int (form chosen by input type).",
-    "anchor": "convert-to-integers"
+    "anchor": "convert-to-integers",
+    "page": "ref-coercions.md"
   },
   {
     "id": "Convert To Map",
     "keyword": "Channeled Energy",
     "signature": "List\u003c(K, V)\u003e → Map\u003cK,V\u003e",
     "summary": "Builds a Map from key/value pairs; last write wins.",
-    "anchor": "convert-to-map"
+    "anchor": "convert-to-map",
+    "page": "ref-coercions.md"
   },
   {
     "id": "Convert To Rows",
     "keyword": "Channeled Energy",
     "signature": "Grid\u003cT\u003e → List\u003cList\u003cT\u003e\u003e",
     "summary": "The inverse of Convert To Grid, so a grid can drop back to lists.",
-    "anchor": "convert-to-rows"
+    "anchor": "convert-to-rows",
+    "page": "ref-coercions.md"
   },
   {
     "id": "Convert To Set",
     "keyword": "Channeled Energy",
     "signature": "List\u003cT\u003e → Set\u003cT\u003e",
     "summary": "Deduplicates a list into a Set, preserving first-seen order; T must be keyable.",
-    "anchor": "convert-to-set"
+    "anchor": "convert-to-set",
+    "page": "ref-coercions.md"
   },
   {
     "id": "Convert To Sparse Grid",
     "keyword": "Channeled Energy",
     "signature": "… → Sparse\u003cT\u003e",
     "summary": "Builds an unbounded default-valued plane from a grid, map, or list of points.",
-    "anchor": "convert-to-sparse-grid"
+    "anchor": "convert-to-sparse-grid",
+    "page": "ref-coercions.md"
   },
   {
     "id": "All",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → Bool",
     "summary": "Whether every element satisfies the predicate; stops at the first that does not.",
-    "anchor": "any--all"
+    "anchor": "any--all",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Any",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → Bool",
     "summary": "Whether any element satisfies the predicate; stops at the first that does.",
-    "anchor": "any--all"
+    "anchor": "any--all",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Count",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e | Set\u003cT\u003e → Int",
     "summary": "Cardinality — how many elements.",
-    "anchor": "count"
+    "anchor": "count",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Count By",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → K) → Map\u003cK, Int\u003e",
     "summary": "Frequency map of the lambda's key; K must be keyable.",
-    "anchor": "count-by"
+    "anchor": "count-by",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Count Cells",
     "keyword": "Maximum Technique",
     "signature": "Grid\u003cT\u003e | Sparse\u003cT\u003e × (T → Bool) → Int",
     "summary": "How many grid cells satisfy the predicate (3-param lambda binds coordinates).",
-    "anchor": "count-cells"
+    "anchor": "count-cells",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Count Matching",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → Int",
     "summary": "How many elements satisfy the predicate.",
-    "anchor": "count-matching"
+    "anchor": "count-matching",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Difference",
     "keyword": "Maximum Technique",
     "signature": "List\u003cList\u003cT\u003e\u003e → Set\u003cT\u003e",
     "summary": "Elements of the first group not present in any later group; also a two-channel consumer.",
-    "anchor": "difference"
+    "anchor": "difference",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Find",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → T",
     "summary": "The first element satisfying the predicate (no match is a runtime error).",
-    "anchor": "find--find-index"
+    "anchor": "find--find-index",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Find Cycle",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e → (Int, Int)",
     "summary": "Where a trajectory first repeats and its period — what turns a billion iterations into arithmetic.",
-    "anchor": "find-cycle"
+    "anchor": "find-cycle",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Find Index",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → Bool) → Int",
     "summary": "The 0-based position of the first match, or -1 when there is none.",
-    "anchor": "find--find-index"
+    "anchor": "find--find-index",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Fold",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × Seed × (Acc, T → Acc) → Acc",
     "summary": "Left fold from a Seed accumulator; also a channel consumer with From:.",
-    "anchor": "fold"
+    "anchor": "fold",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Group By",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → K) → Map\u003cK, List\u003cT\u003e\u003e",
     "summary": "Buckets elements by the lambda's key; K must be keyable.",
-    "anchor": "group-by"
+    "anchor": "group-by",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Intersect",
     "keyword": "Maximum Technique",
     "signature": "List\u003cList\u003cT\u003e\u003e → Set\u003cT\u003e",
     "summary": "Set intersection over the groups (T keyable).",
-    "anchor": "intersect--union--difference"
+    "anchor": "intersect--union--difference",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Join",
     "keyword": "Maximum Technique",
     "signature": "List\u003cText\u003e → Text",
     "summary": "Concatenates the elements, with an optional separator.",
-    "anchor": "join"
+    "anchor": "join",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Max",
     "keyword": "Maximum Technique",
     "signature": "List\u003cInt\u003e → Int",
     "summary": "The largest element (the empty list is a runtime error).",
-    "anchor": "max--min--product"
+    "anchor": "max--min--product",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Max By",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → K) → T",
     "summary": "The element whose ordered key is largest (first wins ties).",
-    "anchor": "min-by--max-by"
+    "anchor": "min-by--max-by",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Merge Ranges",
     "keyword": "Maximum Technique",
     "signature": "List\u003c(Int, Int)\u003e → List\u003c(Int, Int)\u003e",
     "summary": "Coalesces overlapping or adjacent inclusive integer intervals.",
-    "anchor": "merge-ranges"
+    "anchor": "merge-ranges",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Min",
     "keyword": "Maximum Technique",
     "signature": "List\u003cInt\u003e → Int",
     "summary": "The smallest element (the empty list is a runtime error).",
-    "anchor": "max--min--product"
+    "anchor": "max--min--product",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Min By",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → K) → T",
     "summary": "The element whose ordered key is smallest (first wins ties).",
-    "anchor": "min-by--max-by"
+    "anchor": "min-by--max-by",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Product",
     "keyword": "Maximum Technique",
     "signature": "List\u003cInt\u003e → Int",
     "summary": "The product of all elements (the empty list is a runtime error).",
-    "anchor": "max--min--product"
+    "anchor": "max--min--product",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Product By",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → Int) → Int",
     "summary": "Multiplies the lambda's Int key in one pass (1 for the empty list).",
-    "anchor": "sum-by--product-by"
+    "anchor": "sum-by--product-by",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Reduce",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T, T → T) → T",
     "summary": "The seedless fold: the first element starts the accumulator (the empty list is a runtime error).",
-    "anchor": "reduce"
+    "anchor": "reduce",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Select Top K",
     "keyword": "Maximum Technique",
     "signature": "List\u003cInt\u003e → List\u003cInt\u003e (or → Int with , Sum)",
     "summary": "Takes the first K (literal or measured Count:) of the ordered list; a literal fuses with Sort into a quickselect.",
-    "anchor": "select-top-k"
+    "anchor": "select-top-k",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Sum",
     "keyword": "Maximum Technique",
     "signature": "List\u003cInt\u003e → Int",
     "summary": "Sum of all elements (0 for the empty list).",
-    "anchor": "sum"
+    "anchor": "sum",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Sum By",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × (T → Int) → Int",
     "summary": "Sums the lambda's Int key in one pass, without building the mapped list.",
-    "anchor": "sum-by--product-by"
+    "anchor": "sum-by--product-by",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Sum Each Group",
     "keyword": "Maximum Technique",
     "signature": "List\u003cList\u003cInt\u003e\u003e → List\u003cInt\u003e",
     "summary": "Per-group sums, preserving order.",
-    "anchor": "sum-each-group"
+    "anchor": "sum-each-group",
+    "page": "ref-reductions.md"
   },
   {
     "id": "Union",
     "keyword": "Maximum Technique",
     "signature": "List\u003cList\u003cT\u003e\u003e → Set\u003cT\u003e",
     "summary": "Set union over the groups, deduplicated left-to-right (T keyable).",
-    "anchor": "intersect--union--difference"
+    "anchor": "intersect--union--difference",
+    "page": "ref-reductions.md"
   },
   {
     "id": "All Pairs",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e × Mode × lambda → …",
     "summary": "Visits every pair; Mode picks Filter/Count/First/Map. Sum-to-constant is optimized to O(n).",
-    "anchor": "all-pairs--combinations-k"
+    "anchor": "all-pairs--combinations-k",
+    "page": "ref-expansions.md"
   },
   {
     "id": "BFS",
     "keyword": "Domain Expansion",
     "signature": "Grid\u003cT\u003e × (T → Bool) → Grid\u003cInt\u003e",
     "summary": "Breadth-first step distances from a start over walkable cells (unreachable = -1).",
-    "anchor": "bfs"
+    "anchor": "bfs",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Combinations",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e × Mode × lambda → …",
     "summary": "Visits every k-combination in lexicographic order; Mode picks the result shape.",
-    "anchor": "all-pairs--combinations-k"
+    "anchor": "all-pairs--combinations-k",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Connected Components",
     "keyword": "Domain Expansion",
     "signature": "Grid\u003cT\u003e × (T → Bool) → Int",
     "summary": "How many 4-connected regions of matching cells the grid contains (union-find).",
-    "anchor": "connected-components"
+    "anchor": "connected-components",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Dijkstra",
     "keyword": "Domain Expansion",
     "signature": "Grid\u003cInt\u003e → Grid\u003cInt\u003e",
     "summary": "Minimum entry-cost from a start to every cell (4-connectivity, min-heap).",
-    "anchor": "dijkstra"
+    "anchor": "dijkstra",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Explore",
     "keyword": "Domain Expansion",
     "signature": "S × (S → List\u003cS\u003e) → List\u003cS\u003e | Int | Map\u003cS,Int\u003e | V",
     "summary": "Search over an implicit state graph — breadth-first, cheapest-first with a Cost:, or folded with Tally; the answer to a problem that seems to need recursion.",
-    "anchor": "explore"
+    "anchor": "explore",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Flood Fill",
     "keyword": "Domain Expansion",
     "signature": "Grid\u003cT\u003e × (T → Bool) → Grid\u003cInt\u003e",
     "summary": "Marks the start's 4-connected matching region: 1 inside, 0 elsewhere.",
-    "anchor": "flood-fill"
+    "anchor": "flood-fill",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Foreign Block",
     "keyword": "Domain Expansion",
     "signature": "T → Text, or a declared `In -\u003e Out`",
     "summary": "Runs an indented block of Python, Go, rask or cRust as a subprocess, with the current value on its stdin and its stdout as the next stage's value.",
-    "anchor": "foreign-block"
+    "anchor": "foreign-block",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Permutations",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e → List\u003cList\u003cT\u003e\u003e",
     "summary": "Every ordering of the list (bounded: more than 9 elements errors).",
-    "anchor": "permutations"
+    "anchor": "permutations",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Sliding Reduce",
     "keyword": "Domain Expansion",
     "signature": "List\u003cInt\u003e → List\u003cInt\u003e",
     "summary": "Every window's Sum/Max/Min/Product in one streaming pass; the named form of the Window fusion.",
-    "anchor": "sliding-reduce"
+    "anchor": "sliding-reduce",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Sort",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e → List\u003cT\u003e",
     "summary": "Sorts ascending (Descending flips it); the optimizer may substitute the algorithm.",
-    "anchor": "sort--quicksort"
+    "anchor": "sort--quicksort",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Sort By",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e × (T → K) → List\u003cT\u003e",
     "summary": "Stable sort by the lambda's Int key, ascending by default.",
-    "anchor": "sort-by"
+    "anchor": "sort-by",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Subsets",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e → List\u003cList\u003cT\u003e\u003e",
     "summary": "The power set (bounded: more than 16 elements errors).",
-    "anchor": "subsets"
+    "anchor": "subsets",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Topological Sort",
     "keyword": "Domain Expansion",
     "signature": "Map\u003cK, List\u003cK\u003e\u003e | List\u003c(K, K)\u003e → List\u003cK\u003e",
     "summary": "A dependency order over an explicit graph; a cycle is a runtime error naming a blocked node.",
-    "anchor": "topological-sort"
+    "anchor": "topological-sort",
+    "page": "ref-expansions.md"
   },
   {
     "id": "Binding Vow",
     "keyword": "Binding Vow",
     "signature": "T → T (asserts)",
     "summary": "Asserts an invariant about the current value; stripped under --release.",
-    "anchor": "simple-domain-channel-shikigami-binding-vow-reveal"
+    "anchor": "simple-domain-channel-shikigami-binding-vow-reveal",
+    "page": "ref-structure.md"
   },
   {
     "id": "Emit",
     "keyword": "Reveal",
     "signature": "T → (output)",
     "summary": "Writes the current value to the output sink (Reveal: stdout).",
-    "anchor": "simple-domain-channel-shikigami-binding-vow-reveal"
+    "anchor": "simple-domain-channel-shikigami-binding-vow-reveal",
+    "page": "ref-structure.md"
   }
 ]

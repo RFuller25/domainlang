@@ -1,0 +1,39 @@
+Cursed Energy: i15
+Split "\n"
+Cursed Technique: Match Pattern
+    Using: "Generator {id:word} starts with {numa:int}"
+Channel "a":
+    Cursed Technique: Apply
+        Using: (x) -> tuple((first(x).numa * 16807) % 2147483647, 0)
+    Cursed Technique: Unfold
+        Consider t As 40000000
+        While: (x) -> item(x, 1) < t
+        Using: (x) -> tuple((item(x, 0) * 16807) % 2147483647, item(x, 1) + 1)
+    Map Each
+        Using: (x) -> item(x, 0)
+    Filter
+        Using: (x) -> x % 4 = 0
+    Apply
+        Using: (x) -> take(x, 5000000)
+
+Channel "b":
+    Cursed Technique: Apply
+        Using: (x) -> tuple((last(x).numa * 48271) % 2147483647, 0)
+    Cursed Technique: Unfold
+        Consider t As 60000000
+        While: (x) -> item(x, 1) < t
+        Using: (x) -> tuple((item(x, 0) * 48271) % 2147483647, item(x, 1) + 1)
+    Map Each
+        Using: (x) -> item(x, 0)
+    Filter
+        Using: (x) -> x % 8 = 0
+    Apply
+        Using: (x) -> take(x, 5000000)
+Zip
+    From: a, b
+
+Filter
+    Using: (x) -> band(item(x, 0), 65535) = band(item(x, 1), 65535)
+
+Count
+Reveal: stdout

@@ -35,6 +35,20 @@
               --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go ]}
           '';
 
+          # The docs site's playground (docs/wasm/domain.wasm) is a build
+          # artifact, deliberately not committed — see docs/wasm/README.md.
+          # Without this, the Nix package would embed an empty wasm/
+          # directory and ship with no Run buttons. build.sh needs only the
+          # Go toolchain and the module's own vendored deps, both already
+          # present by preBuild, so this runs fully offline in the sandbox.
+          #
+          # Run via `bash` rather than `./docs/wasm/build.sh`: the sandbox has
+          # no /usr/bin/env, so the script's own #!/usr/bin/env bash shebang
+          # cannot resolve there.
+          preBuild = ''
+            bash docs/wasm/build.sh
+          '';
+
           # The repo's test suite is an interpreter-vs-binary oracle: it
           # compiles dozens of programs with a nested `go build`, which is
           # awkward inside the Nix build sandbox. Run `go test ./...` (or

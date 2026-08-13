@@ -87,7 +87,11 @@
     overflow-y: auto;
   }
   .brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
-  .brand h1 { font-size: 1.15rem; margin: 0; letter-spacing: -0.01em; }
+  .brand h1 {
+    font-size: 1.2rem; font-weight: 800; margin: 0; letter-spacing: -0.02em;
+    background: linear-gradient(100deg, var(--text) 40%, var(--jjk-c, var(--accent)) 150%);
+    background-clip: text; -webkit-background-clip: text; color: transparent;
+  }
   .brand .badge {
     font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--accent-text); background: var(--accent-soft);
@@ -128,7 +132,12 @@
     margin-bottom: 1px;
   }
   nav.toc-nav a.doc-link:hover { background: var(--bg-alt); text-decoration: none; }
-  nav.toc-nav a.doc-link.active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+  nav.toc-nav a.doc-link.active {
+    background: color-mix(in srgb, var(--jjk-c, var(--accent)) 14%, var(--accent-soft));
+    color: var(--jjk-c, var(--accent-text)); font-weight: 600;
+    border-left: 2px solid var(--jjk-c, var(--accent));
+    padding-left: 8px;
+  }
   nav.toc-nav .doc-link .desc {
     display: block; font-size: 0.72rem; color: var(--text-muted); font-weight: 400; margin-top: 1px;
   }
@@ -177,21 +186,30 @@
   article h1, article h2, article h3, article h4 {
     line-height: 1.25; letter-spacing: -0.01em; scroll-margin-top: 20px;
   }
-  article h1 { font-size: 2rem; margin: 0 0 0.5em; }
-  article h2 { font-size: 1.45rem; margin: 1.8em 0 0.6em; padding-bottom: 0.25em; border-bottom: 1px solid var(--border); }
+  article h1 {
+    font-size: 2.1rem; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 0.5em;
+    background: linear-gradient(100deg, var(--text) 55%, var(--jjk-c, var(--accent)) 130%);
+    background-clip: text; -webkit-background-clip: text; color: transparent;
+  }
+  article h2 {
+    font-size: 1.45rem; margin: 1.8em 0 0.6em; padding-bottom: 0.25em;
+    border-bottom: 2px solid var(--border);
+    border-image: linear-gradient(90deg, var(--jjk-c, var(--accent)) 0 4.5em, var(--border) 4.5em) 1;
+  }
   article h3 { font-size: 1.15rem; margin: 1.5em 0 0.5em; }
   article h4 { font-size: 1rem; margin: 1.3em 0 0.4em; }
   article p { margin: 0 0 1em; }
   article ul, article ol { margin: 0 0 1em; padding-left: 1.5em; }
   article li { margin: 0.25em 0; }
   article blockquote {
-    margin: 0 0 1em; padding: 0.4em 1.1em; border-left: 3px solid var(--accent);
+    margin: 0 0 1em; padding: 0.4em 1.1em; border-left: 3px solid var(--jjk-c, var(--accent));
     background: var(--bg-alt); color: var(--text-muted); border-radius: 0 8px 8px 0;
   }
   article blockquote p:last-child { margin-bottom: 0; }
   article code {
     font-family: var(--mono); font-size: 0.86em; background: var(--bg-code);
-    padding: 0.15em 0.4em; border-radius: 5px; border: 1px solid var(--border);
+    padding: 0.15em 0.4em; border-radius: 5px;
+    border: 1px solid color-mix(in srgb, var(--jjk-c, var(--accent)) 30%, var(--border));
   }
   article pre {
     background: var(--bg-code); border: 1px solid var(--border); border-radius: var(--radius);
@@ -283,8 +301,10 @@
   }
   .search-overlay.open { display: block; }
   .search-panel {
-    max-width: 640px; margin: 0 auto; background: var(--bg); border: 1px solid var(--border);
-    border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+    max-width: 640px; margin: 0 auto; background: var(--bg);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    border-radius: 14px; overflow: hidden;
+    box-shadow: var(--shadow), 0 0 40px -12px var(--accent);
   }
   .search-panel .search-input-row {
     display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border);
@@ -405,8 +425,14 @@
   article .prim-sig { white-space: nowrap; font-size: 0.82em; }
   .empty-filter { color: var(--text-muted); padding: 24px 0; }
 
-  /* ---- Playground ---- */
-  .pg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0 0 14px; }
+  /* ---- Playground — styled as a cast: the panel is the domain being drawn ---- */
+  .pg-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0 0 14px;
+    padding: 16px; border-radius: 12px; border: 1px solid var(--jjk-c, var(--border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--jjk-c, var(--accent)) 25%, transparent),
+      0 0 32px -14px var(--jjk-c, var(--accent));
+    background: color-mix(in srgb, var(--jjk-c, var(--accent)) 4%, var(--bg));
+  }
   @media (max-width: 760px) { .pg-grid { grid-template-columns: 1fr; } }
   .pg-pane { display: flex; flex-direction: column; min-width: 0; }
   .pg-pane label {
@@ -419,12 +445,13 @@
     border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--bg-code); color: var(--text); tab-size: 2;
   }
-  .pg-pane textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+  .pg-pane textarea:focus { outline: 2px solid var(--jjk-c, var(--accent)); outline-offset: -1px; border-color: transparent; }
   .pg-pane textarea.pg-input { min-height: 240px; }
   .pg-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
   .pg-bar .pg-run {
-    padding: 7px 18px; font: 600 0.85rem/1.4 var(--sans); cursor: pointer; color: #fff;
-    background: var(--accent); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 7px 18px; font: 700 0.85rem/1.4 var(--sans); cursor: pointer; color: #fff;
+    background: var(--jjk-c, var(--accent)); border: 1px solid var(--jjk-c, var(--accent)); border-radius: 8px;
+    box-shadow: 0 0 16px -4px var(--jjk-c, var(--accent));
   }
   .pg-bar .pg-run:hover { filter: brightness(1.08); }
   .pg-bar .pg-run[disabled] { opacity: 0.55; cursor: default; }
@@ -458,19 +485,52 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ---- Site hero (landing page only) ---- */
+  .site-hero {
+    position: relative; overflow: hidden; margin: -6px 0 2.4em;
+    padding: 44px 40px 34px; border-radius: 16px; border: 1px solid var(--border);
+    background: radial-gradient(ellipse 80% 70% at 78% 15%,
+      color-mix(in srgb, var(--jjk-c, var(--accent)) 20%, var(--bg-alt)), var(--bg-alt));
+  }
+  .hero-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .hero-inner { position: relative; z-index: 1; max-width: 620px; }
+  .hero-eyebrow {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700;
+    color: var(--jjk-c, var(--accent-text)); margin: 0 0 10px;
+  }
+  .hero-title {
+    font-size: clamp(2.4rem, 5vw, 3.4rem); font-weight: 800; letter-spacing: -0.03em;
+    margin: 0 0 14px; line-height: 1;
+    background: linear-gradient(100deg, var(--text) 45%, var(--jjk-c, var(--accent)) 140%);
+    background-clip: text; -webkit-background-clip: text; color: transparent;
+  }
+  .hero-tag { font-size: 1.05rem; color: var(--text-muted); margin: 0 0 22px; max-width: 46ch; }
+  .hero-demo {
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    background: var(--bg-code); box-shadow: var(--shadow);
+  }
+  .hero-demo pre { margin: 0; padding: 14px 16px; font-size: 0.82rem; line-height: 1.55; }
+  .hero-demo-out {
+    border-top: 1px solid var(--border); padding: 10px 16px; min-height: 1.5em;
+    font-family: var(--mono); font-size: 0.78rem; color: var(--text-muted);
+    white-space: pre-wrap; background: var(--bg-alt);
+  }
+  @media (max-width: 640px) { .site-hero { padding: 30px 22px 26px; } .hero-inner { max-width: none; } }
+
   /* ---- JJK technique banners (one per doc, all different) ---- */
   .jjk-banner {
-    position: relative; overflow: hidden; height: 72px; margin: 0 0 24px;
+    position: relative; overflow: hidden; height: 86px; margin: 0 0 24px;
     border-radius: var(--radius); border: 1px solid var(--border);
     background: var(--bg-alt);
-    background: linear-gradient(135deg, color-mix(in srgb, var(--jjk-c) 16%, var(--bg-alt)), var(--bg-alt));
-    display: flex; align-items: center; gap: 18px; padding: 0 22px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--jjk-c) 22%, var(--bg-alt)), var(--bg-alt) 75%);
+    box-shadow: inset 0 0 30px -12px var(--jjk-c);
+    display: flex; align-items: center; gap: 20px; padding: 0 24px;
   }
-  .jjk-fx { position: relative; width: 84px; height: 48px; flex: none; }
+  .jjk-fx { position: relative; width: 96px; height: 54px; flex: none; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--jjk-c) 65%, transparent)); }
   .jjk-banner .jjk-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .jjk-banner .kanji { font-size: 1.05rem; font-weight: 700; color: var(--jjk-c); letter-spacing: 0.02em; }
-  .jjk-banner .name { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text); }
-  .jjk-banner .tag { font-size: 0.78rem; color: var(--text-muted); }
+  .jjk-banner .kanji { font-size: 1.15rem; font-weight: 700; color: var(--jjk-c); letter-spacing: 0.02em; text-shadow: 0 0 12px color-mix(in srgb, var(--jjk-c) 50%, transparent); }
+  .jjk-banner .name { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text); }
+  .jjk-banner .tag { font-size: 0.79rem; color: var(--text-muted); }
 
   /* 1. README — Infinity: expanding rings */
   .fx-rings i {
@@ -723,23 +783,35 @@
 
   /* Six Eyes glow behind the search icon — both sidebar box and the overlay */
   .search-pulse { position: relative; }
-  .search-pulse::before {
+  .search-pulse::before, .search-pulse::after {
     content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
     border-radius: 50%; border: 1.5px solid var(--accent); opacity: 0.8;
     animation: jjkSixEyesPulse 2.2s ease-out infinite;
   }
+  .search-pulse::after { animation-delay: -1.1s; }
   @keyframes jjkSixEyesPulse {
     0% { width: 8px; height: 8px; margin: -4px 0 0 -4px; opacity: 0.8; }
-    100% { width: 24px; height: 24px; margin: -12px 0 0 -12px; opacity: 0; }
+    100% { width: 30px; height: 30px; margin: -15px 0 0 -15px; opacity: 0; }
   }
+  /* A slow scanning sweep across the search panel's header — Six Eyes reading
+     the index rather than a plain modal border. */
+  .search-input-row { position: relative; overflow: hidden; }
+  .search-input-row::after {
+    content: ""; position: absolute; top: 0; bottom: 0; left: -20%; width: 20%;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 45%, transparent), transparent);
+    animation: jjkSearchScan 3.6s ease-in-out infinite;
+  }
+  @keyframes jjkSearchScan { 0%, 100% { left: -20%; } 50% { left: 100%; } }
 
   @media (max-width: 860px) {
-    .jjk-banner { height: 60px; padding: 0 16px; gap: 12px; }
-    .jjk-fx { width: 60px; }
+    .jjk-banner { height: 68px; padding: 0 16px; gap: 12px; }
+    .jjk-fx { width: 68px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .jjk-banner *, .search-pulse::before { animation: none !important; }
+    .jjk-banner *, .search-pulse::before, .search-pulse::after,
+    .search-input-row::after { animation: none !important; }
+    .search-input-row::after { display: none; }
   }
 
   /* ---- Print ----
@@ -856,9 +928,22 @@ const DOCS = [
   { id: "examples",        kind: "gallery",            title: "Examples",            desc: "20 annotated programs", group: "Programs", galleryGroup: "examples" },
   { id: "challenges",      kind: "gallery",            title: "Challenges",          desc: "13 classic problems", group: "Programs", galleryGroup: "challenges" },
   { id: "language",        file: "language.md",        title: "Language reference",  desc: "Source structure & keywords", group: "Reference" },
-  { id: "primitives",      file: "primitives.md",      title: "Primitives",          desc: "Every pipeline primitive", group: "Reference" },
+  { id: "primitives",      file: "primitives.md",      title: "Primitives",          desc: "The reference, by keyword class", group: "Reference" },
+  { id: "ref-sources",     file: "ref-sources.md",     title: "· Sources",           desc: "Cursed Energy", group: "Reference" },
+  { id: "ref-transforms",  file: "ref-transforms.md",  title: "· Transforms",        desc: "Cursed Technique, lists & text", group: "Reference" },
+  { id: "ref-transforms-grid", file: "ref-transforms-grid.md", title: "· Grid transforms", desc: "Cursed Technique, Grid & Map", group: "Reference" },
+  { id: "ref-coercions",   file: "ref-coercions.md",   title: "· Coercions",         desc: "Channeled Energy", group: "Reference" },
+  { id: "ref-reductions",  file: "ref-reductions.md",  title: "· Reductions",        desc: "Maximum Technique", group: "Reference" },
+  { id: "ref-expansions",  file: "ref-expansions.md",  title: "· Expansions",        desc: "Domain Expansion", group: "Reference" },
+  { id: "ref-structure",   file: "ref-structure.md",   title: "· Inversions",        desc: "Reverse Cursed Technique", group: "Reference" },
   { id: "primitive-index", kind: "primitives",         title: "Primitive index",     desc: "All of them, filterable", group: "Reference" },
   { id: "expressions",     file: "expressions.md",     title: "Expressions",         desc: "The expression layer", group: "Reference" },
+  { id: "ref-builtins-list",        file: "ref-builtins-list.md",        title: "· List builtins",    desc: "Lists, tuples, grids", group: "Reference" },
+  { id: "ref-builtins-collections", file: "ref-builtins-collections.md", title: "· Map & Set builtins", desc: "Reading and building them", group: "Reference" },
+  { id: "ref-builtins-math",        file: "ref-builtins-math.md",        title: "· Numeric builtins", desc: "Maths and floats", group: "Reference" },
+  { id: "ref-builtins-text",        file: "ref-builtins-text.md",        title: "· Text builtins",    desc: "Text", group: "Reference" },
+  { id: "ref-builtins-bits",        file: "ref-builtins-bits.md",        title: "· Bit builtins",     desc: "Bits, logic, number theory", group: "Reference" },
+  { id: "ref-builtins-records",     file: "ref-builtins-records.md",     title: "· Record builtins",  desc: "Records, points, sparse", group: "Reference" },
   { id: "aoc-toolbox",     file: "aoc-toolbox.md",     title: "AoC toolbox",         desc: "Classic helpers, mapped", group: "Reference" },
   { id: "data-model",      file: "data-model.md",      title: "Data model",          desc: "Value & type model", group: "Reference" },
   { id: "match-pattern",   file: "match-pattern.md",   title: "Match Pattern",       desc: "Typed-hole templates", group: "Reference" },
@@ -918,6 +1003,138 @@ function fxMarkup(fx) {
     case "bind":      return '<div class="knot"></div><i></i><i></i><i></i><i></i>';
     default:          return "";
   }
+}
+
+// Every page whose banner has a technique color tints its own chrome with
+// it — active nav link, h2 rule, blockquote border, inline code — so the
+// page reads as visibly "its own domain." Pages without one (the plain
+// reference sub-pages) fall back to --accent via the CSS var()'s default.
+function applyPageAccent(docId) {
+  const a = DOC_ANIM[docId];
+  if (a) document.documentElement.style.setProperty("--jjk-c", a.color);
+  else document.documentElement.style.removeProperty("--jjk-c");
+}
+
+// ============================================================
+//  Landing-page hero — a Domain Expansion cast, plus the language
+//  demonstrating itself.
+// ============================================================
+function renderHeroMarkup() {
+  return `<section class="site-hero" id="siteHero">
+    <canvas class="hero-canvas" id="heroCanvas" aria-hidden="true"></canvas>
+    <div class="hero-inner">
+      <p class="hero-eyebrow">領域展開 · Domain Expansion</p>
+      <h1 class="hero-title">Domain</h1>
+      <p class="hero-tag">A pipeline language for Advent of Code — you describe <em>what</em> needs to happen, and the compiler decides <em>how</em> to do it optimally.</p>
+      <div class="hero-demo">
+        <pre><code id="heroDemoCode"></code></pre>
+        <div class="hero-demo-out" id="heroDemoOut">Casting…</div>
+      </div>
+    </div>
+  </section>`;
+}
+
+// Draws an octagon of radius r (0 draws nothing) centered on the canvas's
+// current translation, at rotation rot.
+function drawOctagon(ctx, r, rot) {
+  if (r <= 0) return;
+  ctx.beginPath();
+  for (let i = 0; i <= 8; i++) {
+    const a = rot + (i / 8) * Math.PI * 2;
+    const x = Math.cos(a) * r, y = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+// The barrier snaps open once (the "cast"), then settles into a slow ambient
+// pulse — self-terminating once the canvas leaves the document, since the SPA
+// router swaps #content wholesale rather than tearing down listeners per page.
+function initHeroCanvas() {
+  const canvas = document.getElementById("heroCanvas");
+  // Guards both a missing element and the test harness's DOM stub, which has
+  // no <canvas> or layout engine behind getContext()/parentElement.
+  if (!canvas || typeof canvas.getContext !== "function" || !canvas.parentElement) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const color = (getComputedStyle(document.documentElement).getPropertyValue("--jjk-c") || "#7c3aed").trim();
+  const CAST_MS = 1300;
+
+  function size() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = rect.width + "px";
+    canvas.style.height = rect.height + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  size();
+  window.addEventListener("resize", size);
+
+  const start = performance.now();
+  function frame(t) {
+    if (!document.body.contains(canvas)) return; // page navigated away
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    const cx = w * 0.8, cy = h * 0.38;
+    const elapsed = t - start;
+    const castP = reduce ? 1 : Math.min(1, elapsed / CAST_MS);
+    const eased = 1 - Math.pow(1 - castP, 3);
+    const maxR = Math.min(w, h) * 0.6;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.globalAlpha = 0.5 * eased;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    drawOctagon(ctx, maxR * eased, reduce ? 0 : elapsed * 0.00018);
+    ctx.restore();
+
+    if (castP >= 1) {
+      const ambient = reduce ? 0.3 : ((elapsed - CAST_MS) * 0.00035) % 1;
+      for (let i = 0; i < 3; i++) {
+        const p = reduce ? 0.3 : (ambient + i / 3) % 1;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.globalAlpha = 0.3 * (1 - p);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        drawOctagon(ctx, maxR * 0.3 * (1 + p), 0);
+        ctx.restore();
+      }
+    }
+    if (!reduce || castP < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+// The language demonstrating itself: the same starter program the
+// playground opens with, run for real the moment the hero mounts.
+async function runHeroDemo() {
+  const out = document.getElementById("heroDemoOut");
+  const codeEl = document.getElementById("heroDemoCode");
+  if (!out || !codeEl) return;
+  codeEl.innerHTML = highlightDomain(escapeHtml(PLAYGROUND_STARTER));
+  if (await probePlayground() !== "ready") {
+    out.textContent = "Guaranteed hit — build the playground (docs/wasm/README.md) to run this live.";
+    return;
+  }
+  try {
+    const res = await runProgram(PLAYGROUND_STARTER, PLAYGROUND_STARTER_INPUT, { explain: true });
+    const lines = [];
+    if (res.explain && res.explain.length) lines.push(...res.explain);
+    lines.push(res.error ? res.error : (res.output || "(no output)"));
+    out.textContent = lines.join("\n");
+  } catch (e) {
+    out.textContent = "…";
+  }
+}
+
+function initHero() {
+  initHeroCanvas();
+  runHeroDemo();
 }
 
 function renderDocBanner(docId) {
@@ -1093,6 +1310,7 @@ async function route() {
   if (!DOC_BY_ID[docId]) docId = "README";
   const doc = DOC_BY_ID[docId];
   activeDocId = docId;
+  applyPageAccent(docId);
 
   // Moving to another anchor on the page already displayed is a scroll, not a
   // navigation. Re-rendering would refetch and rebuild the whole document —
@@ -1145,12 +1363,18 @@ npx serve                      # Node alternative</code></pre>`
   }
 
   const rendered = renderMarkdown(md);
-  const htmlWithIds = rendered.html.replace(/__DOCID__/g, docId);
+  // The landing page gets a bespoke hero in place of the plain rendered H1 —
+  // the title and tagline it would have shown are already in the hero.
+  const isLanding = docId === "README";
+  const html = isLanding ? rendered.html.replace(/<h1[^>]*>[\s\S]*?<\/h1>/, "") : rendered.html;
+  const htmlWithIds = html.replace(/__DOCID__/g, docId);
   const editUrl = REPO_EDIT_BASE + doc.file;
   const editLink = `<div class="page-edit"><a href="${editUrl}" target="_blank" rel="noopener">Edit this page on GitHub</a></div>`;
-  contentEl.innerHTML = renderDocBanner(docId) + `<article>${htmlWithIds}${editLink}</article>`;
+  const heroOrBanner = isLanding ? renderHeroMarkup() : renderDocBanner(docId);
+  contentEl.innerHTML = heroOrBanner + `<article>${htmlWithIds}${editLink}</article>`;
   renderPageToc(rendered.headings, docId);
   addRunButtons();
+  if (isLanding) initHero();
   renderedDocId = docId;
   scrollToAnchor(anchor);
   closeSidebar();

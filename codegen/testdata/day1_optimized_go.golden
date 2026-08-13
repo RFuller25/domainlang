@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -170,7 +172,39 @@ func dmTopK(xs []int64, k int, desc bool) []int64 {
 	return res
 }
 
+func dmAllocReport() {
+	path := os.Getenv("DOMAIN_ALLOC_REPORT")
+	if path == "" {
+		return
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	line := fmt.Sprintf("%d %d %d %d\n", m.TotalAlloc, m.Mallocs, m.HeapSys, m.NumGC)
+	_ = os.WriteFile(path, []byte(line), 0o644)
+}
+
+func dmCPUProfile() func() {
+	path := os.Getenv("DOMAIN_CPU_PROFILE")
+	if path == "" {
+		return func() {}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return func() {}
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		_ = f.Close()
+		return func() {}
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		_ = f.Close()
+	}
+}
+
 func main() {
+	defer dmAllocReport()
+	defer dmCPUProfile()()
 	v1 := dmReadSource("input.txt")
 	v2 := strings.Split(v1, "\n\n")
 	v3 := make([][]string, len(v2))

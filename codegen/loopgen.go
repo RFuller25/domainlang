@@ -11,11 +11,12 @@ import (
 // single mutable variable. Bodies preserve the value type by construction,
 // so the reassignment always typechecks.
 
-// dmMaxLoopIterations mirrors prims.maxLoopIterations' default: zero, meaning
-// unlimited. The guard is emitted only when this is positive, so a compiled
-// binary carries no iteration counter at all by default — and, like the
-// interpreter, never refuses a long-running but correct loop.
-const dmMaxLoopIterations = 0
+// dmMaxLoopIterations mirrors prims.maxLoopIterations' default, and must keep
+// mirroring it: a program that runs interpreted and dies compiled (or the
+// reverse) is the one failure mode a shared ceiling exists to prevent. The
+// guard is emitted only when this is positive, so setting it to zero strips
+// the counter comparison out of the binary entirely.
+const dmMaxLoopIterations = 1_000_000_000
 
 // comparableScalarElem reports whether t is a list whose element is a scalar
 // comparable with Go's != (so convergence can be detected inline).
@@ -72,8 +73,8 @@ func (g *gen) emitFixedPointMapLoop(mapNode *ir.Node, v, it string) error {
 }
 
 // emitIterationGuard emits the runaway-loop check, and only when a bound is
-// configured. At the default of zero the binary carries no counter comparison
-// at all — a correct but long-running loop is never refused.
+// configured. At a bound of zero the binary carries no counter comparison at
+// all.
 func (g *gen) emitIterationGuard(it, what string) {
 	if dmMaxLoopIterations <= 0 {
 		return

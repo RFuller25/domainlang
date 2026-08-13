@@ -137,8 +137,9 @@ since it is real and simply has nowhere on disk to jump to.
 |---|---|
 | `ctrl+e` | choose the input file — then it offers an opening |
 | `alt+i` | offer an opening again |
-| `ctrl+r` | run, and record |
+| `ctrl+r` | run — the monitor takes the screen and watches it |
 | `ctrl+c` | stop a run that will not end |
+| `alt+m` | reopen the last run's monitor |
 | `ctrl+t` | open the stepper over the last run |
 | `alt+↑` / `alt+↓` | walk the recorded stages, watching the value change |
 | `alt+e` | what the optimizer did to the last run |
@@ -146,15 +147,102 @@ since it is real and simply has nowhere on disk to jump to.
 ## Running a program
 
 `ctrl+r` resolves the buffer and runs it, optimized, exactly as `domain run`
-would. The program's `Reveal:` output appears in a pane when the run is over
-rather than as it happens: a raw-mode terminal cannot take interleaved writes
-from a program that thinks it owns stdout, which is why
-[`:visualize`](tooling.md) captures it too.
+would — and hands the screen to the **run monitor** for as long as it takes.
 
-`ctrl+c` stops a run. `Simple Domain: While` is unbounded by design, so this is
-not a nicety — the run is deliberately handed to a background command so that
+The program's `Reveal:` output is captured rather than printed: a raw-mode
+terminal cannot take interleaved writes from a program that thinks it owns
+stdout, which is why [`:visualize`](tooling.md) captures it too. The monitor
+tails what has been captured as it arrives, so capturing it no longer costs you
+the *timing* of the output — only its place on the terminal. The whole of it is
+in a scrollable pane when the run is over.
+
+`ctrl+c` stops a run. `Simple Domain: While` runs to a billion iterations
+before it gives up, which is no help to someone waiting, so this is not a
+nicety — the run is deliberately handed to a background command so that
 the editor stays able to hear the key. A run that was stopped is reported as
 stopped rather than as failed.
+
+## The run monitor
+
+```
+domain expansion: development  run monitor                            day7.domain
+────────────────────────────────────────────────────────────────────────────────
+⣾ running  3.412s  ·  2,481,003 steps  ·  727K steps/s        stage 4/7 ██████░░
+
+  heap in use  38.2 MB                                           peak 51.0 MB
+  ▁▂▃▅▇█▇▆▅▄▃▃▄▅▆▇█▇▅▃▂▁▁▂▃▄▅▆▇█
+  cpu, share of one core  102%              process, this editor included
+  ▇███▇███████▇████████▇███████▇
+  0s                                                                    3.412s
+
+  4.6 GB allocated in total  ·  39 GC cycles  ·  26.18ms paused for collection
+  last run  5.900s ↓42%  ·  peak 71.0 MB ↓28%  ·  3,100,000 steps
+
+  where it is  Repeat 3 iter 2/3  ·  depth 1
+   3 │ Maximum Technique: Sum
+ → 4 │ Simple Domain: Repeat 3
+   5 │     Cursed Technique: Apply
+
+ => [1000, 2000, 3000] : List<Int>
+
+ output   as it is printed
+  48
+
+  ctrl+c stops the run
+```
+
+Five questions, answered while the answer can still change what you do:
+
+- **Is it going, and how far has it got.** Elapsed time, the steps the run has
+  taken, and which top-level stage it is on — the same depth-0 attribution
+  `--stats` uses, so a loop of four hundred laps is one stage that takes a
+  while rather than four hundred units of progress.
+- **What it is spending.** Live heap and CPU, over the whole run. The history
+  halves when it is full and keeps the heavier reading of each pair, so the
+  chart always covers the run from its start and the peak survives being
+  squeezed.
+- **Where it is.** The line, the enclosing frame (`Repeat 3 iter 2/3`) and the
+  nesting depth, from the trace hook every node evaluation already passes
+  through rather than from a guess made outside the run.
+- **What it has got.** The last reported step's value and type — the REPL's own
+  `=> value : Type`, against a program that has not finished.
+- **What it has said.** The `Reveal:` output, tailed as it is printed.
+
+**The numbers are the process's, this editor included**, and the screen says
+so. There is no way to ask the Go runtime what one goroutine's heap is, and a
+number that pretended otherwise would be worse than no number.
+
+Memory is read with `runtime.ReadMemStats` ten times a second — ~52µs a call
+against `runtime/metrics`' 825ns, paid because the cheap reading only advances
+at a GC, which turns a memory curve into a sawtooth of collection points. CPU
+comes from `runtime/metrics`, which is the only one of the two that accounts
+for it; those counters *do* only advance at a GC, so a reading that has learnt
+nothing new repeats the last one rather than drawing a zero the process never
+spent. Rendering the current value is not done per step: the screen raises a
+flag and the next step to report renders one value, which is ten renderings a
+second rather than two million.
+
+**While it is running**, `ctrl+c` is the only key that means anything — there is
+nothing else to do to a running program, and a keystroke that dismissed the
+screen would hide what it was opened to show. A stop lands at the next node
+boundary, so a single long primitive has to finish first; when that is what is
+happening, the screen says so rather than looking like it ignored the key.
+
+**When it has finished** the screen stays, as the report on the run: the
+outcome, what it cost, the lines it spent itself on, and how it compares with
+the run before it — which is the comparison worth having while making a program
+faster, since it is the edit that is on trial rather than the program.
+
+| Key | |
+|---|---|
+| `ctrl+c` | stop the run (while it is running) |
+| `ctrl+t` | open the stepper over this run |
+| `ctrl+r` | run it again |
+| any other key | back to the program |
+
+`alt+m` opens the last run's monitor again — the screen closes on any key,
+which makes it easy to lose to a keystroke that was meant for the program, and
+nothing about a finished run stops being true.
 
 ### What a run leaves behind
 

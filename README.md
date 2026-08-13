@@ -79,9 +79,14 @@ domain expansion: documentation                  # serve the docs as a local web
 domain expansion: vscode                         # install the VS Code extension carried in the binary
 ```
 
+The documentation site includes a browser playground compiled to WebAssembly.
+`go build ./cmd/domain` alone won't have it — build with `make build` instead
+(runs `docs/wasm/build.sh` first); see [docs/wasm/README.md](docs/wasm/README.md).
+
 There is also a terminal editor (`domain expansion: development` — types at the
-end of every line and errors in the gutter as you type, completion, run and
-interrupt, and the step-through visualizer over the buffer you are editing; see
+end of every line and errors in the gutter as you type, completion, a monitored
+run you can watch and interrupt, and the step-through visualizer over the
+buffer you are editing; see
 [docs/development.md](docs/development.md)), an interactive REPL (`domain repl`
 — build a pipeline line by line, seeing the value and type after each
 statement) and a language server (`domain lsp` — live diagnostics, inlay type
@@ -286,7 +291,7 @@ Every keyword below is optional except where the row says otherwise — see
   its own braces, tabs if it wants them — and a declared `: List<Int> -> Int`
   says what crosses the wire. It is the one Domain Expansion the optimizer
   never touches: it names an implementation, not a result. See
-  [docs/primitives.md](docs/primitives.md#foreign-block--t---text-or-a-declared-in---out).
+  [docs/ref-expansions.md](docs/ref-expansions.md#foreign-block--t---text-or-a-declared-in---out).
 - **`Innate Domain`** — import a library of Shikigami (`Innate Domain: aoc`),
   searched beside the program, then `$DOMAIN_PATH`, then `~/.config/domain/lib`.
   Libraries are free: a Shikigami is inlined, so an imported operation gets
@@ -406,7 +411,7 @@ The interpreter is the correctness oracle: `codegen`'s tests compile every
 anchor program in both modes and require byte-identical stdout. On a
 1M-line AoC 2022 Day 4 input the compiled binary is ~7× faster than the
 interpreter; binaries are self-contained (~1.5 MB, stdlib only) — unless the
-program contains a [foreign block](docs/primitives.md#foreign-block--t---text-or-a-declared-in---out), which
+program contains a [foreign block](docs/ref-expansions.md#foreign-block--t---text-or-a-declared-in---out), which
 embeds another language's source but not the runtime that runs it.
 
 The benchmark that matters is against Go rather than against the
@@ -464,11 +469,13 @@ self-referential one is refused (naming the cycle). `Domain Expansion:
 Explore` is the iterative search that covers the problems which look
 recursive — see [docs/primitives.md](docs/primitives.md).
 
-Loops and the combinatorial generators are **unbounded**. Domain used to cap
-`While`/`Iterate Until Fixed Point` at a million iterations, `Permutations` at
-9 elements and `Subsets` at 16; those ceilings refused correct programs, so
-they are gone. A genuinely non-terminating loop now spins until interrupted
-rather than failing loudly.
+The combinatorial generators are **unbounded**: Domain used to cap
+`Permutations` at 9 elements and `Subsets` at 16, and those ceilings refused
+correct programs, so they are gone. Loops (`While`, `Iterate Until Fixed
+Point`, `Unfold`) stop at **a billion** iterations, raised from the million
+that failed a 40,000,000-step generator — high enough that reaching it means
+stuck rather than slow, and identical in the interpreter and a compiled
+binary.
 
 ## License
 

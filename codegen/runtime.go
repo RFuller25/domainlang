@@ -1974,3 +1974,69 @@ func (q *dmPQ[T]) pop() (T, int64, bool) {
 	}
 	return top.v, top.pri, true
 }`
+
+// declAllocReport is the compiled half of the allocation-measurement protocol
+// (runner/alloc.go holds the interpreter's half and the reader).
+//
+// A normal run pays one environment lookup at exit and returns. When
+// DOMAIN_ALLOC_REPORT names a file — which only `domain expansion: bench` and
+// its siblings ever set — the run writes four numbers into it: cumulative
+// bytes allocated, cumulative allocation count, heap obtained from the OS, and
+// GC cycles.
+//
+// The wire format is four space-separated integers on one line, and it is
+// implemented twice, here and in runner.WriteReport, for the same reason the
+// foreign block's format is: the process being measured and the process doing
+// the measuring cannot share code. A test pins the two together.
+const declAllocReport = `func dmAllocReport() {
+	path := os.Getenv("DOMAIN_ALLOC_REPORT")
+	if path == "" {
+		return
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	line := fmt.Sprintf("%d %d %d %d\n", m.TotalAlloc, m.Mallocs, m.HeapSys, m.NumGC)
+	_ = os.WriteFile(path, []byte(line), 0o644)
+}`
+
+// DeclAllocReport exposes the emitted allocation-report helper so package
+// runner, which implements the other half of the same wire format, can pin
+// the two together in a test without a Go toolchain.
+func DeclAllocReport() string { return declAllocReport }
+
+// declCPUProfile is the profile-collection half of what `domain expansion:
+// mahoraga` needs to feed Go's profile-guided optimization.
+//
+// Like the allocation hook beside it, an ordinary run pays one environment
+// lookup at exit and returns. When DOMAIN_CPU_PROFILE names a file, the run
+// writes a pprof CPU profile into it, which `go build -pgo=<file>` then
+// consumes on the rebuild — so the program is compiled against a profile of
+// itself doing the actual work, on the actual input.
+//
+// It returns the stop function rather than taking one, so main can write
+// `defer dmCPUProfile()()`: the outer call starts the profile immediately and
+// the deferred inner call stops it, with one line and no state to thread.
+// A failure to start is silently a no-op — a missing profile costs a
+// measurement, and taking the program down over it would cost the answer.
+const declCPUProfile = `func dmCPUProfile() func() {
+	path := os.Getenv("DOMAIN_CPU_PROFILE")
+	if path == "" {
+		return func() {}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return func() {}
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		_ = f.Close()
+		return func() {}
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		_ = f.Close()
+	}
+}`
+
+// DeclCPUProfile exposes the emitted profile helper so package runner, which
+// names the same environment variable, can pin the two together in a test.
+func DeclCPUProfile() string { return declCPUProfile }

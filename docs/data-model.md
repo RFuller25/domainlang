@@ -83,8 +83,9 @@ and `Grid` neighbor walks.
   expression layer converts back. Modeling as an ordered set (not a
   list-to-unit map) keeps rendering and set-ops simple.
 
-Access/rendering is via primitives, not literals — v0.2 has no Map/Set literal
-syntax (deferred; AoC builds these from inputs, not from literals).
+Access/rendering is via primitives and builtins, not literals — there is no
+Map/Set literal syntax (deferred; AoC builds these from inputs, not from
+literals).
 
 ## Grids
 

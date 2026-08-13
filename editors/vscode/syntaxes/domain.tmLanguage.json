@@ -261,7 +261,7 @@
       "match": "\\b\\d+\\b"
     },
     "foreign-block": {
-      "comment": "A foreign-language block: `Domain Expansion: Python` (or Go/rask/cRust) and everything indented beneath it, which is that language's source and not Domain. The `while` clause is the standard indented-block trick: the region continues while a line is blank or indented deeper than the opener captured in \\1 — the same rule the lexer applies. Where the language has a grammar installed it is embedded, so the block reads as itself; where it does not, the block is simply left unhighlighted, which is still better than colouring it as Domain.",
+      "comment": "A foreign-language block: `Domain Expansion: Python` (or Go/rask/cRust/Weave) and everything indented beneath it, which is that language's source and not Domain. The `while` clause is the standard indented-block trick: the region continues while a line is blank or indented deeper than the opener captured in \\1 — the same rule the lexer applies. Where the language has a grammar installed it is embedded, so the block reads as itself; where it does not, the block is simply left unhighlighted, which is still better than colouring it as Domain.",
       "patterns": [
         {
           "begin": "^([ \\t]*)(?:(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal)[ \\t]*(:)[ \\t]*)?(Python)\\b[ \\t]*(:[^\\n]*)?$",
@@ -348,6 +348,25 @@
           },
           "while": "^(?:\\1[ \\t]+\\S|[ \\t]*$)",
           "contentName": "meta.embedded.block.crust"
+        },
+        {
+          "begin": "^([ \\t]*)(?:(Cursed Energy|Cursed Technique|Channeled Energy|Maximum Technique|Domain Expansion|Reverse Cursed Technique|Simple Domain|Binding Vow|Reveal)[ \\t]*(:)[ \\t]*)?(Weave)\\b[ \\t]*(:[^\\n]*)?$",
+          "beginCaptures": {
+            "2": {
+              "name": "keyword.control.domain"
+            },
+            "3": {
+              "name": "punctuation.separator.key-value.domain"
+            },
+            "4": {
+              "name": "entity.name.type.foreign.domain"
+            },
+            "5": {
+              "name": "storage.type.domain"
+            }
+          },
+          "while": "^(?:\\1[ \\t]+\\S|[ \\t]*$)",
+          "contentName": "meta.embedded.block.weave"
         }
       ]
     }

@@ -83,7 +83,7 @@ var phraseAliases = []string{
 // else would be wrong.
 func primitiveSpellings() []string {
 	foreign := map[string]bool{}
-	for _, l := range ast.ForeignLanguages {
+	for _, l := range ast.ForeignLanguages() {
 		foreign[l] = true
 	}
 	out := slices.Clone(phraseAliases)
@@ -330,7 +330,7 @@ func TestEveryPhraseWordInTheRepositoryIsHighlighted(t *testing.T) {
 	add(primitiveSpellings()...)
 	add(prims.PreludeNames()...)
 	add(ast.Keywords...)
-	add(ast.ForeignLanguages...)
+	add(ast.ForeignLanguages()...)
 	add(typecheck.Builtins...)
 	// The rules that are hand-written because they name closed sets the
 	// language does not keep a list of: loop drivers, connector words, Mode:
@@ -449,4 +449,88 @@ func localName(prog *ast.Program, word string) bool {
 	// An imported library's Shikigami are named in a file this test does not
 	// read; a program that imports one may call it by a name from there.
 	return len(prog.Imports) > 0
+}
+
+// Every foreign language has a block rule in both grammars.
+//
+// The word lists in these grammars are generated and so cannot go stale, but
+// the foreign-block rules are hand-written — each language names itself in a
+// regex, because the rule colours a whole indented region rather than a word.
+// Weave was added to the language and neither grammar noticed, which is
+// exactly the failure this catches: a block that reads as Domain source when
+// it is not Domain source at all.
+//
+// It reads the *rule patterns* rather than the file, because both grammars
+// also carry a prose comment listing the languages, and a check that the name
+// appears anywhere passes on the comment alone while the rule stays stale.
+func TestForeignBlockRulesCoverEveryLanguage(t *testing.T) {
+	patterns := map[string]string{
+		"vscode/syntaxes/domain.tmLanguage.json": tmForeignPatterns(t),
+		"nvim/syntax/domain.vim":                 vimForeignPatterns(t),
+	}
+	for _, lang := range ast.ForeignLanguages() {
+		for path, src := range patterns {
+			if !strings.Contains(src, lang) {
+				t.Errorf("%s has no foreign-block rule matching %s — such a block would be highlighted as Domain",
+					path, lang)
+			}
+		}
+	}
+}
+
+// tmForeignPatterns is every `begin` regex in the TextMate grammar, which is
+// where a language name has to appear for its block to be recognized.
+func tmForeignPatterns(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("vscode", "syntaxes", "domain.tmLanguage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var sb strings.Builder
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if s, ok := x["begin"].(string); ok {
+				sb.WriteString(s)
+				sb.WriteByte('\n')
+			}
+			for _, e := range x {
+				walk(e)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	walk(doc)
+	return sb.String()
+}
+
+// vimForeignPatterns is every `start=` line of the vim syntax file, for the
+// same reason: comments there begin with a double quote and would otherwise
+// satisfy the check on their own.
+func vimForeignPatterns(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("nvim", "syntax", "domain.vim"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sb strings.Builder
+	for _, line := range strings.Split(string(b), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "\"") {
+			continue // a comment
+		}
+		if strings.Contains(line, "start=") {
+			sb.WriteString(line)
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
 }

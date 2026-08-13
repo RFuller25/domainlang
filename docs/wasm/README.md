@@ -24,6 +24,13 @@ makes the feature safe and honest:
 ./docs/wasm/build.sh
 ```
 
+Or, to build the playground and the `domain` binary that embeds it in one
+step: `make build` at the repo root runs this script first, then
+`go build -o domain ./cmd/domain`. `go generate ./docs/...` runs just this
+step, via the `//go:generate` directive on `docs.FS` in `docs/embed.go`. The
+Nix package (`flake.nix`) runs it too, in a `preBuild` phase, so
+`nix build`/`nix run` also ship a working playground.
+
 That writes two files into this directory, neither of which is committed:
 
 | File | What it is |

@@ -1,9 +1,7 @@
 package ast
 
 import (
-	"slices"
-	"strings"
-
+	"domain/langs"
 	"domain/token"
 )
 
@@ -20,22 +18,21 @@ import (
 // downstream of the parser tries to read it — it is a string handed to another
 // language's runtime.
 //
-// ForeignLanguages lives in this package for the same reason Keywords does:
-// the lexer has to recognize a block opener *before* anything with an opinion
-// about semantics has seen the line, because from the next line onward the
-// source is not Domain and cannot be tokenized as Domain. That makes the list
-// part of the syntax, which is what this package is for.
+// The set the lexer recognizes is package langs' table, read through the two
+// functions below. It lives there rather than here because the interpreter and
+// the compiler need the same list plus the invocation details, and three
+// hand-synced copies meant a language present in two of them and missing from
+// the third — a program that lexes, interprets, and then fails to compile.
+//
+// What stays true is why the lexer needs it at all: a block opener has to be
+// recognized *before* anything with an opinion about semantics has seen the
+// line, because from the next line onward the source is not Domain and cannot
+// be tokenized as Domain. That makes the list part of the syntax, and is why
+// it is closed — a name in it changes how the lexer reads the lines beneath.
 
 // ForeignLanguages is the closed set of languages a foreign block may be
-// written in, in canonical spelling. It is closed on purpose: a name here
-// changes how the *lexer* reads the lines beneath it, so the set has to be
-// small, known, and unable to grow by accident.
-var ForeignLanguages = []string{
-	"Python",
-	"Go",
-	"rask",
-	"cRust",
-}
+// written in, in canonical spelling.
+func ForeignLanguages() []string { return langs.Names() }
 
 // ForeignLanguage reports whether name is a foreign language, returning its
 // canonical spelling. Matching is case-insensitive, so `Domain Expansion:
@@ -43,13 +40,11 @@ var ForeignLanguages = []string{
 // phrases are matched case-insensitively everywhere else (see prims.hasWord),
 // and a lexical rule that cared about case would be the only one that did.
 func ForeignLanguage(name string) (string, bool) {
-	i := slices.IndexFunc(ForeignLanguages, func(l string) bool {
-		return strings.EqualFold(l, name)
-	})
-	if i < 0 {
+	s, ok := langs.Lookup(name)
+	if !ok {
 		return "", false
 	}
-	return ForeignLanguages[i], true
+	return s.Name, true
 }
 
 // ForeignBlock is the body of a foreign-language statement: source text in

@@ -161,6 +161,63 @@ func TestCompiledAnchorsMatchInterpreter(t *testing.T) {
 	}
 }
 
+// The AoC 2017 day 15 "dueling generators" idiom — a Channel unfolding tens
+// of millions of raw values, filtering most out, then taking a fixed number
+// of what's left — is what optimizer.fuseUnfoldStream (docs/optimizer.md,
+// pass 11) exists for. This is the program at its real scale (40M/60M raw
+// steps), unmodified, checked against the known-correct answer rather than
+// the interpreter: the naive (unfused) interpreter path takes over a minute
+// and several GB of RAM at this scale — which is the whole problem this
+// pass fixes — so it is not a viable oracle here. The small-scale
+// differential tests in optimizer/streamfuse_test.go are what check the
+// fusion's output against a naive oracle.
+func TestStreamFusionDay15(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles a binary and runs 40M/60M raw generator steps; skipped in -short mode")
+	}
+	requireGo(t)
+	src, err := os.ReadFile(filepath.Join("..", "testdata", "day15.domain"))
+	if err != nil {
+		t.Fatalf("reading day15.domain: %v", err)
+	}
+	input, err := os.ReadFile(filepath.Join("..", "testdata", "day15_input.txt"))
+	if err != nil {
+		t.Fatalf("reading day15_input.txt: %v", err)
+	}
+
+	toks, err := lexer.Lex(string(src))
+	if err != nil {
+		t.Fatalf("lex: %v", err)
+	}
+	prog, err := parser.Parse(string(src), toks)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pipe, err := prims.Resolve(prog)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	rewrites := optimizer.Optimize(pipe, true)
+
+	fused := false
+	for _, r := range rewrites {
+		if strings.Contains(r.Message, "Cursed Stream") {
+			fused = true
+		}
+	}
+	if !fused {
+		t.Fatalf("expected the Unfold chain to fuse into a Stream node, got rewrites: %v", rewrites)
+	}
+
+	got := strings.TrimSpace(buildAndRun(t, pipe, input, codegen.Options{}))
+	// 309 is the canonical answer for the AoC 2017 day 15 example input
+	// (Generator A starts with 65 / Generator B starts with 8921),
+	// independently verified against the puzzle's own worked example.
+	if got != "309" {
+		t.Errorf("day15 compiled output = %q, want %q", got, "309")
+	}
+}
+
 // Inline programs covering surfaces the anchors miss: the regex-fallback
 // Match Pattern path (word holes) and list rendering at the Reveal sink.
 func TestCompiledInlineProgramsMatchInterpreter(t *testing.T) {

@@ -13,7 +13,25 @@ import (
 
 // Rewrite records a single applied optimization, for --explain.
 type Rewrite struct {
+	// Pass names the pass that produced this rewrite, matching the function
+	// name in passes below ("fuseSortThenTopK"). --explain never shows it;
+	// it exists for the tools that report which passes fired on a program
+	// (`domain expansion: stats`, `golf`), which cannot recover a pass
+	// identity by pattern-matching English out of Message.
+	//
+	// It is stamped in Optimize rather than at each construction site,
+	// because several passes are built on shared helpers (rewritePairs) and
+	// a site inside one of those has no idea which pass is calling it.
+	Pass    string
 	Message string
+}
+
+// stamp labels every rewrite a pass returned with that pass's name.
+func stamp(name string, rs []Rewrite) []Rewrite {
+	for i := range rs {
+		rs[i].Pass = name
+	}
+	return rs
 }
 
 // isIntList reports whether t is exactly List<Int> — the shape every
@@ -55,39 +73,49 @@ func typeHasFloat(t *ir.Type) bool {
 // fusion. Passes cascade — e.g. Sort + Reverse first flips into one Sort,
 // which can then fuse with a following Select Top K — so Optimize reruns the
 // rounds until a full round applies nothing.
-var passes = []func(*ir.Pipeline) []Rewrite{
+// A pass carries its own name so a Rewrite can report where it came from. The
+// name is written out rather than derived by reflection at run time: a test
+// (optimizer_test.go) checks each entry's name against the function it holds,
+// so the duplication cannot drift and the production path stays plain.
+type pass struct {
+	name string
+	run  func(*ir.Pipeline) []Rewrite
+}
+
+var passes = []pass{
 	// expression layer
-	simplifyLambdaBodies,
+	{"simplifyLambdaBodies", simplifyLambdaBodies},
 	// algorithm substitutions
-	fuseSortThenTopK,
-	fuseSortTakeItem,
-	fuseAllPairsSum,
-	fusePairDiff,
-	fuseAllPairsProduct,
-	fuseTripleSum,
-	fuseLinearMapExtremum,
-	fuseWindowReduce,
-	fuseSearchTarget,
-	fuseFilterFirst,
+	{"fuseSortThenTopK", fuseSortThenTopK},
+	{"fuseSortTakeItem", fuseSortTakeItem},
+	{"fuseAllPairsSum", fuseAllPairsSum},
+	{"fusePairDiff", fusePairDiff},
+	{"fuseAllPairsProduct", fuseAllPairsProduct},
+	{"fuseTripleSum", fuseTripleSum},
+	{"fuseLinearMapExtremum", fuseLinearMapExtremum},
+	{"fuseWindowReduce", fuseWindowReduce},
+	{"fuseSearchTarget", fuseSearchTarget},
+	{"fuseFilterFirst", fuseFilterFirst},
+	{"fuseUnfoldStream", fuseUnfoldStream},
 	// reordering dead code
-	fuseSortReverse,
-	elideRedundantSort,
-	hoistUniqueBeforeSort,
-	elideReorderBeforeReduce,
-	cancelReversePairs,
-	elideRedundantUnique,
-	elideUniqueBeforeExtremum,
+	{"fuseSortReverse", fuseSortReverse},
+	{"elideRedundantSort", elideRedundantSort},
+	{"hoistUniqueBeforeSort", hoistUniqueBeforeSort},
+	{"elideReorderBeforeReduce", elideReorderBeforeReduce},
+	{"cancelReversePairs", cancelReversePairs},
+	{"elideRedundantUnique", elideRedundantUnique},
+	{"elideUniqueBeforeExtremum", elideUniqueBeforeExtremum},
 	// map/filter dead code and fusion
-	elideIdentityMap,
-	elideMapBeforeCount,
-	fuseMapMap,
-	fuseFilterFilter,
-	fuseFilterCount,
-	fuseFoldSum,
-	fuseMapReduceBy,
-	fuseZipWith,
-	elideConstPredicates,
-	elideConstEarlyExits,
+	{"elideIdentityMap", elideIdentityMap},
+	{"elideMapBeforeCount", elideMapBeforeCount},
+	{"fuseMapMap", fuseMapMap},
+	{"fuseFilterFilter", fuseFilterFilter},
+	{"fuseFilterCount", fuseFilterCount},
+	{"fuseFoldSum", fuseFoldSum},
+	{"fuseMapReduceBy", fuseMapReduceBy},
+	{"fuseZipWith", fuseZipWith},
+	{"elideConstPredicates", elideConstPredicates},
+	{"elideConstEarlyExits", elideConstEarlyExits},
 }
 
 // maxRounds caps the cascade loop. Every pass either strictly shrinks the
@@ -99,15 +127,120 @@ const maxRounds = 16
 // Optimize applies the optimization passes to the pipeline in place, returning
 // the list of rewrites performed. When enabled is false it is a no-op, leaving
 // the naive pipeline intact (useful as a correctness oracle).
+//
+// This is the pipeline every ordinary run and build takes: the full pass list,
+// in the order above, to a fixpoint. Callers that want to vary that — which
+// today means `domain expansion: mahoraga` searching for the subset and order
+// that suits one program — go through OptimizeWith.
 func Optimize(p *ir.Pipeline, enabled bool) []Rewrite {
 	if !enabled {
 		return nil
 	}
+	return OptimizeWith(p, Schedule{})
+}
+
+// Schedule selects which passes run, in what order, and how many rounds the
+// cascade may take.
+//
+// It exists because "which passes help" is a question with a different answer
+// per program, and the default list can only be right on average. A pass that
+// pessimises one particular program cannot be found by the optimizer itself —
+// the optimizer is not allowed to know anything about the input — but it can
+// be found by measuring, which is what mahoraga does with this.
+//
+// The zero Schedule is the default pipeline, so OptimizeWith(p, Schedule{}) and
+// Optimize(p, true) are the same thing.
+type Schedule struct {
+	// Passes names the passes to run, in order. Nil means every pass in the
+	// declared order. An empty non-nil slice means none of them, which is a
+	// meaningful request: it isolates what the linear-accumulator pass alone
+	// is worth.
+	Passes []string
+
+	// MaxRounds caps the cascade. Zero means the default.
+	MaxRounds int
+
+	// SkipLinear stands down markLinearAccumulators, which otherwise always
+	// runs once after the cascade settles.
+	SkipLinear bool
+}
+
+// PassNames is every pass in its declared order — what a caller enumerates to
+// build a Schedule, and what a report names a rewrite by.
+func PassNames() []string {
+	out := make([]string, len(passes))
+	for i, ps := range passes {
+		out[i] = ps.name
+	}
+	return out
+}
+
+// LinearPassName is the pass that runs after the cascade rather than in it.
+// Named here so a caller building a schedule can talk about it without
+// hardcoding the string.
+const LinearPassName = "markLinearAccumulators"
+
+// UnknownPasses returns the names in a schedule that name no pass. A caller
+// validates before running rather than silently optimizing less than it asked
+// for — a misspelled pass name that quietly did nothing would make a
+// measurement mean the opposite of what it appeared to.
+func (s Schedule) UnknownPasses() []string {
+	if s.Passes == nil {
+		return nil
+	}
+	known := map[string]bool{}
+	for _, ps := range passes {
+		known[ps.name] = true
+	}
+	var bad []string
+	for _, name := range s.Passes {
+		if !known[name] {
+			bad = append(bad, name)
+		}
+	}
+	return bad
+}
+
+// selected resolves a schedule to the passes it names, in the order it names
+// them. A name repeated in Passes runs twice per round, which is a legitimate
+// thing to measure.
+func (s Schedule) selected() []pass {
+	if s.Passes == nil {
+		return passes
+	}
+	byName := make(map[string]pass, len(passes))
+	for _, ps := range passes {
+		byName[ps.name] = ps
+	}
+	out := make([]pass, 0, len(s.Passes))
+	for _, name := range s.Passes {
+		if ps, ok := byName[name]; ok {
+			out = append(out, ps)
+		}
+	}
+	return out
+}
+
+func (s Schedule) rounds() int {
+	if s.MaxRounds <= 0 {
+		return maxRounds
+	}
+	return s.MaxRounds
+}
+
+// OptimizeWith applies a chosen schedule of passes to the pipeline in place.
+//
+// Every schedule is semantics-preserving, because every individual pass is:
+// running fewer passes, or the same passes in a different order, can change
+// how fast a program is and cannot change what it computes. That is what makes
+// searching this space safe in a way that mutating the emitted code is not.
+func OptimizeWith(p *ir.Pipeline, s Schedule) []Rewrite {
+	sel := s.selected()
 	var rewrites []Rewrite
-	for range maxRounds {
+	for range s.rounds() {
 		applied := 0
-		for _, pass := range passes {
-			rs := pass(p)
+		for _, ps := range sel {
+			rs := stamp(ps.name, ps.run(p))
 			rewrites = append(rewrites, rs...)
 			applied += len(rs)
 		}
@@ -121,7 +254,9 @@ func Optimize(p *ir.Pipeline, enabled bool) []Rewrite {
 	// back into: expression simplification folds a constant by applying a
 	// lambda twice, which is precisely what an in-place update must not have
 	// done to it. See optimizer/linear.go.
-	rewrites = append(rewrites, markLinearAccumulators(p)...)
+	if !s.SkipLinear {
+		rewrites = append(rewrites, stamp(LinearPassName, markLinearAccumulators(p))...)
+	}
 	return rewrites
 }
 

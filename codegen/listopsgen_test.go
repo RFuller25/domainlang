@@ -197,6 +197,24 @@ Reveal: stdout
 `,
 			input: "5",
 		},
+		{
+			// Past the 1,000,000 the compiled Unfold bound once stopped at
+			// while the interpreter's kept going: the same program printed an
+			// answer interpreted and died compiled. Both ceilings are now a
+			// billion, so this has to run to the same count in both backends.
+			name: "unfold past a million elements",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert List to Integers
+Cursed Technique: Take Item 0
+Cursed Technique: Unfold
+    While: (x) -> x < 1000001
+    Using: (x) -> x + 1
+Maximum Technique: Count
+Reveal: stdout
+`,
+			input: "0",
+		},
 		// --- Any / All / Find / Find Index ---
 		{
 			name: "all short-circuits before a failing element",

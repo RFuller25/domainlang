@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"domain/ast"
+	"domain/langs"
 
 	"domain/ir"
 	"domain/pattern"
@@ -188,27 +189,26 @@ func TestBuildBinaryBadSource(t *testing.T) {
 }
 
 // TestForeignSpecsCoverEveryLanguage is the guard on the closed set of foreign
-// languages: one that lexes and interprets but has no runner here would parse,
+// languages: one that lexes and interprets but cannot be emitted would parse,
 // run, and then fail to compile — the one failure mode `domain build` is
-// supposed to be free of. Adding a language to ast.ForeignLanguages fails this
-// test until it can be compiled too.
+// supposed to be free of.
+//
+// The three copies of the runner table are now one (package langs), so the
+// lookup can no longer disagree with the lexer's list by construction. What
+// this checks is the part that is still capable of being wrong: that every
+// language actually reaches emitted code, with a spelled-out invocation.
 func TestForeignSpecsCoverEveryLanguage(t *testing.T) {
-	for _, lang := range ast.ForeignLanguages {
-		spec, ok := foreignSpecs[lang]
+	for _, lang := range ast.ForeignLanguages() {
+		spec, ok := langs.Lookup(lang)
 		if !ok {
-			t.Errorf("%s has no codegen runner", lang)
+			t.Errorf("%s has no runner in package langs", lang)
 			continue
 		}
-		if spec.file == "" || spec.env == "" || len(spec.candidates) == 0 {
+		if spec.File == "" || spec.Env == "" || len(spec.Candidates) == 0 {
 			t.Errorf("%s: incomplete runner spec %+v", lang, spec)
 		}
-		if !spec.appendProg && len(spec.tail) == 0 {
+		if !spec.AppendProg && len(spec.Args) == 0 {
 			t.Errorf("%s: the runner would never be told which program to run", lang)
-		}
-	}
-	for lang := range foreignSpecs {
-		if _, ok := ast.ForeignLanguage(lang); !ok {
-			t.Errorf("codegen has a runner for %q, which is not a foreign language", lang)
 		}
 	}
 }

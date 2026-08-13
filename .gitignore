@@ -11,11 +11,21 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
+# Code coverage profiles and other test artifacts.
+#
+# These are anchored to the repo root, and that is not fussiness. The
+# unanchored `coverage.*` that used to be here matched cmd/domain/coverage.go —
+# the implementation of `domain expansion: coverage` — so `git add` skipped it
+# in silence, the file lived on in every working tree that created it, and the
+# break only surfaced when someone built from a source tarball: `undefined:
+# parseCoverageArgs`. A pattern for build output should never be able to
+# swallow a source file, so it names the files the tools actually write.
+/coverage.out
+/coverage.html
+/coverage.txt
+/profile.cov
 *.coverprofile
-profile.cov
+*.out
 
 # Dependency directories (remove the comment below to include it)
 # vendor/

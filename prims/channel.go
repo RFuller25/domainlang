@@ -41,29 +41,36 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 	}
 	r.channels[name] = subType
 
-	return &ir.Node{
+	node := &ir.Node{
 		Prim:    "Channel",
 		In:      cur,
 		Out:     cur, // passthrough
 		Display: fmt.Sprintf("Channel %q", name),
 		Meta:    map[string]any{"name": name, "nodes": subNodes},
 		Pos:     stmt.Pos,
-		Eval: func(ctx *ir.Context, in ir.Value) (ir.Value, error) {
-			// The result is reported to the tracer on the way out, so a failed
-			// body closes its frame as unfinished rather than leaving it open.
-			var body ir.Value
-			ctx.PushFrame(fmt.Sprintf("Channel %q", name), subType)
-			defer func() { ctx.PopFrame(body) }()
+	}
+	node.Eval = func(ctx *ir.Context, in ir.Value) (ir.Value, error) {
+		// The result is reported to the tracer on the way out, so a failed
+		// body closes its frame as unfinished rather than leaving it open.
+		var body ir.Value
+		ctx.PushFrame(fmt.Sprintf("Channel %q", name), subType)
+		defer func() { ctx.PopFrame(body) }()
 
-			v, err := runBody(ctx, subNodes, in)
-			if err != nil {
-				return nil, err
-			}
-			body = v
-			ctx.SetChannel(name, v)
-			return in, nil
-		},
-	}, nil
+		// Read from Meta rather than closing over subNodes directly: a
+		// length-changing optimizer rewrite (e.g. fuseUnfoldStream) replaces
+		// Meta["nodes"] with a shorter fused slice, and only a read at Eval
+		// time picks that up — a captured local would keep running the
+		// pre-optimization body forever.
+		nodes, _ := node.Meta["nodes"].([]*ir.Node)
+		v, err := runBody(ctx, nodes, in)
+		if err != nil {
+			return nil, err
+		}
+		body = v
+		ctx.SetChannel(name, v)
+		return in, nil
+	}
+	return node, nil
 }
 
 // resolveConsumer lowers a From:-consumer (Combine or Difference).

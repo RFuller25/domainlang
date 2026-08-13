@@ -3,10 +3,10 @@
 ## Source format
 
 - **Foreign blocks are the one exception to everything below.** The body of
-  `Domain Expansion: Python` (or `Go`/`rask`/`cRust`) is source in that
+  `Domain Expansion: Python` (or `Go`/`rask`/`cRust`/`Weave`) is source in that
   language, captured verbatim: its own comment character, its own brackets,
   tabs if it wants them. See
-  [primitives.md](primitives.md#foreign-block--t---text-or-a-declared-in---out).
+  [primitives.md](ref-expansions.md#foreign-block--t---text-or-a-declared-in---out).
 - **Significant indentation, spaces only.** A tab anywhere in indentation is a
   lex error. Indented lines form a block belonging to the statement above.
 - **One pipeline statement per line**, `Keyword: operation phrase` — or just
@@ -152,7 +152,7 @@ linter reports it (see [diagnostics.md](diagnostics.md#the-linter)).
 The same block may hold `Consider NAME As …` and `Consider NAME Of …` lines,
 which name a value the stage's expressions can use instead of repeating it:
 
-```domain
+```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"
 Channeled Energy: Convert To Integers
@@ -160,6 +160,15 @@ Cursed Technique: Filter
     Consider mean Of (xs) -> sum(xs) / length(xs)
     Using: (x) -> x > mean
 Reveal: stdout
+```
+```input
+1
+2
+3
+10
+```
+```output
+[10]
 ```
 
 They are their own line kind rather than arguments, because an argument's name
@@ -193,11 +202,65 @@ Cursed Technique: Apply
 Neither form changes anything but the line breaks; see
 [expressions.md](expressions.md#writing-an-expression-across-lines).
 
+`As` never sees the pipeline value, so it is where a constant or a helper
+function goes:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider double As (n) -> n * 2
+    Using: (x) -> double(x) + 1
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[3, 5, 7]
+```
+
 ### Measured arguments
 
 An argument that a phrase takes as a literal — `Window 3`, `Chunk 4`,
 `Select Top 3`, `Split Text by ","` — may instead be given as a named argument
 holding a lambda over the **current value**, so it can depend on the data
+rather than on the program text.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Chunk
+    Size: (xs) -> length(xs) / 2
+Reveal: stdout
+```
+```input
+1,2,3,4,5,6
+```
+```output
+[[1, 2, 3], [4, 5, 6]]
+```
+
+The measured form and the literal form mean the same thing when the lambda is
+constant, so reaching for it costs nothing:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split
+    By: (t) -> if indexof(t, ";") >= 0 then ";" else ","
+Maximum Technique: Count
+Reveal: stdout
+```
+```input
+a;b;c
+```
+```output
+3
+```
+
+<!--MEASURED-->
 rather than on the source:
 
 ```domain
@@ -209,7 +272,7 @@ The lambda binds the whole current value (the binding `Apply` gives its
 lambda), plus one trailing parameter per enclosing `For` loop, and must
 return the slot's own type (`Int` for a count, `Text` for a separator, the
 cell type for a fill). It runs once per execution of the statement, before the
-primitive does. [primitives.md](primitives.md#measured-arguments) has the
+primitive does. [primitives.md](ref-transforms.md#measured-arguments) has the
 full rules and the list of primitives that take one.
 
 An argument is measurable when it carries **data**. Three kinds stay literal,
@@ -278,6 +341,68 @@ seed**, and `Zip` pairs two channel lists element-wise — see
 [primitives.md](primitives.md). These consumers are the only place the
 otherwise linear pipeline forms a graph.
 
+Two channels branching from one upstream value, rejoined by `Combine`:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n\n"
+
+Channel "rules":
+    Cursed Technique: Take Item 0
+    Cursed Technique: Split Text by "\n"
+    Maximum Technique: Count
+
+Channel "pages":
+    Cursed Technique: Take Item 1
+    Cursed Technique: Split Text by "\n"
+    Maximum Technique: Count
+
+Maximum Technique: Combine
+    From: rules, pages
+    Using: (r, p) -> r * 100 + p
+Reveal: stdout
+```
+```input
+a
+b
+c
+
+x
+y
+```
+```output
+302
+```
+
+A channel body may consume channels declared above it, so a value derived from
+two of them can be named once instead of recomputed at every consumer:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+
+Channel "nums":
+    Channeled Energy: Convert To Integers
+
+Channel "total":
+    Maximum Technique: Combine
+        From: nums
+        Using: (ns) -> sum(ns)
+
+Maximum Technique: Combine
+    From: nums, total
+    Using: (ns, t) -> t / length(ns)
+Reveal: stdout
+```
+```input
+2
+4
+6
+```
+```output
+4
+```
+
 ## Part — two answers from one parse
 
 Every Advent of Code day asks two questions about the same input. A
@@ -285,7 +410,7 @@ Every Advent of Code day asks two questions about the same input. A
 value** and labels what that body prints — so the parse above the Parts
 happens once:
 
-```domain
+```domain run
 Cursed Energy: input.txt
 Cursed Technique: Split Text by "\n\n"
 Cursed Technique: Split Each by "\n"
@@ -301,8 +426,23 @@ Part "2":
     Maximum Technique: Select Top 3, Sum
     Reveal: stdout
 ```
+```input
+1000
+2000
+3000
 
+4000
+
+5000
+6000
+
+7000
+8000
+9000
+
+10000
 ```
+```output
 Part 1: 24000
 Part 2: 45000
 ```
@@ -311,6 +451,33 @@ A Part is a **passthrough**, exactly like a [Channel](#channels--multi-section-i
 the main pipeline's current value is unchanged, so sibling Parts all branch
 from the same upstream value (Part 1 sorting cannot disturb what Part 2 sees)
 and a top-level `Reveal` after the Parts still prints the upstream value.
+
+That passthrough is worth seeing directly — the sort inside Part 1 leaves
+nothing behind for Part 2, or for the `Reveal` after both:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+
+Part "sorted":
+    Domain Expansion: Sort
+    Reveal: stdout
+
+Part "first":
+    Cursed Technique: Take Item 0
+    Reveal: stdout
+
+Reveal: stdout
+```
+```input
+3,1,2
+```
+```output
+Part sorted: [1, 2, 3]
+Part first: 3
+[3, 1, 2]
+```
 
 **Output is explicit.** A Part prints only what its body `Reveal`s — `Reveal`
 stays the single output sink, and there is no implicit-print rule to
@@ -352,6 +519,58 @@ Shikigami "Top K Sum" (k: Int) : List<Int> -> Int
 Calls use the block form; parameters are passed as named arguments, and the
 `Shikigami:` keyword is optional like any other:
 
+A definition and its call, as a whole program — the definition is a
+declaration, so it may sit above or below the pipeline that uses it:
+
+```domain run
+Shikigami "Top K Sum" (k: Int) : List<Int> -> Int
+    Domain Expansion: Quicksort, Descending
+    Maximum Technique: Select Top k, Sum
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Shikigami: Top K Sum
+    k: 2
+Reveal: stdout
+```
+```input
+5,1,9,3
+```
+```output
+14
+```
+
+One definition may be called more than once with different arguments, which
+is the whole reason to name a composition rather than repeat it:
+
+```domain run
+Shikigami "Top K Sum" (k: Int) : List<Int> -> Int
+    Domain Expansion: Quicksort, Descending
+    Maximum Technique: Select Top k, Sum
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+
+Part "one":
+    Shikigami: Top K Sum
+        k: 1
+    Reveal: stdout
+
+Part "three":
+    Shikigami: Top K Sum
+        k: 3
+    Reveal: stdout
+```
+```input
+5,1,9,3
+```
+```output
+Part one: 9
+Part three: 17
+```
+
 ```domain ignore
 Shikigami: Top K Sum        Top K Sum
     k: 3                        k: 3
@@ -383,6 +602,50 @@ Declaring it `size: Int` and passing a lambda is rejected, and the error says
 this: a scalar parameter substitutes into the body as a *literal* — into lambda
 bodies included — which is exactly what a function has no form for. (A body may
 of course just measure directly, with no parameter at all.)
+
+A scalar parameter substitutes into the phrase and into lambda bodies alike:
+
+```domain run
+Shikigami "Over" (limit: Int) : List<Int> -> Int
+    Cursed Technique: Filter
+        Using: (x) -> x > limit
+    Maximum Technique: Count
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Shikigami: Over
+    limit: 4
+Reveal: stdout
+```
+```input
+1,5,2,9
+```
+```output
+2
+```
+
+A lambda parameter is the other kind, and it is how a predicate is handed in
+from the call site:
+
+```domain run
+Shikigami "Count Where" (p: (Int) -> Bool) : List<Int> -> Int
+    Maximum Technique: Count Matching
+        Using: p
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Shikigami: Count Where
+    p: (x) -> mod(x, 2) = 0
+Reveal: stdout
+```
+```input
+1,2,3,4
+```
+```output
+2
+```
 
 Composite values (`Grid<Int>`, `List<Text>`, …) are not parameters: Domain has
 no composite literals, so there would be no way to write one at a call. Those
@@ -434,6 +697,46 @@ knowing:
 
 In a signature the top-level `->` always separates input from output, so
 `: (Int, Int) -> Int` takes a **tuple** and returns an `Int`.
+
+A signature is checked at both ends, and inlining still happens through it —
+the pair below is still fused into a quickselect:
+
+```domain run
+Shikigami "Top Two" : List<Int> -> Int
+    Domain Expansion: Quicksort, Descending
+    Maximum Technique: Select Top 2, Sum
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Shikigami: Top Two
+Reveal: stdout
+```
+```input
+5,1,9,3
+```
+```output
+14
+```
+
+Leaving it off is the way to write a genuinely polymorphic operation, since
+there are no type variables to declare one with:
+
+```domain run
+Shikigami "Second"
+    Cursed Technique: Take Item 1
+
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Shikigami: Second
+Reveal: stdout
+```
+```input
+a,b,c
+```
+```output
+b
+```
 
 The prelude declares signatures for all five of its definitions, which is
 where to look for worked examples.
@@ -517,6 +820,55 @@ at the top.
 3. `~/.config/domain/lib`.
 
 A target with a separator (`grids/hex`) is resolved the same way, relative to
+each root in turn.
+
+A library beside the program, and the program calling into it:
+
+```domain run
+Innate Domain: aoc
+
+Cursed Energy: stdin
+Shikigami: Total Lengths
+Reveal: stdout
+```
+```lib aoc.domain
+Shikigami "Total Lengths"
+    Cursed Technique: Split Text by "\n"
+    Maximum Technique: Sum By
+        Using: (line) -> length(line)
+```
+```input
+ab
+cde
+```
+```output
+5
+```
+
+Imports are declarations rather than steps, so they are hoisted and their
+position does not matter — and a library may import another:
+
+```domain run
+Cursed Energy: stdin
+Shikigami: Doubled
+Reveal: stdout
+
+Innate Domain: helpers
+```
+```lib helpers.domain
+Shikigami "Doubled"
+    Cursed Technique: Split Text by ","
+    Channeled Energy: Convert To Integers
+    Cursed Technique: Map Each
+        Using: (n) -> n * 2
+```
+```input
+1,2,3
+```
+```output
+[2, 4, 6]
+```
+
 each candidate directory. A miss lists every directory searched.
 
 **Shadowing** runs weakest to strongest — prelude, then imports in import
@@ -557,6 +909,47 @@ dogfood case — the standard library gets the same check a user's Shikigami doe
 
 User definitions with the same name shadow the prelude.
 
+The prelude's operations are callable with no import at all:
+
+```domain run
+Cursed Energy: stdin
+Shikigami: Ints
+Maximum Technique: Sum
+Reveal: stdout
+```
+```input
+1
+2
+3
+```
+```output
+6
+```
+
+`Blocks` is the paragraph parser, and `Top K Sum` takes the parameter its
+declaration names:
+
+```domain run
+Cursed Energy: stdin
+Shikigami: Blocks
+Channeled Energy: Convert Each List to Integers
+Maximum Technique: Sum Each Group
+Shikigami: Top K Sum
+    k: 2
+Reveal: stdout
+```
+```input
+1
+2
+
+10
+
+100
+```
+```output
+110
+```
+
 ## Simple Domain — loops
 
 The body is an indented sub-pipeline that must **preserve the value type**
@@ -580,12 +973,19 @@ Simple Domain: Iterate Until Fixed Point
 - `Iterate Until Fixed Point` runs the body until the value stops changing
   (structural equality).
 
-`While` and `Iterate Until Fixed Point` are **unbounded**. Domain used to cap
-them at 1,000,000 iterations, which turned a legitimate long-running
-simulation into a spurious failure; a limit must never be the reason a correct
-program cannot run. The trade is real: a genuinely non-terminating loop now
-spins until interrupted rather than failing loudly. The same reasoning removed
-the ceilings on `Permutations`, `Subsets`, and sparse densification.
+`While` and `Iterate Until Fixed Point` stop after **1,000,000,000
+iterations**, and `Unfold` after a billion elements. Domain used to cap them at
+1,000,000, which turned a legitimate long-running simulation into a spurious
+failure; a limit must never be the reason a correct program cannot run, and a
+40,000,000-step generator is an ordinary puzzle, not an abuse. A billion is
+past anything that finishes while you wait, so a loop that reaches it is not
+slow but stuck, and saying so beats spinning until interrupted. Both backends
+use the same number — a program that runs interpreted runs compiled.
+
+The ceilings on `Permutations`, `Subsets`, and sparse densification were
+removed outright rather than raised, and stay that way: those are bounded by
+their input, so a ceiling there refuses a correct program without catching a
+runaway one.
 
 **For** loops iterate a named list, binding each element as an ambient
 extra parameter on every `Using:` lambda in the body:
@@ -624,6 +1024,45 @@ parameter that happens to share the ambient name shadows it.
 `For` compiles like every other loop kind — the earlier interpreter-only
 restriction is gone, so there is no advertised gap between the backends.
 
+`Repeat N` runs the body a fixed number of times, and the body must give back
+the type it was given:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> toint(t)
+Simple Domain: Repeat 3
+    Cursed Technique: Apply
+        Using: (n) -> n * 2
+Reveal: stdout
+```
+```input
+1
+```
+```output
+8
+```
+
+`While` re-tests the current value before each lap, and `Iterate Until Fixed
+Point` runs until the value stops changing:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> toint(t)
+Simple Domain: While
+    Using: (v) -> v > 1
+    Cursed Technique: Apply
+        Using: (n) -> n / 2
+Reveal: stdout
+```
+```input
+20
+```
+```output
+1
+```
+
 ## Binding Vows — debug assertions
 
 A vow is a predicate over the current value. It **never changes the value**;
@@ -646,6 +1085,45 @@ Grid, Map, Record or Sparse — while the expression layer can say anything.
 Vows are debug-time: `--release` sheds them (`domain run --release` skips
 them; `domain build --release` compiles them out of the binary entirely).
 
+A vow that holds is invisible — it passes the value through untouched, which
+is what lets one sit in the middle of a working pipeline:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Binding Vow: All Values > 0
+Maximum Technique: Sum
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+6
+```
+
+`Holds` is the general form, and reaches the types the two literal shapes
+cannot:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Grid
+Binding Vow: Holds
+    Using: (g) -> rows(g) = cols(g)
+Maximum Technique: Count Cells
+    Using: (c) -> c = "#"
+Reveal: stdout
+```
+```input
+#.
+.#
+```
+```output
+2
+```
+
 ## Reveal — output
 
 `Reveal: stdout` prints the current value and ends the useful pipeline.
@@ -655,3 +1133,35 @@ in place. Every
 type has a deterministic rendering (insertion order for Maps/Sets, row-major
 for Grids, sorted set-cell listings for Sparse grids); see
 [data-model.md](data-model.md).
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Maximum Technique: Sum
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+6
+```
+
+`Reveal: stderr` prints without disturbing the program's answer, so a golden
+test still passes with one left in — stdout below carries only the total:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Reveal: stderr
+Maximum Technique: Sum
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+6
+```

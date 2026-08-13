@@ -219,7 +219,7 @@ func TestForeignNodeIsOpaque(t *testing.T) {
 // A Shikigami may not take a language's name, for the same reason it may not
 // take a built-in's: the keyword is optional, so the call would be ambiguous.
 func TestShikigamiCannotBeNamedAfterALanguage(t *testing.T) {
-	for _, lang := range []string{"Python", "Go", "rask", "cRust"} {
+	for _, lang := range []string{"Python", "Go", "rask", "cRust", "Weave"} {
 		src := "Shikigami \"" + lang + "\"\n    Maximum Technique: Sum\n"
 		if _, err := resolveSrc(t, src); err == nil {
 			t.Errorf("a Shikigami named %q was accepted", lang)
@@ -320,8 +320,11 @@ func TestForeignRoundTrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestForeignCommands pins how each language is started: the file the block is
-// written to, and the command line. Three of the four are "interpreter, then
-// the program"; Go is the one that needs a module built around it.
+// written to, and the command line. Most are "interpreter, then the program";
+// Go needs a module built around it and runs the directory, and Weave takes a
+// `run` subcommand ahead of the file — its CLI documents `weave run
+// file.weave` as "compile and run, feeding stdin to Source", which is the wire
+// format's contract exactly.
 func TestForeignCommands(t *testing.T) {
 	cases := []struct {
 		lang, env, file string
@@ -332,6 +335,7 @@ func TestForeignCommands(t *testing.T) {
 		{"rask", "DOMAIN_RASK", "program.rask", []string{"/dir/program.rask"}, nil},
 		{"cRust", "DOMAIN_CRUST", "program.crust", []string{"/dir/program.crust"}, nil},
 		{"Go", "DOMAIN_GO", "main.go", []string{"run", "."}, []string{"go.mod"}},
+		{"Weave", "DOMAIN_WEAVE", "program.weave", []string{"run", "/dir/program.weave"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.lang, func(t *testing.T) {
@@ -370,9 +374,9 @@ func TestForeignOverrideTakesArguments(t *testing.T) {
 	}
 }
 
-// rask and cRust are unlikely to be installed wherever this runs, so the whole
-// path through them is exercised against a stand-in runtime named by the same
-// override a user would set. What is under test is Domain's half of the
+// rask, cRust and Weave are unlikely to be installed wherever this runs, so
+// the whole path through them is exercised against a stand-in runtime named by
+// the same override a user would set. What is under test is Domain's half of the
 // bargain: the block reaches a file, the value reaches stdin, stdout comes
 // back as the next value.
 func TestForeignRunnerPlumbing(t *testing.T) {
@@ -382,13 +386,16 @@ func TestForeignRunnerPlumbing(t *testing.T) {
 	for _, c := range []struct{ lang, env string }{
 		{"rask", "DOMAIN_RASK"},
 		{"cRust", "DOMAIN_CRUST"},
+		{"Weave", "DOMAIN_WEAVE"},
 	} {
 		t.Run(c.lang, func(t *testing.T) {
 			dir := t.TempDir()
 			// A runtime that proves it received both halves: it echoes the
 			// program it was handed, then the input it was piped.
 			stub := filepath.Join(dir, "stub.sh")
-			script := "#!/bin/sh\ncat \"$1\"\ncat\n"
+			// Weave is invoked as `weave run <program>`, so the stub drops a
+			// leading `run` before treating its argument as the program.
+			script := "#!/bin/sh\n[ \"$1\" = run ] && shift\ncat \"$1\"\ncat\n"
 			if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}

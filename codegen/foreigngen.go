@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"domain/ir"
+	"domain/langs"
 )
 
 // Compiling `Domain Expansion: <language>`.
@@ -26,7 +27,7 @@ func (g *gen) emitForeign(n *ir.Node, in string) (string, error) {
 	if lang == "" {
 		return "", unsupported(n, "foreign block has no language")
 	}
-	spec, ok := foreignSpecs[lang]
+	spec, ok := langs.Lookup(lang)
 	if !ok {
 		return "", unsupported(n, "no runner for %s", lang)
 	}
@@ -42,10 +43,12 @@ func (g *gen) emitForeign(n *ir.Node, in string) (string, error) {
 	out := g.fresh("v")
 	g.wl("%s := dmForeignRun(dmForeignSpec{", out)
 	g.in()
-	g.wl("Lang: %s, File: %s, Env: %s,", goStr(lang), goStr(spec.file), goStr(spec.env))
-	g.wl("Cands: %s,", goSlice(spec.candidates))
-	g.wl("Tail: %s, AppendProg: %v,", goSlice(spec.tail), spec.appendProg)
-	g.wl("Extra: %s,", goStrMap(spec.extra))
+	g.wl("Lang: %s, File: %s, Env: %s,", goStr(spec.Name), goStr(spec.File), goStr(spec.Env))
+	g.wl("Cands: %s,", goSlice(spec.Candidates))
+	// The emitted runtime's Tail is inserted between the binary and the
+	// program path, which is what langs calls Args.
+	g.wl("Tail: %s, AppendProg: %v,", goSlice(spec.Args), spec.AppendProg)
+	g.wl("Extra: %s,", goStrMap(spec.Extra))
 	g.wl("Source: %s,", goStr(source))
 	g.out()
 	g.wl("}, %s)", stdin)
@@ -146,28 +149,7 @@ func (g *gen) foreignScalarParse(n *ir.Node, expr string, t *ir.Type) (string, e
 	return "", unsupported(n, "cannot read %s from a foreign block's output", t)
 }
 
-// foreignSpec is everything the emitted program needs to start one language:
-// the compiled mirror of prims.foreignCommand. Two tests keep it honest — the
-// differential ones, which would catch a Python runner that disagreed with the
-// interpreter's, and TestForeignSpecsCoverEveryLanguage, which refuses a
-// language that can be run but not compiled.
-type foreignSpec struct {
-	file       string
-	env        string
-	candidates []string
-	tail       []string
-	appendProg bool
-	extra      map[string]string
-}
-
-var foreignSpecs = map[string]foreignSpec{
-	"Python": {file: "program.py", env: "DOMAIN_PYTHON",
-		candidates: []string{"python3", "python"}, appendProg: true},
-	"Go": {file: "main.go", env: "DOMAIN_GO",
-		candidates: []string{"go"}, tail: []string{"run", "."},
-		extra: map[string]string{"go.mod": "module domainforeign\n\ngo 1.22\n"}},
-	"rask": {file: "program.rask", env: "DOMAIN_RASK",
-		candidates: []string{"rask"}, appendProg: true},
-	"cRust": {file: "program.crust", env: "DOMAIN_CRUST",
-		candidates: []string{"crust"}, appendProg: true},
-}
+// The runner details come from package langs, the same table the lexer and the
+// interpreter read, so the compiled program starts a language exactly the way
+// `domain run` does. The differential tests are what prove it: a foreign
+// block's output has to be byte-identical under both backends.

@@ -14,6 +14,7 @@ import (
 
 	"domain/ast"
 	"domain/ir"
+	"domain/langs"
 	"domain/token"
 )
 
@@ -182,14 +183,14 @@ func foreignScalarOf(s string, t *ir.Type) (ir.Value, error) {
 // ---------------------------------------------------------------------------
 
 // foreignPrim is the one entry in the registry that matches a language name.
-// Its ID is a single primitive rather than one per language because the four
+// Its ID is a single primitive rather than one per language because they
 // differ only in how their runtime is started: the type rules, the wire format
-// and the failure modes are identical, and four registry entries would be four
-// copies of the same documentation.
+// and the failure modes are identical, and one registry entry per language
+// would be that many copies of the same documentation.
 var foreignPrim = &Primitive{
 	ID:      "Foreign Block",
 	Keyword: "Domain Expansion",
-	Phrases: ast.ForeignLanguages,
+	Phrases: ast.ForeignLanguages(),
 	Match: func(op *ast.Operation) bool {
 		if op == nil || len(op.Words) != 1 || len(op.Strings) > 0 ||
 			len(op.Ints) > 0 || len(op.OpSyms) > 0 || len(op.Modifiers) > 0 {
@@ -431,78 +432,23 @@ func foreignFailure(lang string, runErr error, stderr string) error {
 	return fmt.Errorf("the %s block failed with status %d\n%s", lang, exit.ExitCode(), stderr)
 }
 
-// foreignFile is the name the block is written under. Extensions matter: a Go
-// file must end in .go to compile, and the others are named for the benefit of
-// whoever is reading a stack trace.
+// foreignFile is the name the block is written under, and foreignCommand
+// resolves the runtime — both from the shared table in package langs, which
+// the lexer and the compiler backend read too. See langs/langs.go for why the
+// table is in one place.
 func foreignFile(lang string) string {
-	switch lang {
-	case "Python":
-		return "program.py"
-	case "Go":
-		return "main.go"
-	case "rask":
-		return "program.rask"
-	case "cRust":
-		return "program.crust"
+	if s, ok := langs.Lookup(lang); ok {
+		return s.File
 	}
 	return "program.txt"
 }
 
-// foreignCommand resolves the runtime for a language and returns the command to
-// run, plus any extra files the runtime needs beside the program.
-//
-// Every language's runtime can be overridden with an environment variable —
-// DOMAIN_PYTHON, DOMAIN_GO, DOMAIN_RASK, DOMAIN_CRUST — which may name a
-// command with arguments ("uv run python"). That is what makes the feature
-// usable on a machine where the binary is not on PATH under its usual name, and
-// what lets the tests run against whatever is actually installed.
+// foreignCommand returns the command to run, plus any extra files the runtime
+// needs beside the program.
 func foreignCommand(lang, dir string) ([]string, map[string]string, error) {
-	prog := filepath.Join(dir, foreignFile(lang))
-	switch lang {
-	case "Python":
-		bin, err := foreignBinary(lang, "DOMAIN_PYTHON", "python3", "python")
-		if err != nil {
-			return nil, nil, err
-		}
-		return append(bin, prog), map[string]string{}, nil
-	case "Go":
-		bin, err := foreignBinary(lang, "DOMAIN_GO", "go")
-		if err != nil {
-			return nil, nil, err
-		}
-		// `go run .` inside the throwaway module: the block is a whole
-		// `package main`, exactly as a hand-written Go program would be, and
-		// the build cache keeps the repeat cost down.
-		return append(bin, "run", "."),
-			map[string]string{"go.mod": "module domainforeign\n\ngo 1.22\n"}, nil
-	case "rask":
-		bin, err := foreignBinary(lang, "DOMAIN_RASK", "rask")
-		if err != nil {
-			return nil, nil, err
-		}
-		return append(bin, prog), map[string]string{}, nil
-	case "cRust":
-		bin, err := foreignBinary(lang, "DOMAIN_CRUST", "crust")
-		if err != nil {
-			return nil, nil, err
-		}
-		return append(bin, prog), map[string]string{}, nil
+	spec, ok := langs.Lookup(lang)
+	if !ok {
+		return nil, nil, fmt.Errorf("no runner for %q", lang)
 	}
-	return nil, nil, fmt.Errorf("no runner for %q", lang)
-}
-
-// foreignBinary finds a language's runtime: the environment override if it is
-// set, else the first candidate on PATH.
-func foreignBinary(lang, env string, candidates ...string) ([]string, error) {
-	if override := strings.TrimSpace(os.Getenv(env)); override != "" {
-		return strings.Fields(override), nil
-	}
-	for _, c := range candidates {
-		if path, err := exec.LookPath(c); err == nil {
-			return []string{path}, nil
-		}
-	}
-	return nil, fmt.Errorf(
-		"a %s block needs %s on PATH to run (set %s to name it differently)",
-		lang, strings.Join(candidates, " or "), env)
+	return spec.Command(dir)
 }

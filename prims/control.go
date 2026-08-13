@@ -14,16 +14,20 @@ import (
 // Control flow (M8): Simple Domain loops, plus the Apply transform and the
 // Reverse inversion.
 
-// maxLoopIterations optionally bounds While / Iterate Until Fixed Point.
-// (Repeat is already bounded by its count.)
+// maxLoopIterations bounds While / Iterate Until Fixed Point, and Unfold's
+// element count (prims/generate.go). (Repeat is already bounded by its count.)
 //
-// Zero — the default — means unlimited. Domain used to hard-code a ceiling of
-// 1,000,000 here, which turned a legitimate long-running simulation into a
-// spurious failure; a limit must never be the reason a correct program cannot
-// run. The trade is real and deliberate: a genuinely non-terminating loop now
-// spins until interrupted instead of failing loudly. Tests set this to keep
-// their own runaway cases quick.
-var maxLoopIterations = 0
+// One billion is the ceiling, chosen to sit past any run that finishes in a
+// human's lifetime rather than past any run someone might write: a limit must
+// never be the reason a correct program cannot run, and the 1,000,000 Domain
+// used to hard-code turned legitimate long-running simulations — a 40,000,000
+// step generator, say — into spurious failures. Above the ceiling a loop is
+// not slow, it is stuck, and failing loudly beats spinning until interrupted.
+//
+// Zero still means unlimited, and tests lower it to keep their own runaway
+// cases quick. Whatever this is, codegen.dmMaxLoopIterations must match it, or
+// the same program means two different things depending on the backend.
+var maxLoopIterations = 1_000_000_000
 
 // ---------------------------------------------------------------------------
 // Cursed Technique: Apply — T x (T -> U) -> U. Transforms the single current

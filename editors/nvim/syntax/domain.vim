@@ -18,7 +18,7 @@ syn match domainHole /{\%([^{}]\|{[^{}]*}\)*}/ contained
 " and operation phrase keep their own styling. Multi-word forms first.
 syn match domainKeyword /^\s*\%(Reverse Cursed Technique\|Maximum Technique\|Channeled Energy\|Cursed Technique\|Domain Expansion\|Cursed Energy\|Innate Domain\|Simple Domain\|Binding Vow\|Shikigami\|Channel\|Reveal\|Part\)\>/
 
-" Foreign-language blocks: `Domain Expansion: Python` (or Go/rask/cRust) and
+" Foreign-language blocks: `Domain Expansion: Python` (or Go/rask/cRust/Weave) and
 " everything indented beneath it, which is that language's source rather than
 " Domain. \z( \) captures the opener's indentation and \z1 ends the region at
 " the first non-blank line that is not indented past it — the same rule the
@@ -26,7 +26,7 @@ syn match domainKeyword /^\s*\%(Reverse Cursed Technique\|Maximum Technique\|Cha
 " Domain is worse than not colouring it, and vim has no portable way to embed
 " four grammars that may or may not be installed.
 syn region domainForeign matchgroup=domainForeignHead
-      \ start=/^\z(\s*\)\%(\%(Cursed Energy\|Cursed Technique\|Channeled Energy\|Maximum Technique\|Domain Expansion\|Reverse Cursed Technique\|Simple Domain\|Binding Vow\|Reveal\)\s*:\s*\)\=\%(Python\|Go\|rask\|cRust\)\>\%(\s*:.*\)\=$/
+      \ start=/^\z(\s*\)\%(\%(Cursed Energy\|Cursed Technique\|Channeled Energy\|Maximum Technique\|Domain Expansion\|Reverse Cursed Technique\|Simple Domain\|Binding Vow\|Reveal\)\s*:\s*\)\=\%(Python\|Go\|rask\|cRust\|Weave\)\>\%(\s*:.*\)\=$/
       \ end=/^\z1\ze\S/me=s-1
       \ keepend
 

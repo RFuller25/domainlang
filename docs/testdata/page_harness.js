@@ -66,6 +66,9 @@ function makeElement(id) {
     remove() {},
     setAttributeNS() {},
     hasAttribute() { return false; },
+    // Enough of CSSStyleDeclaration for applyPageAccent's --jjk-c toggling;
+    // nothing reads it back in the harness so it doesn't need to store state.
+    style: { setProperty() {}, removeProperty() {}, getPropertyValue: () => "" },
   };
   return el;
 }
@@ -88,6 +91,10 @@ function fire(el, type, event) {
 
 const documentStub = {
   documentElement: makeElement("html"),
+  // The hero canvas self-terminates its rAF loop once it leaves the document;
+  // `contains` always says yes here since nothing in the harness ever runs a
+  // second frame (requestAnimationFrame below runs synchronously, once).
+  body: { contains: () => true },
   activeElement: makeElement("body"),
   getElementById: byId,
   createElement: tag => makeElement("created-" + tag),
@@ -133,6 +140,10 @@ const sandbox = {
   })(),
   matchMedia: () => ({ matches: false }),
   requestAnimationFrame: fn => fn(),
+  // The hero canvas reads --jjk-c off the root element's computed style; the
+  // harness has no layout engine, so an empty value is enough to exercise the
+  // fallback-color path without crashing.
+  getComputedStyle: () => ({ getPropertyValue: () => "" }),
   navigator: { clipboard: { writeText: async () => {} } },
   // Real timers: the page uses them for the run timeout and the copy-button
   // reset, and a no-op stub would quietly break behaviour under test.

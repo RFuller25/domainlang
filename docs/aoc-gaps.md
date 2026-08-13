@@ -28,14 +28,13 @@ what the workaround costs today, and the smallest change that would close it.
 | 11 | ~~`Transpose` is `Grid`-only~~ | **Closed** | — |
 | 12 | ~~`Match Pattern` has no repetition, alternation, or optional match~~ | **Closed** | — |
 | 13 | ~~No first-order list builtins in the expression layer~~ | **Closed** | — |
+| 14 | `set` on a `List` accumulator is still O(size) | **Blocker** | next-pointer simulations: crab cups, marble circles |
 
 ---
 
 ## 1. Functional collection update is O(size)
 
-**Closed** — see
-[aoc-gaps-plan.md](aoc-gaps-plan.md#phase-1--linear-accumulators--done) for
-what shipped. `insert`, `put` and `setat` still copy wherever the copy can be
+**Closed.** `insert`, `put` and `setat` still copy wherever the copy can be
 observed; where a `Fold`'s accumulator is provably dead they write through, and
 the two measurements below are now **0.05 s** and **0.03 s** interpreted
 (0.007 s and 0.03 s compiled). `--no-optimize` still takes 23.7 s, which is
@@ -71,10 +70,17 @@ problems above are exactly the ones that need a different one.
 
 - **Uniqueness-driven mutation.** The accumulator of a `Fold` is dead the
   instant the lambda returns, so the copy is never observed. Recognizing
-  `Fold` (and `Repeat`/`While` bodies) whose lambda threads the accumulator
-  straight into an `insert`/`put`/`setat`/`set`/`with` — and lowering that one
-  shape to an in-place write — removes the copy with no user-visible change
-  and no type-system work. This covers most of the damage.
+  `Fold`, `Fold From:` and `Reduce` whose lambda threads the accumulator
+  straight into an `insert`/`put`/`setat` — and lowering that one shape to an
+  in-place write — removes the copy with no user-visible change and no
+  type-system work. This covers most of the damage.
+
+  It is narrower than it first looks, and the two edges matter enough to name
+  here rather than only in `optimizer/linear.go`. **Loop bodies are not
+  covered**: `Repeat`, `While` and `For` take a sub-pipeline, not a lambda, so
+  there is no accumulator parameter for the pass to follow. **`set` on a List
+  is not covered** either, and that one is a live gap — see
+  [14](#14-set-on-a-list-accumulator-is-still-osize).
 - **Runtime one-reference check.** Give `MapValue`/`GridValue`/`SparseValue` a
   cheap "this is the only handle" bit and mutate when it holds. Broader than
   the pattern match, still invisible to the user, but needs care in `codegen`
@@ -93,7 +99,7 @@ the analysis ever needs to reach further than a fold's accumulator.
 
 **Closed** — `Explore` gained `Mode: Cheapest` and `Mode: Costs`, driven by a
 `Cost:` lambda in either the node-weight or the edge-weight arity. See
-[primitives.md](primitives.md#cost--the-weighted-search).
+[primitives.md](ref-expansions.md#cost--the-weighted-search).
 
 `Domain Expansion: Dijkstra` took a `Grid<Int>` and nothing else.
 `Domain Expansion: Explore` takes an arbitrary keyable state and a successor
@@ -125,7 +131,7 @@ substitution `Domain Expansion` is supposed to be free to make.
 
 **Closed** — `Explore` gained `Mode: Tally`, which folds the reachable DAG
 with `Value:` and `Combine:` instead of walking it. See
-[primitives.md](primitives.md#tally--the-counting-dp).
+[primitives.md](ref-expansions.md#tally--the-counting-dp).
 
 `Explore` memoized only *whether* a state was reached. It has no mode that
 memoizes a *value* per state, so "how many ways" has no spelling at all.
@@ -177,8 +183,7 @@ Maximum Technique: Fold
 The body still computes one value from one value — the extra parameters arrive
 as bindings, which is machinery the `Consider` implementation already had. Every
 declared name is a real binding, the last one included, so it obeys the rules a
-`Consider` name obeys (no shadowing a builtin, no duplicates). See
-[aoc-gaps-plan.md](aoc-gaps-plan.md#phase-4--scope--done).
+`Consider` name obeys (no shadowing a builtin, no duplicates).
 
 The original report follows.
 
@@ -229,6 +234,53 @@ undocumented. If it is ever taken on, the cheap version is a single built-in
 primitive and a fold primitive, rather than user-declared recursive types —
 that covers the AoC cases without putting sum types into a language that has
 no other use for them.
+
+## 14. `set` on a `List` accumulator is still O(size)
+
+Gap 1 closed the quadratic update for `Map`, `Set`, `Grid` and `Sparse`. It did
+not close it for `List`, and the difference is not visible from the outside:
+the same fold shape is fast over one and unusable over the other.
+
+Measured on this repo, 20,000 writes, identical loop structure:
+
+| Accumulator | Write | `--explain` says | `domain run` |
+|---|---|---|---|
+| `Map<Int,Int>` | `insert` | *made 1 accumulator update(s) … write in place* | **0.105 s** |
+| `List<Int>`, 100k long | `set` | *no optimizations applied* | **26.4 s** |
+
+```domain ignore
+Maximum Technique: Fold
+    Seed: (xs) -> range(0, 100000)
+    Using: (acc, i) -> set(acc, mod(i * 7, 100000), i)   # copies 100k per write
+```
+
+**Why it was left out**, from `optimizer/linear.go`: a `List` is a Go slice at
+run time, and `take`, `drop` and `slice` return a subslice of the same backing
+array in both backends. Write in place and a subslice taken earlier sees the
+write. For `Map` and `Grid` no builtin hands out interior storage — `keys`,
+`values` and `tolist` all copy — so the question never arises. The exclusion is
+correct as the pass is currently written; it is not an oversight.
+
+**What it blocks.** The next-pointer encoding, which is how a circular list is
+written in a language without one: `next[i]` holds the successor of `i`, and a
+splice is three `set` calls. 2020 D23 (crab cups, 1,000,000 cups and 10,000,000
+moves) and 2018 D9 (marble circle) are exactly this shape, and both are out of
+reach at O(size) per write.
+
+Note what is *not* blocked: rotation-based circular work is already fine.
+2017 D10's knot hash reverses a wrapping sublist via
+`concat(drop(xs, p), take(xs, p))` and runs both parts in 0.25 s, because it
+rebuilds the list once per step instead of writing into it.
+
+**The smallest change that closes it.** Extend the pass with an alias guard
+rather than widening the whitelist: mark `set` in place only when no
+subslice-producing builtin (`take`, `drop`, `slice`) is applied to the
+accumulator anywhere in the lambda, and extend `mutableAcc` to `KList`. A
+next-pointer fold reads only through `item`, so it passes the guard. `concat`
+needs no guard — `dmConcat` allocates.
+
+`with` (Record) stays out regardless: a record copy is O(fields), and that was
+never the cost.
 
 ---
 
@@ -375,8 +427,7 @@ a runtime error naming the row and both lengths, the same one
 ### 12. `Match Pattern` has no repetition, alternation, or optional match
 
 **Closed for the two cases that mattered** — a repeating hole and `Mode: Try`.
-See [match-pattern.md](match-pattern.md#repetition) and
-[aoc-gaps-plan.md](aoc-gaps-plan.md#phase-5--parsing--done).
+See [match-pattern.md](match-pattern.md#repetition).
 
 ```domain ignore
 Cursed Technique: Match Pattern
@@ -386,7 +437,7 @@ Cursed Technique: Match Pattern
 
 **Fully closed as of phase 6.** What phase 5 left — a repeated *hole* is not a
 repeated *group*, and a `{text}` sponge is not an optional one — is what
-[phase 6](aoc-gaps-plan.md#phase-6--template-groups--done) added:
+phase 6 added:
 
 ```domain ignore
 Using: "{name:word} ({w:int})[? -> {kids:word+ sep=\", \"}]"
@@ -398,7 +449,7 @@ their type's zero, and `{?name}` inside it adds a `Bool` for when the zero and
 a captured zero have to be told apart.
 
 Alternation followed in
-[phase 7](aoc-gaps-plan.md#phase-7--reach--done) as `Case:` — several templates
+phase 7 as `Case:` — several templates
 on one stage, first match wins, a `kind` field naming it — together with
 `Mode: Scan` for a template that describes a *fragment* rather than a line.
 
@@ -423,7 +474,7 @@ inputs. Two cases where it does not:
 
 **Closed** — `sort`, `unique`, `flatten`, `product`, `zip`, `enumerate`,
 `chunk`, `windows` and `transpose` are in the table, in all three layers. See
-[expressions.md](expressions.md#first-order-list-operations).
+[expressions.md](ref-builtins-list.md#first-order-list-operations).
 
 Already flagged in
 [expressions.md](expressions.md#what-the-expression-layer-does-not-have-yet):
@@ -441,20 +492,16 @@ the operations all exist as primitives, and each is one entry in three tables.
 
 Ranked by (problems unblocked) ÷ (work):
 
-1. ~~**Gap 1**, via the `Fold`-accumulator rewrite.~~ Done — see
-   [aoc-gaps-plan.md](aoc-gaps-plan.md#phase-1--linear-accumulators--done).
-2. ~~**Gap 13**, the first-order list builtins.~~ Done, with gap 10 — see
-   [aoc-gaps-plan.md](aoc-gaps-plan.md#phase-3--sequences--done).
-3. ~~**Gaps 8 and 9**, `Text` ordering.~~ Done, along with gap 11 — see
-   [aoc-gaps-plan.md](aoc-gaps-plan.md#phase-0--make-the-ordering-agree-with-itself--done).
-4. ~~**Gap 2**, `Explore` with a `Cost:`.~~ Done, with gap 3 — see
-   [aoc-gaps-plan.md](aoc-gaps-plan.md#phase-2--explore-with-a-cost-and-a-tally--done).
+1. ~~**Gap 1**, via the `Fold`-accumulator rewrite.~~ Done.
+2. ~~**Gap 13**, the first-order list builtins.~~ Done, with gap 10.
+3. ~~**Gaps 8 and 9**, `Text` ordering.~~ Done, along with gap 11.
+4. ~~**Gap 2**, `Explore` with a `Cost:`.~~ Done, with gap 3.
 5. ~~**Gaps 6 and 7**, the two friction items that show up in almost every
-   nontrivial program.~~ Done, with gap 4 — see
-   [aoc-gaps-plan.md](aoc-gaps-plan.md#phase-4--scope--done).
-6. ~~**Gap 12**, repetition and `Mode: Try`.~~ Done — see
-   [aoc-gaps-plan.md](aoc-gaps-plan.md#phase-5--parsing--done), and its
-   residue with [phase 6](aoc-gaps-plan.md#phase-6--template-groups--done).
-7. **Gap 5** is what is left, and it is the one deliberately deferred: the
+   nontrivial program.~~ Done, with gap 4.
+6. ~~**Gap 12**, repetition and `Mode: Try`.~~ Done, and its residue with it.
+7. **Gap 14**, the alias guard that lets `set` write in place. Cheapest of the
+   two open items by a wide margin — one analysis local to a pass that already
+   exists, testable against the same naive oracle gap 1 used.
+8. **Gap 5** is what is left, and it is the one deliberately deferred: the
    most expensive item here and the least AoC-frequent. (Gap 3 shipped
    alongside gap 2, since both are modes on one primitive.)

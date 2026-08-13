@@ -20,6 +20,43 @@ the pipeline's current type, and the body's result type is inferred — a
 predicate position requires `Bool`, `Map Each` produces `List<body type>`,
 and so on.
 
+One parameter, in a `Map Each`; the body's type decides the result's element
+type:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Using: (n) -> n * n
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[1, 4, 9]
+```
+
+Two parameters, because the consuming primitive fixes the arity — the lambda
+never declares it:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Maximum Technique: Fold
+    Seed: 0
+    Using: (acc, n) -> acc * 10 + n
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+123
+```
+
 ## Writing an expression across lines
 
 An expression that has outgrown its line breaks in one of two places, and both
@@ -68,6 +105,51 @@ is parsed, typed, evaluated or compiled. In the REPL they behave like every
 other indented block — keep typing, finish with a blank line.
 
 ## Pipeline bodies — a `Using:` that needs a primitive
+
+A body stands in wherever a one-parameter `Using:` lambda is accepted, which
+is how a per-element job reaches a primitive — the expression layer cannot
+iterate, so there is no lambda that searches an element which is itself a
+list:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Domain Expansion: Sort, Descending
+    Cursed Technique: Take Item 0
+Reveal: stdout
+```
+```input
+3 1 2
+9 7 8
+```
+```output
+[3, 9]
+```
+
+It is not a `Map Each` feature — a `Filter` predicate takes one too, so long
+as the body ends in a `Bool`:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Filter
+    Maximum Technique: Any
+        Using: (n) -> n > 8
+Cursed Technique: Map Each
+    Using: (xs) -> length(xs)
+Reveal: stdout
+```
+```input
+3 1 2
+9 7 8
+```
+```output
+[3]
+```
+
 
 The expression layer has no higher-order builtins: nothing here maps, filters,
 or searches. So once a lambda's parameter is itself a list, a job that needs a
@@ -218,6 +300,40 @@ helper call. `if`/`then`/`else` are contextual keywords inside expressions;
 arms extend as far right as possible (`if c then a else b + 1` puts `b + 1`
 in the else arm — parenthesize to override).
 
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Using: (n) -> if mod(n, 2) = 0 then "even" else "odd"
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[odd, even, odd]
+```
+
+Both arms must have the same type, since the expression has one type whichever
+way it goes — and they chain, which is how a multi-way choice is written:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Using: (n) -> if n < 0 then -1 else if n = 0 then 0 else 1
+Reveal: stdout
+```
+```input
+-5,0,7
+```
+```output
+[-1, 0, 1]
+```
+
+
 ## Local bindings — `consider`
 
 ```
@@ -226,9 +342,44 @@ consider lo as min(a, b) in consider hi as max(a, b) in hi - lo
 ```
 
 `consider NAME as VALUE in BODY` names a subexpression. The value is evaluated
-**exactly once** and `NAME` is in scope only inside `BODY`; without it a
-repeated subexpression has to be written — and computed — twice, since
-lambda-body CSE is a candidate optimizer pass rather than an implemented one.
+**exactly once** and `NAME` is in scope only inside `BODY`.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Using: (n) -> consider d as abs(n - 10) in if d > 3 then d * 2 else d
+Reveal: stdout
+```
+```input
+1,9,20
+```
+```output
+[18, 1, 20]
+```
+
+They nest, which is how more than one name is introduced:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Using: (xs) -> consider lo as min(xs) in consider hi as max(xs) in hi - lo
+Reveal: stdout
+```
+```input
+3 1 9
+10 20
+```
+```output
+[8, 10]
+```
+
+Without it a repeated subexpression has to be written — and computed — twice,
+since lambda-body CSE is a candidate optimizer pass rather than an implemented
+one.
 
 Like `if`/`then`/`else`, the three words are contextual: they stay usable as
 ordinary identifiers everywhere else. Bindings nest, the body extends as far
@@ -267,6 +418,63 @@ an `Int` binding is an error rather than a widening — widen at the binding.
 to right, so `n + (n := x) + n` reads the old `n`, writes, and reads the new
 one. Both backends agree on this; the compiler emits explicit sequencing to
 guarantee it, since Go's own evaluation order does not.
+
+Writing to a **stage binding** is the kind that carries: it is the one value
+that survives from one element to the next without a `Fold`.
+
+> **Known bug — writing to a `consider` local does not work.** The form below
+> is the intended one and is what this section describes, but every spelling of
+> it currently fails at run time with `"t" cannot be updated here`:
+>
+> ```domain ignore
+> Using: (x) -> consider t as x * 2 in (t := t + 1) * 10
+> ```
+>
+> The cause is that two different questions share one answer.
+> `ast.UpdatedNames` deliberately drops a `consider` local's own name, since a
+> write there is a write to the local rather than to any stage binding outside
+> it — correct for the question it was written for. But `programUpdates` in
+> `prims/prims.go` reuses it to decide whether to call `eval.EnableUpdates()`
+> at all, so a program whose only `:=` targets a local never turns updates on,
+> the local is stored as a bare value instead of a `*Cell`, and `assignTo`
+> reaches the branch its own comment calls unreachable. Use a stage binding
+> until it is fixed.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider running As 0
+    Using: (x) -> running := running + x
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[1, 3, 6]
+```
+
+A stage binding's write is visible to the next element, which is what makes
+the running total above accumulate rather than reset:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider seen As 0
+    Using: (x) -> (seen := seen + 1) * x
+Reveal: stdout
+```
+```input
+5,5,5
+```
+```output
+[5, 10, 15]
+```
+
 
 **A write that is not reached does not happen.** `and`/`or` short-circuit and
 `if` arms are lazy in both backends, so the write in `x > 100 and (n := 1) > 0`
@@ -333,6 +541,46 @@ lands on the binding in both backends — including from a body nested inside
 another.
 
 ## Stage bindings — `Consider … As` / `Consider … Of`
+
+`Of` applies an operation to the value entering the stage, so a whole-list
+statistic is available to a per-element lambda:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Filter
+    Consider biggest Of Max
+    Using: (x) -> x = biggest
+Reveal: stdout
+```
+```input
+3,9,2,9
+```
+```output
+[9, 9]
+```
+
+`As` never sees the pipeline value; it names a constant or a function, and a
+function binding is inlined at its call sites:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider limit As 4
+    Consider clampTo As (n) -> min(list(n, limit))
+    Using: (x) -> clampTo(x)
+Reveal: stdout
+```
+```input
+1,5,9
+```
+```output
+[1, 4, 4]
+```
+
 
 `consider` names a subexpression *inside* one expression. A **stage binding**
 names a value for a whole pipeline stage — every lambda on it, and every
@@ -461,358 +709,19 @@ in the interpreter **and** the compiler with identical behavior — the
 point/tuple group compiles through the interned tuple structs (see
 [compiler.md](compiler.md)).
 
-### Lists, maps, grids
+The table is split by what a builtin operates on:
 
-| Builtin | Type | Behavior |
-|---|---|---|
-| `length(xs)` | `List<T> -> Int` | Number of elements. |
-| `item(xs, i)` | `List<T> × Int -> T` | 0-based element. **Error** if `i` is out of range. |
-| `take(xs, n)` | `List<T> × Int -> List<T>` | First `n` elements. Total: `n` clamps to `[0, length]`. |
-| `drop(xs, n)` | `List<T> × Int -> List<T>` | All but the first `n`. Clamps like `take`. |
-| `reverse(xs)` | `List<T> -> List<T>` | Reversed copy. |
-| `concat(a, b)` | `List<T> × List<T> -> List<T>` | `a` then `b`. Both lists must share one type. |
-| `first(xs)` | `List<T> -> T` | **Error** on the empty list. |
-| `last(xs)` | `List<T> -> T` | **Error** on the empty list. |
-| `sum(xs)` | `List<N> -> N` (N = Int or Float) | Total; `0` for the empty list. |
-| `min(xs)` | `List<N> -> N` (N = Int or Float) | **Error** on the empty list. |
-| `max(xs)` | `List<N> -> N` (N = Int or Float) | **Error** on the empty list. |
-| `contains(xs, v)` | `List<T> \| Set<T> × T -> Bool` (T keyable) | Membership over a list or a set. Element type must be keyable (Int, Text, or Tuples/Records of them) — so a set of points works. |
-| `get(m, k)` | `Map<K,V> × K -> V` | Lookup. **Error** if the key is absent. |
-| `at(g, r, c)` | `Grid<T> \| Sparse<T> × Int × Int -> T` | 0-based `(row, col)` cell. Dense: **error** out of bounds. Sparse: total — unset cells read the default. |
-| `inbounds(g, r, c)` | `Grid<T> × Int × Int -> Bool` | Whether `(r, c)` is a legal cell. Pairs with `at` under short-circuit `and`. |
-| `list(a, b, …)` | `T × … -> List<T>` (≥ 1 arg) | Construct a list; all elements must share one type. |
-| `emptylist(v)` | `T -> List<T>` | The empty list. `v` is a **type witness**, never stored — the same trick `emptyset`/`emptymap` play, and the reason `list()` is not the spelling: with no arguments there is nothing to read the element type from, and every expression's type is fixed at resolve time. |
-| `set(xs, i, v)` | `List<T> × Int × T -> List<T>` | Copy of `xs` with element `i` replaced (functional update). **Error** if `i` is out of range. |
-| `row(g, r)` | `Grid<T> × Int -> List<T>` | Row `r` as a list. **Error** out of range. |
-| `col(g, c)` | `Grid<T> × Int -> List<T>` | Column `c` as a list. **Error** out of range. |
-| `rows(g)` / `cols(g)` | `Grid<T> -> Int` | The grid's dimensions. |
-| `slice(xs, lo, hi)` | `List<T> × Int × Int -> List<T>` | Half-open `[lo, hi)`. Total: bounds clamp like `take`/`drop`, and an inverted range gives the empty list. |
-| `indexof(xs, v)` | `List<T> × T -> Int` (T keyable) | Position of the first equal element, or `-1` — the sentinel `Find Index` uses. |
-| `tuple(a, b, …)` | `T1 × T2 × … -> (T1, T2, …)` (≥ 2 args) | Build a **heterogeneous** tuple. Unlike `list`, the elements need not share a type — this is how a mixed `Group By` key or a `Sort By` tiebreak is written. |
-| `range(lo, hi)` | `Int × Int -> List<Int>` | The half-open `[lo, hi)`, matching the `Range` primitive. Empty when `hi <= lo`. |
-| `fill(n, v)` | `Int × T -> List<T>` | `n` copies of `v`. Total: a negative count is the empty list, like `take`. |
-| `item(t, i)` | `(T1, …) × Int -> Ti` | Tuple element. The index must be a **literal**: the elements have different types, so the result type is only knowable when the position is. Compiles to a direct struct field. |
-| `length(t)` | `(T1, …) -> Int` | A tuple's arity. |
+| Page | Covers |
+|---|---|
+| [ref-builtins-list.md](ref-builtins-list.md) | Lists, tuples and grids: indexing, slicing, and the first-order list operations |
+| [ref-builtins-collections.md](ref-builtins-collections.md) | Maps and Sets: reading them, and building or updating a collection |
+| [ref-builtins-math.md](ref-builtins-math.md) | Integer maths, number theory and floats |
+| [ref-builtins-text.md](ref-builtins-text.md) | Text |
+| [ref-builtins-bits.md](ref-builtins-bits.md) | Bit operations, logic and number theory |
+| [ref-builtins-records.md](ref-builtins-records.md) | Records, points and grid geometry, sparse grids |
 
-### First-order list operations
-
-None of these takes a function argument, so none of them is a higher-order
-builtin — they were simply absent, and each absence forced a nested pipeline
-body where an expression would have done. Inside a `Fold`, where a body cannot
-stand in for a 2-parameter lambda at all, the absence was total.
-
-Each mirrors the primitive of the same job exactly, because the two spellings
-have to answer the same question the same way.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `sort(xs)` | `List<T> -> List<T>` (T ordered) | Ascending, stable, over the ordering [`Sort`](primitives.md#sort--quicksort--listt---listt-t-ordered) and `<` share. |
-| `unique(xs)` | `List<T> -> List<T>` (T keyable) | Deduplicated, keeping first-seen order — `Unique`, inside a lambda. |
-| `flatten(xss)` | `List<List<T>> -> List<T>` | One level, left to right. |
-| `product(xs)` | `List<N> -> N` (N = Int or Float) | The product; `1` for the empty list, as `sum` is `0`. |
-| `zip(a, b)` | `List<A> × List<B> -> List<(A, B)>` | Element-wise pairs, truncated to the shorter — the `Zip` consumer without the channels. |
-| `enumerate(xs)` | `List<T> -> List<(Int, T)>` | Each element tupled with its 0-based index. |
-| `chunk(xs, n)` | `List<T> × Int -> List<List<T>>` | Non-overlapping blocks, **keeping a short final one**. **Error** if `n < 1`. |
-| `windows(xs, n)` | `List<T> × Int -> List<List<T>>` | Sliding windows of exactly `n`, so a trailing partial one is **dropped** — the difference from `chunk`. **Error** if `n < 1`. |
-| `transpose(xss)` | `List<List<T>> -> List<List<T>>` | Rows become columns. **Error** on a ragged input, naming the row. |
-
-A `Set` or a `Map` reaches these through `tolist` and `entries`, which is the
-same bridge the rest of the table uses.
-
-### Maps and Sets
-
-`Group By` and `Count By` are among the most reachable primitives and both
-produce a `Map`. Until v0.5 the only Map builtin was `get`, which **errors** on
-a missing key with no way to guard it — so a frequency map could not safely be
-queried at all.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `haskey(m, k)` | `Map<K,V> × K -> Bool` | Whether the key is present. The guard `get` never had. |
-| `getor(m, k, d)` | `Map<K,V> × K × V -> V` | Total lookup: the value, or `d` when absent. |
-| `keys(m)` | `Map<K,V> -> List<K>` | Keys in insertion order. |
-| `values(m)` | `Map<K,V> -> List<V>` | Values in the same order. |
-| `size(m)` | `Map<K,V> \| Set<T> -> Int` | Entry count — `Count`, without leaving the lambda. |
-| `tolist(s)` | `Set<T> -> List<T>` | Elements in insertion order. Without it a `Set` is a dead end: `Map Each` has no Set case. |
-
-### Building and updating a collection
-
-Until v0.6 every collection but `Sparse` was **read-only** from inside an
-expression. That is why a sparse automaton was writable as a `Fold` and a
-frequency map was not: `sparse(d)` and `put` were the only constructor and
-functional update in the table, so an accumulator that was a `Map`, a `Set` or a
-dense `Grid` could not be built at all — not even through a measured `Seed:`,
-which is itself an expression.
-
-Every update below is **functional**: it returns a new collection and leaves its
-argument untouched. That is not a stylistic choice — a lambda may be applied to
-the same value twice (the optimizer folds constants by doing exactly that), and
-an in-place update would let the second application see the first one's work.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `toset(xs)` | `List<T> -> Set<T>` (T keyable) | Deduplicates, keeping first-seen order — `Convert To Set` inside a lambda. |
-| `emptyset(v)` | `T -> Set<T>` | The empty set. `v` is a **type witness**, never stored: an absence cannot say what it is an absence of, which is the same reason `sparse(d)` takes a default. |
-| `tomap(ps)` | `List<(K,V)> -> Map<K,V>` (K keyable) | Builds from key/value pairs; last write wins. |
-| `emptymap(k, v)` | `K × V -> Map<K,V>` | The empty map; both arguments are type witnesses. |
-| `entries(m)` | `Map<K,V> -> List<(K,V)>` | Pairs in insertion order — the inverse of `tomap`. |
-| `insert(s, v)` | `Set<T> × T -> Set<T>` | A copy with `v` added. |
-| `insert(m, k, v)` | `Map<K,V> × K × V -> Map<K,V>` | A copy with `k` bound to `v`. |
-| `del(s, v)` | `Set<T> × T -> Set<T>` | A copy without `v`. Absent is not an error. |
-| `del(m, k)` | `Map<K,V> × K -> Map<K,V>` | A copy without `k`. Absent is not an error. |
-| `union(a, b)` | `Set<T> × Set<T> -> Set<T>` | All of `a`, then `b`'s new elements. |
-| `intersect(a, b)` | `Set<T> × Set<T> -> Set<T>` | Elements in both, in `a`'s order. |
-| `difference(a, b)` | `Set<T> × Set<T> -> Set<T>` | Elements of `a` not in `b`. |
-| `setat(g, r, c, v)` | `Grid<T> × Int × Int × T -> Grid<T>` | A copy with cell `(r, c)` replaced. **Error** out of bounds — a dense grid is finite, so unlike `put` there is no cell to write. |
-| `cellpoints(g)` | `Sparse<T> -> List<(Int, Int)>` | The set cells' coordinates in sorted row-major order. `cells` counts them; this is what walks them. |
-
-So a fold can now carry real state:
-
-```domain
-Maximum Technique: Fold                  # a frequency map, in one lambda
-    Seed: (xs) -> emptymap("", 0)
-    Using: (acc, w) -> insert(acc, w, getor(acc, w, 0) + 1)
-```
-
-Every update is functional, but it is not always a copy. Where the optimizer
-can prove nothing reads the copied-from value after an update — which is the
-usual case in a `Fold`, whose accumulator is dead the moment the lambda
-returns — it marks the site and both backends write through instead, so the
-fold above is linear in its writes rather than quadratic in the map. The
-accumulator is cloned once on entry, because a `Part` or a `Channel` may be
-holding the same value; see
-[optimizer.md](optimizer.md#linear-accumulators--the-pass-that-runs-last) for
-what has to be true, and `--no-optimize` for the copying behaviour.
-
-The proof can fail, and then the copy stays: a body that still reads the
-accumulator *after* updating it needs the old value, so it gets it. `del` is
-never done in place. And a `Count By` or `Group By` still builds one
-collection in one pass, which beats any fold.
-
-### Math / number theory
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `abs(n)` | `Int -> Int` | Absolute value. |
-| `sign(n)` | `Int -> Int` | `-1`, `0`, or `1`. |
-| `gcd(a, b)` | `Int × Int -> Int` | Non-negative greatest common divisor; `gcd(0, 0) = 0`. |
-| `lcm(a, b)` | `Int × Int -> Int` | Non-negative least common multiple; `lcm(a, 0) = 0`. |
-| `modpow(b, e, m)` | `Int × Int × Int -> Int` | `b^e mod m` by binary exponentiation, result in `[0, m)`. **Error** if `e < 0` or `m <= 0`. |
-| `modinv(a, m)` | `Int × Int -> Int` | Multiplicative inverse of `a` mod `m`, in `[0, m)`. **Error** if `m <= 0` or `a` and `m` are not coprime. |
-| `solve2x2(a, b, c, d, e, f)` | `Int × … -> (Int, Int)` | Solves `a·x + b·y = c`, `d·x + e·y = f` (Cramer). **Error** when the determinant is zero or the solution is not integral. |
-| `mod(a, b)` | `Int × Int -> Int` | Euclidean modulo — the `%` operator as a function. Non-negative for a positive modulus whatever the sign of `a`. **Error** on a zero modulus. |
-| `divmod(a, b)` | `Int × Int -> (Int, Int)` | Quotient and remainder together, matching `mod`: `q*b + r = a` holds for negative `a` too. |
-| `pow(b, e)` | `Int × Int -> Int` | Exponentiation by squaring. **Error** on a negative exponent (there are no rationals to answer with). |
-| `isqrt(n)` | `Int -> Int` | Integer square root: the largest `k` with `k*k <= n`. Exact at a perfect square, where `sqrt` rounds. **Error** on negative input. |
-| `clamp(v, lo, hi)` | polymorphic over Int/Float | `v` confined to `[lo, hi]`. **Error** when `lo > hi`. |
-| `factorial(n)` | `Int -> Int` | **Error** past `20!`, which overflows Int — a wrapped factorial is a wrong answer that looks right. |
-| `choose(n, k)` | `Int × Int -> Int` | Binomial coefficient, computed multiplicatively so it stays in range far past where `factorial` overflows. `0` when `k` is out of range. |
-| `min(a, b)` / `max(a, b)` | `N × N -> N` | The two-argument scalar form, beside the one-argument list reductions above. |
-
-### Floats
-
-Arithmetic, comparisons, and `=` accept any mix of `Int` and `Float`; a mixed
-expression computes in `Float` (the numeric tower's single promotion rule).
-Division by zero is a clean error for both. `abs` is polymorphic.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `tofloat(x)` | `Int \| Float \| Text -> Float` | Widen or parse. **Error** if the text is not a number. |
-| `floor(f)` | `Float -> Int` | Largest integer ≤ f. |
-| `ceil(f)` | `Float -> Int` | Smallest integer ≥ f. |
-| `round(f)` | `Float -> Int` | Half away from zero. |
-| `trunc(x)` | `Int \| Float -> Int` | Toward zero. Identity on an Int. |
-| `sqrt(x)` | `Int \| Float -> Float` | **Error** on negative input. |
-| `log(x)` | `Int \| Float -> Float` | Natural logarithm. **Error** on a non-positive input. |
-| `log2(x)` / `log10(x)` | `Int \| Float -> Float` | Base 2 / base 10, same rules. |
-| `exp(x)` | `Int \| Float -> Float` | e^x. |
-| `sin(x)` / `cos(x)` / `tan(x)` | `Int \| Float -> Float` | Radians. |
-| `atan2(y, x)` | `Int \| Float × … -> Float` | The angle of `(x, y)`, quadrant-aware. |
-| `hypot(a, b)` | `Int \| Float × … -> Float` | `sqrt(a² + b²)` without the intermediate overflow. |
-
-`pow` follows the operators' promotion rule rather than staying integral:
-`pow(2, 10)` is the `Int` 1024, `pow(x, 0.5)` is the square root it looks like.
-`Int × Int` was the whole of it before v0.6, so nothing that used to typecheck
-changed meaning.
-
-**There is no infinity and no NaN.** Neither can be written and neither prints
-usefully, so a computation that leaves the reals is an **error where it
-happens** rather than a poison value that surfaces three stages later:
-`log(0)`, `exp(1000)` and `tan` at a pole all fail with a positioned message.
-
-### Text
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `toint(s)` | `Text -> Int` | Parse (whitespace-tolerant). **Error** if not an integer. |
-| `totext(n)` | `Int \| Float -> Text` | Render a number exactly as `Reveal` would (shortest round-trip form for floats). |
-| `occurrences(s, sub)` | `Text × Text -> Int` | Non-overlapping occurrences of `sub` in `s` (Go `strings.Count` semantics, including the empty-substring corner: `len+1`). |
-| `repeats(s)` | `Text -> Bool` | Whether `s` is a shorter pattern repeated ≥ 2 times (`"abab"`, `"aaa"`). |
-| `length(s)` | `Text -> Int` | Number of **runes**. |
-| `slice(s, lo, hi)` | `Text × Int × Int -> Text` | Half-open substring, clamped like the list form. |
-| `charat(s, i)` | `Text × Int -> Text` | The rune at `i`, as a 1-character Text. **Error** out of range, like `item`. |
-| `chars(s)` | `Text -> List<Text>` | The runes — the expression layer's `Split Text by ""`. |
-| `indexof(s, sub)` | `Text × Text -> Int` | Rune position of the first occurrence, or `-1`. |
-| `startswith(s, p)` / `endswith(s, p)` | `Text × Text -> Bool` | Prefix / suffix test. |
-| `replace(s, old, new)` | `Text × Text × Text -> Text` | Every occurrence. |
-| `trim(s)` | `Text -> Text` | Leading and trailing whitespace removed. |
-| `upper(s)` / `lower(s)` | `Text -> Text` | Case folding. |
-| `textjoin(xs, sep)` | `List<Text> × Text -> Text` | The expression layer's `Join`. |
-| `split(s, sep)` | `Text × Text -> List<Text>` | The expression layer's `Split Text by`. An empty separator splits into runes, like `chars`. Line splitting is `split(s, "\n")` — the pipeline layer's `Lines` Shikigami is the same operation. |
-| `words(s)` | `Text -> List<Text>` | Split on runs of whitespace, dropping empties. |
-| `contains(s, sub)` | `Text × Text -> Bool` | Substring test. `indexof(s, sub) >= 0` said the same thing, but a membership question should read the same whatever it is asked of. |
-| `ord(s)` | `Text -> Int` | The first rune's code point. **Error** on the empty text. `ord(c) - ord("a")` is the a–z index that used to need an `indexof` over a literal alphabet. |
-| `chr(n)` | `Int -> Text` | The character with code point `n`. **Error** outside a valid code point. |
-| `repeat(s, n)` | `Text × Int -> Text` | `n` copies. Total: a non-positive count is `""`. Not to be confused with `repeats(s)`, which asks whether `s` *is* a repetition. |
-| `padleft(s, n, p)` / `padright(s, n, p)` | `Text × Int × Text -> Text` | Widen to `n` **runes** by repeating `p` on one side, truncating the last copy. Text already that wide is returned untouched. |
-| `trimprefix(s, p)` / `trimsuffix(s, p)` | `Text × Text -> Text` | Remove `p` if present — the counterparts to `startswith`/`endswith`. |
-| `isdigit(s)` | `Text -> Bool` | Every rune is a decimal digit. The empty text is **false**: "every rune is a digit" is vacuously true of it, which is never what a guard means. |
-| `isalpha(s)` | `Text -> Bool` | Every rune is a letter, same empty rule. |
-| `isupper(s)` / `islower(s)` | `Text -> Bool` | No rune of the opposite case, and at least one cased rune — so `"AB1"` is upper and `"1"` is neither. |
-
-**Positions count runes, not bytes**, everywhere — `length`, `charat`, `slice`
-and `indexof` agree with each other and with `Split Text by ""`, so an index
-means the same thing in both layers on non-ASCII input.
-
-### Bit operations
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `band(a, b)` / `bor(a, b)` / `bxor(a, b)` | `Int × Int -> Int` | Bitwise and / or / xor. |
-| `bnot(n)` | `Int -> Int` | Bitwise complement. |
-| `shl(a, n)` / `shr(a, n)` | `Int × Int -> Int` | Left / arithmetic right shift. **Error** on a negative shift count. |
-| `popcount(n)` | `Int -> Int` | Set bits in the two's-complement representation. |
-| `bandall(xs)` / `borall(xs)` / `bxorall(xs)` | `List<Int> -> Int` | Reduce a list with the operator, the way `sum` and `product` do. The empty list gives the operator's **identity**, so a later fold is unchanged by it: `0` for `or`/`xor` and **`-1`** for `and` (all bits set). `bxorall` is the "xor the whole column" one-liner. |
-| `testbit(n, i)` | `Int × Int -> Bool` | Whether bit `i` is set. **Error** outside `0`–`63`. |
-| `frombin(s)` | `Text -> Int` | Parse a binary string (whitespace-tolerant) — the 2021 D3 diagnostic parse. **Error** if not binary. |
-| `frombase(s, b)` | `Text × Int -> Int` | Parse in base `b` (2–36), sign allowed. **Error** on a bad base or an unparseable string. |
-| `fromhex(s)` | `Text -> Int` | Base 16, tolerating a `0x` prefix. |
-| `tobase(n, b)` | `Int × Int -> Text` | Render in base `b` (2–36). |
-| `tohex(n)` / `tobin(n)` | `Int -> Text` | Base 16 / base 2. |
-
-### Logic
-
-The infix connectives are `and`, `or` and `ikke` (prefix negation). These are
-their **function** spellings, plus the `xor` that has no infix form at all.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `and(a, b)` / `or(a, b)` | `Bool × Bool -> Bool` | Conjunction / disjunction. |
-| `xor(a, b)` | `Bool × Bool -> Bool` | Exactly one of the two. No infix spelling exists. |
-| `not(a)` | `Bool -> Bool` | Negation — `ikke` as a function. |
-
-**The function forms do not short-circuit.** Every builtin evaluates all of its
-arguments before it runs, and these are builtins; the infix operators are
-syntax and keep their short-circuit. The difference is observable:
-
-```domain ignore
-x > 99 and item(xs, 5) > 0      # false — the right operand never runs
-and(x > 99, item(xs, 5) > 0)    # error: index 5 out of range
-```
-
-Prefer the infix operators when either operand can fail or is expensive. The
-function forms are for `xor`, and for reading a chain of conditions as a
-call — never for guarding one operand with another.
-
-`and` and `or` are recognized as operators only in **infix** position and as
-ordinary names elsewhere, so both spellings coexist:
-`a > 0 and and(b > 0, not(c < 0))` is one expression. The one ambiguous
-position — an infix `or` immediately followed by `(` — is a parse error rather
-than a silent reinterpretation.
-
-### Number theory
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `isprime(n)` | `Int -> Bool` | **Exact**, not probabilistic: deterministic Miller-Rabin over a witness set that settles every `Int`. O(log³ n), because a 19-digit Int is legal to write and trial division would be three billion divisions. |
-| `divisors(n)` | `Int -> List<Int>` | Every positive divisor, ascending. **Error** on a non-positive input (zero has infinitely many). One pass to √n, with no sort. |
-| `digits(n)` | `Int -> List<Int>` | The decimal digits of `\|n\|`, most significant first; `0` is `[0]`. |
-| `fromdigits(ds)` | `List<Int> -> Int` | The number those digits spell — the inverse of `digits`. **Error** on an element outside 0–9, or on overflow (a silently wrapped number is a wrong answer that looks right). |
-| `crt(rs, ms)` | `List<Int> × List<Int> -> Int` | The smallest non-negative `x` with `x ≡ rs[i] (mod ms[i])` for every `i`. The moduli need **not** be coprime: each pair is checked for agreement modulo their gcd and merged on their lcm, so a system read out of a puzzle works rather than only one constructed to be coprime. **Error** on an inconsistent system. |
-
-### Records
-
-A `Record` is named fields. `Match Pattern` produces one; `record` builds one,
-which is what lets a fold carry a **named** accumulator instead of a positional
-tuple whose `item(acc, 2)` nobody can read.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `record("a", x, "b", y, …)` | `Text × T1 × … -> {a:T1, b:T2, …}` | Build a record from name/value pairs. Field names must be **literals** and the argument count must be even. |
-| `with(r, "a", v)` | `{a:T, …} × Text × T -> {a:T, …}` | A copy with field `a` replaced. The name is a literal and must already exist; the type is unchanged. |
-
-The names are literals for the same reason `item(t, 0)` over a tuple needs a
-literal index: the result type is only knowable when they are. That also means
-`record` needs **no new syntax** — no braces, no new argument form in the
-grammar — and both it and `with` compile to a plain Go struct literal and a
-struct assignment, so a named accumulator costs nothing a tuple did not.
-
-```domain
-Maximum Technique: Fold
-    Seed: (xs) -> record("lo", 0, "hi", 0)
-    Using: (acc, n) -> with(with(acc, "lo", min(acc.lo, n)), "hi", max(acc.hi, n))
-```
-
-### Points and grid geometry
-
-A **point** is an `(Int, Int)` tuple of `(row, col)` — the same coordinate
-system grids use, and exactly what `Find Cells` and these builtins produce.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `point(r, c)` | `Int × Int -> (Int, Int)` | Construct a point. |
-| `prow(p)` / `pcol(p)` | `(Int, Int) -> Int` | The row / column component. |
-| `padd(p, q)` | `(Int, Int) × (Int, Int) -> (Int, Int)` | Component-wise sum (move by a direction vector). |
-| `manhattan(p, q)` | `(Int, Int) × (Int, Int) -> Int` | `abs(Δrow) + abs(Δcol)`. |
-| `rotl(p)` / `rotr(p)` | `(Int, Int) -> (Int, Int)` | Rotate a direction vector 90° left/right in grid coordinates: `rotr((-1, 0))` (up) is `(0, 1)` (right). |
-| `psub(p, q)` | `(Int, Int) × (Int, Int) -> (Int, Int)` | Component-wise difference. |
-| `pscale(p, n)` | `(Int, Int) × Int -> (Int, Int)` | Step `n` times along a direction. `padd` alone can only step by one. |
-| `chebyshev(p, q)` | `(Int, Int) × (Int, Int) -> Int` | `max(\|Δrow\|, \|Δcol\|)` — 8-connectivity distance. |
-| `dirs4()` | `-> List<(Int, Int)>` | The four orthogonal unit vectors: up, down, left, right. |
-| `dirs8()` | `-> List<(Int, Int)>` | All eight, diagonals included. |
-| `around4(p)` / `around8(p)` | `(Int, Int) -> List<(Int, Int)>` | Neighbours of a **point**, with no grid and no bounds check. `neighbors4`/`neighbors8` require a dense `Grid`, so these are what a `Sparse<T>` automaton needs. |
-| `neighbors4(g, r, c)` | `Grid<T> × Int × Int -> List<(Int, Int)>` | In-bounds orthogonal neighbor coordinates of `(r, c)`. |
-| `neighbors8(g, r, c)` | `Grid<T> × Int × Int -> List<(Int, Int)>` | In-bounds neighbors including diagonals. |
-
-### Sparse grids
-
-`Sparse<T>` is the unbounded default-valued plane — see
-[data-model.md](data-model.md) for the full contract. `at` (above) is
-*total* over a sparse grid.
-
-| Builtin | Type | Behavior |
-|---|---|---|
-| `sparse(d)` | `T -> Sparse<T>` | An empty plane whose default is `d`. |
-| `put(g, r, c, v)` | `Sparse<T> × Int × Int × T -> Sparse<T>` | Functional update: a copy with cell `(r, c)` set to `v` (the original is untouched). O(cells) per call — fine for building small grids in folds and loops; use `Convert To Sparse Grid` for bulk construction. |
-| `has(g, r, c)` | `Sparse<T> × Int × Int -> Bool` | Whether `(r, c)` was explicitly set (a cell set to the default is still set). |
-| `cells(g)` | `Sparse<T> -> Int` | The number of set cells. |
-| `minrow(g)` / `maxrow(g)` | `Sparse<T> -> Int` | Bounds over set cells. **Error** on an empty sparse grid. |
-| `mincol(g)` / `maxcol(g)` | `Sparse<T> -> Int` | Column bounds, same rules. |
-
-Builtins compose freely with each other and with operators:
-
-```
-(g) -> item(g, 0) * 1000 + sum(take(g, 2)) + length(drop(g, 1))
-(m) -> sum(get(m, 1))
-(grid) -> at(grid, 1, 2) * 10 + at(grid, 0, 0)
-(grid) -> inbounds(grid, 5, 0) and at(grid, 5, 0) = "#"
-(ps) -> manhattan(first(ps), last(ps))
-(n) -> lcm(gcd(n, 12), 8) + modpow(n, 10, 97)
-```
-
-Interval idioms need no dedicated Range type — a range is a two-field record
-(from `Match Pattern: "{lo:int}-{hi:int}"`) and the operators express
-containment and overlap directly (see `Merge Ranges` in
-[primitives.md](primitives.md) for coalescing):
-
-```
-(r) -> r.lo <= 42 and 42 <= r.hi                          # Contains
-(a, b) -> a.lo <= b.hi and b.lo <= a.hi                   # Overlaps
-```
-
-Typing errors (unknown function, wrong arity, wrong argument types) are
-positioned resolve-time errors; the message for an unknown name lists the
-whole builtin table.
+Each page carries two worked examples for its group, executed against their
+printed output in both backends.
 
 ### Design rules for extending the table
 
@@ -829,7 +738,7 @@ wording in both backends.
   function you supply. The pure list transforms that need *no* function
   argument are no longer in that sentence — `sort`, `unique`, `flatten`,
   `product`, `zip`, `enumerate`, `chunk`, `windows` and `transpose` all have
-  an expression spelling now ([above](#first-order-list-operations)). What
+  an expression spelling now ([above](ref-builtins-list.md#first-order-list-operations)). What
   still has none is anything taking a lambda: indent a pipeline where the
   lambda goes and the primitives do the work instead.
 - **User-defined functions.** Shikigami operate at the pipeline layer instead,

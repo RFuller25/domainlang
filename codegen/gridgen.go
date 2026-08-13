@@ -61,23 +61,41 @@ func (g *gen) emitGridFromText(n *ir.Node, in string) (string, error) {
 	g.in()
 	bi := g.fresh("bi")
 	g.wl("%s := make([]string, 0, len(%s))", cells, line)
-	// Each cell is a one-rune substring aliasing the line's backing store
-	// (zero allocation for the ASCII grids AoC uses); string(ch) only on the
-	// invalid-rune fallback.
-	g.imp("unicode/utf8")
-	g.wl("for %s, %s := range %s {", bi, ch, line)
-	g.in()
-	g.wl("if rl := utf8.RuneLen(%s); rl > 0 {", ch)
-	g.in()
-	g.wl("%s = append(%s, %s[%s:%s+rl])", cells, cells, line, bi, bi)
-	g.out()
-	g.wl("} else {")
-	g.in()
-	g.wl("%s = append(%s, string(%s))", cells, cells, ch)
-	g.out()
-	g.wl("}")
-	g.out()
-	g.wl("}")
+	asciiLoop := func() {
+		g.wl("for %s := 0; %s < len(%s); %s++ {", bi, bi, line, bi)
+		g.in()
+		g.wl("%s = append(%s, %s[%s:%s+1])", cells, cells, line, bi, bi)
+		g.out()
+		g.wl("}")
+	}
+	switch {
+	case g.asciiText():
+		// The caller has verified that every byte of the input is one rune, so
+		// a byte index *is* a rune index and the decode is dead work: one
+		// utf8.RuneLen per cell over a grid of twenty thousand of them. The
+		// binary carries no check for this — see tuning.go on why it is pinned.
+		asciiLoop()
+	case g.asciiGuarded():
+		// The same fast path with the general one compiled in beside it, chosen
+		// per line. The check is a single pass over the line against a decode of
+		// every rune in it, so a plain line pays a scan and saves the decode,
+		// and a line with a multibyte rune takes the path it always took. This
+		// is what "guarded" means concretely: correct on any input, faster on
+		// the shape that was observed.
+		g.helper("dmASCII", declASCII, "unicode/utf8")
+		g.imp("unicode/utf8")
+		g.wl("if dmASCII(%s) {", line)
+		g.in()
+		asciiLoop()
+		g.out()
+		g.wl("} else {")
+		g.in()
+		g.emitGridRuneCells(cells, line, bi, ch)
+		g.out()
+		g.wl("}")
+	default:
+		g.emitGridRuneCells(cells, line, bi, ch)
+	}
 	g.wl("if %s == 0 {", r)
 	g.in()
 	g.wl("%s.rows, %s.cols = len(%s), len(%s)", v, v, in, cells)
@@ -93,6 +111,29 @@ func (g *gen) emitGridFromText(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	return v, nil
+}
+
+// emitGridRuneCells is the general path: each cell a one-rune substring
+// aliasing the line's backing store (zero allocation for the ASCII grids AoC
+// uses), with string(ch) only on the invalid-rune fallback. It is a function of
+// its own because the guarded ASCII specialisation compiles it *and* the fast
+// path, and a fallback that had drifted from the code it falls back to would be
+// worse than no fallback at all.
+func (g *gen) emitGridRuneCells(cells, line, bi, ch string) {
+	g.imp("unicode/utf8")
+	g.wl("for %s, %s := range %s {", bi, ch, line)
+	g.in()
+	g.wl("if rl := utf8.RuneLen(%s); rl > 0 {", ch)
+	g.in()
+	g.wl("%s = append(%s, %s[%s:%s+rl])", cells, cells, line, bi, bi)
+	g.out()
+	g.wl("} else {")
+	g.in()
+	g.wl("%s = append(%s, string(%s))", cells, cells, ch)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
 }
 
 func (g *gen) emitCountCells(n *ir.Node, in string) (string, error) {

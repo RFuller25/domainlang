@@ -20,10 +20,12 @@ import "embed"
 // worker. The module itself is a build artifact and is not committed (see
 // docs/wasm/README.md), so this embeds whatever is there — the site probes for
 // it at boot and hides the Run buttons when it is absent. Build it first and
-// the playground ships inside the binary too.
+// the playground ships inside the binary too — `make build` at the repo root
+// does this automatically; `go generate ./docs/...` runs just this step.
 //
 // Paths are flat apart from wasm/ (e.g. "index.html", "README.md"), which is
 // exactly what index.html fetches at runtime.
 //
+//go:generate ./wasm/build.sh
 //go:embed index.html render.js *.md *.json wasm
 var FS embed.FS

@@ -1,10 +1,10 @@
 package docs_test
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"domain/docs"
 	"domain/lexer"
 	"domain/parser"
 	"domain/prims"
@@ -31,37 +31,9 @@ import (
 // The site renders those exactly like any other Domain block (see the
 // info-string handling in render.js); only these tests treat them differently.
 
-type docBlock struct {
-	page   string
-	line   int // 1-based line of the opening fence
-	info   string
-	source string
-}
-
-// domainBlocks extracts every fenced block whose language is "domain".
-func domainBlocks(t *testing.T, page, src string) []docBlock {
-	t.Helper()
-	var out []docBlock
-	lines := strings.Split(src, "\n")
-	for i := 0; i < len(lines); i++ {
-		if !strings.HasPrefix(lines[i], "```") {
-			continue
-		}
-		info := strings.TrimSpace(strings.TrimPrefix(lines[i], "```"))
-		start := i
-		i++
-		var body []string
-		for i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
-			body = append(body, lines[i])
-			i++
-		}
-		if fields := strings.Fields(info); len(fields) > 0 && fields[0] == "domain" {
-			out = append(out, docBlock{page: page, line: start + 1, info: info,
-				source: strings.Join(body, "\n") + "\n"})
-		}
-	}
-	return out
-}
+// Block extraction lives in docs/blocks.go so that this file and the
+// runnable-example harness in cmd/domain cannot disagree about what a
+// ```domain block is; see the commentary there for the three info states.
 
 // isProgram reports whether a block is a whole program rather than a fragment:
 // whether its first meaningful line is a source stage. `Innate Domain` and
@@ -84,15 +56,17 @@ func isProgram(src string) bool {
 	return false
 }
 
-func allDomainBlocks(t *testing.T) []docBlock {
+func allDomainBlocks(t *testing.T) []docs.Block {
 	t.Helper()
-	pages, err := filepath.Glob("*.md")
+	all, err := docs.AllBlocks()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []docBlock
-	for _, p := range pages {
-		out = append(out, domainBlocks(t, p, docFile(t, filepath.Base(p)))...)
+	var out []docs.Block
+	for _, b := range all {
+		if b.Lang == "domain" {
+			out = append(out, b)
+		}
 	}
 	if len(out) == 0 {
 		t.Fatal("found no ```domain blocks at all — the extractor is broken")
@@ -103,16 +77,16 @@ func allDomainBlocks(t *testing.T) []docBlock {
 // Every Domain block in the docs is valid syntax.
 func TestDocBlocksParse(t *testing.T) {
 	for _, b := range allDomainBlocks(t) {
-		if strings.Contains(b.info, "ignore") {
+		if b.Ignored() {
 			continue
 		}
-		toks, err := lexer.Lex(b.source)
+		toks, err := lexer.Lex(b.Source)
 		if err != nil {
-			t.Errorf("%s:%d: does not lex: %v\n%s", b.page, b.line, err, b.source)
+			t.Errorf("%s:%d: does not lex: %v\n%s", b.Page, b.Line, err, b.Source)
 			continue
 		}
-		if _, err := parser.Parse(b.source, toks); err != nil {
-			t.Errorf("%s:%d: does not parse: %v\n%s", b.page, b.line, err, b.source)
+		if _, err := parser.Parse(b.Source, toks); err != nil {
+			t.Errorf("%s:%d: does not parse: %v\n%s", b.Page, b.Line, err, b.Source)
 		}
 	}
 }
@@ -122,20 +96,28 @@ func TestDocBlocksParse(t *testing.T) {
 func TestDocProgramsResolve(t *testing.T) {
 	checked := 0
 	for _, b := range allDomainBlocks(t) {
-		if strings.Contains(b.info, "ignore") || !isProgram(b.source) {
+		if b.Ignored() || !isProgram(b.Source) {
 			continue
 		}
-		toks, err := lexer.Lex(b.source)
+		// A program with an import needs a file context to resolve against,
+		// which this test has none of — it holds source, not a path. Those
+		// blocks are covered by the runnable harness in cmd/domain, which
+		// stages the library beside the program and then runs it, so they are
+		// checked more thoroughly there rather than not at all.
+		if strings.Contains(b.Source, "Innate Domain:") {
+			continue
+		}
+		toks, err := lexer.Lex(b.Source)
 		if err != nil {
 			continue // reported by TestDocBlocksParse
 		}
-		prog, err := parser.Parse(b.source, toks)
+		prog, err := parser.Parse(b.Source, toks)
 		if err != nil {
 			continue
 		}
 		checked++
 		if _, err := prims.Resolve(prog); err != nil {
-			t.Errorf("%s:%d: does not resolve: %v\n%s", b.page, b.line, err, b.source)
+			t.Errorf("%s:%d: does not resolve: %v\n%s", b.Page, b.Line, err, b.Source)
 		}
 	}
 	if checked == 0 {

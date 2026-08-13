@@ -38,6 +38,7 @@ provably identical result.
 | 8 | `Window size [step]` + `Map Each ((w) -> sum(w)/max(w)/min(w))` | `WindowedReduce`: prefix sums for sum, a monotonic deque for max/min — one streaming pass, no window lists materialized | O(n·size) time and space → O(n) |
 | 9 | `BFS`/`Dijkstra` + `Apply ((g) -> at(g, R, C))` | `SearchTarget`: early-exit search that stops the moment the target settles (BFS labels at enqueue, Dijkstra at pop — the value is already final) | whole-grid exploration → only cells at distance/cost ≤ the target's |
 | 10 | `Filter` (total predicate) + `Take Item 0` | `Find`: stop at the first match instead of testing every element and building the list of all of them, and report `Take Item`'s own message when there is no match | O(n) tests + a match list → tests up to the first hit, no list |
+| 11 | Bounded `Unfold` + zero or more total `Map Each`/`Filter`, optionally ending in `Apply ((x) -> take(x, N))` | `Stream`: one generate/map/filter/collect loop instead of a materialized list per stage; terminated by `take`, it stops the instant N elements have survived instead of running the full `While:` bound | one allocation instead of one per stage; terminated by `take`, raw generation itself stops early (AoC 2017 day 15's dueling generators: ~4×N and ~8×N draws instead of the full bound) |
 
 For 2–4 and 7 the lambda is recognized in any operand order or association,
 with the literal on either side of `=`, and the parameters must be distinct
@@ -62,6 +63,7 @@ they guard against cannot occur.
 [explain] Domain rewrote Window 3 + Map Each (sum) → Cursed Sliding-Window Sum (one pass, no window lists). Guaranteed hit.
 [explain] Domain rewrote BFS + at(2, 2) → early-exit search (stops when the target settles). Guaranteed hit.
 [explain] Domain rewrote Filter + Take Item 0 → Cursed First Match (stops at the first hit). Guaranteed hit.
+[explain] Domain rewrote Unfold + Map Each + Filter + Apply (take 5000000) → Cursed Stream (early exit). Guaranteed hit.
 ```
 
 ### Reordering dead code
@@ -121,7 +123,7 @@ folding `1 = 2` to `false` is what arms passes 24 and 27.
 
 `insert`, `put` and `setat` are **functional**: each returns a new collection
 and leaves its argument untouched, which is what makes a lambda safe to apply
-twice (see [expressions.md](expressions.md#building-and-updating-a-collection)).
+twice (see [expressions.md](ref-builtins-collections.md#building-and-updating-a-collection)).
 They were implemented by copying, so a `Fold` that built a collection one
 write at a time was quadratic in the *collection*, not linear in the writes —
 20,000 inserts into a Map took 30 s interpreted, and 20,000 `setat`s on a
@@ -159,9 +161,28 @@ Three things make it safe rather than merely plausible:
 `Scan`, `Iterate` and `Iterate Until Fixed Point` are excluded by
 construction: the first two keep every intermediate accumulator in their
 output, and the third compares the previous value against the new one to
-detect convergence. `del` is excluded too — removing a key shifts the key
-order, which a list taken from the accumulator earlier *would* see, unlike an
-append. See `optimizer/linear.go`.
+detect convergence. So are `Repeat`, `While` and `For`: the pass drives off a
+primitive whose lambda threads an accumulator, and a loop body is a
+sub-pipeline rather than a lambda, so there is no accumulator parameter to
+follow. A simulation written as `Repeat N` over a state value still copies.
+
+Three builtins that *look* like they belong are also excluded, each for its
+own reason:
+
+- **`del`** — removing a key shifts the key order, which a list taken from the
+  accumulator earlier *would* see, unlike an append.
+- **`set` (List)** — a `List` is a Go slice at run time, and `take`, `drop` and
+  `slice` hand out a subslice of the *same backing array* in both backends
+  (`xs[:n]`, in `eval/eval.go` and in the generated runtime's `dmTake`). An
+  in-place write is therefore visible through any subslice taken earlier, so
+  "is the accumulator dead?" stops being a question about the accumulator
+  alone. `concat` is not an alias source — it allocates.
+- **`with` (Record)** — excluded on cost, not safety. A record copy is
+  O(fields), which was never what made anything quadratic.
+
+The `set` exclusion has a measured price, recorded in
+[aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize). See
+`optimizer/linear.go`.
 
 ## The safety rules every pass obeys
 
@@ -178,14 +199,17 @@ append. See `optimizer/linear.go`.
    *same* object — the codegen switch has a case for every rewritten prim
    (`PartialSelect`, `HashSetPairScan`, `HashSetDiffScan`,
    `HashSetTripleScan`, `QuickselectItem`, `LinearMapExtremum`,
-   `DivisorPairScan`, `WindowedReduce`, `SearchTarget`).
+   `DivisorPairScan`, `WindowedReduce`, `SearchTarget`, `Stream`).
 4. **Sub-pipelines are respected.** Passes that rewrite a node in place
    (the scans, `Fold → Sum`, lambda simplification) also fire inside
    `Channel` bodies, `Simple Domain` loop bodies, and a `Using:` written as
    an [indented pipeline](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)
-   — which is where a `List<List<Int>>` puts its pair scans. Passes that change the
-   node list's length run only at the top level, because nested lists are
-   captured by their parents' closures.
+   — which is where a `List<List<Int>>` puts its pair scans. Passes that
+   change the node list's length run only at the top level, with one
+   exception: `fuseUnfoldStream` also runs inside `Channel` bodies (see
+   "Length-changing passes inside sub-pipelines" below). `Part` and loop
+   bodies stay out of reach for every length-changing pass — their node
+   lists are still captured by their parents' closures.
 
 Two documented near-misses show where the line is: `Unique` is *not*
 elided before `Sum`/`Count` (it changes them), and `Sort + Unique` swaps
@@ -195,7 +219,7 @@ rather than drops (both are needed).
 
 A primitive's Int argument may be *measured* — a lambda over the current
 value rather than a literal (see
-[primitives.md](primitives.md#measured-arguments)). A measured argument has
+[primitives.md](ref-transforms.md#measured-arguments)). A measured argument has
 no value at optimize time: it lands in `Meta` under its own `…Expr` key, and
 the literal key is **absent**.
 
@@ -355,8 +379,12 @@ Candidate future passes:
 - **Part-local dead code.** A `Part` whose body never `Reveal`s computes
   nothing observable and could be dropped entirely under `--release`. Today
   it is a lint warning, which is the right first step.
-- **Length-changing passes inside sub-pipelines.** Rule 4 above confines them
-  to the top level, so `Sort` + `Select Top K` written inside a `Part`,
-  `Channel` or loop body is not fused. Lifting that means nested node lists
-  can no longer be captured by their parents' `Eval` closures — a real
-  refactor of how those bodies are held, not a new pass.
+- **Length-changing passes inside sub-pipelines.** Rule 4 above confines most
+  of them to the top level, so `Sort` + `Select Top K` written inside a
+  `Part` or loop body is not fused. `Channel` bodies are the one exception:
+  `fuseUnfoldStream` (pass 11) runs there too, which is what day 15's dueling
+  generators needs. It works because `Channel`'s own `Eval` reads its node
+  list from `Meta["nodes"]` at call time rather than closing over a captured
+  slice (`prims/channel.go`) — the "real refactor" this note used to call
+  for, now done for `Channel` specifically. `Part` and loop bodies still
+  capture their node lists by closure and remain out of reach.

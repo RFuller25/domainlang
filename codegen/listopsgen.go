@@ -202,7 +202,109 @@ func (g *gen) emitUnfold(n *ir.Node, in string) (string, error) {
 	return v, nil
 }
 
-// maxUnfoldElements mirrors prims.maxLoopIterations, the bound the interpreter
-// puts on Unfold. The two are separate constants because the interpreter's is
-// a var that tests lower; the compiled bound is baked into the binary.
-const maxUnfoldElements = 1_000_000
+// emitStream lowers the optimizer's fused Unfold + Map Each/Filter (+ take)
+// chain (optimizer/streamfuse.go) to one Go loop — the compiled-backend twin
+// of that pass's interpreter Eval. Every fused Map Each/Filter lambda was
+// proven total when the fusion fired, so — unlike emitMapEach/emitFilter —
+// none of the inlined steps need error handling; only Unfold's own bound
+// check does, exactly as in emitUnfold.
+func (g *gen) emitStream(n *ir.Node, in string) (string, error) {
+	unfoldNode, _ := n.Meta["unfold"].(*ir.Node)
+	steps, _ := n.Meta["steps"].([]*ir.Node)
+	earlyExit, _ := n.Meta["earlyExit"].(bool)
+	takeN, _ := n.Meta["take"].(int64)
+	if unfoldNode == nil {
+		return "", unsupported(n, "missing Stream metadata")
+	}
+	step, err := g.nodeLambda(unfoldNode)
+	if err != nil {
+		return "", err
+	}
+	cond, _ := unfoldNode.Meta["while"].(*ast.Lambda)
+	if cond == nil || len(cond.Params) != 1 {
+		return "", unsupported(n, "missing While: predicate")
+	}
+	outElemGo, err := g.goType(n.Out.Elem)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+
+	v, cur, raw := g.fresh("v"), g.fresh("cur"), g.fresh("raw")
+	condBody, _, err := g.compileExpr(cond.Body, exprEnv{cond.Params[0]: {expr: cur, typ: unfoldNode.In}})
+	if err != nil {
+		return "", unsupported(n, "While: lambda: %v", err)
+	}
+	stepBody, _, err := g.compileExpr(step.Body, exprEnv{step.Params[0]: {expr: cur, typ: unfoldNode.In}})
+	if err != nil {
+		return "", unsupported(n, "lambda: %v", err)
+	}
+
+	g.helper("dmFail", declFail, "fmt", "os")
+	g.wl("%s := []%s{}", v, outElemGo)
+	g.wl("%s := %s", cur, in)
+	g.wl("%s := 0", raw)
+	g.wl("for %s {", condBody)
+	g.in()
+
+	// The fused elementwise run: each Map Each rebinds val to a fresh
+	// variable; each Filter opens an `if` block that everything after it
+	// (including the final append) sits inside, closed once the run is done.
+	val, valType := cur, unfoldNode.In
+	openBlocks := 0
+	for _, s := range steps {
+		lam, err := g.nodeLambda(s)
+		if err != nil {
+			return "", err
+		}
+		body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: val, typ: valType}})
+		if err != nil {
+			return "", unsupported(n, "lambda: %v", err)
+		}
+		switch s.Prim {
+		case "Map Each":
+			m := g.fresh("m")
+			g.wl("%s := %s", m, body)
+			val, valType = m, s.Out.Elem
+		case "Filter":
+			g.wl("if %s {", body)
+			g.in()
+			openBlocks++
+		}
+	}
+	g.wl("%s = append(%s, %s)", v, v, val)
+	if earlyExit {
+		g.wl("if len(%s) >= %d {", v, takeN)
+		g.in()
+		g.wl("break")
+		g.out()
+		g.wl("}")
+	}
+	for range openBlocks {
+		g.out()
+		g.wl("}")
+	}
+
+	// Bounded like the interpreter: a step that never falsifies the predicate
+	// fails loudly instead of running out of memory. Checked against the raw
+	// generation count, not len(v) — a filter that discards almost
+	// everything must not be able to defeat the bound.
+	g.wl("%s++", raw)
+	g.wl("if %s > %d {", raw, maxUnfoldElements)
+	g.in()
+	g.wl(`dmFail("Unfold produced more than %d elements (non-terminating While:?)")`, maxUnfoldElements)
+	g.out()
+	g.wl("}")
+	g.wl("%s = %s", cur, stepBody)
+	g.out()
+	g.wl("}")
+	return v, nil
+}
+
+// maxUnfoldElements is the bound the interpreter puts on Unfold, which is the
+// same bound it puts on a loop (prims.maxLoopIterations) — an unfold that
+// never falsifies its predicate is a non-terminating loop that also eats
+// memory. Defined in terms of dmMaxLoopIterations rather than repeated, so the
+// two cannot drift apart: this constant sat at 1,000,000 after the loop
+// ceiling was lifted, which failed any compiled Unfold past a million elements
+// while the interpreter ran it happily.
+const maxUnfoldElements = dmMaxLoopIterations

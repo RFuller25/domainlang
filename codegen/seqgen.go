@@ -263,7 +263,11 @@ func (g *gen) emitSplitInts(sep byte, in string) string {
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	g.helper("dmParseIntSeg", declParseIntSeg)
 	v := g.fresh("v")
-	g.wl("%s := make([]int64, 0, len(%s)/2+1)", v, in)
+	// len/2+1 is the generator's own guess: the smallest a segment can be is one
+	// character and a separator. It is an over-reservation by the width of the
+	// numbers — 2.5× for five-digit input — and a caller that has counted the
+	// real elements can say so. See tuning.go.
+	g.wl("%s := make([]int64, 0, %s)", v, g.listCap(fmt.Sprintf("len(%s)/2+1", in)))
 	// Fast inline parse of the clean segment; dmParseIntSeg handles surrounding
 	// whitespace / overflow exactly as dmParseInt(TrimSpace) would.
 	g.emitSplitScan(sep, in, func(seg string) {

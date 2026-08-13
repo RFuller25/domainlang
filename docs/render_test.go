@@ -416,7 +416,7 @@ func TestSearchFindsRealPages(t *testing.T) {
 	var all []json.RawMessage
 	for _, d := range []struct{ id, title, file string }{
 		{"README", "Overview", "README.md"},
-		{"primitives", "Primitives", "primitives.md"},
+		{"ref-transforms", "Transforms", "ref-transforms.md"},
 		{"cli", "CLI", "cli.md"},
 		{"optimizer", "Optimizer", "optimizer.md"},
 	} {
@@ -429,7 +429,7 @@ func TestSearchFindsRealPages(t *testing.T) {
 	combined := mergeJSONArrays(t, all)
 
 	for _, c := range []struct{ query, wantDoc string }{
-		{"window", "primitives"},
+		{"window", "ref-transforms"},
 		{"--json", "cli"},
 		{"algorithm substitutions", "optimizer"},
 		// Two terms: both must be present in the same entry.
@@ -545,12 +545,12 @@ func TestPageSearchWorksEndToEnd(t *testing.T) {
 	if res.ResultCount == 0 {
 		t.Fatalf("searching for %q returned no results; the panel rendered:\n%s", "window", res.HTML)
 	}
-	if len(res.DocIDs) == 0 || res.DocIDs[0] != "primitives" {
-		t.Errorf("top hit for %q is in %v, want primitives first", "window", res.DocIDs)
+	if len(res.DocIDs) == 0 || res.DocIDs[0] != "ref-transforms" {
+		t.Errorf("top hit for %q is in %v, want ref-transforms first", "window", res.DocIDs)
 	}
 	// Results must link at an anchor that the renderer actually emits, or the
 	// hit opens the right page at the wrong place.
-	if !strings.Contains(res.HTML, "#/primitives#window--listt---listlistt") {
+	if !strings.Contains(res.HTML, "#/ref-transforms#window--listt---listlistt") {
 		t.Errorf("top hit does not link to the Window heading's anchor:\n%s", res.HTML)
 	}
 	// Snippets are escaped and the term is marked.
@@ -628,9 +628,9 @@ func TestRenderGallery(t *testing.T) {
 func TestRenderPrimitiveIndex(t *testing.T) {
 	entries := []map[string]string{
 		{"id": "Window", "keyword": "Cursed Technique", "signature": "List<T> → List<List<T>>",
-			"summary": "Sliding windows.", "anchor": "window"},
+			"summary": "Sliding windows.", "anchor": "window", "page": "ref-transforms.md"},
 		{"id": "Sum", "keyword": "Maximum Technique", "signature": "List<Int> → Int",
-			"summary": "Adds them up.", "anchor": "sum"},
+			"summary": "Adds them up.", "anchor": "sum", "page": "ref-reductions.md"},
 	}
 	decode := func(filter string) (html string, shown int) {
 		t.Helper()
@@ -650,7 +650,11 @@ func TestRenderPrimitiveIndex(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<h2 id="cursed-technique">`, `<h2 id="maximum-technique">`,
-		`href="#/primitives#window" data-route`,
+		// The row must link at the page the entry names, not at a hardcoded
+		// one: the reference is split by keyword class, and these two rows are
+		// deliberately on different pages.
+		`href="#/ref-transforms#window" data-route`,
+		`href="#/ref-reductions#sum" data-route`,
 		`<code>Window</code>`,
 		`List&lt;T&gt; → List&lt;List&lt;T&gt;&gt;`, // signatures are escaped
 	} {

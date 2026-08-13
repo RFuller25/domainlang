@@ -225,7 +225,7 @@ type DefLocation struct {
 	Name string
 	// Path is the file it lives in; empty means the program itself.
 	Path string
-	Pos token.Position
+	Pos  token.Position
 	// Origin is "local", "import" or "prelude". A prelude definition has no
 	// file to jump to — it lives in embedded source — so it is reported rather
 	// than silently returning nothing.

@@ -497,7 +497,9 @@ you wanted `List<Int>` is visible immediately rather than at the next run; the
 error for the line the cursor is on in the status bar; `tab` for the primitive
 whose name you half-remember; `alt+k` for what it does to the type.
 
-`ctrl+r` runs it. `ctrl+t` records a run and opens the stepper from
+`ctrl+r` runs it, on a screen that charts what the run costs and says where in
+the program it has got to — and stays there afterwards as the report on it.
+`ctrl+t` records a run and opens the stepper from
 [cli.md](cli.md#domain-expansion-visualize) over the program on screen — the
 same panes, over a buffer that has never been saved. When a stage produced the
 wrong shape, the tree is where you find out which one, and the fix is two keys

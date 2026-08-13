@@ -4,15 +4,54 @@ import "domain/ast"
 
 // PrimDoc is human-facing documentation for one primitive: enough for an
 // editor to render a signature and a one-line summary on hover and in
-// completion. The summaries are distilled from docs/primitives.md; the
-// DocAnchor links back into that page (served by `domain expansion:
-// documentation`) for the full reference.
+// completion. The summaries are distilled from the reference pages; DocAnchor
+// and DocPage together link back into them (served by `domain expansion:
+// documentation`) for the full text.
 type PrimDoc struct {
 	ID        string // matches Primitive.ID
 	Keyword   string // the themed keyword this primitive lives under
 	Signature string // type step, e.g. "List<T> → List<List<T>>"
 	Summary   string // one sentence, plain text
-	DocAnchor string // heading slug in primitives.md, e.g. "window"
+	DocAnchor string // heading slug on its page, e.g. "window"
+}
+
+// gridTransforms are the Cursed Technique primitives that work on a Grid,
+// Sparse or Map rather than on a list. They are the one place the reference's
+// page split does not follow the keyword: `Cursed Technique` is far the
+// largest class, so it is documented as two pages, and this is the set that
+// lives on the second one.
+var gridTransforms = map[string]bool{
+	"Map Cells": true, "Find Cells": true, "Transpose": true,
+	"Subgrid": true, "Pad Grid": true,
+	"Rotate Grid": true, "Flip Grid": true, "Map Values": true,
+	"Filter Entries": true,
+}
+
+// keywordPages maps each themed keyword to the reference page documenting it.
+// Deriving the page from the keyword rather than storing it per entry is what
+// keeps the catalog's 77 literals unchanged: the page a primitive is on is
+// already determined by the class it belongs to.
+var keywordPages = map[string]string{
+	"Cursed Energy":            "ref-sources.md",
+	"Cursed Technique":         "ref-transforms.md",
+	"Channeled Energy":         "ref-coercions.md",
+	"Maximum Technique":        "ref-reductions.md",
+	"Domain Expansion":         "ref-expansions.md",
+	"Reverse Cursed Technique": "ref-structure.md",
+	// The statement keywords share the structure page, which is where the
+	// reference points at language.md for their full treatment.
+	"Binding Vow": "ref-structure.md",
+	"Reveal":      "ref-structure.md",
+}
+
+// DocPage is the reference page whose DocAnchor heading documents this
+// primitive. Empty when the keyword is one the reference does not paginate,
+// which a test refuses.
+func (d PrimDoc) DocPage() string {
+	if d.Keyword == "Cursed Technique" && gridTransforms[d.ID] {
+		return "ref-transforms-grid.md"
+	}
+	return keywordPages[d.Keyword]
 }
 
 // Catalog documents every primitive in Registry, keyed by ID. A test

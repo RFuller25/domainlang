@@ -127,7 +127,7 @@ Style and hygiene (warnings):
   a name: the word must both name an expression builtin and be followed by
   `(`, so a channel called `cells` is not mistaken for one. Expressions belong
   in an indented lambda argument (`Size: (xs) -> length(xs) / 2`, see
-  [primitives.md](primitives.md#measured-arguments)).
+  [primitives.md](ref-transforms.md#measured-arguments)).
 
 Performance hints:
 

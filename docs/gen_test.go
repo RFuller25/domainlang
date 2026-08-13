@@ -51,6 +51,7 @@ type primitiveEntry struct {
 	Signature string `json:"signature"`
 	Summary   string `json:"summary"`
 	Anchor    string `json:"anchor"`
+	Page      string `json:"page"`
 }
 
 // buildGallery reads examples/ and challenges/ into the site's shape. Title
@@ -177,7 +178,7 @@ func buildPrimitiveIndex() []primitiveEntry {
 	for _, d := range prims.Catalog {
 		out = append(out, primitiveEntry{
 			ID: d.ID, Keyword: d.Keyword, Signature: d.Signature,
-			Summary: d.Summary, Anchor: d.DocAnchor,
+			Summary: d.Summary, Anchor: d.DocAnchor, Page: d.DocPage(),
 		})
 	}
 	// Keyword order follows the pipeline's own shape (source, transform,
@@ -268,6 +269,35 @@ func TestGalleryDataIsCurrent(t *testing.T) {
 
 // The primitive index is generated from the catalog, so it inherits
 // catalog_test.go's guarantee that the catalog matches the registry.
+// pageAnchors is every anchor one page defines, including the short alias the
+// renderer emits for a heading with a signature — the part before the em dash,
+// which is what the catalog stores so a link survives an edit to the signature.
+func pageAnchors(t *testing.T, page string) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	fence := false
+	for _, line := range strings.Split(docFile(t, page), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fence = !fence
+			continue
+		}
+		if fence {
+			continue
+		}
+		trimmed := strings.TrimLeft(line, "#")
+		n := len(line) - len(trimmed)
+		if n < 1 || n > 6 || !strings.HasPrefix(trimmed, " ") {
+			continue
+		}
+		raw := strings.TrimSpace(trimmed)
+		out[slugify(raw)] = true
+		if i := strings.Index(raw, "—"); i >= 0 {
+			out[slugify(raw[:i])] = true
+		}
+	}
+	return out
+}
+
 func TestPrimitiveIndexIsCurrent(t *testing.T) {
 	index := buildPrimitiveIndex()
 	checkGenerated(t, "primitives.json", marshal(t, index))
@@ -275,7 +305,6 @@ func TestPrimitiveIndexIsCurrent(t *testing.T) {
 	if len(index) != len(prims.Catalog) {
 		t.Errorf("index has %d entries, catalog has %d", len(index), len(prims.Catalog))
 	}
-	ref := docFile(t, "primitives.md")
 	for _, e := range index {
 		if e.Signature == "" || e.Summary == "" {
 			t.Errorf("%s: incomplete catalog entry", e.ID)
@@ -286,8 +315,14 @@ func TestPrimitiveIndexIsCurrent(t *testing.T) {
 			t.Errorf("%s: no doc anchor", e.ID)
 			continue
 		}
-		if !strings.Contains(ref, e.ID) {
-			t.Errorf("%s: indexed but absent from primitives.md", e.ID)
+		if e.Page == "" {
+			t.Errorf("%s: no doc page — prims.keywordPages has no entry for %q", e.ID, e.Keyword)
+			continue
+		}
+		// The anchor has to be on the page the entry names, or the site's
+		// primitive index sends the reader to a page that does not document it.
+		if !pageAnchors(t, e.Page)[e.Anchor] {
+			t.Errorf("%s: anchor %q is not a heading of %s", e.ID, e.Anchor, e.Page)
 		}
 	}
 }

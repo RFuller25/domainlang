@@ -8,7 +8,7 @@ fails.
 Template parsing and typing live in the `pattern` package; the pipeline
 primitive lives in `prims/match.go`; the compiled lowering is
 `codegen/matchgen.go`. The primitive itself is summarized in
-[primitives.md](primitives.md#match-pattern--text---v-or-listtext---listv).
+[primitives.md](ref-transforms.md#match-pattern--text---v-or-listtext---listv).
 
 ## The shape of it
 

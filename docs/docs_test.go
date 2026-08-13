@@ -2,6 +2,7 @@ package docs_test
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,6 +41,53 @@ func docFile(t *testing.T, name string) string {
 	return string(b)
 }
 
+// referencePages are the pages the primitive reference is split across. The
+// split follows the keyword classes, and prims.PrimDoc.DocPage names the same
+// set from the Go side — TestCatalogPagesExist holds the two together.
+func referencePages(t *testing.T) []string {
+	t.Helper()
+	pages, err := fs.Glob(docs.FS, "ref-*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) == 0 {
+		t.Fatal("no ref-*.md pages found — the reference split is missing")
+	}
+	return pages
+}
+
+// referenceText is every reference page concatenated, for the checks that ask
+// whether the reference documents something at all rather than where.
+func referenceText(t *testing.T) string {
+	t.Helper()
+	var b strings.Builder
+	for _, p := range referencePages(t) {
+		b.WriteString(docFile(t, p))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// expressionRefText is expressions.md plus the builtin pages it was split
+// into, for the check that asks whether a builtin is documented at all.
+func expressionRefText(t *testing.T) string {
+	t.Helper()
+	pages, err := fs.Glob(docs.FS, "ref-builtins-*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) == 0 {
+		t.Fatal("no ref-builtins-*.md pages found — the builtin split is missing")
+	}
+	var b strings.Builder
+	b.WriteString(docFile(t, "expressions.md"))
+	for _, p := range pages {
+		b.WriteString("\n")
+		b.WriteString(docFile(t, p))
+	}
+	return b.String()
+}
+
 func repoFile(t *testing.T, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", rel))
@@ -52,7 +100,7 @@ func repoFile(t *testing.T, rel string) string {
 // Every primitive the registry exposes is described in the reference. A
 // primitive that ships without documentation is invisible to users.
 func TestEveryPrimitiveIsDocumented(t *testing.T) {
-	ref := docFile(t, "primitives.md")
+	ref := referenceText(t)
 	var missing []string
 	for _, p := range prims.Registry {
 		// "id" is the placeholder ID of the generated one-per-variant
@@ -67,14 +115,14 @@ func TestEveryPrimitiveIsDocumented(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		t.Errorf("primitives missing from docs/primitives.md: %s", strings.Join(missing, ", "))
+		t.Errorf("primitives missing from the ref-*.md pages: %s", strings.Join(missing, ", "))
 	}
 }
 
 // Every expression builtin is documented, and the count the prose quotes is
 // the real one.
 func TestEveryBuiltinIsDocumented(t *testing.T) {
-	ref := docFile(t, "expressions.md")
+	ref := expressionRefText(t)
 	var missing []string
 	for _, b := range typecheck.Builtins {
 		// Documented in the builtin tables as `name(args)`.
@@ -84,7 +132,7 @@ func TestEveryBuiltinIsDocumented(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		t.Errorf("builtins missing from docs/expressions.md: %s", strings.Join(missing, ", "))
+		t.Errorf("builtins missing from the expression reference: %s", strings.Join(missing, ", "))
 	}
 
 	// The count appears in several places as a selling point; pin it to the
@@ -312,7 +360,7 @@ type docHeading struct {
 func referenceHeadings(t *testing.T) (anchors map[string]bool, byName map[string][]docHeading) {
 	t.Helper()
 	anchors, byName = map[string]bool{}, map[string][]docHeading{}
-	for _, line := range strings.Split(docFile(t, "primitives.md"), "\n") {
+	for _, line := range strings.Split(referenceText(t), "\n") {
 		trimmed := strings.TrimLeft(line, "#")
 		level := len(line) - len(trimmed)
 		if level < 1 || level > 6 || !strings.HasPrefix(trimmed, " ") {

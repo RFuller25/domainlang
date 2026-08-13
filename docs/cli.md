@@ -41,6 +41,12 @@ site is embedded in the `domain` binary, so it works from any install —
 including the NixOS package — with no source checkout present. Press Ctrl+C to
 stop the server.
 
+The site's browser playground (the Run/Explain buttons) is a WebAssembly build
+of the language, itself a build artifact — see
+[docs/wasm/README.md](wasm/README.md). Building the `domain` binary with
+`make build` at the repo root picks it up automatically; a plain
+`go build ./cmd/domain` does not.
+
 ### `domain expansion: development`
 
 The editor. Full reference in [development.md](development.md).
@@ -57,10 +63,11 @@ domain expansion: development day7.domain --input day7.txt
 
 Types at the end of every line and errors in the gutter, both from the buffer
 rather than a saved file; completion, inspect and go-to-definition from the
-same engines `domain lsp` serves; run with `ctrl+r` and interrupt with
-`ctrl+c`; and `ctrl+t` opens the same stepper `visualize` does, over the
-program on screen. Choosing an input file offers the opening that would read
-it.
+same engines `domain lsp` serves; `ctrl+r` runs the program on a monitor screen
+that charts its memory and CPU, says which stage it is on and what value it is
+carrying, and stops on `ctrl+c`; and `ctrl+t` opens the same stepper
+`visualize` does, over the program on screen. Choosing an input file offers the
+opening that would read it.
 
 A file that does not exist is a new program under that name. Unlike every other
 command here it needs a terminal, and says so rather than failing later: an
@@ -561,7 +568,7 @@ opening the UI, and adds an `expressions` array to `--json`.
 
 #### Inside a foreign block
 
-A [foreign block](primitives.md#foreign-block--t---text-or-a-declared-in---out)
+A [foreign block](ref-expansions.md#foreign-block--t---text-or-a-declared-in---out)
 has no expression — its inside is another language's program — but `x` asks the
 same question of it, and answers with what there is:
 
@@ -718,6 +725,458 @@ a truncated run would be worse than one that admits it.
 
 Without a terminal (piped, redirected, or `--plain`) the trace is printed as
 indented text instead, which is also how it is tested.
+
+## Measurement and exploration
+
+Three commands answer their question by running a program more than once and
+comparing the results. All three share one execution layer (`runner`), so they
+agree about what "how long does this take" means: every timed run is a
+subprocess, the input is a redirected regular file rather than a pipe, and the
+reported figure is the best of N runs interleaved between configurations so
+drift lands on all of them equally. This is the methodology
+[bench/README.md](../bench/README.md) established for the Domain-vs-Go suite,
+applied to your own programs.
+
+### `domain expansion: bench`
+
+Four cells — both backends, each with the optimizer on and off:
+
+```sh
+domain expansion: bench day15.domain                     # finds the input beside it
+domain expansion: bench day15.domain --input input.txt   # or say where it is
+domain expansion: bench day15.domain --runs 9            # more repetitions
+domain expansion: bench day15.domain --cells interpret/optimized,compile/optimized
+```
+
+```
+day15.domain · input: input.txt · best of 5
+
+  cell                         time     peak RSS    allocated      build
+  ──────────────────────────────────────────────────────────────────────
+  interpret / naive      did not finish            —            —          —
+  interpret / optimized  did not finish            —            —          —
+  compile / naive        did not finish            —            —   226.56ms
+  compile / optimized        1.415s       254 MB       460 MB   221.01ms
+
+  2 optimizer pass(es) fired: fuseUnfoldStream, fuseFilterCount
+```
+
+**The cross-check is the point.** Every cell that produces output must produce
+the *same* output: the naive/optimized pair is the optimizer's own correctness
+oracle and the interpret/compile pair is the backends'. A disagreement is a
+compiler bug, and the report says so in those words, shows the first differing
+line, and exits 1. When only one cell survives — common on a heavy program,
+where the naive pipeline cannot finish — the report says the cross-check was
+skipped rather than quietly omitting the tick.
+
+A cell that hits the timeout reads `did not finish` rather than showing a
+number, and a ratio is only printed between two cells that both produced a
+time.
+
+Allocation comes in two forms. Peak RSS is from the kernel and always
+available. Bytes allocated needs the measured process to report, which both
+the interpreter and a compiled binary do — a dash means the figure was not
+offered, never that it was zero. Allocation is measured in a separate,
+untimed run, because reading the runtime's memory stats stops the world.
+
+| Flag | Meaning |
+|---|---|
+| `--input F` / `--input-text T` | what the program reads (default: the sibling input) |
+| `--runs N` | repetitions per cell (default 5) |
+| `--timeout D` | per-run deadline (default 60s) |
+| `--cells LIST` | a subset, e.g. `compile/optimized`; interpreting the naive pipeline is often the cell nobody wants to wait for |
+| `--release` | measure with Binding Vows shed |
+| `--json`, `--markdown`, `--plain` | machine-readable, pasteable, or unstyled |
+
+### `domain expansion: coverage`
+
+What a folder of programs has never exercised, against the catalog:
+
+```sh
+domain expansion: coverage examples/
+domain expansion: coverage aoc2024/ --dynamic   # also run each one
+domain expansion: coverage aoc2024/ --used      # invert: what you do use
+domain expansion: coverage examples/ --min 40   # a CI gate
+```
+
+```
+examples/ — 20 program(s)
+
+  primitives   32 /  85  (38%)
+  builtins     28 / 161  (17%)
+  keywords      7 /   8  (88%)
+
+  Cursed Technique — 18 not exercised
+    Chunk                  List<T> → List<List<T>>       ref-transforms.md#chunk
+    Sliding Reduce         …                             ref-transforms.md#sliding-reduce
+    …
+```
+
+Two things it is careful about, because a coverage number is easy to make
+meaningless:
+
+- **It measures the unoptimized pipeline.** `fuseMapMap` turns two `Map Each`
+  nodes into one and `elideRedundantSort` deletes a `Sort` outright, so
+  counting the optimized IR would report that a program which visibly uses
+  `Sort` does not.
+- **Builtins are counted from the source, primitives can also be traced.** A
+  builtin is not a node — `gcd` is evaluated inside the expression layer and
+  never reaches the trace hook — so it is counted where it is written, and a
+  builtin inside a branch that never runs still counts. `--dynamic` runs each
+  program against its input and additionally reports primitives that were
+  *written but never evaluated*, which is the stronger finding. The header
+  always says which mode produced the numbers.
+
+A program that does not resolve, or has no input to run against, is listed as
+skipped with the reason rather than silently dropped.
+
+| Flag | Meaning |
+|---|---|
+| `--dynamic` | also run each program against its input, and report what was written but never evaluated |
+| `--used` | invert the report: what the folder does use, most first |
+| `--only prims\|builtins\|keywords` | one section rather than all three |
+| `--exclude GLOB` | skip programs by basename |
+| `--min PCT` | exit 1 when primitive coverage is below this, for CI |
+| `--json`, `--plain` | machine-readable, or unstyled |
+
+### `domain expansion: stats`
+
+A whole folder at a glance — the portfolio command:
+
+```sh
+domain expansion: stats aoc2024/
+domain expansion: stats aoc2024/ --sort time --top 10
+domain expansion: stats aoc2024/ --markdown        # paste into a README
+```
+
+```
+challenges/ — 13 program(s), compile / optimized, best of 3
+
+  program                  LOC  stages    runtime  passes fired                 ✓
+  ───────────────────────────────────────────────────────────────────────────────
+  01_fizzbuzz               10       6     2.74ms  —                            ✓
+  02_two_sum                 6       5     2.85ms  ×1 fuseAllPairsSum           ✓
+  …
+  ───────────────────────────────────────────────────────────────────────────────
+  13 programs              139      94    34.16ms  3 rewrites                   13/13
+
+  slowest         05_window_max (3.06ms) · 04_collatz (3.02ms)
+  most rewritten  02_two_sum (1) · 05_window_max (1)
+
+  vocabulary      23 / 85 primitives · 18 / 161 builtins
+```
+
+`bench` is for one program studied properly; `stats` runs one configuration
+(compiled and optimized, unless `--interpret`) over a folder and ranks the
+results. **LOC** is non-blank, non-comment lines — what a reader would count.
+**stages** is top-level nodes in the *unoptimized* pipeline, so the column
+measures what was written rather than what survived. **✓** compares the output
+against the `.expected` sibling; a folder without them drops the column rather
+than filling it with dashes. A program that fails keeps its row, with the
+reason in place of a time, and makes the command exit nonzero — dropping it
+would quietly shrink the folder and make every total wrong.
+
+| Flag | Meaning |
+|---|---|
+| `--sort name\|time\|loc\|passes` | ranking (default `name`, which is day order for AoC naming) |
+| `--top N` | keep the first N rows |
+| `--runs N` | repetitions per program (default 3) |
+| `--interpret` | measure the interpreter instead of a compiled binary |
+| `--exclude GLOB` | skip programs by basename |
+| `--json`, `--markdown`, `--plain` | machine-readable, pasteable, or unstyled |
+
+### `domain expansion: battle`
+
+Two programs, one input, one required answer:
+
+```sh
+domain expansion: battle day15.domain day15.py            # language inferred from .py
+domain expansion: battle day15.domain --lang weave rival  # or name it
+domain expansion: battle sum.domain sum.weave --runs 9
+```
+
+```
+input: sum.input · best of 3
+
+  sum.domain (Domain, compiled)
+    run     8.37ms
+    build   132.48ms
+    first   140.85ms  (build + run — what you wait for the first time)
+    peak    16.3 MB
+
+  sum.weave (Weave)
+    run     116.93ms
+    peak    94.9 MB
+
+  output ✓ identical (149966320234)
+
+  SUM.DOMAIN (DOMAIN, COMPILED) WINS — 14.0× faster on the run
+  sum.weave (Weave) wins to first answer — 1.2× (the build is the difference)
+```
+
+**Correctness gates the race.** Both programs run once and their output is
+compared before any timing is reported. If they disagree the command prints
+`NO CONTEST`, shows the first differing line, declares no winner, and exits 1 —
+a faster program that prints the wrong answer has not come out on top. It
+reports no timings at all in that case, because the race never ran and printing
+the check's single run under a "best of N" header would be inventing a
+measurement.
+
+**Both clocks are reported**, because they can disagree and showing only one
+would be taking a position. `run` is the compute. `first answer` adds the
+build, which the compiled Domain side pays and an interpreted challenger does
+not — which is exactly how the example above splits.
+
+The verdict ends with the rules the numbers rest on, so the result can be
+argued with rather than merely believed: both sides are subprocesses reading
+the input as a redirected regular file, best of N alternating so drift lands on
+both, the Domain side compiled and optimized (`--interpret` races the
+interpreter instead, and the report says so), and the challenger run as its own
+runtime runs it with no flags the user did not ask for.
+
+The challenger's language comes from the [table](#foreign-languages) below.
+A missing runtime is a setup problem rather than a failed race: the command
+names it, says where to get it, and exits 2 without racing anything.
+
+| Flag | Meaning |
+|---|---|
+| `--lang L` | the challenger's language; inferred from its extension when omitted |
+| `--input F` / `--input-text T` | what both programs read (default: the sibling input) |
+| `--runs N` | repetitions per side (default 5) |
+| `--timeout D` | per-run deadline |
+| `--interpret` | race `domain run` rather than a compiled binary |
+| `--challenger-args A` | extra arguments for the challenger, shown in the verdict |
+| `--json`, `--plain` | machine-readable, or unstyled |
+
+#### Foreign languages
+
+The same table backs `battle` and the `Domain Expansion: <language>` foreign
+block, so a language works in both or neither:
+
+| Language | Runs as | Override | Extensions |
+|---|---|---|---|
+| Python | `python3 program.py` | `DOMAIN_PYTHON` | `.py` |
+| Go | `go run .` | `DOMAIN_GO` | `.go` |
+| rask | `rask program.rask` | `DOMAIN_RASK` | `.rask` |
+| cRust | `crust program.crust` | `DOMAIN_CRUST` | `.crust` |
+| Weave | `weave run program.weave` | `DOMAIN_WEAVE` | `.weave`, `.wv` |
+
+Each override may name a command with arguments (`DOMAIN_PYTHON="uv run
+python"`), which is what makes these usable where a runtime is not on PATH
+under its usual name.
+
+[Weave](https://github.com/malleum/weavelang) fits the wire format without an
+adapter: `weave run file.weave` feeds stdin to `Source`, and a program's final
+bare expression is what it prints — a value in, a value out, which is the
+contract every foreign block is built on.
+
+### `domain expansion: mahoraga`
+
+Adapt one program to one input:
+
+```sh
+domain expansion: mahoraga day11.domain input.txt expected.txt
+domain expansion: mahoraga day11.domain in.txt want.txt --turns 5 --runs 20
+domain expansion: mahoraga --replay day11.mahoraga.json      # rebuild from the recipe
+domain expansion: mahoraga --verify day11.mahoraga.json in   # can I still use this binary?
+```
+
+Where `optimize` asks what is true of all programs, mahoraga asks what is true
+of *this run*, and is allowed to exploit anything it can measure — switching
+off an optimizer pass that pessimises this program, rebuilding against a
+profile of the actual work, and (in later turns) cutting stages this input
+never reaches. Those are answers to a question the general optimizer is not
+permitted to ask, which is why they live in a separate command and never leak
+into the pass list.
+
+It writes two things: a binary (`<stem>-adapted`) and a **recipe**
+(`<stem>.mahoraga.json`) recording every adaptation, what it measured, and the
+ones rejected with why. The recipe is the durable half — reviewable in a diff,
+replayable, and designed to be committed beside the program. A binary that is
+faster for unexplained reasons is a liability.
+
+**The eight turns.** Turn 1 is reconnaissance: a baseline of N runs whose mean
+is what everything is compared against and whose spread sets the noise floor,
+plus a CPU profile, the input's measured shape, and the Go the compiler
+actually emitted. Turns 2–8 each adapt to what has been measured — dead
+code for this input, a profile-guided rebuild, pass ablation, pass ordering,
+templated codegen edits, guarded specialisation, pinned specialisation. Turns
+not yet built are reported as such, so the report distinguishes "found
+nothing" from "did not look".
+
+**Turn 2 watches the program run**, interpreted, once, and looks for stages
+that did nothing to the value that passed through them — a `Filter` that kept
+every one of two million elements still evaluates its predicate two million
+times and still copies the list. Only primitives where an unchanged length
+means an unchanged value are eligible (`Filter`, `Filter Entries`, `Unique`,
+`Merge Ranges`); a `Sort` preserves length and reorders, a `Map Each` preserves
+length and replaces every element, and neither may ever be removed on the
+strength of one. Removing a stage is pinned tier.
+
+**The catalogue** (turns 6, 7 and 8) is a closed table of templated edits, each
+one a measured fact about the input plus a place in the emitted Go where that
+fact is worth something. An entry checks both: the facts say the input permits
+it, the emitted source says the program has anywhere to apply it.
+
+| Entry | Turn | Precondition | What it does | Tier |
+|---|---|---|---|---|
+| exact list capacity | 6 | the split-and-parse loop reserved `len/2+1`, and the input's segments were counted | reserves the measured count instead — for five-digit numbers the guess over-reserves 2.5× | guarded |
+| collector off for one run | 6 | the baseline actually ran collections, and its heap fits under a limit | `SetGCPercent(-1)` with `SetMemoryLimit` as the backstop: a program that lives 50ms and exits gains nothing by tidying up | guarded |
+| ASCII fast path | 7 | the program decodes runes | compiles the byte-indexed loop *and* the decode, choosing per line — correct on any input, faster on plain ones | guarded |
+| no UTF-8 decoding | 8 | every byte of the input is one rune, and the program decodes runes | the same fast path with the check and the fallback removed | pinned |
+
+The turns divide by tier and shape together, so an entry runs in exactly one of
+them: turn 6 takes the parameter edits, turn 7 the specialisations that compile
+a fallback beside the fast path, turn 8 everything that gives the fallback up.
+The last two rows are the same transformation at two tiers, which is what makes
+`--tier` a concrete choice rather than a procedural one.
+
+The measured facts and the resulting tuning are both recorded in the recipe, so
+a reader can check the reasoning rather than take it, and a replay rebuilds the
+same binary. The catalogue is closed on purpose: no entry can express "print
+the answer", which is what makes that outcome unreachable rather than merely
+rejected.
+
+**The wheel.** On a terminal the search runs under an animated display: eight
+handles at the compass points around a hub, one per turn, with a sweep rotating
+through them at a speed set by how fast candidates are finishing. A handle is
+hollow (`◌`) for a turn the catalogue has not reached, `·` for one not reached
+yet, `◈` for the turn in flight, `○` for a turn that ran and kept nothing, and
+`◆` — crimson through gold by how much it won — for one that adapted. An
+adaptation flashes the whole wheel, because it is the search as a whole getting
+faster.
+
+| Key | While the wheel turns |
+|---|---|
+| `space` | hold the animation; the search keeps running |
+| `s` | abandon the turn in flight and move to the next one |
+| `a` | every candidate tried, kept or not, with why |
+| `r` | what a recipe written right now would say |
+| `p` | which optimizer passes the champion is built with |
+| `?` | the key list |
+| `q` | stop looking, but still re-measure and write both artifacts |
+| `ctrl+c` | abort — nothing is written |
+
+The wheel draws on the alternate screen, so the verdict is printed to the
+terminal underneath once it exits — the animation is not the record. `--plain`,
+`--json` and any non-terminal (a pipe, CI) get a line per event from the same
+search instead; the search emits events and never learns which is watching.
+
+**Measurement discipline** is the difference between a tuner and a random
+number generator with good typography:
+
+- The first run of any measurement is discarded as warmup — cold page cache, a
+  freshly written binary, an unscaled CPU.
+- The slowest quarter of what remains is discarded too. Interference on a
+  shared machine is one-sided — a neighbour process can only make a run
+  slower — so the upper tail is other people's work, not the program's spread.
+  Leaving it in cost one search a real 16% win: minima 44.2ms against 52.3ms,
+  means polluted to 51.4 and 62.4 with enough spread that the two could not be
+  told apart.
+- Every candidate is raced against the champion **interleaved**, alternating
+  run by run, and the two figures compared are from the same minute. Timing a
+  candidate alone against a champion measured earlier puts all the machine's
+  drift on the candidate, which is enough to read a 15% win as "slower by 10".
+- The **baseline runs in every race too**, as a third contestant. That makes
+  the champion's standing against it a measurement rather than a product of
+  ratios accumulated across turns, and it means a machine that drifts costs the
+  search time rather than correctness — every comparison is internal to the
+  race making it. How far the box moved is reported (`drifted_races`) and
+  rejects nothing.
+- The figure reported as "best" is the baseline scaled by that measured ratio,
+  never the champion's own mean. Those two numbers come from different minutes;
+  only a ratio within one race is drift-free.
+- The noise floor is the **standard error** of the baseline mean, not its
+  standard deviation. The two differ by a factor of √N, and using the
+  deviation put the floor near 20% on a 20ms program, rejecting every real
+  improvement.
+- A candidate is accepted only when it is distinguishable from the champion
+  given how precisely each is known, *and* clears the minimum effect worth
+  recording. Too few samples to have a spread means not distinguishable.
+- The champion is **re-measured against the baseline** after the search, fresh
+  and interleaved, because a champion picked across dozens of measurements is
+  partly picked for favourable noise. If that measurement does not confirm it,
+  the baseline binary is written instead and the recipe records that the search
+  was overturned.
+- A search that found nothing says `BASELINE UNBEATEN`. A search that adapted
+  nothing can never report a speedup: its champion *is* the baseline.
+- A candidate that measured faster and still could not be distinguished is
+  counted separately and reported. That is a question the measurement budget
+  could not answer, not a failed candidate — on a noisy machine a real 17%
+  win against a baseline known to ±9% is genuinely undecided, and the remedy
+  (`--runs`) is one the user can act on.
+
+**Tiers.** `general` adaptations hold for any input. `guarded` ones keep a
+fallback — a capacity hint that is wrong still appends, a disabled collector
+still has its memory limit — so they stay *correct* on any input and only stop
+being optimal. `pinned` ones are valid only for the input's contract, and carry
+**no runtime check**, because the verification happened while adapting. That
+is deliberate: paying a startup check on every run forever, to re-derive a
+fact settled once during the search, is the waste this command exists to
+remove. The cost is stated rather than buried — a pinned binary is bound to
+its input and will not notice a different one. `--verify` and `--replay` are
+where that contract is re-checked, at build time, and `--verify` distinguishes
+the two: a guarded recipe on a different input is worth mentioning, a pinned
+one is refused.
+
+The final report says which of these you actually got, from the adaptations
+that were *kept* rather than from the tier the search was allowed to reach: a
+run at the default `pinned` tier that kept only general and guarded adaptations
+has produced a program that is correct on any input, and says so.
+
+**The contract.** A pinned adaptation records the assumption it rests on, not
+the file it was measured from. "Every byte is one rune" is satisfied by any
+number of inputs, so `--verify` re-checks the assumption against a candidate
+input and accepts it if it holds:
+
+```sh
+domain expansion: mahoraga --verify day11.mahoraga.json other-input.txt
+```
+
+Some assumptions cannot be re-established by looking at a file — whether a
+`Filter` would keep every element of it is a property of running the program —
+and those are recorded as unverifiable. A recipe carrying one is bound to the
+input it was adapted to, and the refusal names the clause that binds it.
+
+| Flag | Meaning |
+|---|---|
+| `-o PATH` | the adapted binary (default `<stem>-adapted`) |
+| `--recipe PATH` | the recipe (default `<stem>.mahoraga.json`) |
+| `--replay RECIPE` | rebuild from a recipe instead of searching, re-verifying the output |
+| `--verify RECIPE [input]` | check a recipe's contract against an input, without building |
+| `--turns N` | stop after N turns of the wheel |
+| `--runs N` | measurement runs for the baseline and confirmations (default 10) |
+| `--screen-runs N` | cheaper first measurement per candidate (default 3) |
+| `--min-effect F` | the improvement worth recording, as a fraction (default 0.02) |
+| `--tier general\|guarded\|pinned` | how far an adaptation may commit (default pinned) |
+| `--seed N` | make the search reproducible |
+| `-q`, `--quiet` | the verdict only, with no per-candidate progress |
+| `--plain` | one line per candidate, unstyled (no wheel) |
+| `--json` | write the recipe to stdout instead of a report |
+
+`--runs` is the one to raise on a machine that is not quiet. It sets both the
+baseline's run count and every confirmation's, so it is what the search's
+ability to tell a real effect from noise is bought with — the report says how
+many candidates it could not decide, and that number is what `--runs` spends
+against.
+
+Three levels of output, on one axis: the wheel when both ends are a terminal,
+`--plain` for a line per candidate, `--quiet` for the verdict alone. `--quiet`
+never suppresses the verdict itself; a flag that did would leave only an exit
+code to interpret.
+
+A recipe of general-tier adaptations can also be applied by the compiler
+directly:
+
+```sh
+domain build day11.domain --recipe day11.mahoraga.json -o day11
+```
+
+`domain build --recipe` **refuses** a recipe carrying a guarded or pinned
+adaptation. Those were verified against a particular input and `domain build`
+has none to check them against; applying one there would produce a binary bound
+to a contract nobody checked. `mahoraga --replay` is the path that has the
+input and does the checking.
 
 ## Input
 
