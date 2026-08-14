@@ -262,6 +262,110 @@ cd
 The inverse of `Convert To Grid`, which was otherwise a one-way door: anything
 the grid primitives do not cover can be reached by dropping back to lists.
 
+### Convert To Graph — `List<(K,K)> | List<(K,K,Int)> | Map<K,List<K>> -> Graph<K>`
+
+The pipeline half of the `graph` builtin: a parse that has just produced an
+edge list becomes a graph without detouring through an `Apply`.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Channeled Energy: Convert To Graph
+Reveal: stdout
+```
+```input
+a -> b
+a -> c
+b -> c
+```
+```output
+{a: [(b, 1), (c, 1)], b: [(c, 1)], c: []}
+```
+
+`Mode: Undirected` inserts both arcs. There is no second kind of value: an
+undirected graph *is* one with the arcs both ways, which is what keeps one set
+of algorithms working over both.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Channeled Energy: Convert To Graph
+    Mode: Undirected
+Reveal: stdout
+```
+```input
+a -> b
+b -> c
+```
+```output
+{a: [(b, 1)], b: [(a, 1), (c, 1)], c: [(b, 1)]}
+```
+
+
+Four input shapes, all of them shapes a parse actually lands on:
+
+| Input | Weights |
+|---|---|
+| `List<(K, K)>` | all 1 |
+| `List<(K, K, Int)>` | as given |
+| `List<List<K>>` — what a **positional** `Match Pattern` produces | all 1 |
+| `Map<K, List<K>>` — an adjacency map | all 1 |
+
+The adjacency form is the only one that can name an **isolated** node, since
+an edge list mentions a node only by connecting it. Nodes must be keyable
+(`Int`, `Text`, or a tuple/record of them).
+
+### Convert To Edges — `Graph<K> -> List<(K, K, Int)>`
+
+The way back out, so anything the graph vocabulary does not cover is reachable
+by dropping to lists — the same role `Convert To Rows` plays for a `Grid`.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Channeled Energy: Convert To Graph
+Channeled Energy: Convert To Edges
+Reveal: stdout
+```
+```input
+a -> b
+b -> c
+```
+```output
+[[a, b, 1], [b, c, 1]]
+```
+
+Weights survive the round trip, which is what makes the pair a way to *edit* a
+graph with the list vocabulary and put it back:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> list(tuple("a", "b", 4), tuple("b", "c", 6))
+Channeled Energy: Convert To Graph
+Channeled Energy: Convert To Edges
+Reveal: stdout
+```
+```input
+```
+```output
+[[a, b, 4], [b, c, 6]]
+```
+
+
+Arcs come out in node insertion order, and each node's arcs in theirs — the
+same order the graph renders in.
+
+
 ### Convert To Entries — `Map<K,V> -> List<(K, V)>`
 
 ```domain run

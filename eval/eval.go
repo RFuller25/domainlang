@@ -566,6 +566,9 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if s, ok := args[0].(*ir.SetValue); ok {
 			return s.Has(args[1]), nil
 		}
+		if g, ok := args[0].(*ir.GraphValue); ok {
+			return g.Has(args[1]), nil
+		}
 		xs, err := ir.AsList(args[0])
 		if err != nil {
 			return fail("contains: %v", err)
@@ -1036,13 +1039,18 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if !ok {
 			return fail("textjoin: separator must be Text, got %s", ir.DescribeValue(args[1]))
 		}
+		// Render each element exactly as Reveal would. When the static element
+		// type is available it decides record field order (see
+		// FormatValueTyped); otherwise fall back to the value's built order.
+		var elemT *ir.Type
+		if types != nil {
+			if t, err := typecheck.ExprType(x.Args[0], types); err == nil && t != nil && t.Kind == ir.KList {
+				elemT = t.Elem
+			}
+		}
 		parts := make([]string, len(xs))
 		for i, e := range xs {
-			s, ok := e.(string)
-			if !ok {
-				return fail("textjoin: element %d is not Text", i)
-			}
-			parts[i] = s
+			parts[i] = ir.FormatValueTyped(e, elemT)
 		}
 		return strings.Join(parts, sep), nil
 
@@ -1171,8 +1179,11 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return int64(x.Len()), nil
 		case *ir.SetValue:
 			return int64(x.Len()), nil
+		case *ir.GraphValue:
+			// Node count. The arc count is length(edges(g)).
+			return int64(x.Len()), nil
 		}
-		return fail("size: expected a Map or Set, got %s", ir.DescribeValue(args[0]))
+		return fail("size: expected a Map, Set or Graph, got %s", ir.DescribeValue(args[0]))
 	case "manhattan":
 		r1, c1, err1 := asPoint(args[0], name)
 		r2, c2, err2 := asPoint(args[1], name)
@@ -1421,6 +1432,159 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			out[i] = []ir.Value{p[0], p[1]}
 		}
 		return out, nil
+
+	// -- graphs ------------------------------------------------------------------
+	//
+	// Every update clones first: the expression layer's graph updates are
+	// functional, exactly like insert/put/setat, and the optimizer's
+	// dead-receiver pass is what takes the copy back when nothing can observe
+	// the original.
+	case "graph":
+		es, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("graph: %v", err)
+		}
+		g := ir.NewGraphSized(len(es))
+		for i, e := range es {
+			parts, err := ir.AsList(e)
+			if err != nil {
+				return fail("graph: edge %d: %v", i, err)
+			}
+			if len(parts) != 2 && len(parts) != 3 {
+				return fail("graph: edge %d has %d parts, want 2 (from, to) or 3 (from, to, weight)",
+					i, len(parts))
+			}
+			w := int64(1)
+			if len(parts) == 3 {
+				n, ok := parts[2].(int64)
+				if !ok {
+					return fail("graph: edge %d weight is not an Int", i)
+				}
+				w = n
+			}
+			g.AddEdge(parts[0], parts[1], w)
+		}
+		return g, nil
+	case "emptygraph":
+		return ir.NewGraphValue(), nil
+	case "addnode":
+		g, err := asGraph(args[0], "addnode")
+		if err != nil {
+			return fail("%v", err)
+		}
+		out := g
+		if !x.InPlace {
+			out = g.Clone()
+		}
+		out.AddNode(args[1])
+		return out, nil
+	case "addedge":
+		g, err := asGraph(args[0], "addedge")
+		if err != nil {
+			return fail("%v", err)
+		}
+		w := int64(1)
+		if len(args) == 4 {
+			n, ok := args[3].(int64)
+			if !ok {
+				return fail("addedge: weight must be an Int, got %s", ir.DescribeValue(args[3]))
+			}
+			w = n
+		}
+		out := g
+		if !x.InPlace {
+			out = g.Clone()
+		}
+		out.AddEdge(args[1], args[2], w)
+		return out, nil
+	case "deledge":
+		g, err := asGraph(args[0], "deledge")
+		if err != nil {
+			return fail("%v", err)
+		}
+		out := g.Clone()
+		out.DelEdge(args[1], args[2])
+		return out, nil
+	case "nodes":
+		g, err := asGraph(args[0], "nodes")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return slices.Clone(g.Nodes()), nil
+	case "edges":
+		g, err := asGraph(args[0], "edges")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.Edges(), nil
+	case "neighbors":
+		g, err := asGraph(args[0], "neighbors")
+		if err != nil {
+			return fail("%v", err)
+		}
+		ns := g.Neighbors(args[1])
+		if ns == nil {
+			ns = []ir.Value{}
+		}
+		return ns, nil
+	case "edgesof":
+		g, err := asGraph(args[0], "edgesof")
+		if err != nil {
+			return fail("%v", err)
+		}
+		es := g.EdgesOf(args[1])
+		if es == nil {
+			es = []ir.Value{}
+		}
+		return es, nil
+	case "hasedge":
+		g, err := asGraph(args[0], "hasedge")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.HasEdge(args[1], args[2]), nil
+	case "weight":
+		g, err := asGraph(args[0], "weight")
+		if err != nil {
+			return fail("%v", err)
+		}
+		w, ok := g.Weight(args[1], args[2])
+		if !ok {
+			return fail("weight: no edge from %s to %s",
+				ir.FormatValue(args[1]), ir.FormatValue(args[2]))
+		}
+		return w, nil
+	case "weightor":
+		g, err := asGraph(args[0], "weightor")
+		if err != nil {
+			return fail("%v", err)
+		}
+		if w, ok := g.Weight(args[1], args[2]); ok {
+			return w, nil
+		}
+		return args[3], nil
+	case "degree":
+		g, err := asGraph(args[0], "degree")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return int64(g.Degree(args[1])), nil
+	case "flipedges":
+		g, err := asGraph(args[0], "flipedges")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.Flipped(), nil
+	case "subgraph":
+		g, err := asGraph(args[0], "subgraph")
+		if err != nil {
+			return fail("%v", err)
+		}
+		keep, err := ir.AsList(args[1])
+		if err != nil {
+			return fail("subgraph: %v", err)
+		}
+		return g.Subgraph(keep), nil
 
 	// -- list generation ---------------------------------------------------------
 	case "range":
@@ -2251,6 +2415,16 @@ func compareOrdered(op token.Kind, lv, rv ir.Value, pos token.Position) (ir.Valu
 // compares structurally instead of always reporting false.
 func valuesEqual(a, b ir.Value) bool {
 	return ir.DeepEqual(a, b)
+}
+
+// asGraph asserts that v is a graph, wording the error the way the other as*
+// helpers do.
+func asGraph(v ir.Value, name string) (*ir.GraphValue, error) {
+	g, ok := v.(*ir.GraphValue)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected a Graph, got %s", name, ir.DescribeValue(v))
+	}
+	return g, nil
 }
 
 // isFloatOperand reports whether a runtime value routes arithmetic through

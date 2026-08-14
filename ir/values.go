@@ -272,6 +272,39 @@ func writeValue(w *valueWriter, v Value) {
 		w.writeByte('}')
 	case *GridValue:
 		writeGrid(w, x)
+	case *GraphValue:
+		// Deliberately the rendering a Map<K, List<(K, Int)>> already produces:
+		// `{a: [(b, 1)], b: []}`. A reader who knows how maps and tuples print
+		// can predict a graph without learning a new shape. Weights are always
+		// shown — hiding them when they happen to all be 1 would make the
+		// output depend on the data, and the two backends have to agree on it
+		// byte for byte.
+		w.writeByte('{')
+		for i, n := range x.Nodes() {
+			if w.over {
+				return
+			}
+			if i > 0 {
+				w.WriteString(", ")
+			}
+			writeValue(w, n)
+			w.WriteString(": [")
+			for k, e := range x.AdjOf(i) {
+				if w.over {
+					return
+				}
+				if k > 0 {
+					w.WriteString(", ")
+				}
+				w.writeByte('(')
+				writeValue(w, x.NodeAt(e.To))
+				w.WriteString(", ")
+				w.WriteString(strconv.FormatInt(e.W, 10))
+				w.writeByte(')')
+			}
+			w.writeByte(']')
+		}
+		w.writeByte('}')
 	case *SparseValue:
 		// Map-style listing of the set cells, sorted row-major, keys rendered
 		// as points ([r, c]) — exactly how a Map<(Int, Int), V> renders. The
@@ -418,6 +451,35 @@ func FormatValueTyped(v Value, t *Type) string {
 			sb.WriteString(strconv.FormatInt(p[1], 10))
 			sb.WriteString("]: ")
 			sb.WriteString(FormatValueTyped(x.At(p[0], p[1]), t.Elem))
+		}
+		sb.WriteByte('}')
+		return sb.String()
+	case *GraphValue:
+		if t.Kind != KGraph {
+			break
+		}
+		// Mirrors writeValue's graph case exactly; the type only reaches the
+		// nodes, which matters when a node is a record whose declared field
+		// order differs from the order it was built in.
+		var sb strings.Builder
+		sb.WriteByte('{')
+		for i, n := range x.Nodes() {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(FormatValueTyped(n, t.Elem))
+			sb.WriteString(": [")
+			for k, e := range x.AdjOf(i) {
+				if k > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteByte('(')
+				sb.WriteString(FormatValueTyped(x.NodeAt(e.To), t.Elem))
+				sb.WriteString(", ")
+				sb.WriteString(strconv.FormatInt(e.W, 10))
+				sb.WriteByte(')')
+			}
+			sb.WriteByte(']')
 		}
 		sb.WriteByte('}')
 		return sb.String()
@@ -653,6 +715,12 @@ func DeepEqual(a, b Value) bool {
 			}
 		}
 		return true
+	case *GraphValue:
+		// Order-insensitive, unlike every other collection here: see GraphEqual
+		// for why two graphs built in different insertion orders are the same
+		// graph even though they render differently.
+		y, ok := b.(*GraphValue)
+		return ok && GraphEqual(x, y)
 	case nil:
 		return b == nil
 	default:
@@ -683,6 +751,8 @@ func DescribeValue(v Value) string {
 		return "Grid"
 	case *SparseValue:
 		return "Sparse"
+	case *GraphValue:
+		return "Graph"
 	case nil:
 		return "<none>"
 	default:

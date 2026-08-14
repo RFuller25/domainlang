@@ -356,6 +356,17 @@ func (l *lexer) lexOperator() error {
 		if len(l.parens) > 0 {
 			l.parens = l.parens[:len(l.parens)-1]
 		}
+	case '{':
+		// Braces deliberately do *not* join the parens stack, so they do not
+		// suspend layout: a record literal is written on one line, exactly as
+		// the `record(…)` call it stands for is today. Continuation inside `(`
+		// exists because an open paren is visible proof the expression is
+		// unfinished; whether a brace should say the same thing is a separate
+		// question, and answering it here would silently change how an
+		// unclosed `{` at end of input is reported.
+		k = token.LBRACE
+	case '}':
+		k = token.RBRACE
 	case '+':
 		k = token.PLUS
 	case '-':

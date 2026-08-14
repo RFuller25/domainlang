@@ -156,7 +156,11 @@ func TestRunnableProgramCountsAreCurrent(t *testing.T) {
 		15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen",
 		19: "nineteen", 20: "twenty", 21: "twenty-one", 22: "twenty-two",
 	}
-	anyWord := regexp.MustCompile(`\b(ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty-one|twenty-two)\b`)
+	// Longest alternative first: Go's regexp is leftmost-*first*, so with
+	// `twenty` ahead of `twenty-one` the shorter one wins and "twenty-one"
+	// can never be recognized — the words table above has always had the
+	// entry, and the twenty-first example is what finally reached it.
+	anyWord := regexp.MustCompile(`\b(twenty-one|twenty-two|twenty|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\b`)
 	// Flatten to one line and drop dots, so a window can span the line wrap and
 	// the "../examples/" inside a link target without the scan stopping early.
 	normalize := func(s string) string {

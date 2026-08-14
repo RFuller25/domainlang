@@ -686,14 +686,17 @@ inlined, so optimizer rewrites still fire straight through — a signed
 Shikigami wrapping `Quicksort` + `Select Top K` still becomes a quickselect.
 
 Types are written as `Int`, `Float`, `Text`, `Bool`, `List<T>`, `Set<T>`,
-`Grid<T>`, `Sparse<T>`, `Map<K,V>`, and `(A, B)` tuples. Two limits worth
-knowing:
+`Grid<T>`, `Sparse<T>`, `Map<K,V>`, `(A, B)` tuples, and `{a: Int, b: Text}`
+records — the last written exactly as `Reveal` and every type error print one,
+so a declared signature and the type it is checked against read identically.
+Field order is not part of a record's identity: `{b: Text, a: Int}` matches a
+pipeline producing `{a: Int, b: Text}`.
+
+One limit worth knowing:
 
 - **No type variables.** A signature is necessarily monomorphic, so a
   genuinely polymorphic Shikigami (`List<T> -> T`) simply declares none and
   behaves exactly as it always did. That is why signatures are opt-in.
-- **Record types cannot be written** (`{a:Int, b:Int}`), so a Shikigami
-  operating on `Match Pattern` records leaves its signature off.
 
 In a signature the top-level `->` always separates input from output, so
 `: (Int, Int) -> Int` takes a **tuple** and returns an `Int`.

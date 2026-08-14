@@ -579,6 +579,11 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			g.helper("dmSetHas", declSetHas)
 			return "dmSetHas(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
 		}
+		if types[0] != nil && types[0].Kind == ir.KGraph {
+			g.helper("dmGraph", declGraph)
+			return "func() bool { _, ok := (" + args[0] + ").index[" + args[1] + "]; return ok }()",
+				ir.Bool(), nil
+		}
 		if _, err := listElem(0); err != nil {
 			return "", nil, err
 		}
@@ -817,8 +822,19 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmSliceList", declSliceList)
 		return "dmSliceList(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
 	case "textjoin":
-		g.imp("strings")
-		return "strings.Join(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+		elemT, err := listElem(0)
+		if err != nil {
+			return "", nil, err
+		}
+		if elemT != nil && elemT.Kind == ir.KText {
+			g.imp("strings")
+			return "strings.Join(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+		}
+		fn, err := g.joinFn(elemT)
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
 
 	// -- grid geometry ----------------------------------------------------------
 	case "inbounds":
@@ -957,6 +973,10 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmSet", declSet)
 		return "(" + args[0] + ").elems", ir.List(types[0].Elem), nil
 	case "size":
+		if types[0] != nil && types[0].Kind == ir.KGraph {
+			g.helper("dmGraph", declGraph)
+			return "int64(len((" + args[0] + ").nodes))", ir.Int(), nil
+		}
 		if types[0] != nil && types[0].Kind == ir.KSet {
 			g.helper("dmSet", declSet)
 			return "int64(len((" + args[0] + ").elems))", ir.Int(), nil
@@ -1267,6 +1287,155 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 				", len(ps)); for i, p := range ps { out[i] = " + ptGo +
 				"{f0: p.r, f1: p.c} }; return out }((" + args[0] + ").pts())",
 			ir.List(irPoint()), nil
+
+	// -- graphs ------------------------------------------------------------------
+	//
+	// The updates go through dmGraphAddNode/AddEdge/DelEdge, which clone first:
+	// the expression layer's graph updates are functional, exactly like the Map
+	// and Sparse ones, and the dead-receiver pass is what takes the copy back.
+	case "graph":
+		gt, err := g.graphOut(x, types)
+		if err != nil {
+			return "", nil, err
+		}
+		fn, err := g.graphBuildFn(gt, types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ")", gt, nil
+	case "emptygraph":
+		gt := ir.Graph(types[0])
+		goT, err := g.goType(gt)
+		if err != nil {
+			return "", nil, err
+		}
+		// The argument is a type witness, but the interpreter evaluates every
+		// argument before dispatching, so it has to be evaluated here too or the
+		// two backends disagree about whether a failing witness runs.
+		nodeGo, err := g.goType(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmGraph", declGraph)
+		return "func(_ " + nodeGo + ") " + goT + " { return dmNewGraph[" + nodeGo + "]() }(" +
+			args[0] + ")", gt, nil
+	case "addnode":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("addnode needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		if x.InPlace {
+			g.helper("dmGraphAddNodeIn", declGraphAddNodeIn)
+			return "dmGraphAddNodeIn(" + args[0] + ", " + args[1] + ")", types[0], nil
+		}
+		g.helper("dmGraphAddNode", declGraphAddNode)
+		return "dmGraphAddNode(" + args[0] + ", " + args[1] + ")", types[0], nil
+	case "addedge":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("addedge needs a Graph argument, got %s", types[0])
+		}
+		w := "1"
+		if len(args) == 4 {
+			w = args[3]
+		}
+		g.helper("dmGraph", declGraph)
+		if x.InPlace {
+			g.helper("dmGraphAddEdgeIn", declGraphAddEdgeIn)
+			return "dmGraphAddEdgeIn(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
+				types[0], nil
+		}
+		g.helper("dmGraphAddEdge", declGraphAddEdge)
+		return "dmGraphAddEdge(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
+			types[0], nil
+	case "deledge":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("deledge needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphDelEdge", declGraphDelEdge)
+		return "dmGraphDelEdge(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+	case "nodes":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("nodes needs a Graph argument, got %s", types[0])
+		}
+		nodeGo, err := g.goType(types[0].Elem)
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmGraph", declGraph)
+		// Copied, because the interpreter hands back a copy and a later append
+		// on the result must not be visible through the graph.
+		return "append([]" + nodeGo + "{}, (" + args[0] + ").nodes...)",
+			ir.List(types[0].Elem), nil
+	case "edges":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("edges needs a Graph argument, got %s", types[0])
+		}
+		fn, err := g.graphEdgesFn(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ")", ir.List(ir.Tuple(types[0].Elem, types[0].Elem, ir.Int())), nil
+	case "neighbors":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("neighbors needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphNeighbors", declGraphNeighbors)
+		return "dmGraphNeighbors(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+	case "edgesof":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("edgesof needs a Graph argument, got %s", types[0])
+		}
+		fn, err := g.graphEdgesOfFn(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(ir.Tuple(types[0].Elem, ir.Int())), nil
+	case "hasedge":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("hasedge needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		return "func() bool { _, ok := (" + args[0] + ").weight(" + args[1] + ", " + args[2] +
+			"); return ok }()", ir.Bool(), nil
+	case "weight":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("weight needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphWeight", declGraphWeightAt)
+		return "dmGraphWeight(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
+	case "weightor":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("weightor needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphWeightOr", declGraphWeightOr)
+		return "dmGraphWeightOr(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
+			ir.Int(), nil
+	case "degree":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("degree needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphDegree", declGraphDegree)
+		return "dmGraphDegree(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "flipedges":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("flipedges needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphFlip", declGraphFlip)
+		return "dmGraphFlip(" + args[0] + ")", types[0], nil
+	case "subgraph":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("subgraph needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphSub", declGraphSub)
+		return "dmGraphSub(" + args[0] + ", " + args[1] + ")", types[0], nil
 
 	// -- list generation ---------------------------------------------------------
 	case "range":

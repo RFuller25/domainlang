@@ -74,6 +74,11 @@ var expansionTechniques = map[string]technique{
 	"maximum compile": {"領域展開", "DOMAIN EXPANSION", "guaranteed hit.", jjkCrimson},
 	"documentation":   {"呪術高専", "JUJUTSU HIGH ARCHIVES", "everything a sorcerer needs to know.", jjkPurple},
 	"vscode":          {"式神召喚", "SHIKIGAMI SUMMONING", "bound to your editor, ready to serve.", jjkBlue},
+	"bench":           {"呪力測定", "CURSED ENERGY MEASUREMENT", "four ways to fight; one is fastest.", jjkYellow},
+	"coverage":        {"術式目録", "TECHNIQUE INVENTORY", "you have not thrown every technique you know.", jjkGreen},
+	"stats":           {"等級査定", "GRADE ASSESSMENT", "the record, laid out.", jjkPurple},
+	"battle":          {"領域展開・対決", "DOMAIN CLASH", "two domains, one survives.", jjkCrimson},
+	"mahoraga":        {"八握剣異戒神将魔虚羅", "MAHORAGA", "the wheel turns; it adapts.", jjkCrimson},
 }
 
 // expansionBanner renders the small technique banner for one expansion

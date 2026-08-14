@@ -217,7 +217,15 @@ func isTotal(e ast.Expr) bool {
 			// fail on any input. mod/divmod/pow/isqrt/factorial/charat/clamp
 			// are deliberately absent: each has a documented error case.
 			"slice", "indexof", "startswith", "endswith", "replace", "trim",
-			"upper", "lower", "chars", "textjoin", "tuple":
+			"upper", "lower", "chars", "textjoin", "tuple",
+			// Graph. Every reader answers empty/false/0 for a node that is not
+			// in the graph rather than failing, and every update is a functional
+			// copy that cannot reject its input. `weight` is deliberately absent
+			// — it errors on a missing arc, which is what `weightor` is for, the
+			// same split as get/getor.
+			"graph", "emptygraph", "addnode", "addedge", "deledge",
+			"nodes", "edges", "neighbors", "edgesof", "hasedge",
+			"weightor", "degree", "flipedges", "subgraph":
 			// total builtins (take/drop/slice clamp)
 		default:
 			return false // item, first, last, min, max, get, at are partial

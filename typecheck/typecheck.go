@@ -210,6 +210,12 @@ var Builtins = []string{
 	// 2-parameter lambda at all, the absence was total.
 	"sort", "unique", "flatten", "product", "zip", "enumerate",
 	"chunk", "windows", "transpose",
+	// Graph<K>: the explicit graph gets a value, so the three vocabularies
+	// that described one — Grid geometry, Explore's implicit state space,
+	// Topological Sort's adjacency map — stop being the only ways to ask.
+	"graph", "emptygraph", "addnode", "addedge", "deledge",
+	"nodes", "edges", "neighbors", "edgesof", "hasedge",
+	"weight", "weightor", "degree", "flipedges", "subgraph",
 }
 
 // PointType is the expression-layer representation of a 2D point: an
@@ -257,6 +263,10 @@ var builtinArity = map[string]int{
 	// first-order list operations
 	"sort": 1, "unique": 1, "flatten": 1, "product": 1, "zip": 2,
 	"enumerate": 1, "chunk": 2, "windows": 2, "transpose": 1,
+	// graph. addedge is variadic: 3 arguments weigh the arc 1, 4 name a weight.
+	"graph": 1, "emptygraph": 1, "addnode": 2, "addedge": -1, "deledge": 3,
+	"nodes": 1, "edges": 1, "neighbors": 2, "edgesof": 2, "hasedge": 3,
+	"weight": 3, "weightor": 4, "degree": 2, "flipedges": 1, "subgraph": 2,
 	"insert": -1, // 2 over a Set, 3 over a Map
 	"del":    2,  // Set × elem, or Map × key
 	"union":  2, "intersect": 2, "difference": 2,
@@ -290,6 +300,8 @@ var builtinArity = map[string]int{
 var variadicArity = map[string][2]int{
 	"list": {1, -1}, "tuple": {2, -1}, "min": {1, 2}, "max": {1, 2},
 	"insert": {2, 3}, "record": {2, -1},
+	// addedge weighs the arc 1 when no weight is given.
+	"addedge": {3, 4},
 }
 
 // CheckArity reports whether the builtin name accepts n arguments, wording the
@@ -537,8 +549,8 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			}
 			return ir.Bool(), nil
 		}
-		if args[0] == nil || (args[0].Kind != ir.KList && args[0].Kind != ir.KSet) {
-			return nil, fmt.Errorf("%s: contains needs a Text, List or Set argument, got %s", x.Pos, args[0])
+		if args[0] == nil || (args[0].Kind != ir.KList && args[0].Kind != ir.KSet && args[0].Kind != ir.KGraph) {
+			return nil, fmt.Errorf("%s: contains needs a Text, List, Set or Graph argument, got %s", x.Pos, args[0])
 		}
 		elem := args[0].Elem
 		if !ir.Keyable(elem) {
@@ -775,8 +787,10 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Text(), nil
 	case "textjoin":
-		if args[0] == nil || args[0].Kind != ir.KList || !args[0].Elem.Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: textjoin needs List<Text>, got %s", x.Pos, args[0])
+		// Any element type is fine: each is rendered exactly as Reveal would
+		// render it (Int/Float/Text/Bool/Record/...), then joined.
+		if args[0] == nil || args[0].Kind != ir.KList {
+			return nil, fmt.Errorf("%s: textjoin needs a List, got %s", x.Pos, args[0])
 		}
 		if !args[1].Equal(ir.Text()) {
 			return nil, fmt.Errorf("%s: textjoin separator must be Text, got %s", x.Pos, args[1])
@@ -864,9 +878,10 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.List(args[0].Elem), nil
 	case "size":
-		// Count, without leaving the lambda.
-		if args[0] == nil || (args[0].Kind != ir.KMap && args[0].Kind != ir.KSet) {
-			return nil, fmt.Errorf("%s: size needs a Map or Set argument, got %s", x.Pos, args[0])
+		// Count, without leaving the lambda. Over a Graph it is the node count;
+		// `length(edges(g))` is the arc count, which is a different question.
+		if args[0] == nil || (args[0].Kind != ir.KMap && args[0].Kind != ir.KSet && args[0].Kind != ir.KGraph) {
+			return nil, fmt.Errorf("%s: size needs a Map, Set or Graph argument, got %s", x.Pos, args[0])
 		}
 		return ir.Int(), nil
 	case "manhattan":
@@ -1071,6 +1086,148 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.List(PointType()), nil
 
+	// -- graphs ------------------------------------------------------------------
+	//
+	// Every update here is functional, like insert/put/setat: it returns a new
+	// graph and leaves its receiver alone. The optimizer's dead-receiver pass is
+	// what recovers the copy when nothing can observe the original.
+	case "graph":
+		// From an edge list: (from, to) pairs, or (from, to, weight) triples.
+		// This is the shape a positional Match Pattern lands on, which is why it
+		// is the constructor rather than an adjacency map.
+		node, err := graphEdgeListNode(x, args[0])
+		if err != nil {
+			return nil, err
+		}
+		return ir.Graph(node), nil
+	case "emptygraph":
+		// Witness form, like emptyset: the argument is a value of the node type,
+		// evaluated but unused, because the result type has to come from
+		// somewhere.
+		if err := needKeyable(x, name, args[0]); err != nil {
+			return nil, err
+		}
+		return ir.Graph(args[0]), nil
+	case "addnode":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: addnode value must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return g, nil
+	case "addedge":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		for i := 1; i < 3; i++ {
+			if !args[i].Equal(g.Elem) {
+				return nil, fmt.Errorf("%s: addedge endpoint %d must be %s, got %s", x.Pos, i, g.Elem, args[i])
+			}
+		}
+		if len(args) == 4 {
+			if err := needInt(3); err != nil {
+				return nil, err
+			}
+		}
+		return g, nil
+	case "deledge":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		for i := 1; i < 3; i++ {
+			if !args[i].Equal(g.Elem) {
+				return nil, fmt.Errorf("%s: deledge endpoint %d must be %s, got %s", x.Pos, i, g.Elem, args[i])
+			}
+		}
+		return g, nil
+	case "nodes":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		return ir.List(g.Elem), nil
+	case "edges":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		return ir.List(ir.Tuple(g.Elem, g.Elem, ir.Int())), nil
+	case "neighbors":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: neighbors node must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return ir.List(g.Elem), nil
+	case "edgesof":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: edgesof node must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return ir.List(ir.Tuple(g.Elem, ir.Int())), nil
+	case "hasedge":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		for i := 1; i < 3; i++ {
+			if !args[i].Equal(g.Elem) {
+				return nil, fmt.Errorf("%s: hasedge endpoint %d must be %s, got %s", x.Pos, i, g.Elem, args[i])
+			}
+		}
+		return ir.Bool(), nil
+	case "weight", "weightor":
+		// weight is the partial one — it errors on a missing arc — and weightor
+		// is its total twin, exactly as get/getor pair over a Map.
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		for i := 1; i < 3; i++ {
+			if !args[i].Equal(g.Elem) {
+				return nil, fmt.Errorf("%s: %s endpoint %d must be %s, got %s", x.Pos, name, i, g.Elem, args[i])
+			}
+		}
+		if name == "weightor" {
+			if err := needInt(3); err != nil {
+				return nil, err
+			}
+		}
+		return ir.Int(), nil
+	case "degree":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: degree node must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return ir.Int(), nil
+	case "flipedges":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		return g, nil
+	case "subgraph":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if args[1] == nil || args[1].Kind != ir.KList || !args[1].Elem.Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: subgraph needs List<%s> of nodes to keep, got %s", x.Pos, g.Elem, args[1])
+		}
+		return g, nil
+
 	// -- list generation ---------------------------------------------------------
 	case "range":
 		for i := range 2 {
@@ -1273,6 +1430,59 @@ func recordType(x *ast.CallExpr, args []*ir.Type) (*ir.Type, error) {
 		fields = append(fields, ir.Field{Name: lit.Value, Type: args[i+1]})
 	}
 	return ir.Record(fields...), nil
+}
+
+// needGraph requires argument i to be a Graph, returning its type so the
+// caller can reach the node type through Elem.
+func needGraph(x *ast.CallExpr, name string, args []*ir.Type, i int) (*ir.Type, error) {
+	if args[i] == nil || args[i].Kind != ir.KGraph {
+		return nil, fmt.Errorf("%s: %s needs a Graph argument, got %s", x.Pos, name, args[i])
+	}
+	return args[i], nil
+}
+
+// graphEdgeListNode types `graph(edges)`: the argument is a list of (from, to)
+// pairs or (from, to, weight) triples, and the node type is the one both
+// endpoints share.
+//
+// Two shapes rather than one because a positional Match Pattern produces
+// List<List<K>> — two entries per row — while tuple(...) and zip produce
+// List<(K, K)>. Topological Sort already accepts both for the same reason, so
+// the constructor matches the shape the parse actually lands on.
+func graphEdgeListNode(x *ast.CallExpr, t *ir.Type) (*ir.Type, error) {
+	bad := func() (*ir.Type, error) {
+		return nil, fmt.Errorf("%s: graph needs an edge list — List<(K, K)>, List<(K, K, Int)>, "+
+			"or the List<List<K>> a positional Match Pattern produces — got %s", x.Pos, t)
+	}
+	if t == nil || t.Kind != ir.KList || t.Elem == nil {
+		return bad()
+	}
+	switch e := t.Elem; e.Kind {
+	case ir.KTuple:
+		if len(e.Elems) != 2 && len(e.Elems) != 3 {
+			return bad()
+		}
+		if !e.Elems[0].Equal(e.Elems[1]) {
+			return nil, fmt.Errorf("%s: graph's edge endpoints must have the same type, got %s and %s",
+				x.Pos, e.Elems[0], e.Elems[1])
+		}
+		if len(e.Elems) == 3 && !e.Elems[2].Equal(ir.Int()) {
+			return nil, fmt.Errorf("%s: graph's edge weight must be Int, got %s", x.Pos, e.Elems[2])
+		}
+		if err := needKeyable(x, "graph", e.Elems[0]); err != nil {
+			return nil, err
+		}
+		return e.Elems[0], nil
+	case ir.KList:
+		// The ragged form: the length is only known at run time, so the weight
+		// cannot be typed here. An unweighted edge list is what this shape is
+		// for, and every arc gets weight 1.
+		if err := needKeyable(x, "graph", e.Elem); err != nil {
+			return nil, err
+		}
+		return e.Elem, nil
+	}
+	return bad()
 }
 
 // needKeyable requires a type that can be a Map key or Set element.

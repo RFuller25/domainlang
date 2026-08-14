@@ -27,9 +27,11 @@ import (
 	"domain/interp"
 	"domain/ir"
 	"domain/lexer"
+	"domain/mahoraga"
 	"domain/optimizer"
 	"domain/parser"
 	"domain/prims"
+	"domain/runner"
 )
 
 // Options controls a single run.
@@ -49,6 +51,12 @@ type BuildOptions struct {
 	Out      string // binary output path; "" derives it from the source name
 	EmitGo   string // also write the generated Go source here ("-" for stdout)
 	Run      bool   // build, run with the current stdin, then clean up
+
+	// Recipe rebuilds with the configuration `domain expansion: mahoraga`
+	// recorded — its pass schedule and toolchain flags — rather than the
+	// defaults. It is what makes a tuning durable: the recipe lives beside the
+	// program, in a diff, and this is how it gets applied.
+	Recipe string
 }
 
 // exitError carries a child process's exit code out of Build --run. The child
@@ -70,7 +78,14 @@ func main() {
 			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
 			os.Exit(2)
 		}
-		if err := Execute(path, opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
+		err = Execute(path, opts, os.Stdin, os.Stdout, os.Stderr)
+		// The interpreter half of the allocation-measurement protocol. It
+		// covers the whole process — front end included — which is the right
+		// scope, because the wall time a measured run reports covers it too.
+		// A no-op unless DOMAIN_ALLOC_REPORT is set, which only the
+		// measurement commands ever do.
+		runner.WriteReport()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
 			os.Exit(1)
 		}
@@ -116,7 +131,9 @@ func main() {
 		// argument means the compiler is wanted.
 		args := os.Args[1:]
 		if isImplicitRun(args) {
-			if err := Execute(args[0], Options{Optimize: true}, os.Stdin, os.Stdout, os.Stderr); err != nil {
+			err := Execute(args[0], Options{Optimize: true}, os.Stdin, os.Stdout, os.Stderr)
+			runner.WriteReport()
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "domain: %v\n", err)
 				os.Exit(1)
 			}
@@ -176,6 +193,11 @@ Expansion commands (the diagnostics engine):
   domain expansion: optimize <file>         optimization report; rewrites the source where possible (.bak)
   domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
   domain expansion: visualize <file>        step through a run and watch the data change shape
+  domain expansion: bench <file>            time and measure interpret/compile x naive/optimized
+  domain expansion: coverage <folder>       which builtins and primitives a folder never exercises
+  domain expansion: stats <folder>          per-program runtime, LOC and optimizer passes, ranked
+  domain expansion: battle <a> [--lang L] <b>  race a Domain program against one in another language
+  domain expansion: mahoraga <f> <in> <exp>    adapt one program to one input; writes a binary and a recipe
   domain expansion: development [file]      write a program in a terminal editor that knows the language
   domain expansion: documentation [-p PORT] serve the browsable docs website locally (default port 4444)
   domain expansion: vscode [--dir PATH]     install the VS Code extension carried inside this binary
@@ -192,13 +214,31 @@ Run flags:
 Build flags:
   -o <binary>    where to write the compiled binary (default: source name without .domain)
   --emit-go <f>  also write the generated Go source ("-" for stdout)
+  --recipe <f>   rebuild with a mahoraga recipe's pass schedule and build flags
   --run          run the binary immediately with the current stdin; without -o
                  it is built to a temp path and cleaned up afterwards
+
+Mahoraga flags (domain expansion: mahoraga <file.domain> <input> <expected>):
+  --runs <n>     measurement runs for the baseline and every confirmation
+                 (default 10); raise it on a noisy machine
+  --screen-runs <n>  cheaper first measurement per candidate (default 3)
+  --min-effect <f>   the improvement worth recording, as a fraction (default 0.02)
+  --turns <n>    stop after n of the eight turns of the wheel
+  --tier general|guarded|pinned   how far an adaptation may commit (default pinned)
+  --seed <n>     make the search reproducible
+  -o <binary>    the adapted binary (default <stem>-adapted)
+  --recipe <f>   the recipe (default <stem>.mahoraga.json)
+  --replay <f>   rebuild from a recipe instead of searching, re-verifying the output
+  --verify <f> [input]   check a recipe's contract against an input, without building
+  -q, --quiet    the verdict only, with no per-candidate progress
+  --plain        one line per candidate, unstyled (no wheel)
+  --json         write the recipe to stdout instead of a report
 
 Examples:
   domain day1.domain < input.txt      interpret day1.domain
   domain day1.domain -o day1          compile to ./day1
   domain run day1.domain --explain    interpret, showing optimizer rewrites
+  domain expansion: mahoraga day1.domain input.txt want.txt --runs 20 --quiet
 `)
 }
 
@@ -289,6 +329,12 @@ func parseBuildArgs(args []string) (string, BuildOptions, error) {
 				return "", opts, fmt.Errorf("--emit-go requires a path")
 			}
 			opts.EmitGo = args[i]
+		case "--recipe":
+			i++
+			if i >= len(args) {
+				return "", opts, fmt.Errorf("--recipe requires a path")
+			}
+			opts.Recipe = args[i]
 		default:
 			if strings.HasPrefix(a, "-") {
 				return "", opts, fmt.Errorf("unknown flag %q", a)
@@ -379,12 +425,19 @@ func Execute(path string, opts Options, stdin io.Reader, stdout, stderr io.Write
 // input` is a one-shot compile-and-run. A nonzero child exit comes back as an
 // *exitError carrying the child's code.
 func Build(path string, opts BuildOptions, stdin io.Reader, stdout, stderr io.Writer) error {
+	build := codegen.BuildConfig{}
+	var tuning codegen.Tuning
 	pipe, err := loadPipeline(path, opts.Optimize, opts.Explain, stderr)
 	if err != nil {
 		return err
 	}
+	if opts.Recipe != "" {
+		if pipe, build, tuning, err = applyRecipe(path, opts, stderr); err != nil {
+			return err
+		}
+	}
 
-	goSrc, err := codegen.EmitProgram(pipe, codegen.Options{Release: opts.Release})
+	goSrc, err := codegen.EmitProgram(pipe, codegen.Options{Release: opts.Release, Tuning: tuning})
 	if err != nil {
 		return err
 	}
@@ -410,7 +463,7 @@ func Build(path string, opts BuildOptions, stdin io.Reader, stdout, stderr io.Wr
 			out = defaultBinaryName(path)
 		}
 	}
-	if err := codegen.BuildBinary(goSrc, out); err != nil {
+	if err := codegen.BuildBinaryWith(goSrc, out, build); err != nil {
 		return err
 	}
 	if !opts.Run {
@@ -429,6 +482,53 @@ func Build(path string, opts BuildOptions, stdin io.Reader, stdout, stderr io.Wr
 		return err
 	}
 	return nil
+}
+
+// applyRecipe rebuilds with a mahoraga recipe's pass schedule and toolchain
+// flags.
+//
+// It refuses a recipe carrying anything but general-tier adaptations. Those
+// hold for any input; a guarded or pinned one was verified against a
+// particular input, and `domain build` has no input to verify against — it
+// takes a program and nothing else. Applying such a recipe here would produce
+// a binary bound to a contract nobody checked, which is exactly the failure the
+// design exists to prevent. `domain expansion: mahoraga --replay` is the path
+// that has the input and does the checking.
+//
+// A guarded adaptation is refused here as well as a pinned one, and that is
+// not the same claim `Verify` makes. Verify asks "is this binary still
+// correct", where a guarded adaptation's fallback answers yes. This asks "may
+// I build a tuning nobody has checked against any input at all" — and a
+// capacity measured from an input this command cannot see is a number with no
+// provenance, whatever its fallback.
+func applyRecipe(path string, opts BuildOptions, stderr io.Writer) (*ir.Pipeline, codegen.BuildConfig, codegen.Tuning, error) {
+	r, err := mahoraga.ReadRecipe(opts.Recipe)
+	if err != nil {
+		return nil, codegen.BuildConfig{}, codegen.Tuning{}, err
+	}
+	for _, a := range r.Kept() {
+		if a.Tier != "general" {
+			return nil, codegen.BuildConfig{}, codegen.Tuning{}, fmt.Errorf(
+				"%s carries a %s-tier adaptation (turn %d, %q) that was verified against a "+
+					"particular input, and `domain build` has none to check it against.\n"+
+					"Use: domain expansion: mahoraga --replay %s",
+				opts.Recipe, a.Tier, a.Turn, a.ID, opts.Recipe)
+		}
+	}
+	c := r.Candidate()
+	pipe, err := runner.LoadPipelineSchedule(path, c.Schedule)
+	if err != nil {
+		return nil, codegen.BuildConfig{}, codegen.Tuning{}, err
+	}
+	if opts.Explain {
+		fmt.Fprintf(stderr, "[recipe] %s: %d adaptation(s) from %s\n",
+			opts.Recipe, len(r.Kept()), r.AdaptedAt.Format("2006-01-02"))
+		for _, a := range r.Kept() {
+			fmt.Fprintf(stderr, "[recipe] turn %d: %s (%.1f%% faster when measured)\n",
+				a.Turn, a.ID, a.EffectPct)
+		}
+	}
+	return pipe, c.Build, c.Tuning, nil
 }
 
 // defaultBinaryName derives the output binary path from the program path:

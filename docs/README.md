@@ -23,7 +23,7 @@ compiling to a binary. Then come back to the reference below.
 rather than as definitions: what flows between the stages, one working program
 per idea, every output taken from a real run.
 
-Runnable material: twenty annotated programs in
+Runnable material: twenty-one annotated programs in
 [../examples/](../examples/README.md) and thirteen classic challenges
 (FizzBuzz → Game of Life) in [../challenges/](../challenges/README.md),
 all golden-tested in both backends.
@@ -44,7 +44,7 @@ the buttons.
 | [walkthroughs.md](walkthroughs.md) | Whole programs, start to finish: bindings, all four loops, Channels, Parts, pipeline bodies, Shikigami, the optimizer |
 | [language.md](language.md) | Source structure: the two layers, keywords, statements, arguments, Channels, Shikigami, loops, vows |
 | [primitives.md](primitives.md) | Every pipeline primitive: signature, arguments, errors, two runnable examples each — an index over seven pages, one per keyword class |
-| [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, `consider`, `:=`, stage bindings. The 161 builtin functions are on six pages linked from it |
+| [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, `consider`, `:=`, stage bindings. The 176 builtin functions are on six pages linked from it |
 | [aoc-toolbox.md](aoc-toolbox.md) | The classic AoC helper library (parsing, grids, searches, math, ranges, combinatorics) mapped onto Domain, item by item |
 | [data-model.md](data-model.md) | The value and type model (Int, Float, Text, Bool, List, Tuple, Record, Map, Set, Grid, Sparse): representation, construction, equality, rendering |
 | [match-pattern.md](match-pattern.md) | The `Match Pattern` typed-hole template language: syntax, output shapes, lowering, and failure modes |

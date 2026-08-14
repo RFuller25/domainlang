@@ -55,10 +55,12 @@ import (
 //
 // Deliberately not here:
 //
-//   - `del`. Removing a key has to shift the key order, which *would* be
-//     visible through a list taken earlier, and there is no existing mutating
-//     Without to reuse. It is also rare in an accumulator fold, so it buys
-//     little for the only genuinely new reasoning on the page.
+//   - `del`, and `deledge` for the same reason. Removing a key has to shift
+//     the key order, which *would* be visible through a list taken earlier,
+//     and there is no existing mutating Without to reuse. Removing an arc
+//     shifts the arc indices behind it identically. Both are rare in an
+//     accumulator fold, so they buy little for the only genuinely new
+//     reasoning on the page.
 //   - `set` (List) and `with` (Record). A List is a Go slice at run time and
 //     `take`/`drop`/`slice` hand out subslices of the same backing array, so
 //     "who else can see this" stops being a question about the accumulator
@@ -69,6 +71,13 @@ var inPlaceUpdates = map[string]int{
 	"insert": 0, // Map or Set
 	"put":    0, // Sparse
 	"setat":  0, // Grid
+	// Graph. Both are their functional form minus the clone — AddEdge is
+	// Clone-then-addEdge — and neither mutates anything an alias can see:
+	// adding a node appends to the node order, and adding an arc appends to
+	// (or re-weights in place) one node's arc list. `nodes` and `edges` both
+	// copy, so a list taken from the accumulator earlier still reads the same.
+	"addnode": 0,
+	"addedge": 0,
 }
 
 // mutableAcc reports whether an accumulator of this type is worth (and safe)
@@ -79,7 +88,7 @@ func mutableAcc(t *ir.Type) bool {
 		return false
 	}
 	switch t.Kind {
-	case ir.KMap, ir.KSet, ir.KGrid, ir.KSparse:
+	case ir.KMap, ir.KSet, ir.KGrid, ir.KSparse, ir.KGraph:
 		return true
 	}
 	return false

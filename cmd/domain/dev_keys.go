@@ -58,6 +58,7 @@ type devKeyMap struct {
 
 	Run       key.Binding
 	Visualize key.Binding
+	Monitor   key.Binding
 	Input     key.Binding
 	Suggest   key.Binding
 	StageNext key.Binding
@@ -99,8 +100,12 @@ func defaultDevKeys() devKeyMap {
 
 		Run:       key.NewBinding(key.WithKeys("ctrl+r")),
 		Visualize: key.NewBinding(key.WithKeys("ctrl+t")),
-		Input:     key.NewBinding(key.WithKeys("ctrl+e")),
-		Suggest:   key.NewBinding(key.WithKeys("alt+i")),
+		// The monitor opens itself on ctrl+r and closes on any key; alt+m is
+		// for the run whose screen was dismissed by one that was meant for the
+		// program.
+		Monitor: key.NewBinding(key.WithKeys("alt+m")),
+		Input:   key.NewBinding(key.WithKeys("ctrl+e")),
+		Suggest: key.NewBinding(key.WithKeys("alt+i")),
 		// Walking the recorded stages: the stepper's gesture, against the
 		// program you are editing rather than a tree beside it.
 		StageNext: key.NewBinding(key.WithKeys("alt+down")),
@@ -151,7 +156,9 @@ func devHelpBody() []string {
 	section("Running")
 	row("ctrl+e", "choose the input file — then it offers an opening")
 	row("alt+i", "offer an opening again")
-	row("ctrl+r", "run — ctrl+c stops a run that will not end")
+	row("ctrl+r", "run — the monitor takes the screen and watches it")
+	row("ctrl+c", "stop a run that will not end (on the monitor)")
+	row("alt+m", "reopen the last run's monitor")
 	row("ctrl+t", "open the stepper over the last run")
 	row("alt+↑ / alt+↓", "walk the recorded stages, watching the value change")
 	row("alt+e", "what the optimizer did to the last run")

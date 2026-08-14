@@ -54,8 +54,110 @@ without one, and a frequency map is normally queried through `getor`.
 | `getor(m, k, d)` | `Map<K,V> × K × V -> V` | Total lookup: the value, or `d` when absent. |
 | `keys(m)` | `Map<K,V> -> List<K>` | Keys in insertion order. |
 | `values(m)` | `Map<K,V> -> List<V>` | Values in the same order. |
-| `size(m)` | `Map<K,V> \| Set<T> -> Int` | Entry count — `Count`, without leaving the lambda. |
+| `size(m)` | `Map<K,V> \| Set<T> \| Graph<K> -> Int` | Entry count (a `Graph`'s node count) — `Count`, without leaving the lambda. |
 | `tolist(s)` | `Set<T> -> List<T>` | Elements in insertion order. Without it a `Set` is a dead end: `Map Each` has no Set case. |
+
+### Graphs
+
+An edge list becomes a graph, and the graph answers questions about itself:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Cursed Technique: Apply
+    Using: (rs) -> graph(rs)
+Cursed Technique: Apply
+    Using: (g) -> textjoin(list(
+        totext(size(g)),
+        textjoin(nodes(g), "/"),
+        textjoin(neighbors(g, "a"), "/"),
+        if hasedge(g, "c", "a") then "cycle" else "no cycle"
+    ), " ")
+Reveal: stdout
+```
+```input
+a -> b
+a -> c
+b -> c
+```
+```output
+3 a/b/c b/c no cycle
+```
+
+Weights are `Int` and default to 1, so an unweighted graph needs no separate
+spelling — and a graph renders as the adjacency listing it is:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> addnode(addedge(addedge(emptygraph(""), "a", "b"), "a", "c", 7), "q")
+Reveal: stdout
+```
+```input
+```
+```output
+{a: [(b, 1), (c, 7)], b: [], c: [], q: []}
+```
+
+
+A `Graph<K>` is a **directed**, `Int`-weighted adjacency over keyable nodes.
+See [data-model.md](data-model.md) for the full contract; the short version is
+four rules:
+
+- **Directed.** An undirected graph is one with both arcs — that is what
+  `Convert To Graph`'s `Mode: Undirected` inserts.
+- **`Int` weights, default `1`.** An unweighted graph is one whose weights are
+  all `1`, so no algorithm needs a separate unweighted path.
+- **Insertion-ordered**, like `Map` and `Set`. An edge brings its endpoints
+  into the graph, so an edge list is a complete description; `addnode` is for
+  the isolated nodes an edge list cannot mention.
+- **A repeated edge re-weights**, in place, rather than adding a parallel one —
+  which is what keeps `weight(g, a, b)` a question with one answer.
+
+Nodes must be keyable (`Int`, `Text`, or a tuple/record of them), the same rule
+`Set` elements and `Explore`'s state follow: the visited set is what makes a
+traversal terminate. A `Graph` is not itself keyable or ordered, so it cannot
+be a `Map` key, a `Set` element, or sorted.
+
+| Builtin | Type | Behavior |
+|---|---|---|
+| `graph(es)` | `List<(K,K)> \| List<(K,K,Int)> \| List<List<K>> -> Graph<K>` | Build from an edge list. Pairs weigh 1; the ragged `List<List<K>>` form is what a positional `Match Pattern` produces, and also weighs 1. |
+| `emptygraph(k)` | `K -> Graph<K>` | The empty graph. The argument is a *type witness* — evaluated, then discarded — like `emptyset`'s. |
+| `addnode(g, k)` | `Graph<K> × K -> Graph<K>` | A copy with `k` present. An existing node keeps its arcs. |
+| `addedge(g, a, b)` / `addedge(g, a, b, w)` | `Graph<K> × K × K [× Int] -> Graph<K>` | A copy with the arc `a → b` (weight `w`, default 1). Both endpoints join the graph. A repeat re-weights. |
+| `deledge(g, a, b)` | `Graph<K> × K × K -> Graph<K>` | A copy without that arc. The nodes stay. |
+| `nodes(g)` | `Graph<K> -> List<K>` | Nodes in insertion order. |
+| `edges(g)` | `Graph<K> -> List<(K, K, Int)>` | Every arc as `(from, to, weight)`. |
+| `neighbors(g, k)` | `Graph<K> × K -> List<K>` | The destinations of `k`'s out-arcs. A node not in the graph has none — total, not an error. |
+| `edgesof(g, k)` | `Graph<K> × K -> List<(K, Int)>` | `neighbors` with the weights. |
+| `hasedge(g, a, b)` | `Graph<K> × K × K -> Bool` | Whether `a → b` is an arc. |
+| `weight(g, a, b)` | `Graph<K> × K × K -> Int` | The arc's weight. **Error** if there is no such arc. |
+| `weightor(g, a, b, d)` | `Graph<K> × K × K × Int -> Int` | `weight` with a default — the total twin, exactly as `getor` is to `get`. |
+| `degree(g, k)` | `Graph<K> × K -> Int` | Out-arc count; 0 for a node not in the graph. |
+| `flipedges(g)` | `Graph<K> -> Graph<K>` | Every arc reversed, node order kept. (`reverse` and `transpose` are taken.) |
+| `subgraph(g, ks)` | `Graph<K> × List<K> -> Graph<K>` | Restricted to `ks`, keeping only arcs with both endpoints in it. A name not in `g` is skipped, not invented. |
+| `size(g)` | `Graph<K> -> Int` | Node count. The arc count is `length(edges(g))` — a different question. |
+| `contains(g, k)` | `Graph<K> × K -> Bool` | Node membership. |
+
+Every update is **functional**, like `insert`/`put`/`setat`: it returns a new
+graph and leaves its receiver untouched. The dead-receiver rewrite below
+reaches `addnode` and `addedge`, so a graph accumulated in a `Fold` is linear
+in its writes rather than quadratic — 12,000 edges into a 900-node graph takes
+0.03 s against 2.1 s with `--no-optimize`. `deledge` is deliberately not
+rewritten, for the reason `del` is not: removing an arc shifts the ones behind
+it.
+
+Equality is **order-insensitive**: two graphs built by reading the same edges
+in a different order are the same graph, so `=` and `Iterate Until Fixed Point`
+agree with that. Rendering still follows insertion order, and always shows
+weights:
+
+```
+{a: [(b, 1), (c, 2)], b: [(c, 1)], c: []}
+```
 
 ### Building and updating a collection
 

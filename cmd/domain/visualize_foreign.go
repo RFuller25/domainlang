@@ -101,6 +101,11 @@ func (m *visualModel) foreignLines(w int) []string {
 // nothing a reader can go and look at, while the binary that ran — which
 // python3, from PATH or from DOMAIN_PYTHON — is the whole reason this line is
 // here, and is what the full path pushes off the edge.
+//
+// It says nothing about the interpreter's own path, which can be long enough
+// to fill the line by itself (`/run/current-system/sw/bin/python3` on NixOS).
+// Keeping the name visible there is truncateVisLeft's job, not this one's: the
+// path is real and worth showing, it just cannot all fit.
 func shortCommand(cmd string) string {
 	parts := strings.Fields(cmd)
 	for i, part := range parts {

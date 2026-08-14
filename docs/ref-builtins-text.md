@@ -54,7 +54,7 @@ noon
 | `replace(s, old, new)` | `Text × Text × Text -> Text` | Every occurrence. |
 | `trim(s)` | `Text -> Text` | Leading and trailing whitespace removed. |
 | `upper(s)` / `lower(s)` | `Text -> Text` | Case folding. |
-| `textjoin(xs, sep)` | `List<Text> × Text -> Text` | The expression layer's `Join`. |
+| `textjoin(xs, sep)` | `List<T> × Text -> Text` | Renders each element exactly as `Reveal` would (`Text` elements pass through unchanged; `Int`, `Float`, `Bool`, `Record`, and any other renderable type are converted) and joins the results with `sep`. `List<Text>` is the expression layer's `Join`. |
 | `split(s, sep)` | `Text × Text -> List<Text>` | The expression layer's `Split Text by`. An empty separator splits into runes, like `chars`. Line splitting is `split(s, "\n")` — the pipeline layer's `Lines` Shikigami is the same operation. |
 | `words(s)` | `Text -> List<Text>` | Split on runs of whitespace, dropping empties. |
 | `contains(s, sub)` | `Text × Text -> Bool` | Substring test. `indexof(s, sub) >= 0` said the same thing, but a membership question should read the same whatever it is asked of. |

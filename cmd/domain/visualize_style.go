@@ -62,6 +62,25 @@ var (
 	// read by scanning for the hot end, so the ramp has to be legible at a
 	// glance and monotonic — not merely distinct.
 	heatRamp []heatBand
+
+	// Mahoraga's wheel. The spoke styles are four steps of one ramp rather than
+	// four unrelated colors: the sweep rotating around the wheel is read as a
+	// comet trail, and a trail whose brightness is not monotonic reads as eight
+	// separate things blinking.
+	styWheelBase   lipgloss.Style // a spoke at rest
+	styWheelMid    lipgloss.Style
+	styWheelBright lipgloss.Style
+	styWheelPeak   lipgloss.Style // the cell the sweep is on
+	styWheelHub    lipgloss.Style
+	styWheelPend   lipgloss.Style // a handle the search has not reached
+	styWheelSpent  lipgloss.Style // a handle that ran and kept nothing
+	styWheelAbsent lipgloss.Style // a turn the catalogue has not reached
+	styWheelFlash  lipgloss.Style // the whole wheel, for the frames after an adaptation
+
+	// wheelEffectRamp colors a lit handle by how much it won, crimson through
+	// gold. It is deliberately the *opposite* direction to heatRamp: there, a
+	// big number is a problem; here it is the point.
+	wheelEffectRamp []lipgloss.Style
 )
 
 type heatBand struct {
@@ -132,6 +151,23 @@ func useTheme(light bool) {
 	styComment = fg("240", "245")
 	styFix = fg("84", "28")
 
+	styWheelBase = fg("240", "250")
+	styWheelMid = fg("61", "104")
+	styWheelBright = fg("99", "62")
+	styWheelPeak = bold("183", "57")
+	styWheelHub = bold("135", "91")
+	styWheelPend = fg("242", "248")
+	styWheelSpent = fg("245", "243")
+	// An unbuilt turn has to be clearly darker than a turn that simply has not
+	// been reached: the wheel is claiming there are eight of them, and half of
+	// them not existing yet is the honest part of that claim.
+	styWheelAbsent = fg("235", "253")
+	styWheelFlash = bold("231", "17")
+	wheelEffectRamp = []lipgloss.Style{
+		bold("197", "160"), bold("203", "166"), bold("209", "172"),
+		bold("214", "130"), bold("220", "94"),
+	}
+
 	if light {
 		heatRamp = []heatBand{
 			{1, "245"}, {5, "28"}, {15, "30"}, {35, "130"}, {60, "166"}, {101, "160"},
@@ -192,20 +228,24 @@ func truncateVis(s string, w int) string {
 	return ansi.Truncate(s, w, "…")
 }
 
-// truncateVisLeft shortens a line to w columns from the front, marking the cut
-// with a leading ellipsis. Used where the tail of the string — a binary's name,
-// not the directory it lives in — is the part worth keeping visible.
+// truncateVisLeft shortens a line to w columns by cutting from the *left*,
+// marking the cut with a leading ellipsis. Use it for a line whose meaning
+// accumulates towards its end — a path, or a command line, where the last
+// components name the thing and the leading ones only say where it lives.
+// truncateVis on one of those keeps the least identifying part and drops the
+// name, which is the wrong half to lose.
 func truncateVisLeft(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if ansi.StringWidth(s) <= w {
+	n := ansi.StringWidth(s)
+	if n <= w {
 		return s
 	}
 	if w == 1 {
 		return "…"
 	}
-	return "…" + ansi.TruncateLeft(s, ansi.StringWidth(s)-w+1, "")
+	return ansi.TruncateLeft(s, n-(w-1), "…")
 }
 
 // wrapVis breaks a message into lines of at most w columns, on word boundaries.

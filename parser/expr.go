@@ -276,9 +276,85 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			return nil, err
 		}
 		return inner, nil
+	case token.LBRACE:
+		return p.parseRecordLit()
 	default:
 		return nil, p.errRanOutf("unexpected %s in expression", t)
 	}
+}
+
+// parseRecordLit parses `{a: 1, b: x}` and returns the `record("a", 1, "b", x)`
+// call it stands for, flagged Braced so `domain fmt` writes it back as braces.
+//
+// Field names are bare identifiers rather than expressions because the result
+// *type* depends on them: recordType (typecheck) reads them off the call as
+// string literals, exactly as it does for a hand-written record(). The literal
+// inherits that rule rather than inventing a looser one.
+func (p *parser) parseRecordLit() (ast.Expr, error) {
+	// A record literal nests like any other expression ({a: {b: 1}}), so it
+	// takes a depth level the way parseTypeExpr and parseExpr do.
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
+
+	open := p.advance() // {
+
+	if p.cur().Kind == token.RBRACE {
+		return nil, p.errf("an empty record has no fields; write at least one, e.g. {n: 0}")
+	}
+
+	var args []ast.Expr
+	seen := map[string]token.Position{}
+	for {
+		name := p.cur()
+		if name.Kind != token.IDENT {
+			// The one place `{` could mean something else. Sets and maps are
+			// rendered with braces (ir.FormatValue) and are the obvious next
+			// thing to want to write, so the reservation is explicit rather
+			// than left to a generic "expected IDENT" to explain.
+			return nil, p.errRanOutf("{ starts a record literal, so it needs a field name: {name: value}. " +
+				"Braces are not (yet) map or set literals — write tomap(...) or toset(...) for those")
+		}
+		p.advance()
+		if _, err := p.expect(token.COLON); err != nil {
+			return nil, p.errf("record field %q needs a colon before its value: {%s: value}", name.Literal, name.Literal)
+		}
+		if at, dup := seen[name.Literal]; dup {
+			return nil, p.errf("record has a duplicate field %q; it was already given at %s", name.Literal, at)
+		}
+		seen[name.Literal] = name.Pos
+
+		// The value is parsed at bpNone so an operator expression reads whole,
+		// but *not* through parseTopExpr: a bare `also` list here would make
+		// its clause commas indistinguishable from the field commas, which is
+		// the same ambiguity a call's argument list refuses it for.
+		val, err := p.parseExpr(bpNone)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, &ast.StringLit{Value: name.Literal, Pos: name.Pos}, val)
+
+		if p.cur().Kind == token.COMMA {
+			p.advance()
+			if p.cur().Kind == token.RBRACE {
+				return nil, p.errf("a record literal has no trailing comma; remove it or add another field")
+			}
+			continue
+		}
+		break
+	}
+	if p.cur().Kind != token.RBRACE {
+		return nil, p.errRanOutf("expected , or } in the record literal opened at %s, got %s", open.Pos, p.cur())
+	}
+	p.advance() // }
+
+	return &ast.CallExpr{
+		Fn:     &ast.Ident{Name: "record", Pos: open.Pos},
+		Args:   args,
+		Pos:    open.Pos,
+		Braced: true,
+	}, nil
 }
 
 // parseCond parses `if cond then a else b`. The keywords are contextual

@@ -183,6 +183,15 @@
     "expected": "3\n"
   },
   {
+    "id": "21_graph_routes",
+    "group": "examples",
+    "title": "A first-class graph: parse an edge list once, then ask it several questions",
+    "description": "Before Graph\u003cK\u003e an explicit graph had nowhere to live. BFS and Dijkstra took\na Grid, so they only reached geometry; Explore takes a successor lambda, so\nits graph is implicit and cannot be built once and queried twice; and\nTopological Sort's adjacency map had to be rebuilt at every stage and had\nnowhere to put a weight. `Convert To Graph` gives the parse somewhere to go.\n\nThe roads are undirected, which is one arc each way — `Mode: Undirected` is\nhow you say that, rather than a second kind of value.\n\n`Shortest Path` answers which way rather than how far: the cheapest route\nfrom London to Exeter is via Bristol (118 + 84 = 202), not via Oxford\n(57 + 74 + 84 = 215), even though both are three cities.",
+    "source": "# A first-class graph: parse an edge list once, then ask it several questions.\n#\n# Before Graph\u003cK\u003e an explicit graph had nowhere to live. BFS and Dijkstra took\n# a Grid, so they only reached geometry; Explore takes a successor lambda, so\n# its graph is implicit and cannot be built once and queried twice; and\n# Topological Sort's adjacency map had to be rebuilt at every stage and had\n# nowhere to put a weight. `Convert To Graph` gives the parse somewhere to go.\n#\n# The roads are undirected, which is one arc each way — `Mode: Undirected` is\n# how you say that, rather than a second kind of value.\n#\n# `Shortest Path` answers which way rather than how far: the cheapest route\n# from London to Exeter is via Bristol (118 + 84 = 202), not via Oxford\n# (57 + 74 + 84 = 215), even though both are three cities.\n#\n#   domain examples/21_graph_routes.domain\n#   Expected output: london-\u003ebristol-\u003eexeter\nCursed Energy: 21_graph_routes.input\nShikigami: Lines\nCursed Technique: Split Each by \" \"\nCursed Technique: Map Each\n    Using: (r) -\u003e tuple(item(r, 0), item(r, 1), toint(item(r, 2)))\nChanneled Energy: Convert To Graph\n    Mode: Undirected\nDomain Expansion: Shortest Path\n    Start: \"london\"\n    Goal: \"exeter\"\nMaximum Technique: Join with \"-\u003e\"\nReveal: stdout\n",
+    "input": "london bristol 118\nlondon oxford 57\noxford bristol 74\nbristol exeter 84\noxford birmingham 65\nbirmingham manchester 88\nmanchester leeds 44\nleeds york 25\n",
+    "expected": "london-\u003ebristol-\u003eexeter\n"
+  },
+  {
     "id": "01_fizzbuzz",
     "group": "challenges",
     "title": "FizzBuzz — the classic screening question: print 1..N, but multiples of 3",

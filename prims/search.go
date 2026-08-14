@@ -145,8 +145,12 @@ var bfs = &Primitive{
 	Keyword: "Domain Expansion",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "BFS") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
+		if in != nil && in.Kind == ir.KGraph {
+			return graphSearchNode("BFS", args, in, pos)
+		}
 		if in == nil || in.Kind != ir.KGrid {
-			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("BFS expects a Grid, got %s", in)}
+			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+				"BFS expects a Grid or a Graph, got %s", in)}
 		}
 		rowM, colM, err := startCoords(op, args, "BFS", in, pos)
 		if err != nil {
@@ -225,10 +229,13 @@ var dijkstra = &Primitive{
 	Keyword: "Domain Expansion",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "Dijkstra") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
+		if in != nil && in.Kind == ir.KGraph {
+			return graphSearchNode("Dijkstra", args, in, pos)
+		}
 		want := ir.Grid(ir.Int())
 		if !in.Equal(want) {
 			return nil, &ResolveError{Pos: pos,
-				Msg: fmt.Sprintf("Dijkstra expects Grid<Int> (cell entry costs), got %s", in)}
+				Msg: fmt.Sprintf("Dijkstra expects Grid<Int> (cell entry costs) or a Graph, got %s", in)}
 		}
 		rowM, colM, err := startCoords(op, args, "Dijkstra", in, pos)
 		if err != nil {
@@ -380,9 +387,27 @@ var connectedComponents = &Primitive{
 	Keyword: "Domain Expansion",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "Connected") && hasWord(op, "Components") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
+		if in != nil && in.Kind == ir.KGraph {
+			// Weakly connected: the arcs are read as undirected, which is what
+			// "how many separate pieces is this" almost always means. No
+			// walkability lambda — a graph's nodes are all there is.
+			return &ir.Node{
+				Prim: "Connected Components", In: in, Out: ir.Int(),
+				Display: "Connected Components", Swappable: true,
+				Meta: map[string]any{"graph": true, "node": in.Elem}, Pos: pos,
+				Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+					g, ok := v.(*ir.GraphValue)
+					if !ok {
+						return nil, runtimeErr("Connected Components", pos,
+							"expected a Graph, got %s", ir.DescribeValue(v))
+					}
+					return graphComponents(g), nil
+				},
+			}, nil
+		}
 		if in == nil || in.Kind != ir.KGrid {
 			return nil, &ResolveError{Pos: pos,
-				Msg: fmt.Sprintf("Connected Components expects a Grid, got %s", in)}
+				Msg: fmt.Sprintf("Connected Components expects a Grid or a Graph, got %s", in)}
 		}
 		lam, err := requireLambda(args, 1, "Connected Components", pos)
 		if err != nil {

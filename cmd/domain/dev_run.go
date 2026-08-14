@@ -12,9 +12,11 @@
 //
 // The second is where the output goes. A raw-mode terminal cannot take
 // interleaved writes from a program that thinks it owns stdout, so `Reveal:`
-// is captured and shown when the run is over rather than as it happens. That
-// is the same choice `:visualize` makes, and it is why the output pane exists
-// at all instead of the program simply printing.
+// is captured rather than printed. That is the same choice `:visualize` makes,
+// and it is why the output pane exists at all instead of the program simply
+// printing. What is captured is now tailed live on the monitor screen
+// (dev_monitor.go), so the capture no longer costs the reader the *timing* of
+// the output — only its place on the terminal.
 //
 // The stepper is the same model `domain expansion: visualize` opens, hosted as
 // an overlay — the precedent is repl_visualize.go. It records the *buffer*,
@@ -25,6 +27,7 @@ package main
 import (
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -86,10 +89,28 @@ func (m devModel) runProgram() (tea.Model, tea.Cmd) {
 
 	rec := interp.NewRecorder(0)
 	m.running = true
-	// The interrupter wraps the recorder, so one trace chain both records the
-	// run and can stop it.
-	m.interrupt = ir.NewInterrupter(rec)
+	// One trace chain does all four jobs a monitored run needs: the interrupter
+	// can stop it, the counter knows which stage it is on, the live tracer
+	// publishes where it is, and the recorder keeps it for the stepper
+	// afterwards. Ordering matters only in that the interrupter is outermost —
+	// a run is stopped after everything watching it has seen the step.
+	live := &devLive{Inner: rec}
+	prog := &progressCounter{Inner: live}
+	prog.SetTotal(len(pipe.Nodes))
+	m.interrupt = ir.NewInterrupter(prog)
 	m.status = "running… ctrl+c stops it"
+
+	// The output is a synchronized buffer rather than a strings.Builder because
+	// the monitor tails it while the run is still writing: `Reveal:` output now
+	// appears as it is printed, not only once there is nothing left to print.
+	outBuf := &devOutBuf{}
+	m.runSeq++
+	var prev *devRunSummary
+	if m.lastRun != nil {
+		prev = m.lastRun.done
+	}
+	m.monitor = newDevMonitor(m.runSeq, m.path, live, outBuf, prog, prev)
+	m.lastRun = m.monitor
 
 	gen, interrupt, dir := m.gen, m.interrupt, m.baseDir()
 	rewrites := optimizer.Optimize(clonePipeline(text, m.path), true)
@@ -105,23 +126,23 @@ func (m devModel) runProgram() (tea.Model, tea.Cmd) {
 		defer eval.WatchApplications(rec.Applied)()
 		defer prims.WatchForeignRuns(rec.ForeignRan)()
 
-		var out strings.Builder
-		ctx := &ir.Context{Stdout: &out, BaseDir: dir, Trace: interrupt}
+		ctx := &ir.Context{Stdout: outBuf, BaseDir: dir, Trace: interrupt}
 		_, runErr := interp.Run(pipe, ctx)
+		out := outBuf.String()
 		return devRunDoneMsg{result: devRunResult{
 			gen:         gen,
-			output:      out.String(),
+			output:      out,
 			err:         runErr,
 			interrupted: interrupt.Stopped(),
 			view: &traceView{
 				path: path, pipe: pipe, rec: rec, rewrites: rewrites,
-				revealed: strings.TrimRight(out.String(), "\n"),
+				revealed: strings.TrimRight(out, "\n"),
 				runErr:   runErr,
 				srcLines: srcLines,
 			},
 		}}
 	}
-	return m, tea.Batch(run, m.spin.Tick)
+	return m, tea.Batch(run, m.spin.Tick, devSampleCmd(m.runSeq))
 }
 
 // openStepper hands the last recording to the stepper.
@@ -193,11 +214,19 @@ func (m devModel) runPath() string {
 	return m.path
 }
 
-// finishRun moves a completed run into the output pane.
+// finishRun moves a completed run into the output pane, and closes the
+// monitor's record of it.
+//
+// The monitor is finished before anything else is decided, including whether
+// the result is still current: it is the report of a run that really happened,
+// and a program edited underneath it does not make its measurements untrue.
 func (m devModel) finishRun(res devRunResult) (tea.Model, tea.Cmd) {
 	m.running = false
 	m.interrupt = nil
 	m.status = ""
+	if m.monitor != nil {
+		m.monitor.finish(res, time.Since(m.monitor.started))
+	}
 	if res.gen != m.gen {
 		// The program changed while it ran; its output describes something
 		// that is no longer on screen.

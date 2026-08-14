@@ -1268,6 +1268,36 @@ func TestReplTTYBareLoadOpensThePicker(t *testing.T) {
 	}
 }
 
+// The browser's second line says where it is. In a tree deeper than the window
+// is wide, the components that answer that are the last ones — a cut from the
+// right keeps a root shared by every directory on the machine and drops the
+// only part that distinguishes this one.
+func TestReplTTYPickerHeaderKeepsTheDeepestDirectory(t *testing.T) {
+	deep := filepath.Join(t.TempDir(), "workspace", "advent", "2024", "day19", "attempts")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := newPicker(":load", deep)
+
+	const width = 30
+	header := strings.Split(ansi.Strip(p.view(width, 24)), "\n")[1]
+	if n := ansi.StringWidth(header); n > width {
+		t.Errorf("the header is %d columns wide, want <= %d: %q", n, width, header)
+	}
+	if !strings.Contains(header, "day19/attempts") {
+		t.Errorf("the header dropped the directory it is in: %q", header)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(header), "…") {
+		t.Errorf("a path this long must show that it was cut: %q", header)
+	}
+
+	// With room to spare it is the whole path, ellipsis and all left alone.
+	full := strings.Split(ansi.Strip(p.view(len(deep)+10, 24)), "\n")[1]
+	if strings.TrimSpace(full) != deep {
+		t.Errorf("a path that fits should be shown whole: %q, want %q", full, deep)
+	}
+}
+
 func TestReplTTYPickerCancelLeavesTheSessionAlone(t *testing.T) {
 	t.Chdir(t.TempDir())
 	m := newTestModel(t)

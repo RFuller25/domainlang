@@ -89,13 +89,24 @@ type Param struct {
 //
 //	Name != ""     a named type, with Args for generics: Int, List<Int>, Map<K,V>
 //	Tuple != nil   a positional tuple: (Int, Int)
+//	Fields != nil  a record: {a: Int, b: Text}
 //	Lambda != nil  a lambda type: (Int) -> Bool
 type TypeExpr struct {
 	Name   string
 	Args   []*TypeExpr
 	Tuple  []*TypeExpr
+	Fields []TypeField
 	Lambda *LambdaType
 	Pos    token.Position
+}
+
+// TypeField is one named member of a written record type. The order is the
+// order it was written; ir.Type.Equal compares records by field set, so a
+// declared {b: Text, a: Int} still matches an inferred {a: Int, b: Text}.
+type TypeField struct {
+	Name string
+	Type *TypeExpr
+	Pos  token.Position
 }
 
 // LambdaType is the type of a lambda-valued Shikigami parameter.
@@ -339,6 +350,23 @@ type CallExpr struct {
 	// CallExpr carry the flag across anyway, so that ordering is a policy
 	// rather than the only thing keeping this correct.
 	InPlace bool
+
+	// Braced marks a call the source wrote as a record literal — `{a: 1}`
+	// rather than `record("a", 1)`. The parser desugars the literal to this
+	// call, so the two are the same node and every layer below the formatter
+	// treats them identically; the flag exists only so `domain fmt` gives back
+	// the syntax that was written.
+	//
+	// Desugaring at the parser rather than adding an ast.Expr node is
+	// deliberate. Several expression walkers — prims/locals.go's rewriteExpr,
+	// collectIdents and renameIdents — fall through on a node kind they do not
+	// know, silently and without a compile error, which for a literal holding
+	// sub-expressions would mean skipped substitutions and captured names. A
+	// CallExpr is a shape all of them have handled since record() shipped.
+	//
+	// It is presentation only: nothing compares, hashes or dispatches on it,
+	// and a pass that rebuilds the call is free to drop it.
+	Braced bool
 }
 
 // CondExpr is `if cond then a else b`. Both arms are lazy: only the selected

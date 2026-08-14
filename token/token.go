@@ -35,6 +35,8 @@ const (
 	DOT    // .
 	LPAREN // (
 	RPAREN // )
+	LBRACE // {   (record literal, and the record form of a written type)
+	RBRACE // }
 	ARROW  // ->
 
 	PLUS    // +
@@ -77,6 +79,8 @@ var kindNames = [...]string{
 	DOT:     "DOT",
 	LPAREN:  "LPAREN",
 	RPAREN:  "RPAREN",
+	LBRACE:  "LBRACE",
+	RBRACE:  "RBRACE",
 	ARROW:   "ARROW",
 	PLUS:    "PLUS",
 	MINUS:   "MINUS",

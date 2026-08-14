@@ -8,16 +8,18 @@ import (
 // The type grammar, used by Shikigami parameter declarations and declared
 // signatures:
 //
-//	type    := named | tuple | lambda
+//	type    := named | tuple | record | lambda
 //	named   := IDENT ( '<' type (',' type)* '>' )?
 //	tuple   := '(' type (',' type)* ')'          -- one element is grouping
+//	record  := '{' IDENT ':' type (',' IDENT ':' type)* '}'
 //	lambda  := '(' [ type (',' type)* ] ')' '->' type
 //
 // `<` and `>` are ordinary comparison tokens, so generics need no lexer change.
 //
-// Records (`{a:Int}`) are deliberately absent: the lexer has no brace tokens,
-// and a signature is optional, so a Shikigami operating on Match Pattern
-// records simply declares none. lowerTypeExpr says so by name if one is tried.
+// Records used to be absent here because the lexer had no brace tokens, so a
+// Shikigami operating on Match Pattern records simply declared no signature.
+// The record-literal syntax brought the braces, and the written form is the one
+// ir.Type.String() has always printed, so the two now agree.
 
 // parseTypeExpr parses one type. allowLambda controls whether a parenthesized
 // group followed by `->` is read as a lambda type. It is false on the left of a
@@ -76,6 +78,10 @@ func (p *parser) parseTypeExpr(allowLambda bool) (*ast.TypeExpr, error) {
 		}
 	}
 
+	if p.cur().Kind == token.LBRACE {
+		return p.parseRecordType(pos)
+	}
+
 	name, err := p.expect(token.IDENT)
 	if err != nil {
 		return nil, err
@@ -100,6 +106,58 @@ func (p *parser) parseTypeExpr(allowLambda bool) (*ast.TypeExpr, error) {
 	if _, err := p.expect(token.GT); err != nil {
 		return nil, err
 	}
+	return te, nil
+}
+
+// parseRecordType parses `{a: Int, b: Text}`. The caller has already taken a
+// depth level and confirmed the `{`.
+//
+// It mirrors the value literal's grammar deliberately: the same field-name
+// rule, the same duplicate check, the same refusal of an empty one, so the type
+// and the value are written the same way.
+func (p *parser) parseRecordType(pos token.Position) (*ast.TypeExpr, error) {
+	open := p.advance() // {
+	if p.cur().Kind == token.RBRACE {
+		return nil, p.errf("an empty record type has no fields; write at least one, e.g. {n: Int}")
+	}
+
+	te := &ast.TypeExpr{Pos: pos}
+	seen := map[string]token.Position{}
+	for {
+		name := p.cur()
+		if name.Kind != token.IDENT {
+			return nil, p.errf("a record type's field needs a name: {name: Type}")
+		}
+		p.advance()
+		if _, err := p.expect(token.COLON); err != nil {
+			return nil, p.errf("record type field %q needs a colon before its type: {%s: Int}",
+				name.Literal, name.Literal)
+		}
+		if at, dup := seen[name.Literal]; dup {
+			return nil, p.errf("record type has a duplicate field %q; it was already given at %s",
+				name.Literal, at)
+		}
+		seen[name.Literal] = name.Pos
+
+		ft, err := p.parseTypeExpr(true)
+		if err != nil {
+			return nil, err
+		}
+		te.Fields = append(te.Fields, ast.TypeField{Name: name.Literal, Type: ft, Pos: name.Pos})
+
+		if p.cur().Kind == token.COMMA {
+			p.advance()
+			if p.cur().Kind == token.RBRACE {
+				return nil, p.errf("a record type has no trailing comma; remove it or add another field")
+			}
+			continue
+		}
+		break
+	}
+	if p.cur().Kind != token.RBRACE {
+		return nil, p.errf("expected , or } in the record type opened at %s, got %s", open.Pos, p.cur())
+	}
+	p.advance() // }
 	return te, nil
 }
 

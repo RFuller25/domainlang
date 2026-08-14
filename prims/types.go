@@ -28,6 +28,7 @@ var genericArity = map[string]int{
 	"Set":    1,
 	"Grid":   1,
 	"Sparse": 1,
+	"Graph":  1,
 	"Map":    2,
 }
 
@@ -56,6 +57,20 @@ func lowerTypeExpr(te *ast.TypeExpr, pos token.Position) (*ir.Type, error) {
 			elems[i] = t
 		}
 		return ir.Tuple(elems...), nil
+
+	case te.Fields != nil:
+		// Field order is kept as written, but ir.Type.Equal compares records by
+		// field set, so a declared {b: Text, a: Int} still matches an inferred
+		// {a: Int, b: Text}. The parser has already refused duplicates.
+		fields := make([]ir.Field, len(te.Fields))
+		for i, f := range te.Fields {
+			t, err := lowerTypeExpr(f.Type, at)
+			if err != nil {
+				return nil, err
+			}
+			fields[i] = ir.Field{Name: f.Name, Type: t}
+		}
+		return ir.Record(fields...), nil
 	}
 
 	if mk, ok := scalarTypes[te.Name]; ok {
@@ -98,6 +113,15 @@ func lowerTypeExpr(te *ast.TypeExpr, pos token.Position) (*ir.Type, error) {
 				"Set elements must be keyable (Int, Text, or a tuple of them), got %s", args[0])}
 		}
 		return ir.Set(args[0]), nil
+	case "Graph":
+		// Same rule as a Set element and as Explore's state: the visited set is
+		// what makes a traversal terminate, and an unkeyable node could not be
+		// recognized on a second visit.
+		if !ir.Keyable(args[0]) {
+			return nil, &ResolveError{Pos: at, Msg: fmt.Sprintf(
+				"Graph nodes must be keyable (Int, Text, or a tuple/record of them), got %s", args[0])}
+		}
+		return ir.Graph(args[0]), nil
 	case "Map":
 		if !ir.Keyable(args[0]) {
 			return nil, &ResolveError{Pos: at, Msg: fmt.Sprintf(
@@ -112,8 +136,8 @@ func lowerTypeExpr(te *ast.TypeExpr, pos token.Position) (*ir.Type, error) {
 func knownTypeNames() string {
 	return strings.Join([]string{
 		"Int", "Float", "Text", "Bool",
-		"List<T>", "Set<T>", "Grid<T>", "Sparse<T>", "Map<K,V>",
-		"(A, B)",
+		"List<T>", "Set<T>", "Grid<T>", "Sparse<T>", "Graph<K>", "Map<K,V>",
+		"(A, B)", "{a: Int}",
 	}, ", ")
 }
 
@@ -160,6 +184,14 @@ func typeExprString(te *ast.TypeExpr) string {
 			parts[i] = typeExprString(p)
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
+	case te.Fields != nil:
+		// Written the way ir.Type.String() prints a record, so a declared type
+		// and the type it is compared against read identically in a message.
+		parts := make([]string, len(te.Fields))
+		for i, f := range te.Fields {
+			parts[i] = f.Name + ":" + typeExprString(f.Type)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	case len(te.Args) > 0:
 		parts := make([]string, len(te.Args))
 		for i, a := range te.Args {

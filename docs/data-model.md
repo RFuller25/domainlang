@@ -4,7 +4,7 @@ Every value Domain can hold, how it is represented in the type checker
 (`ir.Type`), how it looks at runtime (`ir.Value`), how it is constructed and
 accessed, and how it renders. The scalar core is `Int`, `Float`, `Text` and
 `Bool`; the composites are **List**, **Tuple**, **Record**, **Map**, **Set**,
-**Grid** and **Sparse**.
+**Grid**, **Sparse** and **Graph**.
 
 Everything described here is implemented in both backends. For what each
 primitive does with these types see [primitives.md](primitives.md); for the
@@ -25,13 +25,16 @@ builtins that read them see [expressions.md](expressions.md).
 | `KSet` | `Elem *Type` (keyable) | `Set<T>` |
 | `KGrid` | `Elem *Type` | `Grid<T>` |
 | `KSparse` | `Elem *Type` | `Sparse<T>` |
+| `KGraph` | `Elem *Type` (the **node** type, keyable) | `Graph<K>` |
 
 Equality rules:
 
 - **Tuple** equal iff same arity and element-wise equal types.
 - **Record** equal iff same field names *and* types. (Structural, order of
   declaration normalized — sort fields by name for comparison.)
-- **Map/Set/Grid/Sparse** equal iff key/element types equal.
+- **Map/Set/Grid/Sparse/Graph** equal iff key/element types equal. A
+  `Graph`'s `Elem` is its *node* type — a graph has no separate element, and
+  its edge weight is always `Int`.
 
 ## Runtime representation (`ir.Value`)
 
@@ -47,6 +50,7 @@ etc.).
 | Set | `*SetValue` over keyable values via `ir.KeyOf` (insertion order preserved) |
 | Grid | `*GridValue` — `{ Rows, Cols int; Cells []Value }` row-major |
 | Sparse | `*SparseValue` — set-cells map keyed by `(row, col)` + a default value + exact bounds |
+| Graph | `*GraphValue` — nodes in insertion order, `KeyOf(node) -> index`, and adjacency held as `(index, weight)` arcs |
 
 Tuples reuse `[]Value` so existing list ops (index access) work on them; the
 distinction lives only in the static type. These are implemented in
@@ -56,12 +60,15 @@ and `Grid` neighbor walks.
 ## Records
 
 - **Produced by** `Match Pattern` with named holes (see
-  [match-pattern.md](match-pattern.md)).
+  [match-pattern.md](match-pattern.md)), and by a **record literal** —
+  `{a: 1, b: x}`, which is the `record("a", 1, "b", x)` call it parses to.
 - **Accessed by** `x.field` in the expression layer. An unknown field is a
   positioned error; the static typer resolves `x.field` to the field's type at
   resolve time, so a typo never survives to run time.
 - **Structurally typed:** a `{a:Int, b:Int}` flows wherever that record type is
-  expected; the type checker compares field sets.
+  expected; the type checker compares field sets. The written type, the printed
+  value and the literal all use the same braces, so a record reads the same in
+  a signature, in the source and in the output.
 
 ## Maps and Sets
 
@@ -86,6 +93,33 @@ and `Grid` neighbor walks.
 Access/rendering is via primitives and builtins, not literals — there is no
 Map/Set literal syntax (deferred; AoC builds these from inputs, not from
 literals).
+
+
+## Graphs
+
+- **Produced by** `Convert To Graph` (an edge list or an adjacency map) or the
+  `graph`/`emptygraph` builtins.
+- **Directed**, always. An undirected graph is one with both arcs, which
+  `Mode: Undirected` inserts — one representation, one set of algorithms.
+  A flag on the value would leak into equality, rendering and every primitive.
+- **`Int`-weighted, default 1.** An unweighted graph is one whose weights are
+  all 1, so no algorithm needs a separate unweighted path. That is why
+  `Graph<K>` takes one type parameter and not two.
+- **Nodes must be keyable**, the rule `Set` elements and `Explore`'s state
+  follow: the visited set is what makes a traversal terminate. A `Graph` is
+  itself neither keyable nor ordered, so it cannot be a `Map` key, a `Set`
+  element, or sorted.
+- **Insertion-ordered**, like `Map` and `Set` and unlike `Sparse` (which sorts,
+  because it is geometry). An edge brings its endpoints into the graph in the
+  order written; only the adjacency-map form can name an isolated node.
+- **A repeated edge re-weights in place** rather than adding a parallel arc,
+  which is what keeps `weight(g, a, b)` a question with one answer.
+- **Equality ignores insertion order.** This is a deliberate divergence from
+  `Map` and `Set`, where order is part of the value because it is part of the
+  rendering. Two graphs built by reading the same edges in a different order
+  *are* the same graph, and a `Iterate Until Fixed Point` over one would
+  otherwise never converge. Rendering still follows insertion order — equality
+  and rendering answer different questions here.
 
 ## Grids
 
@@ -201,6 +235,11 @@ type, and everything above reads the same.
 tracing use:
 
 - Tuple → `(v1, v2, …)`
+- Graph → `{a: [(b, 1), (c, 2)], b: [], c: []}` — deliberately the shape a
+  `Map<K, List<(K, Int)>>` already renders as, so a reader who knows how maps
+  and tuples print can predict a graph. Weights are **always** shown: hiding
+  them when they happen to all be 1 would make the output depend on the data,
+  and both backends have to agree on it byte for byte.
 - Record → `{a: v1, b: v2}` — the field order the **type** declares, which the
   Reveal sink reads through `FormatValueTyped`. A `*RecordValue` remembers the
   order it was built in and `FormatValue` uses that, which is the same order

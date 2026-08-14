@@ -108,6 +108,22 @@ func TestRecordNeedsLiteralFieldNames(t *testing.T) {
 	wantTypeErr(t, `(r, s) -> with(r, s, 1)`, "literal field name", rec, ir.Text())
 }
 
+// textjoin takes a List of any element type, not just List<Text>: every
+// element renders exactly as Reveal would (Int, Float, Bool, Record, ...)
+// before being joined.
+func TestTextJoinAcceptsAnyElementType(t *testing.T) {
+	rec := ir.Record(ir.Field{Name: "a", Type: ir.Int()}, ir.Field{Name: "b", Type: ir.Text()})
+	wantType(t, `(xs) -> textjoin(xs, ",")`, ir.Text(), ir.List(ir.Text()))
+	wantType(t, `(xs) -> textjoin(xs, ",")`, ir.Text(), ir.List(ir.Int()))
+	wantType(t, `(xs) -> textjoin(xs, ",")`, ir.Text(), ir.List(ir.Float()))
+	wantType(t, `(xs) -> textjoin(xs, ",")`, ir.Text(), ir.List(ir.Bool()))
+	wantType(t, `(xs) -> textjoin(xs, ",")`, ir.Text(), ir.List(rec))
+	wantType(t, `(xs) -> textjoin(xs, ",")`, ir.Text(), ir.List(ir.List(ir.Int())))
+
+	wantTypeErr(t, `(n) -> textjoin(n, ",")`, "textjoin needs a List", ir.Int())
+	wantTypeErr(t, `(xs) -> textjoin(xs, 5)`, "separator must be Text", ir.List(ir.Int()))
+}
+
 // pow is the one builtin that follows the operators' promotion rule rather than
 // staying integral, so both directions are worth pinning.
 func TestPowPromotesLikeTheOperators(t *testing.T) {

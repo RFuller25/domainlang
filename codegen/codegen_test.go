@@ -29,6 +29,10 @@ import (
 // that does resolves against another test's scope and fails with an unknown
 // identifier, intermittently and only under the full suite.
 //
+// It covers resolution only. The interpretation half of that invariant is
+// enforced by interp.Run itself, which takes a process-wide lock for the
+// duration of a run (interp/runMu) — so these tests may call it directly.
+//
 // The lock belongs here rather than in prims: serializing the resolver for
 // every caller would be a change to its threading model, and the tests are the
 // only thing that ever asked for concurrency.

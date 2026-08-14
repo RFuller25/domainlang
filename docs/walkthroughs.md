@@ -518,7 +518,7 @@ one resolver, one diagnostics engine, one recorder. See
 - [primitives.md](primitives.md) — every stage these programs used, with its
   signature, arguments and failure modes.
 - [expressions.md](expressions.md) — everything legal inside a `Using:`.
-- [../examples/](../examples/README.md) — twenty runnable programs, each
+- [../examples/](../examples/README.md) — twenty-one runnable programs, each
   showing one piece of the language, all golden-tested in both backends.
 - [development.md](development.md) — the editor the section above uses, in
   full: every key, what it analyzes, and what it deliberately does not do.

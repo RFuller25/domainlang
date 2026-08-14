@@ -24,15 +24,14 @@ Reveal: stdout
 6
 ```
 
-`record` builds one from name/value pairs and `with` copies it with a field
-replaced — both take literal field names:
+A **record literal** builds one, and `with` copies it with a field replaced:
 
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert To Integers
 Cursed Technique: Map Each
-    Using: (n) -> with(record("v", n, "double", 0), "double", n * 2)
+    Using: (n) -> with({v: n, double: 0}, "double", n * 2)
 Reveal: stdout
 ```
 ```input
@@ -43,26 +42,63 @@ Reveal: stdout
 ```
 
 
-A `Record` is named fields. `Match Pattern` produces one; `record` builds one,
+A `Record` is named fields. `Match Pattern` produces one; a literal builds one,
 which is what lets a fold carry a **named** accumulator instead of a positional
 tuple whose `item(acc, 2)` nobody can read.
 
-| Builtin | Type | Behavior |
+| Form | Type | Behavior |
 |---|---|---|
-| `record("a", x, "b", y, …)` | `Text × T1 × … -> {a:T1, b:T2, …}` | Build a record from name/value pairs. Field names must be **literals** and the argument count must be even. |
+| `{a: x, b: y, …}` | `-> {a:T1, b:T2, …}` | Build a record. Field names are bare identifiers, written once each; at least one is required. |
+| `record("a", x, "b", y, …)` | `Text × T1 × … -> {a:T1, b:T2, …}` | The same thing spelled as a call — what the literal parses to. Field names must be **literals** and the argument count must be even. |
 | `with(r, "a", v)` | `{a:T, …} × Text × T -> {a:T, …}` | A copy with field `a` replaced. The name is a literal and must already exist; the type is unchanged. |
 
-The names are literals for the same reason `item(t, 0)` over a tuple needs a
-literal index: the result type is only knowable when they are. That also means
-`record` needs **no new syntax** — no braces, no new argument form in the
-grammar — and both it and `with` compile to a plain Go struct literal and a
-struct assignment, so a named accumulator costs nothing a tuple did not.
+Field names are fixed at the point they are written, for the same reason
+`item(t, 0)` over a tuple needs a literal index: the result type is only
+knowable when they are. `{a: x}` is exactly `record("a", x)` — the literal is
+parsed into that call, so the two spellings are one construct with one set of
+rules, and `domain fmt` gives each back as it was written.
+
+Both compile to a plain Go struct literal, and `with` to a struct assignment,
+so a named accumulator costs nothing a tuple did not:
 
 ```domain
 Maximum Technique: Fold
-    Seed: (xs) -> record("lo", 0, "hi", 0)
+    Seed: (xs) -> {lo: 0, hi: 0}
     Using: (acc, n) -> with(with(acc, "lo", min(acc.lo, n)), "hi", max(acc.hi, n))
 ```
+
+The literal renders the way the value prints, so a record reads the same in the
+source and in the output:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> {name: "hi", n: 2}
+Reveal: stdout
+```
+```input
+```
+```output
+{name: hi, n: 2}
+```
+
+
+Braces are **only** record literals. A map or a set is built with `tomap` and
+`toset`; writing `{1: 2}` or `{1, 2}` is refused by name rather than by a
+generic syntax error, so the spelling stays available.
+
+A record type is written the same way, which is also how `Reveal` and every
+type error print one — so a declared signature and the type it is checked
+against read identically:
+
+```domain
+Shikigami "Widen" : List<{a: Int, b: Text}> -> List<Text>
+    Cursed Technique: Map Each
+        Using: (r) -> r.b + totext(r.a)
+```
+
+Field order is not part of a record's identity: a signature declaring
+`{b: Text, a: Int}` matches a pipeline producing `{a: Int, b: Text}`.
 
 ### Points and grid geometry
 

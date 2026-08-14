@@ -200,7 +200,10 @@ func (p *picker) view(width, height int) string {
 		what = "choose an input file"
 	}
 	b.WriteString(styTitle.Render("domain "+p.command) + styDim.Render("  "+what) + "\n")
-	b.WriteString(styDim.Render(truncateVis(p.dir, max(width, 20))) + "\n")
+	// Cut from the left: this line answers "where am I", and in a deep tree
+	// the answer is the last few components — the ones a right-hand cut drops
+	// while keeping a root that every directory on the machine shares.
+	b.WriteString(styDim.Render(truncateVisLeft(p.dir, max(width, 20))) + "\n")
 
 	switch {
 	case p.err != "":

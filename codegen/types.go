@@ -66,6 +66,13 @@ func (g *gen) goType(t *ir.Type) (string, error) {
 		}
 		g.helper("dmSparse", declSparse, "slices")
 		return "dmSparse[" + elem + "]", nil
+	case ir.KGraph:
+		node, err := g.goType(t.Elem)
+		if err != nil {
+			return "", err
+		}
+		g.helper("dmGraph", declGraph)
+		return "dmGraph[" + node + "]", nil
 	default:
 		return "", fmt.Errorf("type %s has no compiled representation yet", t)
 	}
@@ -95,6 +102,8 @@ func canonicalKey(t *ir.Type) string {
 		return "Grid<" + canonicalKey(t.Elem) + ">"
 	case ir.KSparse:
 		return "Sparse<" + canonicalKey(t.Elem) + ">"
+	case ir.KGraph:
+		return "Graph<" + canonicalKey(t.Elem) + ">"
 	case ir.KMap:
 		return "Map<" + canonicalKey(t.Key) + ", " + canonicalKey(t.Elem) + ">"
 	case ir.KTuple:
@@ -387,6 +396,42 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	sb.WriteByte('}')
 	return sb.String()
 }`, name, goT, cellFmt)
+	case ir.KGraph:
+		// Mirrors ir.writeValue's graph case: the adjacency listing a
+		// Map<K, List<(K, Int)>> already renders as, weights always shown.
+		nodeFmt, err := g.scalarFmt("n", t.Elem)
+		if err != nil {
+			return "", err
+		}
+		toFmt, err := g.scalarFmt("v.nodes[e.to]", t.Elem)
+		if err != nil {
+			return "", err
+		}
+		g.imp("strings", "strconv")
+		fmt.Fprintf(&sb, `func %s(v %s) string {
+	var sb strings.Builder
+	sb.WriteByte('{')
+	for i, n := range v.nodes {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(%s)
+		sb.WriteString(": [")
+		for k, e := range v.adj[i] {
+			if k > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteByte('(')
+			sb.WriteString(%s)
+			sb.WriteString(", ")
+			sb.WriteString(strconv.FormatInt(e.w, 10))
+			sb.WriteByte(')')
+		}
+		sb.WriteByte(']')
+	}
+	sb.WriteByte('}')
+	return sb.String()
+}`, name, goT, nodeFmt, toFmt)
 	default:
 		return "", fmt.Errorf("no renderer for type %s yet", t)
 	}

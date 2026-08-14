@@ -292,6 +292,25 @@ Reveal: stdout
 			input: "1\n2\n91\n97\n0\n-28\n2147483647\n4295098369",
 		},
 		{
+			// textjoin no longer requires List<Text>: any element type renders
+			// exactly as Reveal would (Int, Float, Bool, Record) and gets joined.
+			name: "textjoin over non-Text elements",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Using: (n) -> textjoin(list(
+        textjoin(list(n, n * 2, n * 3), "-"),
+        textjoin(list(tofloat(n), tofloat(n) / 2.0), "-"),
+        textjoin(list(n > 0, n = 0), "-"),
+        textjoin(list(record("a", n, "b", n * 2)), "-")
+    ), "|")
+Maximum Technique: Join with "\n"
+Reveal: stdout
+`,
+			input: "3\n-2\n0",
+		},
+		{
 			name: "crt over non-coprime moduli",
 			src: `Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"
