@@ -90,3 +90,32 @@ func TestMapSetGridBoolStringAndEqual(t *testing.T) {
 		t.Fatalf("nested list string: %q", nested.String())
 	}
 }
+
+// Graph<K> is a directed, Int-weighted adjacency over keyable nodes. It takes
+// one type parameter, not two: the weight is always Int, so an unweighted graph
+// is one whose weights are all 1.
+func TestGraphType(t *testing.T) {
+	g := Graph(Text())
+	if g.String() != "Graph<Text>" {
+		t.Errorf("String() = %s, want Graph<Text>", g)
+	}
+	if !g.Equal(Graph(Text())) {
+		t.Error("two Graph<Text> compared unequal")
+	}
+	if g.Equal(Graph(Int())) {
+		t.Error("Graph<Text> and Graph<Int> compared equal")
+	}
+	// The node type is Elem, so a graph is not confused with the other
+	// single-parameter composites.
+	if g.Equal(Set(Text())) || g.Equal(List(Text())) {
+		t.Error("Graph compared equal to another single-parameter composite")
+	}
+	// A graph is not itself keyable — like List, Map, Set and Grid, and for the
+	// same reason: it has no canonical comparable form.
+	if Keyable(g) {
+		t.Error("Graph is keyable; it must not be a Map key or Set element")
+	}
+	if Keyable(Graph(Int())) {
+		t.Error("Graph<Int> is keyable")
+	}
+}

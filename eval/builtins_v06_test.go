@@ -284,6 +284,23 @@ func TestRecordConstructionAndUpdate(t *testing.T) {
 	}
 }
 
+// textjoin no longer needs List<Text>: any element renders exactly as Reveal
+// would — Int, Float, Bool and Record included — and the results are joined.
+func TestTextJoinOverNonTextElements(t *testing.T) {
+	for _, c := range []struct{ src, want string }{
+		{`(_) -> textjoin(list(1, 2, 3), ",")`, "1,2,3"},
+		{`(_) -> textjoin(list(1.5, 2.0), ",")`, "1.5,2"},
+		{`(_) -> textjoin(list(1 = 1, 1 = 2), ",")`, "true,false"},
+		{`(_) -> textjoin(list(record("a", 1, "b", "x")), ",")`, "{a: 1, b: x}"},
+		{`(_) -> textjoin(list(list(1, 2), list(3)), "|")`, "[1, 2]|[3]"},
+	} {
+		got := mustEval(t, c.src, int64(0))
+		if got != c.want {
+			t.Errorf("%s = %q, want %q", c.src, got, c.want)
+		}
+	}
+}
+
 // --- number theory -----------------------------------------------------------
 
 // Deterministic Miller-Rabin, so these are exact rather than probable — and the

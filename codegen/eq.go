@@ -17,6 +17,18 @@ func (g *gen) eqExpr(a, b string, t *ir.Type) (string, error) {
 	switch t.Kind {
 	case ir.KInt, ir.KFloat, ir.KText, ir.KBool:
 		return "(" + a + " == " + b + ")", nil
+	case ir.KGraph:
+		// One generic helper rather than an interned per-type function: a
+		// graph's nodes are keyable, so they are already a Go comparable, and
+		// the comparison never has to descend into an element type. It also
+		// keeps the order-insensitivity (ir.GraphEqual's contract) written
+		// once instead of re-emitted per node type.
+		if _, err := g.goType(t); err != nil {
+			return "", err
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphEq", declGraphEq)
+		return "dmGraphEq(" + a + ", " + b + ")", nil
 	default:
 		fn, err := g.eqFunc(t)
 		if err != nil {

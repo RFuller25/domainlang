@@ -62,6 +62,16 @@ type devModel struct {
 	spin      spinner.Model
 	output    *devOutput
 	stepper   *visualModel
+	// monitor is the run screen while it is showing, and lastRun the most
+	// recent one whether it is showing or not — so a screen dismissed by a
+	// stray keystroke can be opened again, and so a run can be compared against
+	// the one before it.
+	monitor *devMonitor
+	lastRun *devMonitor
+	// runSeq names each run, so a sampling tick left over from one cannot be
+	// mistaken for the next one's. The buffer generation cannot do this job:
+	// running the same program twice does not change it.
+	runSeq int
 	// trace is the last run's recording. It is what the value bar, the timing
 	// gutter and the stage walk read, and what the stepper opens over.
 	trace *traceView
@@ -171,6 +181,18 @@ func (m devModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case devRunDoneMsg:
 		return m.finishRun(msg.result)
 
+	case devSampleMsg:
+		// A tick from a run that has ended, or from one that was never being
+		// watched, is dropped rather than appended to whatever is showing now.
+		if m.monitor == nil || m.monitor.seq != msg.seq {
+			return m, nil
+		}
+		if m.monitor.done != nil {
+			return m, nil // the run's last reading was taken when it finished
+		}
+		m.monitor.sample()
+		return m, devSampleCmd(msg.seq)
+
 	case spinner.TickMsg:
 		if !m.running {
 			return m, nil
@@ -206,13 +228,16 @@ func (m devModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // key routes one keystroke: overlays first, then the editor's own bindings,
 // then text.
 func (m devModel) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	// A run in progress owns Ctrl+C: that is the whole reason the run is on a
-	// command rather than inside Update, and it has to be checked before the
-	// quit binding that shares the key.
+	// The monitor owns the screen and the keyboard while it is up, running or
+	// finished — including the ctrl+c that stops a run, which is why this is
+	// checked before every other binding.
+	if m.monitor != nil {
+		return m.monitorKey(msg)
+	}
+	// A run without the monitor showing still owns Ctrl+C: that is the whole
+	// reason the run is on a command rather than inside Update, and it has to
+	// be checked before the quit binding that shares the key.
 	if m.running {
-		// ctrl+c interrupts rather than copying or leaving. This is checked
-		// before every other binding, which is the whole reason the run is on a
-		// command and not inside Update.
 		if msg.String() == "ctrl+c" {
 			m.interrupt.Stop()
 			m.status = "stopping…"
@@ -388,6 +413,17 @@ func (m devModel) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Visualize):
 		return m.openStepper()
+
+	case key.Matches(msg, m.keys.Monitor):
+		// The monitor closes on any key, which makes it easy to lose to a
+		// keystroke that was meant for the program. Reopening it costs nothing:
+		// the readings are still there.
+		if m.lastRun == nil {
+			m.status = "nothing has been run yet — ctrl+r runs and watches"
+			return m, nil
+		}
+		m.monitor = m.lastRun
+		return m, nil
 
 	case key.Matches(msg, m.keys.StageNext), key.Matches(msg, m.keys.StagePrev):
 		delta := 1
@@ -676,6 +712,9 @@ func (m devModel) open(path string) (tea.Model, tea.Cmd) {
 	m.intel = devIntel{}
 	m.blocks, m.folded = nil, nil
 	m.trace, m.stages = nil, nil
+	// The monitor is one of those answers: its source context and its hot lines
+	// are line numbers into the program that was open when it ran.
+	m.monitor, m.lastRun = nil, nil
 	m.gen++
 	return m, analyzeCmd(m.gen, m.path, m.buf.text())
 }

@@ -127,8 +127,9 @@ primitives, each with its own unit tests:
 | `PQ[T]` (push with priority / pop min) | runtime `ir.PQ` (min-heap, stable ties) — drives **Dijkstra** |
 
 If a solve seems to need an explicit queue, it is usually one of the search
-primitives below wearing a disguise — or, when the graph is not a grid,
-`Domain Expansion: Explore`.
+primitives below wearing a disguise — or, when the graph is not a grid, a
+`Graph<K>` (if the edges are in the input) or `Domain Expansion: Explore` (if
+they are generated as you go).
 
 ## Graph search
 
@@ -139,17 +140,22 @@ optimizer is allowed to substitute.
 |---|---|
 | `BFS(start, isWalkable)` | `Domain Expansion: BFS from R C` + `Using:` walkable predicate → `Grid<Int>` step distances (−1 unreachable) |
 | `Dijkstra(start, cost)` | `Domain Expansion: Dijkstra from R C` over a `Grid<Int>` of cell entry costs → `Grid<Int>` min total costs |
-| `Dijkstra` over a **non-grid** graph | `Domain Expansion: Explore` `Mode: Cheapest` + `Cost:` — states, not cells |
+| `Dijkstra` over an **explicit** graph | `Channeled Energy: Convert To Graph` then `Domain Expansion: Dijkstra` `Start:` → `Map<K, Int>` |
+| `Dijkstra` over an **implicit** state space | `Domain Expansion: Explore` `Mode: Cheapest` + `Cost:` — states, not cells |
 | cheapest cost to every state | `Domain Expansion: Explore` `Mode: Costs` → `Map<S, Int>` |
 | weighted edges rather than node weights | a 2-parameter `Cost: (s, t) -> Int` |
 | `FloodFill(grid, start, match)` | `Domain Expansion: Flood Fill from R C` + `Using:` region predicate → `Grid<Int>` 0/1 mask |
 | counting regions | `Domain Expansion: Connected Components` + `Using:` predicate → `Int` |
 | 8-connectivity (diagonals) | `Mode: 8` on any grid search; `Mode: 4` is the default |
-| BFS over a **non-grid** graph | `Domain Expansion: Explore` + `Using:` successor lambda — states, not cells |
+| BFS over an **explicit** graph | `Channeled Energy: Convert To Graph` then `Domain Expansion: BFS` `Start:` → `Map<K, Int>` (unreachable absent) |
+| BFS over an **implicit** state space | `Domain Expansion: Explore` + `Using:` successor lambda — states, not cells |
+| the shortest path itself, not its length | `Domain Expansion: Shortest Path` `Start:`/`Goal:` → `List<K>` |
+| counting pieces of an explicit graph | `Domain Expansion: Connected Components` over a `Graph<K>` — no predicate |
 | fewest moves to a goal | `Domain Expansion: Explore` `Mode: Steps` + `Until:` |
 | reachable-state count | `Domain Expansion: Explore` `Mode: Count` |
 | shortest distances to every state | `Domain Expansion: Explore` `Mode: Distances` → `Map<S, Int>` |
-| `TopoSort(deps)` | `Domain Expansion: Topological Sort` — takes an adjacency Map or an edge list |
+| `TopoSort(deps)` | `Domain Expansion: Topological Sort` — takes a `Graph<K>`, an adjacency Map, or an edge list |
+| an adjacency list you keep and re-query | `Graph<K>` — built once with `Convert To Graph`, then `neighbors`/`weight`/`degree` in any lambda |
 
 ## Memoization
 

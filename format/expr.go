@@ -75,6 +75,9 @@ func render(e ast.Expr) (string, int) {
 	case *ast.FieldAccess:
 		return expr(x.Target, bpAtom) + "." + x.Field, bpAtom
 	case *ast.CallExpr:
+		if s, ok := renderBraced(x); ok {
+			return s, bpAtom
+		}
 		args := make([]string, len(x.Args))
 		for i, a := range x.Args {
 			// One power above `also`, because an argument list is the one
@@ -120,6 +123,53 @@ func render(e ast.Expr) (string, int) {
 		return "(an indented pipeline body)", bpAtom
 	}
 	return "(unrenderable expression)", bpAtom
+}
+
+// renderBraced writes a record literal back as `{a: 1}` when the call is one
+// the parser desugared from that syntax, reporting false when it is not.
+//
+// The check is deliberately structural rather than trusting the flag alone.
+// Braced is presentation only, so no pass is obliged to maintain it across a
+// rebuild; a call that carries it but no longer has the name/value alternation
+// the syntax requires — an optimizer-folded field name, say — must fall back to
+// `record(...)` rather than emit source that will not parse. Formatting is the
+// one operation that has to give back something valid whatever it is handed.
+func renderBraced(x *ast.CallExpr) (string, bool) {
+	if !x.Braced || len(x.Args) == 0 || len(x.Args)%2 != 0 {
+		return "", false
+	}
+	if id, ok := x.Fn.(*ast.Ident); !ok || id.Name != "record" {
+		return "", false
+	}
+	fields := make([]string, 0, len(x.Args)/2)
+	for i := 0; i < len(x.Args); i += 2 {
+		name, ok := x.Args[i].(*ast.StringLit)
+		if !ok || !isFieldName(name.Value) {
+			return "", false
+		}
+		fields = append(fields, name.Value+": "+expr(x.Args[i+1], bpAlso+1))
+	}
+	return "{" + strings.Join(fields, ", ") + "}", true
+}
+
+// isFieldName reports whether a field name is one the literal syntax can write
+// — an identifier the lexer would give back whole. A record built by a written
+// record("has space", 1) call is perfectly legal and has no braced spelling, so
+// it keeps the call form.
+func isFieldName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func binaryBP(op token.Kind) int {

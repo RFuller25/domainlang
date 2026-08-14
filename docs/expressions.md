@@ -234,9 +234,26 @@ in-place rewrites, algorithm substitution included, fire inside it (see
 ## Grammar
 
 Primary expressions: integer literals, double-quoted string literals,
-identifiers (lambda parameters), parenthesized expressions, field access
-(`expr.name`), and builtin calls (`name(args...)`). Unary minus negates an
-Int.
+identifiers (lambda parameters), parenthesized expressions, **record literals**
+(`{a: 1, b: x}`), field access (`expr.name`), and builtin calls
+(`name(args...)`). Unary minus negates an Int.
+
+A record literal is written
+
+```
+record := '{' IDENT ':' expr (',' IDENT ':' expr)* '}'
+```
+
+and is exactly the `record(...)` call it parses to — `{a: 1}` *is*
+`record("a", 1)`, so the two spellings share one set of rules and `domain fmt`
+gives each back as written. Field names are bare identifiers rather than
+expressions because the record's type depends on them. See
+[ref-builtins-records.md](ref-builtins-records.md).
+
+Braces are only record literals. `{1, 2}` and `{"a": 1}` — the set and map
+spellings the values themselves print as — are refused by name, not by a
+generic syntax error, so the syntax stays available; build those with `toset`
+and `tomap`.
 
 Binary operators, loosest-binding first (left-associative unless noted):
 

@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -303,6 +305,44 @@ func TestVisualizeForeignPaneShowsTheProgramAndTheWire(t *testing.T) {
 	// The dead end it replaces.
 	if strings.Contains(pane, "has no Using:") {
 		t.Errorf("the pane still reports a foreign stage as having no expression:\n%s", pane)
+	}
+}
+
+// Which python3 ran is the point of the `ran` line, and on a machine that
+// keeps its interpreters somewhere deep — /run/current-system/sw/bin/python3
+// on NixOS, /nix/store/<hash>-python3-3.11/bin/python3 under a flake — the
+// path fills the line by itself. Cut from the right it is the name that goes
+// first, leaving a prefix that identifies nothing; the line has to give up its
+// left instead. The test names the interpreter through DOMAIN_PYTHON so the
+// length under test is the test's, not the host's.
+func TestVisualizeForeignPaneKeepsTheInterpreterName(t *testing.T) {
+	needsPythonVis(t)
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		if python, err = exec.LookPath("python"); err != nil {
+			t.Skip("no python3 on PATH")
+		}
+	}
+	deep := filepath.Join(t.TempDir(), "run", "current-system", "sw", "bin")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(deep, "python3")
+	if err := os.Symlink(python, link); err != nil {
+		t.Skipf("cannot symlink an interpreter here: %v", err)
+	}
+	t.Setenv("DOMAIN_PYTHON", link)
+
+	m := visForeignModel(t, visForeignProgram)
+	m = send(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = send(m, pressKey("g"), pressKey("j"), pressKey("j"), pressKey("j"), pressKey("x"))
+	pane := ansi.Strip(m.View().Content)
+	if !strings.Contains(pane, "python3") {
+		t.Errorf("the pane truncated away the interpreter's name:\n%s", pane)
+	}
+	// Cut from the left, and said so.
+	if !strings.Contains(pane, "…") {
+		t.Errorf("a path this long must show that it was cut:\n%s", pane)
 	}
 }
 

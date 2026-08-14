@@ -1180,6 +1180,225 @@ const declMapAppend = `func dmAppend[K comparable, V any](m *dmMap[K, []V], k K,
 	m.vals[k] = []V{v}
 }`
 
+// declGraph mirrors ir.GraphValue: a directed, Int-weighted adjacency over
+// keyable nodes, insertion-ordered, with arcs held as indices into the node
+// list. Every semantic decision documented on the interpreter's type applies
+// here unchanged — an edge brings its endpoints in, a repeat re-weights in
+// place, and equality (dmGraphEq) ignores insertion order while rendering
+// follows it.
+const declGraph = `type dmGraphEdge struct {
+	to int
+	w  int64
+}
+
+type dmGraph[K comparable] struct {
+	nodes []K
+	index map[K]int
+	adj   [][]dmGraphEdge
+	edges map[[2]int]int
+}
+
+func dmNewGraph[K comparable]() dmGraph[K] {
+	return dmGraph[K]{index: map[K]int{}, edges: map[[2]int]int{}}
+}
+
+func (g *dmGraph[K]) addNode(n K) int {
+	if i, ok := g.index[n]; ok {
+		return i
+	}
+	i := len(g.nodes)
+	g.nodes = append(g.nodes, n)
+	g.adj = append(g.adj, nil)
+	g.index[n] = i
+	return i
+}
+
+func (g *dmGraph[K]) addEdge(a, b K, w int64) {
+	i, j := g.addNode(a), g.addNode(b)
+	if at, ok := g.edges[[2]int{i, j}]; ok {
+		g.adj[i][at].w = w
+		return
+	}
+	g.edges[[2]int{i, j}] = len(g.adj[i])
+	g.adj[i] = append(g.adj[i], dmGraphEdge{to: j, w: w})
+}
+
+func (g *dmGraph[K]) delEdge(a, b K) {
+	i, ok := g.index[a]
+	if !ok {
+		return
+	}
+	j, ok := g.index[b]
+	if !ok {
+		return
+	}
+	at, ok := g.edges[[2]int{i, j}]
+	if !ok {
+		return
+	}
+	g.adj[i] = append(g.adj[i][:at], g.adj[i][at+1:]...)
+	delete(g.edges, [2]int{i, j})
+	for k := at; k < len(g.adj[i]); k++ {
+		g.edges[[2]int{i, g.adj[i][k].to}] = k
+	}
+}
+
+func (g dmGraph[K]) weight(a, b K) (int64, bool) {
+	i, ok := g.index[a]
+	if !ok {
+		return 0, false
+	}
+	j, ok := g.index[b]
+	if !ok {
+		return 0, false
+	}
+	at, ok := g.edges[[2]int{i, j}]
+	if !ok {
+		return 0, false
+	}
+	return g.adj[i][at].w, true
+}
+
+func (g dmGraph[K]) clone() dmGraph[K] {
+	out := dmGraph[K]{
+		nodes: append([]K(nil), g.nodes...),
+		index: make(map[K]int, len(g.index)),
+		adj:   make([][]dmGraphEdge, len(g.adj)),
+		edges: make(map[[2]int]int, len(g.edges)),
+	}
+	for k, v := range g.index {
+		out.index[k] = v
+	}
+	for i, arcs := range g.adj {
+		out.adj[i] = append([]dmGraphEdge(nil), arcs...)
+	}
+	for k, v := range g.edges {
+		out.edges[k] = v
+	}
+	return out
+}`
+
+const declGraphNeighbors = `func dmGraphNeighbors[K comparable](g dmGraph[K], n K) []K {
+	i, ok := g.index[n]
+	if !ok {
+		return []K{}
+	}
+	out := make([]K, len(g.adj[i]))
+	for k, e := range g.adj[i] {
+		out[k] = g.nodes[e.to]
+	}
+	return out
+}`
+
+const declGraphDegree = `func dmGraphDegree[K comparable](g dmGraph[K], n K) int64 {
+	i, ok := g.index[n]
+	if !ok {
+		return 0
+	}
+	return int64(len(g.adj[i]))
+}`
+
+const declGraphWeightAt = `func dmGraphWeight[K comparable](g dmGraph[K], a, b K) int64 {
+	w, ok := g.weight(a, b)
+	if !ok {
+		dmFail("weight: no edge from %v to %v", a, b)
+	}
+	return w
+}`
+
+const declGraphWeightOr = `func dmGraphWeightOr[K comparable](g dmGraph[K], a, b K, d int64) int64 {
+	if w, ok := g.weight(a, b); ok {
+		return w
+	}
+	return d
+}`
+
+const declGraphAddNode = `func dmGraphAddNode[K comparable](g dmGraph[K], n K) dmGraph[K] {
+	out := g.clone()
+	out.addNode(n)
+	return out
+}`
+
+const declGraphAddEdge = `func dmGraphAddEdge[K comparable](g dmGraph[K], a, b K, w int64) dmGraph[K] {
+	out := g.clone()
+	out.addEdge(a, b, w)
+	return out
+}`
+
+const declGraphDelEdge = `func dmGraphDelEdge[K comparable](g dmGraph[K], a, b K) dmGraph[K] {
+	out := g.clone()
+	out.delEdge(a, b)
+	return out
+}`
+
+const declGraphAddNodeIn = `func dmGraphAddNodeIn[K comparable](g dmGraph[K], n K) dmGraph[K] {
+	g.addNode(n)
+	return g
+}`
+
+const declGraphAddEdgeIn = `func dmGraphAddEdgeIn[K comparable](g dmGraph[K], a, b K, w int64) dmGraph[K] {
+	g.addEdge(a, b, w)
+	return g
+}`
+
+const declGraphFlip = `func dmGraphFlip[K comparable](g dmGraph[K]) dmGraph[K] {
+	out := dmNewGraph[K]()
+	for _, n := range g.nodes {
+		out.addNode(n)
+	}
+	for i, arcs := range g.adj {
+		for _, e := range arcs {
+			out.addEdge(g.nodes[e.to], g.nodes[i], e.w)
+		}
+	}
+	return out
+}`
+
+const declGraphSub = `func dmGraphSub[K comparable](g dmGraph[K], keep []K) dmGraph[K] {
+	want := make(map[K]bool, len(keep))
+	out := dmNewGraph[K]()
+	for _, n := range keep {
+		if _, ok := g.index[n]; ok {
+			want[n] = true
+			out.addNode(n)
+		}
+	}
+	for i, arcs := range g.adj {
+		if !want[g.nodes[i]] {
+			continue
+		}
+		for _, e := range arcs {
+			if want[g.nodes[e.to]] {
+				out.addEdge(g.nodes[i], g.nodes[e.to], e.w)
+			}
+		}
+	}
+	return out
+}`
+
+// dmGraphEq mirrors ir.GraphEqual: same nodes, same arcs, **independent of
+// insertion order**. Two graphs built by reading the same edges in a different
+// order are the same graph, so a fixed-point loop over one converges.
+const declGraphEq = `func dmGraphEq[K comparable](a, b dmGraph[K]) bool {
+	if len(a.nodes) != len(b.nodes) || len(a.edges) != len(b.edges) {
+		return false
+	}
+	for k := range a.index {
+		if _, ok := b.index[k]; !ok {
+			return false
+		}
+	}
+	for i, arcs := range a.adj {
+		for _, e := range arcs {
+			w, ok := b.weight(a.nodes[i], a.nodes[e.to])
+			if !ok || w != e.w {
+				return false
+			}
+		}
+	}
+	return true
+}`
+
 const declSet = `type dmSet[T comparable] struct {
 	elems []T
 	has   map[T]struct{}
@@ -2040,3 +2259,153 @@ const declCPUProfile = `func dmCPUProfile() func() {
 // DeclCPUProfile exposes the emitted profile helper so package runner, which
 // names the same environment variable, can pin the two together in a test.
 func DeclCPUProfile() string { return declCPUProfile }
+
+// The graph search runtime. Each mirrors the interpreter's function of the
+// same job in prims/graph.go — same traversal order, same insertion order into
+// the result map, same refusal of a negative weight — so the two backends
+// print the same bytes.
+
+const declGraphBFS = `func dmGraphBFS[K comparable](g dmGraph[K], start int) dmMap[K, int64] {
+	dist := make([]int64, len(g.nodes))
+	seen := make([]bool, len(g.nodes))
+	out := dmNewMap[K, int64]()
+	q := []int{start}
+	seen[start] = true
+	out.put(g.nodes[start], 0)
+	for len(q) > 0 {
+		cur := q[0]
+		q = q[1:]
+		for _, e := range g.adj[cur] {
+			if seen[e.to] {
+				continue
+			}
+			seen[e.to] = true
+			dist[e.to] = dist[cur] + 1
+			out.put(g.nodes[e.to], dist[e.to])
+			q = append(q, e.to)
+		}
+	}
+	return out
+}`
+
+const declGraphNoNeg = `func dmGraphNoNeg[K comparable](g dmGraph[K], prim string) {
+	for i := range g.nodes {
+		for _, e := range g.adj[i] {
+			if e.w < 0 {
+				dmFail("%s: negative edge weight %d from %v to %v; %s needs non-negative weights",
+					prim, e.w, g.nodes[i], g.nodes[e.to], prim)
+			}
+		}
+	}
+}`
+
+const declGraphDijkstra = `func dmGraphDijkstra[K comparable](g dmGraph[K], start int) dmMap[K, int64] {
+	dmGraphNoNeg(g, "Dijkstra")
+	best := make([]int64, len(g.nodes))
+	for i := range best {
+		best[i] = -1
+	}
+	settled := make([]bool, len(g.nodes))
+	out := dmNewMap[K, int64]()
+	var pq dmPQ[int]
+	best[start] = 0
+	pq.push(start, 0)
+	for {
+		cur, d, ok := pq.pop()
+		if !ok {
+			break
+		}
+		if settled[cur] {
+			continue
+		}
+		settled[cur] = true
+		out.put(g.nodes[cur], d)
+		for _, e := range g.adj[cur] {
+			nd := d + e.w
+			if best[e.to] == -1 || nd < best[e.to] {
+				best[e.to] = nd
+				pq.push(e.to, nd)
+			}
+		}
+	}
+	return out
+}`
+
+const declGraphComponents = `func dmGraphComponents[K comparable](g dmGraph[K]) int64 {
+	parent := make([]int, len(g.nodes))
+	rank := make([]int, len(g.nodes))
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(x int) int {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+	count := len(g.nodes)
+	for i := range g.nodes {
+		for _, e := range g.adj[i] {
+			a, b := find(i), find(e.to)
+			if a == b {
+				continue
+			}
+			if rank[a] < rank[b] {
+				a, b = b, a
+			}
+			parent[b] = a
+			if rank[a] == rank[b] {
+				rank[a]++
+			}
+			count--
+		}
+	}
+	return int64(count)
+}`
+
+const declGraphPath = `func dmGraphPath[K comparable](g dmGraph[K], start, goal int) []K {
+	dmGraphNoNeg(g, "Shortest Path")
+	best := make([]int64, len(g.nodes))
+	prev := make([]int, len(g.nodes))
+	for i := range best {
+		best[i], prev[i] = -1, -1
+	}
+	settled := make([]bool, len(g.nodes))
+	var pq dmPQ[int]
+	best[start] = 0
+	pq.push(start, 0)
+	for {
+		cur, d, ok := pq.pop()
+		if !ok {
+			break
+		}
+		if settled[cur] {
+			continue
+		}
+		settled[cur] = true
+		if cur == goal {
+			break
+		}
+		for _, e := range g.adj[cur] {
+			nd := d + e.w
+			if best[e.to] == -1 || nd < best[e.to] {
+				best[e.to], prev[e.to] = nd, cur
+				pq.push(e.to, nd)
+			}
+		}
+	}
+	if best[goal] == -1 {
+		return []K{}
+	}
+	var rev []K
+	for at := goal; at != -1; at = prev[at] {
+		rev = append(rev, g.nodes[at])
+	}
+	out := make([]K, len(rev))
+	for i, n := range rev {
+		out[len(rev)-1-i] = n
+	}
+	return out
+}`

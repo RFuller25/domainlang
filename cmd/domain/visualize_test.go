@@ -455,6 +455,42 @@ func TestWidthHelpersIgnoreStyling(t *testing.T) {
 	if n := ansi.StringWidth(truncateVis(styled, 3)); n > 3 {
 		t.Errorf("truncateVis(styled, 3) is %d columns, want <= 3", n)
 	}
+	if n := ansi.StringWidth(truncateVisLeft(styled, 3)); n > 3 {
+		t.Errorf("truncateVisLeft(styled, 3) is %d columns, want <= 3", n)
+	}
+}
+
+// truncateVisLeft is truncateVis from the other end: it spends the budget on
+// the end of the line, because its callers render paths and command lines,
+// where the name comes last.
+func TestTruncateVisLeft(t *testing.T) {
+	const path = "/run/current-system/sw/bin/python3"
+	for _, tc := range []struct {
+		w    int
+		want string
+	}{
+		{0, ""},
+		{1, "…"},
+		{2, "…3"},
+		{12, "…bin/python3"},
+		{len(path), path},
+		{len(path) + 5, path}, // room to spare: no ellipsis
+	} {
+		if got := truncateVisLeft(path, tc.w); got != tc.want {
+			t.Errorf("truncateVisLeft(path, %d) = %q, want %q", tc.w, got, tc.want)
+		}
+	}
+	// The property the callers actually depend on: whatever the budget, the
+	// result never exceeds it and always ends where the input ends.
+	for w := 1; w <= len(path)+2; w++ {
+		got := truncateVisLeft(path, w)
+		if n := ansi.StringWidth(got); n > w {
+			t.Errorf("truncateVisLeft(path, %d) is %d columns wide", w, n)
+		}
+		if !strings.HasSuffix(path, strings.TrimPrefix(got, "…")) {
+			t.Errorf("truncateVisLeft(path, %d) = %q, which is not a tail of the input", w, got)
+		}
+	}
 }
 
 // --- timings as shares of the run ---

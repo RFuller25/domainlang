@@ -5,6 +5,11 @@
 //	domain expansion: lint <file>             errors + style warnings + perf hints, read-only
 //	domain expansion: fix <file>              apply confident fixes in place (.bak backup)
 //	domain expansion: optimize <file>         optimization report + source rewrites (.bak backup)
+//	domain expansion: bench <file>            four-cell timing and allocation report
+//	domain expansion: coverage <folder>       what of the catalog a folder never exercises
+//	domain expansion: stats <folder>          per-program runtime, LOC and passes, as a leaderboard
+//	domain expansion: battle <a> <b>          race a Domain program against one in another language
+//	domain expansion: mahoraga <f> <in> <out> adapt one program to one input, and record how
 //	domain expansion: maximum compile <file>  fix → lint → optimize → compile → run
 //	domain expansion: documentation [-p PORT] serve the docs website (default port 4444)
 //	domain expansion: development [file]      edit a program in a terminal editor
@@ -33,6 +38,11 @@ var expansionCommands = [][]string{
 	{"development"},
 	{"vscode"},
 	{"visualize"},
+	{"bench"},
+	{"coverage"},
+	{"stats"},
+	{"battle"},
+	{"mahoraga"},
 	{"diagnosis"},
 	{"lint"},
 	{"optimize"},
@@ -84,7 +94,7 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		} else {
 			fmt.Fprintf(stderr, "domain: unknown expansion command %q\n", strings.Join(rest, " "))
 		}
-		fmt.Fprintln(stderr, "known: maximum compile, documentation, development, vscode, visualize, lint, optimize, fix, diagnosis")
+		fmt.Fprintln(stderr, "known: maximum compile, documentation, development, vscode, visualize, bench, coverage, stats, battle, mahoraga, lint, optimize, fix, diagnosis")
 		return 2
 	}
 
@@ -124,6 +134,65 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 			return 2
 		}
 		return Visualize(path, opts, stdin, stdout, stderr)
+
+	// The measurement commands take flags of their own too. Each prints its
+	// banner only in the human-facing modes: --json and --markdown produce
+	// output something else consumes, and a banner in front of it would make
+	// the document malformed.
+	case "bench":
+		path, opts, err := parseBenchArgs(rest)
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		if !opts.JSON && !opts.Markdown {
+			fmt.Fprint(stdout, expansionBanner("bench", isColorTerminal(stdout) && !opts.Plain))
+		}
+		return Bench(path, opts, stdout, stderr)
+
+	case "coverage":
+		path, opts, err := parseCoverageArgs(rest)
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		if !opts.JSON {
+			fmt.Fprint(stdout, expansionBanner("coverage", isColorTerminal(stdout) && !opts.Plain))
+		}
+		return Coverage(path, opts, stdout, stderr)
+
+	case "stats":
+		path, opts, err := parseStatsArgs(rest)
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		if !opts.JSON && !opts.Markdown {
+			fmt.Fprint(stdout, expansionBanner("stats", isColorTerminal(stdout) && !opts.Plain))
+		}
+		return Stats(path, opts, stdout, stderr)
+
+	case "battle":
+		a, b, opts, err := parseBattleArgs(rest)
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		if !opts.JSON {
+			fmt.Fprint(stdout, expansionBanner("battle", isColorTerminal(stdout) && !opts.Plain))
+		}
+		return Battle(a, b, opts, stdout, stderr)
+
+	case "mahoraga":
+		prog, input, expected, opts, err := parseMahoragaArgs(rest)
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		if !opts.JSON && !opts.Quiet {
+			fmt.Fprint(stdout, expansionBanner("mahoraga", isColorTerminal(stdout) && !opts.Plain))
+		}
+		return Mahoraga(prog, input, expected, opts, stdin, stdout, stderr)
 	}
 
 	var path string

@@ -10,17 +10,31 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// runToCompletion starts a run and delivers its result, standing in for the
-// event loop. The run itself is a plain command, so this is the whole of what
-// the runtime would have done.
+// runToCompletion starts a run, delivers its result and dismisses the monitor
+// — which is what someone who ran a program and went back to editing it did.
+// Tests about the monitor itself use runToMonitor and stay on the screen.
 func runToCompletion(t *testing.T, m devModel) devModel {
+	t.Helper()
+	m = runToMonitor(t, m)
+	if m.monitor != nil {
+		m = devKey(m, "esc")
+	}
+	return m
+}
+
+// runToMonitor starts a run and delivers its result, standing in for the event
+// loop, leaving the monitor showing the report as it would be on screen. The
+// run itself is a plain command, so this is the whole of what the runtime
+// would have done — bar the sampling ticks, which tests drive themselves.
+func runToMonitor(t *testing.T, m devModel) devModel {
 	t.Helper()
 	next, cmd := m.runProgram()
 	m = next.(devModel)
 	if cmd == nil {
 		return m // refused to start; the output pane says why
 	}
-	// The batch is {run, spinner tick}; only the run's message matters here.
+	// The batch is {run, spinner tick, first sample}; only the run's message
+	// matters here.
 	for _, msg := range collectMsgs(cmd) {
 		if done, ok := msg.(devRunDoneMsg); ok {
 			next, _ := m.Update(done)

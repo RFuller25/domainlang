@@ -272,6 +272,14 @@
     "page": "ref-transforms.md"
   },
   {
+    "id": "Convert To Edges",
+    "keyword": "Channeled Energy",
+    "signature": "Graph\u003cK\u003e → List\u003c(K, K, Int)\u003e",
+    "summary": "Drops a Graph back into the list vocabulary as (from, to, weight) triples — the way back out.",
+    "anchor": "convert-to-edges",
+    "page": "ref-coercions.md"
+  },
+  {
     "id": "Convert To Entries",
     "keyword": "Channeled Energy",
     "signature": "Map\u003cK,V\u003e → List\u003c(K, V)\u003e",
@@ -285,6 +293,14 @@
     "signature": "List\u003cText|Int\u003e → List\u003cFloat\u003e",
     "summary": "Parses or widens each field to a Float (form chosen by input type).",
     "anchor": "convert-to-floats",
+    "page": "ref-coercions.md"
+  },
+  {
+    "id": "Convert To Graph",
+    "keyword": "Channeled Energy",
+    "signature": "List\u003c(K,K)\u003e | List\u003c(K,K,Int)\u003e | Map\u003cK,List\u003cK\u003e\u003e → Graph\u003cK\u003e",
+    "summary": "Builds a directed, Int-weighted graph from an edge list or an adjacency map; Mode: Undirected inserts both arcs.",
+    "anchor": "convert-to-graph",
     "page": "ref-coercions.md"
   },
   {
@@ -562,7 +578,7 @@
   {
     "id": "BFS",
     "keyword": "Domain Expansion",
-    "signature": "Grid\u003cT\u003e × (T → Bool) → Grid\u003cInt\u003e",
+    "signature": "Grid\u003cT\u003e × (T → Bool) → Grid\u003cInt\u003e | Graph\u003cK\u003e × Start: → Map\u003cK,Int\u003e",
     "summary": "Breadth-first step distances from a start over walkable cells (unreachable = -1).",
     "anchor": "bfs",
     "page": "ref-expansions.md"
@@ -578,7 +594,7 @@
   {
     "id": "Connected Components",
     "keyword": "Domain Expansion",
-    "signature": "Grid\u003cT\u003e × (T → Bool) → Int",
+    "signature": "Grid\u003cT\u003e × (T → Bool) → Int | Graph\u003cK\u003e → Int",
     "summary": "How many 4-connected regions of matching cells the grid contains (union-find).",
     "anchor": "connected-components",
     "page": "ref-expansions.md"
@@ -586,7 +602,7 @@
   {
     "id": "Dijkstra",
     "keyword": "Domain Expansion",
-    "signature": "Grid\u003cInt\u003e → Grid\u003cInt\u003e",
+    "signature": "Grid\u003cInt\u003e → Grid\u003cInt\u003e | Graph\u003cK\u003e × Start: → Map\u003cK,Int\u003e",
     "summary": "Minimum entry-cost from a start to every cell (4-connectivity, min-heap).",
     "anchor": "dijkstra",
     "page": "ref-expansions.md"
@@ -624,6 +640,14 @@
     "page": "ref-expansions.md"
   },
   {
+    "id": "Shortest Path",
+    "keyword": "Domain Expansion",
+    "signature": "Graph\u003cK\u003e × Start: × Goal: → List\u003cK\u003e",
+    "summary": "The cheapest path between two nodes as a list of nodes, empty when unreachable.",
+    "anchor": "shortest-path",
+    "page": "ref-expansions.md"
+  },
+  {
     "id": "Sliding Reduce",
     "keyword": "Domain Expansion",
     "signature": "List\u003cInt\u003e → List\u003cInt\u003e",
@@ -658,7 +682,7 @@
   {
     "id": "Topological Sort",
     "keyword": "Domain Expansion",
-    "signature": "Map\u003cK, List\u003cK\u003e\u003e | List\u003c(K, K)\u003e → List\u003cK\u003e",
+    "signature": "Graph\u003cK\u003e | Map\u003cK, List\u003cK\u003e\u003e | List\u003c(K, K)\u003e → List\u003cK\u003e",
     "summary": "A dependency order over an explicit graph; a cycle is a runtime error naming a blocked node.",
     "anchor": "topological-sort",
     "page": "ref-expansions.md"

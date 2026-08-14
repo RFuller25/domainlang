@@ -415,7 +415,7 @@ Domain Expansion: Explore
 `Cost:` comes in two arities, because both questions get asked:
 
 - **`(t) -> Int`** is the cost of *entering* a state — the convention grid
-  [`Dijkstra`](#dijkstra--gridint---gridint) already follows, where the start's
+  [`Dijkstra`](#dijkstra--gridint---gridint--graphk--start---mapkint) already follows, where the start's
   own value is not paid.
 - **`(s, t) -> Int`** is the cost of the *edge*, which a graph with weighted
   edges needs and a node weight cannot express.
@@ -456,7 +456,7 @@ the paths that reach the goal" is the natural spelling.
 
 The search must be **acyclic**: a cycle has no finite fold, and the error names
 a state on it rather than only reporting that one exists — the same reason
-[`Topological Sort`](#topological-sort--mapk-listk--listk-k---listk-k-keyable)
+[`Topological Sort`](#topological-sort--graphk--mapk-listk--listk-k---listk-k-keyable)
 names a blocked node.
 
 **This is what Domain has instead of recursion.** A Shikigami is inlined at
@@ -470,7 +470,7 @@ graph can be nodes named in a text file or tuples of position and facing.
 The state must be keyable, which is what makes termination possible; build a
 compound one with `tuple(...)`.
 
-### Topological Sort — `Map<K, List<K>> | List<(K, K)> -> List<K>` (K keyable)
+### Topological Sort — `Graph<K> | Map<K, List<K>> | List<(K, K)> -> List<K>` (K keyable)
 
 ```domain run
 Cursed Energy: stdin
@@ -491,6 +491,32 @@ b c
 
 Given edge pairs it infers the node set from the edges themselves, so nothing
 has to declare the nodes separately.
+
+A `Graph<K>` is the third input shape, and the one the other two were standing
+in for — an adjacency map and an edge list are both descriptions of a graph
+that had nowhere to live:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Domain Expansion: Topological Sort
+Maximum Technique: Join with ","
+Reveal: stdout
+```
+```input
+a b
+b c
+d a
+```
+```output
+d,a,b,c
+```
+
+All three shapes go through the same adjacency map internally, so a graph and
+the edge list it was built from sort **identically** — the tie-breaking is part
+of the answer, not an accident of the input form.
 
 A diamond has more than one valid order; the sort is deterministic, so the
 answer is reproducible rather than merely correct:
@@ -539,7 +565,7 @@ that appears only as a target is still ordered.
 A cycle is a runtime error that **names a blocked node** — "there is a cycle"
 alone leaves you to find it by hand in a large input.
 
-### BFS — `Grid<T> × (T -> Bool) -> Grid<Int>`
+### BFS — `Grid<T> × (T -> Bool) -> Grid<Int> | Graph<K> × Start: -> Map<K,Int>`
 
 ```domain
 Domain Expansion: BFS from 0 0
@@ -595,7 +621,38 @@ Reveal: stdout
 8
 ```
 
-### Dijkstra — `Grid<Int> -> Grid<Int>`
+
+Given a **`Graph<K>`** it answers the same question over an explicit graph:
+`Start:` names the node to search from, and the result maps each *reachable*
+node to its hop count. Unreachable nodes are **absent** rather than `-1` — a
+graph has no "every position" obligation the way a dense grid does, so there is
+no cell to put a sentinel in.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Domain Expansion: BFS
+    Start: "a"
+Reveal: stdout
+```
+```input
+a b
+b d
+a c
+c d
+e f
+```
+```output
+{a: 0, b: 1, c: 1, d: 2}
+```
+
+`e` and `f` are in the graph but not reachable from `a`, so they are not in the
+answer. `Start:` may also be a lambda over the graph, which is how the start is
+computed rather than written: `Start: (g) -> first(nodes(g))`.
+
+### Dijkstra — `Grid<Int> -> Grid<Int> | Graph<K> × Start: -> Map<K,Int>`
 
 ```domain
 Domain Expansion: Dijkstra from 0 0
@@ -644,6 +701,37 @@ Reveal: stdout
 0 1
 1 2
 ```
+
+
+Over a **`Graph<K>`** it is the weighted twin of `BFS`: `Start:` names the
+node, and the result maps each reachable node to the cheapest total weight of
+reaching it. The arc weights are the cost, so this and `BFS` disagree exactly
+when the cheap route is not the short one.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Cursed Technique: Map Each
+    Using: (p) -> tuple(item(p, 0), item(p, 1), toint(item(p, 2)))
+Channeled Energy: Convert To Graph
+Domain Expansion: Dijkstra
+    Start: "a"
+Reveal: stdout
+```
+```input
+a b 1
+b d 10
+a c 2
+c d 3
+```
+```output
+{a: 0, b: 1, c: 2, d: 5}
+```
+
+`d` is two hops away either way, but 5 through `c` and 11 through `b`. A
+negative weight is a runtime error rather than a wrong answer: the
+settled-once invariant a priority queue rests on does not hold for them.
 
 ### Flood Fill — `Grid<T> × (T -> Bool) -> Grid<Int>`
 
@@ -698,7 +786,66 @@ Reveal: stdout
 3
 ```
 
-### Connected Components — `Grid<T> × (T -> Bool) -> Int`
+### Shortest Path — `Graph<K> × Start: × Goal: -> List<K>`
+
+`Dijkstra` answers "how far is everything"; this answers "which way do I go".
+The result is the cheapest path as a list of nodes, **including both
+endpoints**, so a path from a node to itself is that one node.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Cursed Technique: Map Each
+    Using: (p) -> tuple(item(p, 0), item(p, 1), toint(item(p, 2)))
+Channeled Energy: Convert To Graph
+    Mode: Undirected
+Domain Expansion: Shortest Path
+    Start: "a"
+    Goal: "d"
+Maximum Technique: Join with "->"
+Reveal: stdout
+```
+```input
+a b 1
+b d 10
+a c 2
+c d 3
+```
+```output
+a->c->d
+```
+
+An unreachable goal is the **empty list**, not an error — "there is no path" is
+an answer, and `Count` on it is 0:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Domain Expansion: Shortest Path
+    Start: "a"
+    Goal: "f"
+Maximum Technique: Count
+Reveal: stdout
+```
+```input
+a b
+b c
+e f
+```
+```output
+0
+```
+
+
+`Start:` and `Goal:` are each a node literal or a lambda over the graph. A node
+that is not in the graph is a runtime error naming it — unreachable and absent
+are different mistakes and get different messages. Weights must be
+non-negative, as for `Dijkstra`.
+
+### Connected Components — `Grid<T> × (T -> Bool) -> Int | Graph<K> -> Int`
 
 ```domain
 Domain Expansion: Connected Components
@@ -746,6 +893,28 @@ Reveal: stdout
 ```
 ```output
 1
+```
+
+
+Over a **`Graph<K>`** it takes no predicate — a graph's nodes are all there is
+— and counts **weakly** connected components: the arcs are read as undirected,
+which is what "how many separate pieces is this" almost always means.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Domain Expansion: Connected Components
+Reveal: stdout
+```
+```input
+a b
+b c
+e f
+```
+```output
+2
 ```
 
 ### Foreign Block — `T -> Text`, or a declared `In -> Out`

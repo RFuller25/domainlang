@@ -48,7 +48,7 @@ go run ./cmd/domain build testdata/day1.domain -o day1
 go run ./cmd/domain build testdata/day1.domain --emit-go -
 ```
 
-Twenty ready-to-run programs with inputs and expected outputs live in
+Twenty-one ready-to-run programs with inputs and expected outputs live in
 [`examples/`](examples/README.md) — each one shows off a different piece of
 the language — and thirteen classic programming challenges (FizzBuzz, Two
 Sum, Kadane, Conway's Game of Life, Minesweeper, …) live in

@@ -457,12 +457,14 @@ func renderTokens(src string, toks []token.Token) string {
 func needsSpace(prev, cur, beforePrev token.Token) bool {
 	// Never a space before these.
 	switch cur.Kind {
-	case token.COLON, token.COMMA, token.RPAREN, token.DOT:
+	case token.COLON, token.COMMA, token.RPAREN, token.DOT, token.RBRACE:
 		return false
 	}
-	// Never a space after these.
+	// Never a space after these. A record literal's braces hug their fields —
+	// `{a: 1}`, not `{ a: 1 }` — which is what makes the written form match how
+	// ir.FormatValue prints the value back.
 	switch prev.Kind {
-	case token.LPAREN, token.DOT:
+	case token.LPAREN, token.DOT, token.LBRACE:
 		return false
 	}
 	// A call's parenthesis hugs its function name; a grouping paren after an

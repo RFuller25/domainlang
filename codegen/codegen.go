@@ -649,13 +649,21 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 	case "Subsets":
 		return g.emitSubsets(n, in)
 	case "BFS":
+		if isGraph, _ := n.Meta["graph"].(bool); isGraph {
+			return g.emitGraphBFS(n, in)
+		}
 		return g.emitBFS(n, in)
 	case "Dijkstra":
+		if isGraph, _ := n.Meta["graph"].(bool); isGraph {
+			return g.emitGraphDijkstra(n, in)
+		}
 		return g.emitDijkstra(n, in)
 	case "Flood Fill":
 		return g.emitFloodFill(n, in)
 	case "Range":
 		return g.emitRange(n, in)
+	case "Shortest Path":
+		return g.emitShortestPath(n, in)
 	case "Topological Sort":
 		return g.emitTopologicalSort(n, in)
 	case "Subgrid":
@@ -670,6 +678,10 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitConvertToRows(n, in)
 	case "Find Cycle":
 		return g.emitFindCycle(n, in)
+	case "Convert To Graph":
+		return g.emitConvertToGraph(n, in)
+	case "Convert To Edges":
+		return g.emitConvertToEdges(n, in)
 	case "Convert To Entries":
 		return g.emitConvertToEntries(n, in)
 	case "Convert To Map":
@@ -681,6 +693,9 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 	case "Explore":
 		return g.emitExplore(n, in)
 	case "Connected Components":
+		if isGraph, _ := n.Meta["graph"].(bool); isGraph {
+			return g.emitGraphComponents(n, in)
+		}
 		return g.emitConnectedComponents(n, in)
 	case "SearchTarget":
 		return g.emitSearchTarget(n, in)

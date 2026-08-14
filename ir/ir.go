@@ -34,6 +34,7 @@ const (
 	KSet    // Set<T>, T in {Int, Text}
 	KGrid   // Grid<T>
 	KSparse // Sparse<T>: unbounded 2D plane with a default value (see SparseValue)
+	KGraph  // Graph<K>: directed, Int-weighted adjacency over keyable nodes (see GraphValue)
 )
 
 // Field is one named member of a Record type.
@@ -87,6 +88,14 @@ func Grid(elem *Type) *Type {
 // Sparse builds a Sparse<elem> type — the nested/sparse grid.
 func Sparse(elem *Type) *Type {
 	return &Type{Kind: KSparse, Elem: elem}
+}
+
+// Graph builds a Graph<node> type: a directed, Int-weighted adjacency over
+// keyable nodes. Elem is the *node* type — a graph has no separate element,
+// and the edge weight is always Int (an unweighted graph is one whose weights
+// are all 1), which is why this takes one parameter rather than two.
+func Graph(node *Type) *Type {
+	return &Type{Kind: KGraph, Elem: node}
 }
 
 // Keyable reports whether t can be a Map key or Set element: Int, Text, or a
@@ -155,6 +164,8 @@ func (t *Type) String() string {
 		return "Grid<" + t.Elem.String() + ">"
 	case KSparse:
 		return "Sparse<" + t.Elem.String() + ">"
+	case KGraph:
+		return "Graph<" + t.Elem.String() + ">"
 	default:
 		return "<unknown>"
 	}
@@ -170,7 +181,7 @@ func (t *Type) Equal(o *Type) bool {
 		return false
 	}
 	switch t.Kind {
-	case KList, KSet, KGrid, KSparse:
+	case KList, KSet, KGrid, KSparse, KGraph:
 		return t.Elem.Equal(o.Elem)
 	case KMap:
 		return t.Key.Equal(o.Key) && t.Elem.Equal(o.Elem)

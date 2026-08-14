@@ -260,6 +260,28 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	g.helper("dmMap", declMap)
+	// A Graph is folded into the adjacency map first, exactly as the
+	// interpreter's graphAdjacency does. Going through the map rather than
+	// walking the graph directly is what keeps the tie-breaking identical
+	// across the three input shapes: a graph and the edge list it was built
+	// from sort the same way.
+	if isGraph, _ := n.Meta["graph"].(bool); isGraph {
+		g.helper("dmGraph", declGraph)
+		m, i, nd, e := g.fresh("m"), g.fresh("i"), g.fresh("nd"), g.fresh("e")
+		g.wl("%s := dmNewMap[%s, []%s]()", m, keyGo, keyGo)
+		g.wl("for %s, %s := range %s.nodes {", i, nd, in)
+		g.in()
+		g.wl("%s := make([]%s, 0, len(%s.adj[%s]))", e+"s", keyGo, in, i)
+		g.wl("for _, %s := range %s.adj[%s] {", e, in, i)
+		g.in()
+		g.wl("%s = append(%s, %s.nodes[%s.to])", e+"s", e+"s", in, e)
+		g.out()
+		g.wl("}")
+		g.wl("%s.put(%s, %s)", m, nd, e+"s")
+		g.out()
+		g.wl("}")
+		in = m
+	}
 	// An edge list is folded into the adjacency map first, exactly as the
 	// interpreter does, so one algorithm serves both input shapes.
 	if edges, _ := n.Meta["edges"].(bool); edges {

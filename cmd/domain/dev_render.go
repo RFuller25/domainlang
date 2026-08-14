@@ -23,6 +23,11 @@ func (m devModel) view() string {
 		// command. It is a whole model, not a pane.
 		return m.stepper.View().Content
 	}
+	if m.monitor != nil {
+		// A run takes the whole screen, for as long as it is running and until
+		// the report on it is dismissed.
+		return m.monitorView()
+	}
 	if m.showHelp {
 		return m.helpView()
 	}

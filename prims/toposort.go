@@ -27,6 +27,25 @@ var topologicalSort = &Primitive{
 		// classic form; an **edge list** is the one a parse actually lands on,
 		// since `Match Pattern "{word} -> {word}" Mode: Each` produces exactly
 		// List<List<Text>> with two entries per row.
+		// A Graph is the third shape, and the one the other two were standing
+		// in for: an adjacency map and an edge list are both descriptions of a
+		// graph that had nowhere to live.
+		if in != nil && in.Kind == ir.KGraph {
+			node := in.Elem
+			return &ir.Node{
+				Prim: "Topological Sort", In: in, Out: ir.List(node),
+				Display: "Topological Sort", Swappable: true,
+				Meta: map[string]any{"edges": false, "graph": true, "node": node}, Pos: pos,
+				Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+					g, ok := v.(*ir.GraphValue)
+					if !ok {
+						return nil, runtimeErr("Topological Sort", pos,
+							"expected a Graph, got %s", ir.DescribeValue(v))
+					}
+					return topoSort(graphAdjacency(g), pos)
+				},
+			}, nil
+		}
 		node, edges, err := topoInputShape(in, pos)
 		if err != nil {
 			return nil, err
@@ -50,9 +69,9 @@ var topologicalSort = &Primitive{
 func topoInputShape(in *ir.Type, pos token.Position) (*ir.Type, bool, error) {
 	bad := func() (*ir.Type, bool, error) {
 		return nil, false, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-			"Topological Sort expects Map<K, List<K>> (a node mapped to its successors) "+
-				"or a list of edges — List<(K, K)> or two-element List<List<K>>, the shape "+
-				"a positional Match Pattern produces — got %s", in)}
+			"Topological Sort expects a Graph<K>, a Map<K, List<K>> (a node mapped to its "+
+				"successors), or a list of edges — List<(K, K)> or two-element List<List<K>>, "+
+				"the shape a positional Match Pattern produces — got %s", in)}
 	}
 	if in == nil {
 		return bad()
@@ -82,6 +101,23 @@ func topoInputShape(in *ir.Type, pos token.Position) (*ir.Type, bool, error) {
 		}
 	}
 	return bad()
+}
+
+// graphAdjacency renders a Graph as the adjacency Map topoSort already takes,
+// keeping insertion order on both the nodes and each node's successors. Going
+// through the Map rather than reimplementing Kahn's algorithm is what keeps the
+// tie-breaking — and so the exact output — identical across the three input
+// shapes: a graph and the edge list it was built from sort the same way.
+func graphAdjacency(g *ir.GraphValue) *ir.MapValue {
+	m := ir.NewMapSized(g.Len())
+	for i, n := range g.Nodes() {
+		succ := make([]ir.Value, 0, len(g.AdjOf(i)))
+		for _, e := range g.AdjOf(i) {
+			succ = append(succ, g.NodeAt(e.To))
+		}
+		m.Put(n, succ)
+	}
+	return m
 }
 
 // topoSortEdges runs the same algorithm over a list of (from, to) pairs,

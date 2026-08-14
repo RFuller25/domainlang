@@ -279,6 +279,10 @@ var argNames = []string{
 	"Height", "High", "Index", "Low", "Mark", "Mode", "Params", "Row", "Seed",
 	"Case", "Size", "Step", "Thickness", "Times", "Until", "Using", "Value", "While",
 	"Width", "With", "Zip",
+	// The graph searches name their endpoints. They are deliberately not
+	// `From:`/`To:` — `From:` already means "these channels" everywhere else,
+	// and a node is not a channel.
+	"Start", "Goal",
 }
 
 // ArgNames returns the named arguments the vocabulary understands, sorted.
@@ -330,6 +334,10 @@ var Registry = []*Primitive{
 	convertToSet,
 	convertToRows,
 	convertToEntries,
+	// Before Convert To Map: "Convert To Graph" names neither Map nor Grid, so
+	// ordering is not load-bearing here, but the coercions stay together.
+	convertToGraph,
+	convertToEdges,
 	convertToMap,
 	// Maximum Technique (reductions) — By-variants before their bare forms.
 	sumBy, // before Sum Each Group / Sum
@@ -362,6 +370,7 @@ var Registry = []*Primitive{
 	// Domain Expansion (swappable algorithms) — Sort By and Topological Sort
 	// before Sort, whose matcher accepts any phrase containing "Sort".
 	topologicalSort,
+	shortestPath,
 	sortBy,
 	sortPrim,
 	slidingReduce,

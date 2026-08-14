@@ -200,6 +200,26 @@ func TestLinearMarksTheSafeShapes(t *testing.T) {
 			seed: emptyIntMap, want: 1,
 			body: "(acc, x) -> consider m as insert(acc, x, 1) in m",
 		},
+		{
+			// A graph accumulated in a fold — the shape the whole Graph type
+			// exists for, and the difference between linear and quadratic in
+			// its writes.
+			name: "graph edge added in a fold",
+			seed: "emptygraph(0)", want: 1,
+			body: "(acc, x) -> addedge(acc, x, x + 1)",
+		},
+		{
+			name: "graph node and edge chained",
+			seed: "emptygraph(0)", want: 2,
+			body: "(acc, x) -> addedge(addnode(acc, x), x, x + 1, 2)",
+		},
+		{
+			// deledge is deliberately not in the table: removing an arc shifts
+			// the indices behind it, exactly as del shifts a key order.
+			name: "deledge is not marked",
+			seed: "emptygraph(0)", want: 0,
+			body: "(acc, x) -> deledge(acc, x, x + 1)",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := inPlaceSites(t, foldSrc(tc.seed, tc.body)); got != tc.want {

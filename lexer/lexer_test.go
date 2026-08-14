@@ -438,3 +438,103 @@ func TestLexDottedFileTargetIsNotAFloat(t *testing.T) {
 		}
 	}
 }
+
+// Braces are tokens as of the record-literal syntax. They were previously an
+// "unexpected character" error, which is why nothing in the language had to be
+// re-spelled to make room for them.
+func TestLexBraces(t *testing.T) {
+	toks, err := Lex("Using: (p) -> {a: 1}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []token.Kind{
+		token.IDENT, token.COLON,
+		token.LPAREN, token.IDENT, token.RPAREN, token.ARROW,
+		token.LBRACE, token.IDENT, token.COLON, token.INT, token.RBRACE,
+		token.NEWLINE, token.EOF,
+	}
+	got := kinds(toks)
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("token %d: got %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
+// A brace inside a string literal is text, which is what keeps Match Pattern
+// templates ("{word} -> {word}") working now that braces lex.
+func TestLexBraceInsideStringIsText(t *testing.T) {
+	toks, err := Lex(`Match Pattern "{word} -> {word}"` + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range toks {
+		if tk.Kind == token.LBRACE || tk.Kind == token.RBRACE {
+			t.Fatalf("brace inside a string literal lexed as punctuation: %v", kinds(toks))
+		}
+	}
+	var got string
+	for _, tk := range toks {
+		if tk.Kind == token.STRING {
+			got = tk.Literal
+		}
+	}
+	if got != "{word} -> {word}" {
+		t.Fatalf("string literal: got %q", got)
+	}
+}
+
+// A brace in a comment is skipped with the rest of the comment.
+func TestLexBraceInCommentIsSkipped(t *testing.T) {
+	toks, err := Lex("Reveal: stdout  # {a: 1}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range toks {
+		if tk.Kind == token.LBRACE || tk.Kind == token.RBRACE {
+			t.Fatalf("brace in a comment lexed as punctuation: %v", kinds(toks))
+		}
+	}
+}
+
+// Braces do not suspend layout the way parentheses do: they are not on the
+// paren stack, so a newline after `{` still ends the logical line.
+func TestLexBracesDoNotSuspendLayout(t *testing.T) {
+	toks, err := Lex("Reveal: {a\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawNewline := false
+	for _, tk := range toks {
+		if tk.Kind == token.NEWLINE {
+			sawNewline = true
+		}
+	}
+	if !sawNewline {
+		t.Fatalf("an open brace suspended layout: %v", kinds(toks))
+	}
+}
+
+// Positions and end offsets are what the parser slices source with, so a brace
+// has to carry them like every other punctuation token.
+func TestLexBracePositions(t *testing.T) {
+	src := "Reveal: {a: 1}\n"
+	toks, err := Lex(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range toks {
+		if tk.Kind != token.LBRACE && tk.Kind != token.RBRACE {
+			continue
+		}
+		if got := src[tk.Pos.Offset:tk.End]; got != tk.Literal {
+			t.Errorf("%s: source slice %q does not match literal %q", tk.Kind, got, tk.Literal)
+		}
+		if tk.Pos.Line != 1 {
+			t.Errorf("%s: line = %d, want 1", tk.Kind, tk.Pos.Line)
+		}
+	}
+}

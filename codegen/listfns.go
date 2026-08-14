@@ -57,6 +57,31 @@ func (g *gen) sortFn(elem *ir.Type) (string, error) {
 	})
 }
 
+// joinFn interns textjoin's non-Text-element case: render each element the
+// way Reveal would (via scalarFmt/fmtFunc, so it stays byte-for-byte with the
+// interpreter's FormatValue) and join the results with the given separator.
+// The Text-element case skips this and calls strings.Join directly.
+func (g *gen) joinFn(elem *ir.Type) (string, error) {
+	elemGo, err := g.goType(elem)
+	if err != nil {
+		return "", err
+	}
+	elemFmt, err := g.scalarFmt("e", elem)
+	if err != nil {
+		return "", err
+	}
+	g.imp("strings")
+	return g.listFn("join:"+canonicalKey(elem), "TextJoin", func(name string) (string, error) {
+		return fmt.Sprintf(`func %s(xs []%s, sep string) string {
+	parts := make([]string, len(xs))
+	for i, e := range xs {
+		parts[i] = %s
+	}
+	return strings.Join(parts, sep)
+}`, name, elemGo, elemFmt), nil
+	})
+}
+
 // pairFn interns zip or enumerate for one output tuple type. Both build a
 // tuple struct, which is why neither can be a single generic helper.
 func (g *gen) pairFn(kind string, a, b *ir.Type) (string, error) {
