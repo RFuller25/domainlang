@@ -171,7 +171,7 @@ the file is touched.
    statements after the final `Reveal`, and deleting unused Channels. Each
    rewrite is applied one at a time and the program is re-resolved after
    each; a rewrite that would break the program is rolled back.
-2. *The IR report* — everything the 31-pass optimizer will substitute on
+2. *The IR report* — everything the 32-pass optimizer will substitute on
    every run/build of the (possibly rewritten) program, in the same wording
    as `--explain`.
 

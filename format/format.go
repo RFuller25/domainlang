@@ -529,27 +529,18 @@ func isWordOperator(t token.Token) bool {
 }
 
 // splitComment splits a line into its code text and its trailing comment
-// (including the whitespace run before the `#`). A `#` inside a string literal
-// is not a comment, so the scan tracks string state and its escapes — that is
-// what keeps `Using: (c) -> c = "#"` intact.
+// (including the whitespace run before the marker). Finding the marker is
+// token.CommentStart's job — it knows both spellings and knows that neither
+// counts inside a string literal, which is what keeps `Using: (c) -> c = "#"`
+// intact.
 func splitComment(line string) (code, comment string) {
-	inString := false
-	for i := 0; i < len(line); i++ {
-		switch c := line[i]; {
-		case inString && c == '\\':
-			i++ // skip the escaped byte
-		case inString && c == '"':
-			inString = false
-		case inString:
-		case c == '"':
-			inString = true
-		case c == '#':
-			j := i
-			for j > 0 && (line[j-1] == ' ' || line[j-1] == '\t') {
-				j--
-			}
-			return line[:j], line[j:]
-		}
+	i := token.CommentStart(line)
+	if i < 0 {
+		return line, ""
 	}
-	return line, ""
+	j := i
+	for j > 0 && (line[j-1] == ' ' || line[j-1] == '\t') {
+		j--
+	}
+	return line[:j], line[j:]
 }

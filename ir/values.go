@@ -273,12 +273,14 @@ func writeValue(w *valueWriter, v Value) {
 	case *GridValue:
 		writeGrid(w, x)
 	case *GraphValue:
-		// Deliberately the rendering a Map<K, List<(K, Int)>> already produces:
-		// `{a: [(b, 1)], b: []}`. A reader who knows how maps and tuples print
-		// can predict a graph without learning a new shape. Weights are always
-		// shown — hiding them when they happen to all be 1 would make the
-		// output depend on the data, and the two backends have to agree on it
-		// byte for byte.
+		// `{a: [(b, 1)], b: []}` — node keys as a map's, each arc as a
+		// parenthesized pair. Note that this is *not* what a
+		// Map<K, List<(K, Int)>> renders as: a Tuple value is a []Value and
+		// prints in brackets like any list, so the same data held in ordinary
+		// collections comes out `{a: [[b, 1]]}`. The parentheses here are the
+		// arc's own notation. Weights are always shown — hiding them when they
+		// happen to all be 1 would make the output depend on the data, and the
+		// two backends have to agree on it byte for byte.
 		w.writeByte('{')
 		for i, n := range x.Nodes() {
 			if w.over {

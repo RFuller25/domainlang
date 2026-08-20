@@ -18,7 +18,7 @@ quickselect. `--explain` prints every step of the chain.
 
 ## The pass catalog
 
-Thirty passes in four families, plus one that runs after the rest. "Cost" is
+Thirty-one passes in four families, plus one that runs after the rest. "Cost" is
 what the rewrite saves.
 
 ### Algorithm substitutions
@@ -72,33 +72,33 @@ Reorderings whose effect is provably invisible are cancelled or hoisted.
 
 | # | Pattern | Rewrite |
 |---|---------|---------|
-| 11 | `Sort` + `Sort` | keep only the second (the first ordering is dead) |
-| 12 | `Reverse` + `Reverse` | drop both (an involution applied twice) |
-| 13 | `Sort` + `Reverse` | one `Sort` with the opposite order |
-| 14 | `Sort`/`Reverse` + `Sum`/`Count`/`Max`/`Min`/`Product` | drop the reordering (the reduction is order-insensitive) |
-| 15 | `Unique` + `Unique` | one `Unique` (idempotent) |
-| 16 | `Unique` + `Max`/`Min` | drop `Unique` (duplicates cannot move an extremum) |
-| 17 | `Sort` + `Unique` | swap to `Unique` + `Sort` (dedupe first, sort d ≤ n elements) |
+| 12 | `Sort` + `Sort` | keep only the second (the first ordering is dead) |
+| 13 | `Reverse` + `Reverse` | drop both (an involution applied twice) |
+| 14 | `Sort` + `Reverse` | one `Sort` with the opposite order |
+| 15 | `Sort`/`Reverse` + `Sum`/`Count`/`Max`/`Min`/`Product` | drop the reordering (the reduction is order-insensitive) |
+| 16 | `Unique` + `Unique` | one `Unique` (idempotent) |
+| 17 | `Unique` + `Max`/`Min` | drop `Unique` (duplicates cannot move an extremum) |
+| 18 | `Sort` + `Unique` | swap to `Unique` + `Sort` (dedupe first, sort d ≤ n elements) |
 
-Pass 14 deliberately excludes `Count Matching`: its *result* is
+Pass 15 deliberately excludes `Count Matching`: its *result* is
 order-insensitive but its per-element error positions are not.
 
 ### Map/Filter dead code and fusion
 
 | # | Pattern | Rewrite |
 |---|---------|---------|
-| 18 | `Map Each ((x) -> x)` | drop the node (often the residue of pass 28) |
-| 19 | `Map Each` (total lambda) + `Count` | drop the map (mapping preserves length) |
-| 20 | `Map Each` + `Map Each` (first lambda total) | one fused `Map Each` running the composed lambda — one pass, no intermediate list |
-| 21 | `Filter` + `Filter` | one fused `Filter` with the conjoined predicate |
-| 22 | `Filter` + `Count` | `Count Matching` (count without materializing the list) |
-| 23 | `Fold` with `Seed: 0` and `(acc, x) -> acc + x` | `Sum` |
-| 24 | constant predicates (after folding): always-true `Filter` disappears; always-false `Filter` returns `[]` without scanning; always-true `Count Matching` becomes `Count`; always-false becomes `0` | |
-| 25 | `Map Each` + `Sum` / `Product` | `Sum By` / `Product By` — folds each mapped value as it is produced, so no mapped list is built |
-| 26 | `Zip` + `Map Each` | one fused pass that builds each pair as a loop-local; the compiled form has no `[]tuple` in it |
-| 27 | constant predicates on the early-exit primitives: always-true `Take While` (and always-false `Drop While`) disappear, their opposites return `[]` unscanned; `Any`/`All` become a constant or an emptiness test |  |
+| 19 | `Map Each ((x) -> x)` | drop the node (often the residue of pass 29) |
+| 20 | `Map Each` (total lambda) + `Count` | drop the map (mapping preserves length) |
+| 21 | `Map Each` + `Map Each` (first lambda total) | one fused `Map Each` running the composed lambda — one pass, no intermediate list |
+| 22 | `Filter` + `Filter` | one fused `Filter` with the conjoined predicate |
+| 23 | `Filter` + `Count` | `Count Matching` (count without materializing the list) |
+| 24 | `Fold` with `Seed: 0` and `(acc, x) -> acc + x` | `Sum` |
+| 25 | constant predicates (after folding): always-true `Filter` disappears; always-false `Filter` returns `[]` without scanning; always-true `Count Matching` becomes `Count`; always-false becomes `0` | |
+| 26 | `Map Each` + `Sum` / `Product` | `Sum By` / `Product By` — folds each mapped value as it is produced, so no mapped list is built |
+| 27 | `Zip` + `Map Each` | one fused pass that builds each pair as a loop-local; the compiled form has no `[]tuple` in it |
+| 28 | constant predicates on the early-exit primitives: always-true `Take While` (and always-false `Drop While`) disappear, their opposites return `[]` unscanned; `Any`/`All` become a constant or an emptiness test |  |
 
-Passes 25 and 26 are unconditional: neither reorders lambda calls nor
+Passes 26 and 27 are unconditional: neither reorders lambda calls nor
 substitutes one body into another, so every evaluation the naive pipeline
 performed still happens, in the same order, and a lambda that fails still
 fails on the same element.
@@ -107,13 +107,13 @@ fails on the same element.
 
 These rewrite `Using:` lambda bodies in place (interpreter and compiler
 share the lambda, so both see it), and they feed the structural passes —
-folding `1 = 2` to `false` is what arms passes 24 and 27.
+folding `1 = 2` to `false` is what arms passes 25 and 28.
 
 | # | Pattern | Examples |
 |---|---------|----------|
-| 28 | algebraic identities | `x + 0 → x` · `x * 1 → x` · `x / 1 → x` · `x * 0 → 0` · `x - x → 0` · `x = x → true` |
-| 29 | constant folding | `2 + 3 → 5` · `7 / 2 → 3` · `2 < 3 → true` · `"a" = "b" → false` · `-(4) → -4` |
-| 30 | boolean short-circuit | `true and p → p` · `false and p → false` · `p or false → p` |
+| 29 | algebraic identities | `x + 0 → x` · `x * 1 → x` · `x / 1 → x` · `x * 0 → 0` · `x - x → 0` · `x = x → true` |
+| 30 | constant folding | `2 + 3 → 5` · `7 / 2 → 3` · `2 < 3 → true` · `"a" = "b" → false` · `-(4) → -4` |
+| 31 | boolean short-circuit | `true and p → p` · `false and p → false` · `p or false → p` |
 
 ```
 [explain] Domain simplified the Using: lambda of Filter (boolean short-circuit, constant folding). Guaranteed hit.
@@ -136,8 +136,8 @@ are marked, and both backends write through instead of copying.
 
 | # | Pattern | Cost |
 |---|---------|------|
-| 31 | an update rooted at a `Fold`/`Reduce`/`Fold From:` accumulator, with no read of it afterwards | O(size) per write → O(1) |
-| 31 | the same over a `List` accumulator, where no `take`/`drop`/`slice` is applied to it anywhere in the lambda | O(size) per write → O(1) |
+| 32 | an update rooted at a `Fold`/`Reduce`/`Fold From:` accumulator, with no read of it afterwards | O(size) per write → O(1) |
+| 32 | the same over a `List` accumulator, where no `take`/`drop`/`slice` is applied to it anywhere in the lambda | O(size) per write → O(1) |
 
 ```
 [explain] Domain made 1 accumulator update(s) in Fold write in place — the copy was never read. Guaranteed hit.
@@ -181,7 +181,7 @@ storage the clone on entry does not own.
 
 | # | Pattern | Cost |
 |---|---------|------|
-| 31 | a `set` rooted at a `While`/`Repeat` state, or at a constant tuple field of one, with no read of the state afterwards | O(size) per lap → O(1) |
+| 32 | a `set` rooted at a `While`/`Repeat` state, or at a constant tuple field of one, with no read of the state afterwards | O(size) per lap → O(1) |
 
 ```
 [explain] Domain made 1 state update(s) in While write in place — the copy was never read. Guaranteed hit.

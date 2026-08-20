@@ -333,18 +333,30 @@ func diagRange(d *diag.Diagnostic, text string) map[string]any {
 }
 
 // ---------------------------------------------------------------------------
-// hover: the pipeline type flowing through a statement
+// hover: the name under the cursor, or the statement on its line
 // ---------------------------------------------------------------------------
 
+// positionParams is the request shape shared by every position-taking method.
+// The character is read as well as the line: hover and go-to-definition both
+// answer about a *word* first and fall back to the line it is on.
+type positionParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Position struct {
+		Line      int `json:"line"`
+		Character int `json:"character"`
+	} `json:"position"`
+}
+
+// byteColumn converts the protocol's 0-based UTF-16 offset into the 0-based
+// byte offset the analysis works in.
+func byteColumn(text string, line, character int) int {
+	return utf16OffsetToBytes(lineText(text, line), character)
+}
+
 func (s *Server) hover(params json.RawMessage) any {
-	var p struct {
-		TextDocument struct {
-			URI string `json:"uri"`
-		} `json:"textDocument"`
-		Position struct {
-			Line int `json:"line"`
-		} `json:"position"`
-	}
+	var p positionParams
 	if json.Unmarshal(params, &p) != nil {
 		return nil
 	}
@@ -352,7 +364,14 @@ func (s *Server) hover(params json.RawMessage) any {
 	if !ok {
 		return nil
 	}
-	ins, found := doc.analyze().InspectLine(p.Position.Line + 1)
+	a := doc.analyze()
+	line := p.Position.Line + 1
+	// A name under the cursor is a more specific question than "what is this
+	// line", and it is the one the reader asked: they pointed at a word.
+	if sym, found := a.SymbolAt(line, byteColumn(doc.text, line, p.Position.Character)); found {
+		return markupHover(sym.Describe())
+	}
+	ins, found := a.InspectLine(line)
 	if !found {
 		return nil
 	}
@@ -429,14 +448,7 @@ func statementOnLine(prog *ast.Program, line int) *ast.Statement {
 // ---------------------------------------------------------------------------
 
 func (s *Server) definition(params json.RawMessage) any {
-	var p struct {
-		TextDocument struct {
-			URI string `json:"uri"`
-		} `json:"textDocument"`
-		Position struct {
-			Line int `json:"line"`
-		} `json:"position"`
-	}
+	var p positionParams
 	if json.Unmarshal(params, &p) != nil {
 		return nil
 	}
@@ -444,7 +456,8 @@ func (s *Server) definition(params json.RawMessage) any {
 	if !ok {
 		return nil
 	}
-	loc, found := doc.analyze().DefinitionAt(p.Position.Line + 1)
+	line := p.Position.Line + 1
+	loc, found := doc.analyze().DefinitionAtPos(line, byteColumn(doc.text, line, p.Position.Character))
 	if !found || loc.Origin == "prelude" {
 		// Prelude Shikigami live in embedded source, not a file: there is
 		// nowhere on disk to send the editor.

@@ -13,7 +13,7 @@
       packages = forAllSystems (system: pkgs: rec {
         domain = pkgs.buildGoModule {
           pname = "domain";
-          version = "0.5.0";
+          version = "0.3.0";
           src = self;
 
           # Vendor hash covers charm.land/bubbletea/v2, charm.land/bubbles/v2,
@@ -66,7 +66,7 @@
         #   programs.neovim.plugins = [ domain.packages.${system}.domain-nvim ];
         domain-nvim = pkgs.vimUtils.buildVimPlugin {
           pname = "domain-nvim";
-          version = "0.5.0";
+          version = "0.3.0";
           src = ./editors/nvim;
         };
 

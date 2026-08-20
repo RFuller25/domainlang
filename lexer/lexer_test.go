@@ -1,6 +1,7 @@
 package lexer
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,6 +87,87 @@ func TestCommentsAndBlankLinesSkipped(t *testing.T) {
 	// First meaningful token must be the IDENT "Reveal".
 	if toks[0].Kind != token.IDENT || toks[0].Literal != "Reveal" {
 		t.Fatalf("expected first token Reveal, got %s", toks[0])
+	}
+}
+
+// `technically` is the other comment marker, and it has to behave exactly as
+// `#` does everywhere the lexer looks at one: as a whole line, as a trailing
+// remark, and as something that never affects the block structure around it.
+func TestTechnicallyStartsAComment(t *testing.T) {
+	src := "technically a note\n\nReveal: stdout\nTechnically, trailing\n"
+	toks, err := Lex(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks[0].Kind != token.IDENT || toks[0].Literal != "Reveal" {
+		t.Fatalf("expected first token Reveal, got %s", toks[0])
+	}
+	for _, tk := range toks {
+		if tk.Literal == "note" || tk.Literal == "trailing" {
+			t.Fatalf("comment content was tokenized instead of skipped: %v", tk)
+		}
+	}
+}
+
+func TestTechnicallyAfterCodeOnSameLine(t *testing.T) {
+	toks, err := Lex("Reveal: stdout technically it prints\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []token.Kind{token.IDENT, token.COLON, token.IDENT, token.NEWLINE, token.EOF}
+	if got := kinds(toks); !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// The word is only a marker where a word can start and none continues past it,
+// so a name that merely contains it is still a name.
+func TestTechnicallyInsideANameIsNotAComment(t *testing.T) {
+	toks, err := Lex("Consider technicallyOK As 1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, tk := range toks {
+		found = found || tk.Literal == "technicallyOK"
+	}
+	if !found {
+		t.Fatalf("technicallyOK was swallowed as a comment: %v", kinds(toks))
+	}
+}
+
+// Inside a string literal it is text, exactly as `#` is.
+func TestTechnicallyInsideAStringIsNotAComment(t *testing.T) {
+	toks, err := Lex(`Reveal: "technically a string"` + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range toks {
+		if tk.Kind == token.STRING && tk.Literal == "technically a string" {
+			return
+		}
+	}
+	t.Fatalf("the string literal did not survive: %v", toks)
+}
+
+// A comment-only line carries no layout, whichever marker opens it.
+func TestTechnicallyOnlyLinesDoNotAffectIndentation(t *testing.T) {
+	src := "A:\n    B: x\n\n    technically still inside the block\n    C: y\nD: z\n"
+	toks, err := Lex(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indents, dedents := 0, 0
+	for _, tk := range toks {
+		switch tk.Kind {
+		case token.INDENT:
+			indents++
+		case token.DEDENT:
+			dedents++
+		}
+	}
+	if indents != 1 || dedents != 1 {
+		t.Fatalf("blank/comment lines should not affect indentation: got %d indents, %d dedents", indents, dedents)
 	}
 }
 

@@ -59,6 +59,46 @@ func TestRepeatedWordsStopAtTheSeparator(t *testing.T) {
 	}
 }
 
+// A space separator, which is the shape AoC 2023 day 6 arrives in and the one
+// worked case in the reference that no test reached. It is worth its own case
+// because an int element and a space separator are the pair most likely to run
+// together: the element pattern has to stop at the separator here too, and the
+// template matches the single spaces literally — a run of them is what
+// `Split Fields` is for, and match-pattern.md says so.
+func TestRepeatedIntsWithASpaceSeparator(t *testing.T) {
+	tmpl, err := ParseTemplate(`{label:word}: {ns:int+ sep=" "}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := ir.Record(
+		ir.Field{Name: "label", Type: ir.Text()},
+		ir.Field{Name: "ns", Type: ir.List(ir.Int())},
+	)
+	if got := tmpl.OutputType(); !got.Equal(want) {
+		t.Errorf("output type: got %s, want %s", got, want)
+	}
+	re, err := tmpl.CompileRegex()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	m := re.FindStringSubmatch("Time: 7 15 30")
+	if m == nil {
+		t.Fatal("the template did not match `Time: 7 15 30`")
+	}
+	if m[1] != "Time" {
+		t.Errorf("label: got %q, want %q", m[1], "Time")
+	}
+	got := tmpl.Holes[1].Split(m[2])
+	if len(got) != 3 || got[0] != "7" || got[1] != "15" || got[2] != "30" {
+		t.Errorf("split gave %v, want [7 15 30]", got)
+	}
+	// The separator is matched literally, so the column-aligned spelling of the
+	// same line is not this template's job.
+	if re.FindStringSubmatch("Time:      7  15   30") != nil {
+		t.Error("padded columns matched a literal single-space separator")
+	}
+}
+
 // A positional template's homogeneity has to count repetition: a repeated hole
 // and a plain one of the same scalar type are List<Int> and Int, which are
 // different types and so a Tuple rather than a List.

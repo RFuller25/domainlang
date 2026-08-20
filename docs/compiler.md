@@ -213,18 +213,22 @@ differences remain:
    plain `./binary` invocation.
 2. **Error wording.** Runtime failures abort with exit 1 and a
    `domain: ...` message in both backends, but the exact message text can
-   differ (the interpreter's errors carry source positions; the binary's
-   don't). Notably, a `Match Pattern` int capture that overflows int64 is
-   reported by the interpreter as an invalid capture and by the binary as a
-   non-matching line.
+   differ: the interpreter's errors carry the source position of the stage
+   that failed and name the primitive, and a compiled binary — which no longer
+   has the source — carries neither. The *diagnosis* is the same one: an int
+   capture too large for int64 reports `captured "…" is not a valid integer`
+   from both backends, in every `Match Pattern` mode, and only the `3:1:` in
+   front and the `(in Match Pattern)` behind it are the interpreter's.
 
 ## Limits
 
 - There is no program the interpreter runs and this backend refuses. The two
   that used to be — a `:=` from inside a pipeline body, and two Record types
-  declaring the same fields in different orders — are closed; the survey that
-  found them, and what it ruled out, is
-  this page's guarantees section.
+  declaring the same fields in different orders — are closed. What keeps that
+  list empty is the oracle testing
+  [above](#correctness-the-interpreter-is-the-oracle): a program the two
+  backends disagree about fails the suite, whether it disagrees by refusing to
+  compile or by printing something else.
 - `While` / `Iterate Until Fixed Point` / `Unfold` stop after **1,000,000,000**
   iterations in a compiled binary, matching the interpreter:
   `dmMaxLoopIterations` mirrors `prims.maxLoopIterations`, and

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"domain/ast"
@@ -360,7 +361,7 @@ func indentWidthsAbove(src string, line int) []int {
 			// toward this line's width.
 		case counting && c == ' ':
 			width++
-		case c == '#' && blank:
+		case blank && token.CommentMarker(src, i) > 0:
 			inComment = true
 			counting = false
 		case c != '\r':
@@ -610,6 +611,13 @@ func keywordSpan(d *Diagnostic) (start, end int, ok bool) {
 }
 
 func enrichUnknownOp(d *Diagnostic, prog *ast.Program, src, raw, keyword, known string) {
+	// prims wrote the phrase with %q and the pattern above captured what that
+	// produced, escapes and all. Quoting it a second time here doubled every
+	// backslash, so `Splitt Each by ","` was reported back to the reader as
+	// `Splitt Each by \\\",\\\"`. Undo the first quoting before redoing it.
+	if unquoted, err := strconv.Unquote(`"` + raw + `"`); err == nil {
+		raw = unquoted
+	}
 	d.Msg = fmt.Sprintf("unknown operation %q under %q", raw, keyword)
 	if known != "" {
 		d.Notes = append(d.Notes, fmt.Sprintf("operations available under %q: %s", keyword, known))

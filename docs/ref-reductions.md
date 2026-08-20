@@ -539,6 +539,21 @@ Reveal: stdout
 
 ### Find Cycle — `List<T> -> (Int, Int)` (T keyable)
 
+```domain
+Cursed Technique: Iterate 200
+    Using: (s) -> step(s)
+Maximum Technique: Find Cycle      # -> (first index of the repeat, period)
+```
+
+Where a trajectory first repeats, and its period. `Iterate` produces the
+trajectory precisely so a program can ask "have I been here before?", but the
+asking had no primitive — `Find Index` needs a predicate over one element, not
+a seen-set over the prefix. The answer is what turns "run this a billion
+times" into arithmetic.
+
+A trajectory with no repeat gives `(-1, 0)` — the sentinel `Find Index`
+already uses — rather than an error, since that is a legitimate result.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Apply
@@ -573,22 +588,6 @@ Reveal: stdout
 ```output
 [-1, 0]
 ```
-
-
-```domain
-Cursed Technique: Iterate 200
-    Using: (s) -> step(s)
-Maximum Technique: Find Cycle      # -> (first index of the repeat, period)
-```
-
-Where a trajectory first repeats, and its period. `Iterate` produces the
-trajectory precisely so a program can ask "have I been here before?", but the
-asking had no primitive — `Find Index` needs a predicate over one element, not
-a seen-set over the prefix. The answer is what turns "run this a billion
-times" into arithmetic.
-
-A trajectory with no repeat gives `(-1, 0)` — the sentinel `Find Index`
-already uses — rather than an error, since that is a legitimate result.
 
 ### Sum By / Product By — `List<T> × (T -> Int) -> Int`
 
@@ -639,6 +638,13 @@ ab
 
 ### Join — `List<Text> -> Text`
 
+```domain
+Maximum Technique: Join
+Maximum Technique: Join with ", "
+```
+
+Concatenates the elements, with an optional separator.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
@@ -670,15 +676,14 @@ three
 one, two, three
 ```
 
+### Group By — `List<T> × (T -> K) -> Map<K, List<T>>` (K keyable)
 
 ```domain
-Maximum Technique: Join
-Maximum Technique: Join with ", "
+Maximum Technique: Group By
+    Using: (n) -> n / 3
 ```
 
-Concatenates the elements, with an optional separator.
-
-### Group By — `List<T> × (T -> K) -> Map<K, List<T>>` (K keyable)
+Buckets preserve element order; keys appear in first-seen order.
 
 ```domain run
 Cursed Energy: stdin
@@ -699,8 +704,8 @@ banana
 Every element is kept, which is the difference from `Count By` — reach for
 this when the members matter and for `Count By` when only the tally does.
 
-The key may be any keyable expression, including a tuple — which is how a
-grouping on two fields at once is spelled:
+The key is whatever the lambda returns, not a field of the element — here the
+elements are grouped by a property none of them carries:
 
 ```domain run
 Cursed Energy: stdin
@@ -718,15 +723,34 @@ xyz
 {2: [ab, cd], 3: [xyz]}
 ```
 
+Any keyable expression will do, and a tuple is keyable — which is how a
+grouping on two things at once is spelled, with no nested `Group By`:
 
-```domain
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
 Maximum Technique: Group By
-    Using: (n) -> n / 3
+    Using: (w) -> tuple(length(w), charat(w, 0))
+Reveal: stdout
+```
+```input
+ax
+ay
+bz
+abc
+```
+```output
+{[2, a]: [ax, ay], [2, b]: [bz], [3, a]: [abc]}
 ```
 
-Buckets preserve element order; keys appear in first-seen order.
-
 ### Count By — `List<T> × (T -> K) -> Map<K, Int>` (K keyable)
+
+```domain
+Maximum Technique: Count By
+    Using: (n) -> n / 10
+```
+
+Frequency map of the lambda's key, keys in first-seen order.
 
 ```domain run
 Cursed Energy: stdin
@@ -770,15 +794,25 @@ banana
 the list builtins do not read tuples — the index has to be a literal so the
 result type is knowable.)
 
+### Min By / Max By — `List<T> × (T -> K) -> T` (K ordered)
 
 ```domain
-Maximum Technique: Count By
-    Using: (n) -> n / 10
+Maximum Technique: Max By
+    Using: (r) -> r.n
 ```
 
-Frequency map of the lambda's key, keys in first-seen order.
+The element whose key is smallest/largest (the first wins ties; the empty
+list is a runtime error).
 
-### Min By / Max By — `List<T> × (T -> K) -> T` (K ordered)
+`K` is any **ordered** type — Int, Float, Text, or a Tuple of them — exactly
+as [`Sort By`](ref-expansions.md#sort-by--listt--t---k---listt-k-ordered)'s is, and over the
+same ordering: whatever `Min By` picks, a `Sort By` on the same key puts
+first. A tuple key tiebreaks, so "the earliest of the shortest" is one pass:
+
+```domain
+Maximum Technique: Min By
+    Using: (w) -> tuple(length(w), w)
+```
 
 ```domain run
 Cursed Energy: stdin
@@ -817,25 +851,6 @@ cat
 ```
 ```output
 fig
-```
-
-
-```domain
-Maximum Technique: Max By
-    Using: (r) -> r.n
-```
-
-The element whose key is smallest/largest (the first wins ties; the empty
-list is a runtime error).
-
-`K` is any **ordered** type — Int, Float, Text, or a Tuple of them — exactly
-as [`Sort By`](ref-expansions.md#sort-by--listt--t---k---listt-k-ordered)'s is, and over the
-same ordering: whatever `Min By` picks, a `Sort By` on the same key puts
-first. A tuple key tiebreaks, so "the earliest of the shortest" is one pass:
-
-```domain
-Maximum Technique: Min By
-    Using: (w) -> tuple(length(w), w)
 ```
 
 ### Intersect / Union / Difference — `List<List<T>> -> Set<T>` (T keyable)
@@ -884,6 +899,19 @@ in no later group. The empty input produces the empty set.
 
 ### Merge Ranges — `List<(Int, Int)> -> List<(Int, Int)>`
 
+```domain
+Maximum Technique: Merge Ranges
+```
+
+Accepts `List<(Int, Int)>`, `List<List<Int>>` (two ints per row — the shape
+a positional `"{int}-{int}"` Match Pattern produces), or a list of records
+with exactly two Int fields (the **first declared field** is the low end).
+Emits the same shape back: sorted by low end, with overlapping **or
+adjacent** ranges merged (`[1,4]` and `[5,7]` coalesce to `[1,7]` —
+inclusive integer ranges). An inverted range (`lo > hi`) is a runtime error.
+For `Contains`/`Overlaps` predicates, use plain comparisons in a lambda —
+see the interval idioms in [expressions.md](expressions.md).
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"
@@ -927,20 +955,6 @@ Reveal: stdout
 ```output
 3
 ```
-
-
-```domain
-Maximum Technique: Merge Ranges
-```
-
-Accepts `List<(Int, Int)>`, `List<List<Int>>` (two ints per row — the shape
-a positional `"{int}-{int}"` Match Pattern produces), or a list of records
-with exactly two Int fields (the **first declared field** is the low end).
-Emits the same shape back: sorted by low end, with overlapping **or
-adjacent** ranges merged (`[1,4]` and `[5,7]` coalesce to `[1,7]` —
-inclusive integer ranges). An inverted range (`lo > hi`) is a runtime error.
-For `Contains`/`Overlaps` predicates, use plain comparisons in a lambda —
-see the interval idioms in [expressions.md](expressions.md).
 
 ### Combine — channel consumer, `-> U`
 
@@ -1079,6 +1093,29 @@ bd
 
 ### Zip — channel consumer, `-> List<(A, B)>`
 
+```domain
+Maximum Technique: Zip
+    From: xs, ys
+```
+
+Pairs two channel lists element-wise, truncated to the shorter one. Over
+two Int lists the pairs are points (`prow`/`pcol` read them). The main
+pipeline's current value is ignored, like Combine.
+
+**Zip With.** Adding a two-parameter `Using:` lambda combines the channels
+directly instead of handing back tuples for a following `Map Each` to take
+apart — one pass, and no intermediate tuple list:
+
+```domain
+Maximum Technique: Zip
+    From: xs, ys
+    Using: (x, y) -> x * y      # -> List<Int>, not List<(Int, Int)>
+```
+
+The lambda must take one parameter per channel. Writing the naive `Zip` +
+`Map Each` pair is fine too: the optimizer fuses it into the same single
+pass.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by "\n\n"
@@ -1138,29 +1175,5 @@ z
 ```output
 2
 ```
-
-
-```domain
-Maximum Technique: Zip
-    From: xs, ys
-```
-
-Pairs two channel lists element-wise, truncated to the shorter one. Over
-two Int lists the pairs are points (`prow`/`pcol` read them). The main
-pipeline's current value is ignored, like Combine.
-
-**Zip With.** Adding a two-parameter `Using:` lambda combines the channels
-directly instead of handing back tuples for a following `Map Each` to take
-apart — one pass, and no intermediate tuple list:
-
-```domain
-Maximum Technique: Zip
-    From: xs, ys
-    Using: (x, y) -> x * y      # -> List<Int>, not List<(Int, Int)>
-```
-
-The lambda must take one parameter per channel. Writing the naive `Zip` +
-`Map Each` pair is fine too: the optimizer fuses it into the same single
-pass.
 
 ---

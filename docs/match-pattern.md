@@ -228,9 +228,9 @@ Silently skipping it would turn a corrupt input into a quietly short answer.
 
 ### `Mode: Scan` — the template as a fragment
 
-Every other mode reads the template as a description of a **whole line**, so
-input the template does not describe exhaustively has no spelling. `Scan` reads
-it as a description of a **fragment** and takes every occurrence:
+Every other mode reads the template as a description of a **whole line**, which
+leaves no way to write down a line the template describes only part of. `Scan`
+reads it as a description of a **fragment** instead, and takes every occurrence:
 
 ```domain
 Cursed Technique: Match Pattern
@@ -422,9 +422,12 @@ the honest tool, and `Match Pattern` is meant to stay readable at a glance:
 - **Nested groups.** One level only — a group holds literals and holes, never
   another group.
 - Recursive patterns.
-- Custom hole types beyond `{int}`, `{word}`, `{text}`.
-- Whitespace-flexible matching — templates match literally, so pre-split with
-  `Split Fields` or trim first.
+- **Hole types of your own.** The six above (`int`, `hex`, `digits`, `char`,
+  `word`, `text`) are the whole set, and a template cannot introduce another —
+  a hole naming an unknown type is refused rather than treated as a literal.
+- **Implicit whitespace flexibility.** A literal space matches exactly one
+  space, and nothing is trimmed for you; a gap that varies has to be written as
+  one, with `{~}`.
 
 For input that needs more than this, `Extract Integers` mines every integer out
 of a messy line without a template at all, and `Split Fields` handles

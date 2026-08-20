@@ -249,6 +249,13 @@ func TestRunnableProgramCountsAreCurrent(t *testing.T) {
 	for _, f := range []string{"README.md", "examples/README.md"} {
 		check(t, f, repoFile(t, f), "programs", count("examples"))
 	}
+	// The site's own banner counts them in words too — "nineteen programs,
+	// drawn back one at a time" was on the Examples gallery for as long as
+	// there had been twenty-one, two rows above a sidebar entry reading "21
+	// annotated programs" and a paragraph reading "21 small, self-contained
+	// programs". Nothing read index.html for number words.
+	check(t, "docs/index.html", docFile(t, "index.html"), "programs", count("examples"))
+	check(t, "docs/index.html", docFile(t, "index.html"), "classics", count("challenges"))
 	check(t, "README.md", repoFile(t, "README.md"), "challenges", count("challenges"))
 	check(t, "challenges/README.md", repoFile(t, "challenges/README.md"), "challenges", count("challenges"))
 }
@@ -524,6 +531,59 @@ func TestCatalogMatchesTheReference(t *testing.T) {
 			}
 			t.Errorf("catalog %q signature %q is not in its reference heading(s) %q",
 				id, d.Signature, strings.Join(sigs, " | "))
+		}
+	}
+}
+
+// The AoC toolbox page is a promise in the other direction: it names, for each
+// classic helper a veteran carries, the Domain thing that replaces it. Every
+// other check asks whether the language's surface is documented; this one asks
+// whether what the page sends a reader after actually exists. A renamed
+// builtin or a retired prelude Shikigami leaves the mapping pointing at
+// nothing, and the page reads exactly as convincingly either way.
+func TestTheToolboxPointsAtThingsThatExist(t *testing.T) {
+	page := docFile(t, "aoc-toolbox.md")
+
+	builtins := map[string]bool{}
+	for _, b := range typecheck.Builtins {
+		builtins[b] = true
+	}
+	// The page's own legend: "expr `name(...)`" is an expression builtin.
+	exprRe := regexp.MustCompile("expr `([a-z][a-z0-9_]*)\\(")
+	found := exprRe.FindAllStringSubmatch(page, -1)
+	if len(found) < 20 {
+		t.Fatalf("found %d expr references in aoc-toolbox.md — the legend or the pattern has changed", len(found))
+	}
+	seen := map[string]bool{}
+	for _, m := range found {
+		if seen[m[1]] {
+			continue
+		}
+		seen[m[1]] = true
+		if !builtins[m[1]] {
+			t.Errorf("aoc-toolbox.md sends a reader to the builtin %s(), which does not exist", m[1])
+		}
+	}
+
+	// "prelude `Shikigami: Name`" has to name one the prelude defines.
+	prelude := map[string]bool{}
+	for _, m := range regexp.MustCompile(`Shikigami "([^"]+)"`).
+		FindAllStringSubmatch(repoFile(t, filepath.Join("prims", "prelude.go")), -1) {
+		prelude[m[1]] = true
+	}
+	if len(prelude) == 0 {
+		t.Fatal("found no Shikigami in the prelude — the extraction has stopped matching")
+	}
+	// The page writes it both ways: "prelude `Shikigami: Lines`" and, where the
+	// keyword is already in the sentence, "prelude `Digit Grid`".
+	preludeRe := regexp.MustCompile("prelude `(?:Shikigami: )?([A-Za-z][A-Za-z ]*?)`")
+	hits := preludeRe.FindAllStringSubmatch(page, -1)
+	if len(hits) == 0 {
+		t.Error("aoc-toolbox.md no longer points at the prelude at all — the legend or the pattern has changed")
+	}
+	for _, m := range hits {
+		if !prelude[strings.TrimSpace(m[1])] {
+			t.Errorf("aoc-toolbox.md sends a reader to the prelude Shikigami %q, which the prelude does not define", m[1])
 		}
 	}
 }

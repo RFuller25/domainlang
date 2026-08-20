@@ -16,7 +16,7 @@ across both: parsing (`Match Pattern`), dense and sparse grids,
 pairs/combinations, sets/maps, higher-order lambda operations (with a `Using:`
 that may be an [indented pipeline](docs/expressions.md) rather than an
 expression), named dataflow `Channel`s, loops, measured arguments,
-user-defined `Shikigami` + a prelude, and a **31-pass optimizer** (algorithm
+user-defined `Shikigami` + a prelude, and a **32-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
 `domain build` compiles that same IR into a standalone, aggressively typed Go
 binary — every primitive and all 176 expression builtins have a codegen case,
@@ -85,13 +85,17 @@ The documentation site includes a browser playground compiled to WebAssembly.
 
 There is also a terminal editor (`domain expansion: development` — types at the
 end of every line and errors in the gutter as you type, completion, a monitored
-run you can watch and interrupt, and the step-through visualizer over the
-buffer you are editing; see
+run you can watch and interrupt, the step-through visualizer over the buffer
+you are editing, and an Advent of Code day fetched onto the screen beside it:
+`alt+c` pulls the puzzle, your input and the worked example, and `alt+x` checks
+what the last run answered; see
 [docs/development.md](docs/development.md)), an interactive REPL (`domain repl`
 — build a pipeline line by line, seeing the value and type after each
 statement) and a language server (`domain lsp` — live diagnostics, inlay type
-hints after every statement, hover types, go-to-Shikigami (across imported
-libraries), quick fixes in any LSP editor); see
+hints after every statement, hover (over a name: its type and the line that
+declares it; over a statement: the primitive's documentation),
+go-to-definition, following a name to its declaration and a Shikigami into an
+imported library, quick fixes in any LSP editor); see
 [docs/tooling.md](docs/tooling.md).
 
 Choosing an input file in the editor reads its shape and offers the opening
@@ -314,7 +318,7 @@ Every keyword below is optional except where the row says otherwise — see
   `solve2x2`, `manhattan`/`neighbors4`/`rotr`, `occurrences`/`repeats`).
   The full map from the canonical Go helper library lives in
   [`docs/aoc-toolbox.md`](docs/aoc-toolbox.md).
-- **A 31-pass optimizer** that fires even through Shikigami abstraction (below).
+- **A 32-pass optimizer** that fires even through Shikigami abstraction (below).
 
 Worked anchor programs live in [`testdata/`](testdata): AoC 2022 Days 1/4/5/8
 and AoC 2020 Day 1 (parts 1 & 2).
@@ -381,7 +385,7 @@ ir/         typed pipeline graph, value/type model, runtime collections
 typecheck/  static expression typer (lambda output-type inference)
 eval/       dynamic expression evaluator (lambda bodies, runtime field access)
 prims/      primitive vocabulary + resolver/typechecker + Shikigami + prelude
-optimizer/  31 rewrite passes: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
+optimizer/  32 rewrite passes: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
 interp/     tree-walking evaluator
 codegen/    Go compiler backend: optimized IR → typed Go source → `go build`
 cmd/domain/ CLI (bare file → interpret, extra args → compile; run/build, --help)
@@ -445,7 +449,10 @@ self-contained binaries.
   except inside a foreign block, which is another language's source and is
   copied byte for byte, tabs included.
 - `=` is equality; `and`/`or` are the boolean connectives (no assignment exists).
-- `#` begins a comment to end of line.
+- `#` begins a comment to end of line — and so does the word **`technically`**,
+  which is a comment marker because the asides in a language written in
+  sentences are written in sentences too (`Reveal: stdout technically it
+  prints`). It is a word, so `technicallyOK` is still a name.
 - Double-quoted strings interpret standard escapes (`\n \t \\ \"`).
 - One pipeline statement per line; indented children form sub-blocks.
 

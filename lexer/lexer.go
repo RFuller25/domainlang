@@ -132,10 +132,11 @@ func (l *lexer) run() ([]token.Token, error) {
 			l.lineTok = len(l.toks)
 		case c == ' ' || c == '\t' || c == '\r':
 			l.advance()
-		case c == '#':
-			for l.pos < len(l.src) && l.at() != '\n' {
-				l.advance()
-			}
+		case token.CommentMarker(l.src, l.pos) > 0:
+			// Both markers run to end of line. The word form is tested before
+			// isLetter below, because `technically` is a word and would
+			// otherwise lex as the identifier it looks like.
+			l.skipComment()
 		case isLetter(c):
 			l.lexIdent()
 		case isDigit(c):
@@ -201,10 +202,9 @@ func (l *lexer) lineStart() error {
 	case '\r':
 		l.advance()
 		return nil
-	case '#': // comment-only line
-		for l.pos < len(l.src) && l.at() != '\n' {
-			l.advance()
-		}
+	}
+	if token.CommentMarker(l.src, l.pos) > 0 { // comment-only line
+		l.skipComment()
 		return nil
 	}
 
@@ -225,6 +225,16 @@ func (l *lexer) lineStart() error {
 	}
 	l.atLineStart = false
 	return nil
+}
+
+// skipComment consumes a comment — either marker — up to but not including
+// the newline that ends it. Comments produce no tokens: the lexer drops them,
+// and the tools that want them back (the formatter, the highlighters) find
+// them in the gaps between tokens with token.CommentStart.
+func (l *lexer) skipComment() {
+	for l.pos < len(l.src) && l.at() != '\n' {
+		l.advance()
+	}
 }
 
 func (l *lexer) lexIdent() {

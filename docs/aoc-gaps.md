@@ -3,9 +3,19 @@
 [aoc-toolbox.md](aoc-toolbox.md) maps the classic helper library onto Domain and
 finds an entry for nearly every row. This page is the other half of that
 audit: the survey went looking for AoC problems Domain **cannot** express, or
-can only express at a speed that makes the answer unreachable, and found five
-of them — plus a tail of sharp edges that cost a workaround rather than a
-solve.
+can only express at a speed that makes the answer unreachable. It found five,
+plus a tail of sharp edges that cost a workaround rather than a solve —
+fourteen items in all.
+
+**Twelve of the fourteen are now closed.** What remains is gap 5, no recursive
+data, and gap 14, `set` on a `List` accumulator still costing O(size). Read the
+summary for where each stands and
+[where to start](#where-to-start) for the order the two left are worth taking
+in.
+
+Every closed item keeps the report that justified it, measurement and all,
+rather than being deleted: the numbers are why the work was done, and they are
+the baseline anything claiming to have closed the next one is measured against.
 
 Everything below was reproduced against the interpreter and, where the claim
 is about speed, against a compiled binary too. Each item says what it blocks,
@@ -459,9 +469,9 @@ Cursed Technique: Match Pattern
     Using: "{id:word}: {vals:int+ sep=\",\"}"
 ```
 
-**Fully closed as of phase 6.** What phase 5 left — a repeated *hole* is not a
-repeated *group*, and a `{text}` sponge is not an optional one — is what
-phase 6 added:
+**Fully closed.** Repetition alone left two things out — a repeated *hole* is
+not a repeated *group*, and a `{text}` sponge is not an optional one — and
+template groups closed both:
 
 ```domain ignore
 Using: "{name:word} ({w:int})[? -> {kids:word+ sep=\", \"}]"
@@ -472,10 +482,9 @@ AoC 2017 D7 and 2023 D2, one template each. An absent group leaves its holes at
 their type's zero, and `{?name}` inside it adds a `Bool` for when the zero and
 a captured zero have to be told apart.
 
-Alternation followed in
-phase 7 as `Case:` — several templates
-on one stage, first match wins, a `kind` field naming it — together with
-`Mode: Scan` for a template that describes a *fragment* rather than a line.
+Alternation followed as `Case:` — several templates on one stage, first match
+wins, a `kind` field naming it — together with `Mode: Scan` for a template that
+describes a *fragment* rather than a line.
 
 **Still absent, on purpose:** nested groups (one level only), and alternation
 *inside* a template, which would need a sum type for its result to land in.

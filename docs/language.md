@@ -12,9 +12,44 @@
 - **One pipeline statement per line**, `Keyword: operation phrase` — or just
   `operation phrase`: the themed keyword is optional and the compiler infers
   it (see [Optional keywords](#optional-keywords)).
-- `#` starts a comment running to end of line.
+- **A comment starts at `#`, or at the word `technically`**, and runs to end
+  of line ([below](#comments)).
 - Double-quoted strings interpret the standard escapes `\n`, `\t`, `\\`, `\"`.
 - Blank lines are insignificant.
+
+## Comments
+
+A comment runs to the end of the line and starts either of two ways:
+
+```domain
+# the classic
+Cursed Energy: input.txt   # a trailing note
+
+technically the input is one number per line
+Shikigami: Ints            technically that splits the lines and converts them
+Maximum Technique: Sum
+Reveal: stdout
+```
+
+`technically` is a comment marker because the language is written in sentences
+and its asides are written that way too. "Technically the grid is ragged" is a
+remark a reader was going to make anyway; spelling it as a comment costs no
+punctuation, and the line still reads as the sentence it is.
+
+It is a **word**, and it is only a marker where a word can start and where no
+word continues past it:
+
+| written | read as |
+|---|---|
+| `technically fine` | a comment |
+| `Technically, fine` | a comment — case does not matter |
+| `technicallyOK` | an identifier |
+| `technically_true` | an identifier |
+| `Reveal: "technically"` | a string, exactly as `"#"` is |
+
+Neither marker has a block form, and neither means anything inside a foreign
+block — that body is another language's source, with another language's
+comments.
 
 ## The two layers
 
@@ -30,7 +65,7 @@
 
 The pipeline is statically typed **before** anything runs: resolution matches
 each statement to a primitive, checks the incoming type, and computes the
-outgoing type (lambda result types are inferred by the typechecker). A
+outgoing type (lambda result types are inferred by the type checker). A
 mistyped pipeline fails with a positioned error, never mid-run.
 
 ## Keyword taxonomy

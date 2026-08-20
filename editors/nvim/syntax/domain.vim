@@ -4,8 +4,13 @@ if exists("b:current_syntax")
   finish
 endif
 
-" Comments run from # to end of line.
-syn match domainComment "#.*$" contains=@Spell
+" Comments run from their marker to end of line. There are two: `#`, and the
+" word `technically` — held to word boundaries so `technicallyOK` stays an
+" identifier, and matched without regard to case (\c) so a sentence may open a
+" line with it. A marker inside a string is not a comment: the string region
+" below starts earlier on such a line and wins, and contains only its own
+" escapes and holes.
+syn match domainComment /\%(#\|\c\<technically\>\).*$/ contains=@Spell
 
 " Strings, with the standard escapes and Match Pattern typed holes.
 syn region domainString start=/"/ skip=/\\./ end=/"/ contains=domainEscape,domainHole
@@ -31,15 +36,52 @@ syn region domainForeign matchgroup=domainForeignHead
       \ keepend
 
 " Indented named arguments: Using:, Mode:, Seed:, From:, k: ...
-syn match domainArgKey /^\s\+\zs[A-Za-z_][A-Za-z0-9_]*\ze:/
+" (`\%(=\)\@!` keeps `n := 1` out: that colon opens a walrus, not a label.)
+syn match domainArgKey /^\s\+\zs[A-Za-z_][A-Za-z0-9_]*\ze:\%(=\)\@!/
 
 " Local bindings: `Consider NAME As …` / `Consider NAME Of …`. The keywords are
 " matched case-insensitively (\c), like the parser does, and the bound name is
 " highlighted as the definition it is. Only this exact shape is a binding, so a
 " phrase that merely starts with the word keeps its ordinary colouring.
+"
+" The name and the preposition are found by looking *behind* rather than by
+" anchoring to `^` and stepping forward with \zs. They have to be: vim resumes
+" matching where the previous item stopped, so a second `^…` rule for the same
+" line is never reached once the first has claimed the start of it. The
+" bounded form (\@40<=) keeps the backward scan to the width these lines
+" actually have.
 syn match domainBind /^\s*\c\<consider\>\ze\s\+[A-Za-z_][A-Za-z0-9_]*\s\+\c\%(as\|of\)\>/
-syn match domainBindName /^\s*\c\<consider\>\s\+\zs[A-Za-z_][A-Za-z0-9_]*\ze\s\+\c\%(as\|of\)\>/
-syn match domainBindPrep /^\s*\c\<consider\>\s\+[A-Za-z_][A-Za-z0-9_]*\s\+\zs\c\%(as\|of\)\>/
+syn match domainBindName /\%(^\s*\c\<consider\>\s\+\)\@40<=[A-Za-z_][A-Za-z0-9_]*\ze\s\+\c\%(as\|of\)\>/
+syn match domainBindPrep /\%(^\s*\c\<consider\>\s\+[A-Za-z_][A-Za-z0-9_]*\s\+\)\@80<=\c\%(as\|of\)\>/
+
+" Global declarations: `Cursed Object:` declares a global and `Cursed Tool:`
+" changes one. Both write the declared name where a statement writes its
+" operation phrase, so the name gets the colouring a definition gets and the
+" preposition the colouring a keyword gets — as a `Consider` binding's do.
+"
+"     Cursed Object: total As 0
+"     Cursed Tool:   total As total + 1
+"
+" Looking behind, for the reason given above: the keyword rule has already
+" claimed the start of the line by the time these are tried.
+syn match domainGlobalName /\%(^\s*\c\%(Cursed Object\|Cursed Tool\)\s*:\s*\)\@40<=[A-Za-z_][A-Za-z0-9_]*\ze\s\+\c\%(as\|of\)\>/
+syn match domainGlobalPrep /\%(^\s*\c\%(Cursed Object\|Cursed Tool\)\s*:\s*[A-Za-z_][A-Za-z0-9_]*\s\+\)\@80<=\c\%(as\|of\)\>/
+
+" The block form — a bare `Cursed Object:` and one declaration per indented
+" line beneath it:
+"
+"     Cursed Object:
+"         a As numa
+"         b As numb
+"
+" Recognized by shape, and deliberately only for the `As` spelling: nothing
+" else in the language writes `NAME As` at the start of an indented line, while
+" `NAME of …` is also how an operation phrase reads (`Subsets of 3`), and
+" colouring a primitive as a declared name would be worse than leaving the rarer
+" `Of` declaration plain. The same rule, for the same reason, is what the
+" editor's own highlighter applies (cmd/domain/repl_highlight.go).
+syn match domainDeclName /^\s\+\zs[A-Za-z_][A-Za-z0-9_]*\ze\s\+\c\<as\>/
+syn match domainDeclPrep /\%(^\s\+[A-Za-z_][A-Za-z0-9_]*\s\+\)\@40<=\c\<as\>\ze\s/
 
 " The Go-backed primitives (the operation phrases). Title Case, so they never
 " collide with the lowercase builtins. Multi-word phrases first so the longest
@@ -60,7 +102,15 @@ syn keyword domainPreposition by from to with into of
 
 " The expression layer.
 syn match domainArrow /->/
-syn match domainOperator /:=\|<=\|>=\|!=\|[-+*/%=<>]/
+syn match domainOperator /<=\|>=\|!=\|[-+*/%=<>]/
+
+" `name := value`: the one expression that writes rather than computes. The
+" name it writes is coloured as the target it is, and `:=` gets its own group
+" rather than riding along with the arithmetic — reading a lambda means knowing
+" at a glance which of its clauses change something.
+syn match domainWalrusName /\<[A-Za-z_][A-Za-z0-9_]*\ze\s*:=/
+syn match domainWalrus /:=/
+
 syn keyword domainLogical and or not if then else also
 syn match domainNumber /\<\d\+\>/
 
@@ -87,6 +137,12 @@ hi def link domainArgKey      Identifier
 hi def link domainBind        Statement
 hi def link domainBindName    Identifier
 hi def link domainBindPrep    Statement
+hi def link domainGlobalName  Define
+hi def link domainGlobalPrep  Statement
+hi def link domainDeclName    Define
+hi def link domainDeclPrep    Statement
+hi def link domainWalrusName  Identifier
+hi def link domainWalrus      Operator
 hi def link domainArrow       Operator
 hi def link domainOperator    Operator
 hi def link domainLogical     Keyword

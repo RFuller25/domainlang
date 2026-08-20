@@ -1,8 +1,9 @@
 # Editor support
 
 Syntax highlighting for `.domain` files, plus full language features
-(diagnostics with suggestions, primitive-documentation hover, completion,
-go-to-Shikigami, quick fixes) via the built-in language server (`domain
+(diagnostics with suggestions, hover — over a name for its type and where it is
+declared, over a statement for the primitive's documentation — completion,
+go-to-definition, quick fixes) via the built-in language server (`domain
 lsp`). Wiring is in [docs/tooling.md](../docs/tooling.md).
 
 **Both grammars are generated from the language itself** — the primitives from
@@ -19,13 +20,27 @@ Both grammars highlight the same surface: themed pipeline keywords, the **primit
 (operation phrases like `Sum Each Group`, `BFS`, `Quicksort`) in their own
 colour, indented argument keys (`Using:`, `Mode:`, …), local bindings
 (`Consider x As …` / `Consider x Of …`, with the bound name in the colour
-its readers get), loop drivers
-(`Repeat`/`While`/`Iterate Until Fixed Point`), connector words
+its readers get), **global declarations** (`Cursed Object: total As 0`,
+`Cursed Tool: total As total + 1`, and the indented `NAME As …` lines of the
+block form — the declared name in the colour a definition gets), the
+**walrus** (`n := n + 1`, target and operator each in their own colour), loop
+drivers (`Repeat`/`While`/`Iterate Until Fixed Point`), connector words
 (`by`/`from`/`to`/`with`), strings with escapes and `{typed:holes}`, lambda
 arrows, operators, `and`/`or`/`not`/`if`/`then`/`else`, numbers, the full set
 of expression builtins (in call position), `Mode:` values,
-`Ascending`/`Descending`, and the value-kind type names. Both also configure
-`#` comments and spaces-only indentation — tabs are a lex error in Domain.
+`Ascending`/`Descending`, and the value-kind type names. Both open a comment at
+either marker — `#` and the word `technically` — and configure spaces-only
+indentation, since tabs are a lex error in Domain.
+
+Two details are worth knowing about the declaration rules, because both
+grammars make the same call and so does the terminal editor. The block form's
+lines have no keyword to lean on, so they are recognized by `As` alone:
+`NAME of …` is also how an operation phrase reads (`Subsets of 3`), and
+colouring a primitive as a declared name would be worse than leaving the rarer
+`Of` declaration plain. And in vim the name and preposition rules look
+*behind* rather than anchoring to `^`: vim resumes matching where the previous
+item stopped, so a second `^…` rule for the same line is never reached once the
+keyword rule has claimed the start of it.
 
 The exception both grammars carve out is a
 [foreign block](../docs/primitives.md#foreign-block--t---text-or-a-declared-in---out):
@@ -40,8 +55,9 @@ that may or may not be present.
 ## VS Code (`editors/vscode/`)
 
 A full extension: the TextMate grammar **and** a language client that
-launches `domain lsp`, so hover, completion, diagnostics, go-to-Shikigami,
-and quick fixes work out of the box.
+launches `domain lsp`, so hover (including hovering a name for its type and
+declaring line), completion, diagnostics, go-to-definition, and quick fixes
+work out of the box.
 
 **The binary installs it.** The extension is embedded in `domain`, so no
 checkout, marketplace or `.vsix` is involved:
@@ -73,11 +89,11 @@ cd editors/vscode
 npm install                       # pulls vscode-languageclient
 
 # Package it:
-npx @vscode/vsce package          # produces domain-language-0.5.0.vsix
-code --install-extension domain-language-0.5.0.vsix
+npx @vscode/vsce package          # produces domain-language-0.4.1.vsix
+code --install-extension domain-language-0.4.1.vsix
 
 # …or symlink it for a live edit loop (then reload VS Code):
-ln -s "$PWD" ~/.vscode/extensions/domain-lang.domain-language-0.5.0
+ln -s "$PWD" ~/.vscode/extensions/domain-lang.domain-language-0.4.1
 ```
 
 The extension finds `domain` on your `PATH`; if the binary lives elsewhere,
@@ -118,4 +134,6 @@ programs.neovim.plugins = [
 ```
 
 The ftplugin sets `expandtab`, 4-space indentation, and `commentstring` for
-`#`, so commenting plugins and auto-indent behave.
+`#`, so commenting plugins and auto-indent behave. (`commentstring` holds one
+spelling and `#` is the one a plugin should insert; `technically` is
+highlighted as a comment wherever it is written, but nothing generates it.)

@@ -61,6 +61,11 @@ The scheme is a full-screen editor's rather than the REPL's, because that is
 the muscle memory people bring to one; `micro` is the closest reference. It
 agrees with the REPL where it matters — `ctrl+g` is the key list in both.
 
+The tables below are the keys worth learning, not all of them: the ordinary
+motions a full-screen editor binds (`home`/`end`, `pgup`/`pgdn`, `ctrl+←` and
+`ctrl+→` by word, `ctrl+home`/`ctrl+end` for the whole program) are there and
+behave as you expect. `ctrl+g` lists every binding, including those.
+
 `ctrl+c` copies and does **not** leave. It interrupts a run while one is going,
 and is the clipboard key the rest of the time. Leaving is `ctrl+q` alone, so a
 buffer cannot be abandoned by the reflex that copies.
@@ -98,12 +103,21 @@ step whatever the timing.
 | Key | |
 |---|---|
 | `tab` | complete a keyword, primitive, argument label or path |
-| `alt+k` | inspect what is on this line |
+| `alt+k` | inspect the name under the cursor, or what is on this line |
 | `alt+a` / `alt+A` | apply the fix for this line / every confident fix |
-| `ctrl+]` / `ctrl+[` | go to a Shikigami definition, following imports / come back |
+| `ctrl+]` / `ctrl+[` | go to the definition of the name under the cursor, or to a Shikigami definition, following imports / come back |
 | `alt+z` / `alt+Z` | fold or unfold the block here / unfold everything |
 | `alt+d` | browse the primitive catalog |
 | `alt+f` | format the program |
+
+**Inspecting a name.** `alt+k` on a word answers about the word: what kind of
+name it is, its type, and the line that declares it — a `Cursed Object` global
+(with the `Cursed Tool` lines that write it, or a note that nothing does), a
+`Consider` binding, a Shikigami parameter, a lambda parameter. Anywhere else on
+the line it answers about the statement, as it always has. `ctrl+]` follows the
+same name to where it is declared. Both are the language server's own answers
+([tooling.md](tooling.md#hovering-a-name)), so the editor and an LSP client
+cannot disagree about where a name comes from.
 
 **Fixes.** A diagnostic that carries a confident repair can apply it: `alt+a`
 on the line, `alt+A` for every one in the program — the same repairs
@@ -277,7 +291,6 @@ the program on screen. The recording carries the buffer's own source, so the
 stepper's source pane shows the program you are looking at rather than whatever
 is on disk under that name.
 
-## The input file
 
 `ctrl+e` opens a browser over every file beside the program — an input is
 whatever the puzzle gave you, so it is not filtered to `.domain` — and points

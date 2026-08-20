@@ -368,6 +368,23 @@ same order the graph renders in.
 
 ### Convert To Entries — `Map<K,V> -> List<(K, V)>`
 
+```domain
+Channeled Energy: Convert To Entries
+```
+
+Drops a Map back into the list vocabulary, in insertion order (the order a Map
+already renders in), where `Sort By` and `Select Top K` already live. This is
+how the "which key occurred most?" idiom is written:
+
+```domain
+Maximum Technique: Count By
+    Using: (s) -> charat(s, 0)
+Channeled Energy: Convert To Entries
+Domain Expansion: Sort By, Descending
+    Using: (e) -> item(e, 1)
+Cursed Technique: Take Item 0
+```
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by ""
@@ -402,24 +419,6 @@ abracadabra
 ```
 ```output
 [a, 5]
-```
-
-
-```domain
-Channeled Energy: Convert To Entries
-```
-
-Drops a Map back into the list vocabulary, in insertion order (the order a Map
-already renders in), where `Sort By` and `Select Top K` already live. This is
-how the "which key occurred most?" idiom is written:
-
-```domain
-Maximum Technique: Count By
-    Using: (s) -> charat(s, 0)
-Channeled Energy: Convert To Entries
-Domain Expansion: Sort By, Descending
-    Using: (e) -> item(e, 1)
-Cursed Technique: Take Item 0
 ```
 
 ### Convert To Map — `List<(K, V)> -> Map<K,V>` (K keyable)
@@ -466,6 +465,25 @@ a=9
 
 ### Convert To Set — `List<T> -> Set<T>` (T keyable)
 
+```domain
+Channeled Energy: Convert To Set
+```
+
+Deduplicates a list into a Set, preserving first-seen order.
+
+**A Set is accepted wherever a list-shaped primitive takes a List** — `Map
+Each`, `Filter`, `Count Matching`, `Count By`, `Group By`, `Fold`, `Reduce`,
+`Scan`, `Unique`, `Enumerate`, `Pairs`, `Window`, `Chunk`, `Partition`, `Take
+Item`, `Sort By`, `Permutations`, `Subsets`, `Merge Ranges`, `Find Cycle` — and
+is read in insertion order, the order it already renders and iterates in. The
+**result is a List**: a transform may map two distinct elements onto the same
+value, and silently deduplicating would lose data the program asked for.
+
+Primitives that check their input type directly rather than by shape (`Join`,
+`Sum`, `Sort`) still require a List. Sets also support `Count`, the Channel
+consumers (`Difference`), and the `contains`/`size`/`tolist` expression
+builtins.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
@@ -495,25 +513,5 @@ Reveal: stdout
 ```output
 3
 ```
-
-
-```domain
-Channeled Energy: Convert To Set
-```
-
-Deduplicates a list into a Set, preserving first-seen order.
-
-**A Set is accepted wherever a list-shaped primitive takes a List** — `Map
-Each`, `Filter`, `Count Matching`, `Count By`, `Group By`, `Fold`, `Reduce`,
-`Scan`, `Unique`, `Enumerate`, `Pairs`, `Window`, `Chunk`, `Partition`, `Take
-Item`, `Sort By`, `Permutations`, `Subsets`, `Merge Ranges`, `Find Cycle` — and
-is read in insertion order, the order it already renders and iterates in. The
-**result is a List**: a transform may map two distinct elements onto the same
-value, and silently deduplicating would lose data the program asked for.
-
-Primitives that check their input type directly rather than by shape (`Join`,
-`Sum`, `Sort`) still require a List. Sets also support `Count`, the Channel
-consumers (`Difference`), and the `contains`/`size`/`tolist` expression
-builtins.
 
 ---

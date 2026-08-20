@@ -198,6 +198,31 @@ func TestCommentHandling(t *testing.T) {
 			"Cursed Energy: x\nCursed Technique: Map Each\n    Using: (s) -> \"\\\"#\\\"\"\n",
 			"Cursed Energy: x\nCursed Technique: Map Each\n    Using: (s) -> \"\\\"#\\\"\"\n",
 		},
+		{
+			"a technically comment is a comment",
+			"technically a header\nCursed Energy: x\n",
+			"technically a header\nCursed Energy: x\n",
+		},
+		{
+			"a trailing technically comment keeps its gap",
+			"Cursed Energy: x      technically the input\nReveal: stdout\n",
+			"Cursed Energy: x      technically the input\nReveal: stdout\n",
+		},
+		{
+			"a technically comment takes the depth of the line it documents",
+			"Cursed Energy: x\nSimple Domain: Repeat 3\ntechnically explain\n    Cursed Technique: Unique\n",
+			"Cursed Energy: x\nSimple Domain: Repeat 3\n    technically explain\n    Cursed Technique: Unique\n",
+		},
+		{
+			"technically inside a string is not a comment",
+			"Cursed Energy: x\nMaximum Technique: Count Cells\n    Using: (c) -> c = \"technically\"\n",
+			"Cursed Energy: x\nMaximum Technique: Count Cells\n    Using: (c) -> c = \"technically\"\n",
+		},
+		{
+			"a name that merely contains the word is not a comment",
+			"Cursed Energy: x\nMaximum Technique: Count Matching\n    Consider technicallyOK As 1\n    Using: (n) -> n = technicallyOK\n",
+			"Cursed Energy: x\nMaximum Technique: Count Matching\n    Consider technicallyOK As 1\n    Using: (n) -> n = technicallyOK\n",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

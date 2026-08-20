@@ -93,3 +93,11 @@ editors/vscode/package-lock.json
 /bench/mahoraga/out/
 /bench/mahoraga/fixed/
 /bench/mahoraga/after2/
+
+# Advent of Code inputs fetched by the editor (`alt+c`). They are personal —
+# the site hands each account a different file and asks that they not be
+# republished — so a puzzle input that lands beside a scratch program in this
+# tree is not something to commit. The committed inputs under challenges/ and
+# bench/ are the repository's own and are not named this way.
+aoc-*.input
+aoc-*.example

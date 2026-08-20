@@ -4,6 +4,45 @@ Part of the [expression layer reference](expressions.md).
 
 ### Records
 
+```domain
+Maximum Technique: Fold
+    Seed: (xs) -> {lo: 0, hi: 0}
+    Using: (acc, n) -> with(with(acc, "lo", min(acc.lo, n)), "hi", max(acc.hi, n))
+```
+
+The literal renders the way the value prints, so a record reads the same in the
+source and in the output:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> {name: "hi", n: 2}
+Reveal: stdout
+```
+```input
+```
+```output
+{name: hi, n: 2}
+```
+
+
+Braces are **only** record literals. A map or a set is built with `tomap` and
+`toset`; writing `{1: 2}` or `{1, 2}` is refused by name rather than by a
+generic syntax error, so the spelling stays available.
+
+A record type is written the same way, which is also how `Reveal` and every
+type error print one — so a declared signature and the type it is checked
+against read identically:
+
+```domain
+Shikigami "Widen" : List<{a: Int, b: Text}> -> List<Text>
+    Cursed Technique: Map Each
+        Using: (r) -> r.b + totext(r.a)
+```
+
+Field order is not part of a record's identity: a signature declaring
+`{b: Text, a: Int}` matches a pipeline producing `{a: Int, b: Text}`.
+
 `Match Pattern` produces records, and `.field` reads them:
 
 ```domain run
@@ -60,45 +99,6 @@ rules, and `domain fmt` gives each back as it was written.
 
 Both compile to a plain Go struct literal, and `with` to a struct assignment,
 so a named accumulator costs nothing a tuple did not:
-
-```domain
-Maximum Technique: Fold
-    Seed: (xs) -> {lo: 0, hi: 0}
-    Using: (acc, n) -> with(with(acc, "lo", min(acc.lo, n)), "hi", max(acc.hi, n))
-```
-
-The literal renders the way the value prints, so a record reads the same in the
-source and in the output:
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Apply
-    Using: (t) -> {name: "hi", n: 2}
-Reveal: stdout
-```
-```input
-```
-```output
-{name: hi, n: 2}
-```
-
-
-Braces are **only** record literals. A map or a set is built with `tomap` and
-`toset`; writing `{1: 2}` or `{1, 2}` is refused by name rather than by a
-generic syntax error, so the spelling stays available.
-
-A record type is written the same way, which is also how `Reveal` and every
-type error print one — so a declared signature and the type it is checked
-against read identically:
-
-```domain
-Shikigami "Widen" : List<{a: Int, b: Text}> -> List<Text>
-    Cursed Technique: Map Each
-        Using: (r) -> r.b + totext(r.a)
-```
-
-Field order is not part of a record's identity: a signature declaring
-`{b: Text, a: Int}` matches a pipeline producing `{a: Int, b: Text}`.
 
 ### Points and grid geometry
 

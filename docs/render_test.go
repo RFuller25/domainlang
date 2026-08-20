@@ -257,6 +257,38 @@ func TestCodeFenceRendering(t *testing.T) {
 		}
 	}
 
+	// The rest of the language's surface: both comment markers, the declared
+	// name of a global and of a binding, and the walrus. A string is a string —
+	// a marker inside one is text, which is the case that used to be checked
+	// against an HTML entity escapeHtml never produces.
+	rich := renderMarkdown(t, "```domain\n"+
+		"technically a note\n"+
+		"Cursed Object: total As 0\n"+
+		"Cursed Object:\n"+
+		"    bump As 10\n"+
+		"Cursed Technique: Map Each\n"+
+		"    Consider mean Of Sum\n"+
+		"    Using: (n) -> n := n + total\n"+
+		"Maximum Technique: Subsets of 3\n"+
+		"Reveal: \"technically not a comment\"\n"+
+		"```\n")
+	for _, want := range []string{
+		`<span class="tok-comment">technically a note</span>`,
+		`<span class="tok-kw">Cursed Object</span>: <span class="tok-def">total</span>`,
+		`<span class="tok-def">bump</span>`,
+		`<span class="tok-kw">Consider</span> <span class="tok-def">mean</span>`,
+		`<span class="tok-def">n</span> <span class="tok-op">:=</span>`,
+		`<span class="tok-str">"technically not a comment"</span>`,
+	} {
+		if !strings.Contains(rich, want) {
+			t.Errorf("domain fence missing %q:\n%s", want, rich)
+		}
+	}
+	// `Subsets of 3` is an operation phrase, not a declaration.
+	if strings.Contains(rich, `<span class="tok-def">Subsets</span>`) {
+		t.Errorf("an operation phrase was coloured as a declaration:\n%s", rich)
+	}
+
 	// A non-Domain fence is escaped but not tokenized.
 	plain := renderMarkdown(t, "```sh\ndomain run x.domain\n```\n")
 	if strings.Contains(plain, "tok-") {
@@ -297,6 +329,117 @@ func TestBlockConstructs(t *testing.T) {
 	} {
 		if got := renderMarkdown(t, c.md); !strings.Contains(got, c.want) {
 			t.Errorf("rendering %q gave %q, want it to contain %q", c.md, got, c.want)
+		}
+	}
+}
+
+// A list item that wraps onto a second line is one item, not an item plus a
+// paragraph. Two thirds of the list items in these documents wrap, and the
+// renderer used to end the list at the wrap: the tail of the sentence came out
+// as an outdented paragraph and every later bullet opened a fresh <ul>. The
+// cases below are the shapes the pages actually contain.
+func TestListItemsWrap(t *testing.T) {
+	for _, c := range []struct{ name, md, want string }{
+		{
+			"wrapped item stays one item",
+			"- unknown keywords against the primitive\n  registry plus the structural forms;\n- unknown Shikigami;\n",
+			"<ul><li>unknown keywords against the primitive registry plus the structural forms;</li>" +
+				"<li>unknown Shikigami;</li></ul>",
+		},
+		{
+			"ordered items wrap too",
+			"1. first, which\n   wraps\n2. second\n",
+			"<ol><li>first, which wraps</li><li>second</li></ol>",
+		},
+		{
+			"a nested list stays inside its item",
+			"- outer\n  - inner one\n  - inner two\n- outer two\n",
+			"<ul><li>outer<ul><li>inner one</li><li>inner two</li></ul></li><li>outer two</li></ul>",
+		},
+		{
+			"text after the list is still its own paragraph",
+			"- an item that\n  wraps\n\nafter the list\n",
+			"<ul><li>an item that wraps</li></ul><p>after the list</p>",
+		},
+	} {
+		if got := strings.TrimSpace(renderMarkdown(t, c.md)); got != c.want {
+			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
+		}
+	}
+
+	// An item holding a blank line is several blocks, and keeps them: the
+	// compiler page has one carrying a paragraph, a Go fence and two more
+	// paragraphs, all of which must stay inside the <li>.
+	multi := renderMarkdown(t, "- **Bodies become functions.** Like so:\n\n  ```go\n  func f() {}\n  ```\n\n  And then some.\n")
+	for _, want := range []string{"<li><p><strong>Bodies become functions.</strong>", "<pre>", "<p>And then some.</p>", "</li></ul>"} {
+		if !strings.Contains(multi, want) {
+			t.Errorf("multi-block list item missing %q:\n%s", want, multi)
+		}
+	}
+	if strings.Contains(multi, "</ul>\n<pre>") {
+		t.Errorf("the fence escaped its list item:\n%s", multi)
+	}
+}
+
+// No page may render a literal emphasis marker. The renderer's bold pattern
+// used to reject a body containing any asterisk at all, so "**a *b* c**" — a
+// shape both the overview and the tutorial open with — failed to match, the
+// italics pass then paired the asterisks up wrongly, and the outer two were
+// left on the page as text. Reading this off the real pages is what makes it
+// hold for whatever emphasis someone writes next.
+func TestNoPageShowsLiteralEmphasisMarkers(t *testing.T) {
+	pages, err := filepath.Glob("*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inside code an asterisk is just an asterisk, and prose may name A*.
+	code := regexp.MustCompile(`(?s)<pre.*?</pre>|<code>.*?</code>`)
+	astar := regexp.MustCompile(`\bA\*`)
+	for _, page := range pages {
+		md, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := astar.ReplaceAllString(code.ReplaceAllString(renderMarkdown(t, string(md)), ""), "")
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, "*") {
+				t.Errorf("%s renders a literal asterisk: %s", page, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// A table row is several facts, and a search snippet has to read as several.
+// Flattening one by turning its pipes into spaces ran the cells together —
+// searching the real pages for "window" previewed the measured-arguments table
+// as "Primitive phrase form measured form --- --- --- Window Window SIZE
+// [STEP] Size:, Step: Chunk Chunk SIZE Size:" — and several reference pages
+// are mostly table.
+func TestSearchEntriesFlattenTablesReadably(t *testing.T) {
+	md := "## Measured arguments\n\n" +
+		"| Primitive | phrase form | measured form |\n|---|---|---|\n" +
+		"| `Window` | `Window SIZE [STEP]` | `Size:`, `Step:` |\n" +
+		"| `Chunk` | `Chunk SIZE` | `Size:` |\n"
+	var entries []struct {
+		Heading string `json:"heading"`
+		Text    string `json:"text"`
+	}
+	if err := json.Unmarshal(renderJS(t, "buildSearchEntries", "x", "X", md), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1: %v", len(entries), entries)
+	}
+	got := entries[0].Text
+	if strings.Contains(got, "---") {
+		t.Errorf("the separator row leaked into the snippet: %q", got)
+	}
+	for _, want := range []string{
+		"Primitive · phrase form · measured form",
+		"Window · Window SIZE [STEP] · Size:, Step:",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("snippet %q\nis missing %q", got, want)
 		}
 	}
 }
@@ -609,6 +752,34 @@ func TestRenderGallery(t *testing.T) {
 	}
 	if len(res.Headings) != 1 || res.Headings[0].Slug != "01-fizzbuzz" {
 		t.Errorf("headings = %+v, want one entry slugged 01-fizzbuzz", res.Headings)
+	}
+
+	// A description is the program's comment header: prose, wrapped at the
+	// width the file is read at, with backticks and emphasis in it. Eleven of
+	// the thirty-four use backticks and two use *emphasis*, and escaping the
+	// lot and joining it with <br> showed all of that punctuation on the page
+	// in a ragged narrow column.
+	prose := []map[string]string{{
+		"id": "02_pair_sum", "group": "examples", "title": "Pairs",
+		"description": "`All Pairs` with a sum-to-constant lambda is the\nO(n\u00b2) *request*.\n\nThe second paragraph.",
+		"source":      "Reveal: stdout", "input": "1", "expected": "1",
+	}}
+	var desc struct {
+		HTML string `json:"html"`
+	}
+	if err := json.Unmarshal(renderJS(t, "renderGallery", prose, map[string]bool{"runnable": false}), &desc); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`<p class="program-desc"><code>All Pairs</code> with a sum-to-constant lambda is the O(n²) <em>request</em>.</p>`,
+		`<p class="program-desc">The second paragraph.</p>`,
+	} {
+		if !strings.Contains(desc.HTML, want) {
+			t.Errorf("description missing %q:\n%s", want, desc.HTML)
+		}
+	}
+	if strings.Contains(desc.HTML, "<br>") {
+		t.Errorf("the comment header's line wrapping survived into the page:\n%s", desc.HTML)
 	}
 
 	// With the playground available, every card gets a Run button.

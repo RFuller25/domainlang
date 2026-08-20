@@ -89,7 +89,8 @@
   .brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
   .brand h1 {
     font-size: 1.2rem; font-weight: 800; margin: 0; letter-spacing: -0.02em;
-    background: linear-gradient(100deg, var(--text) 40%, var(--jjk-c, var(--accent)) 150%);
+    background: linear-gradient(100deg, var(--text) 40%,
+      color-mix(in srgb, var(--jjk-c, var(--accent)) 70%, var(--text)) 150%);
     background-clip: text; -webkit-background-clip: text; color: transparent;
   }
   .brand .badge {
@@ -134,14 +135,24 @@
   nav.toc-nav a.doc-link:hover { background: var(--bg-alt); text-decoration: none; }
   nav.toc-nav a.doc-link.active {
     background: color-mix(in srgb, var(--jjk-c, var(--accent)) 14%, var(--accent-soft));
-    color: var(--jjk-c, var(--accent-text)); font-weight: 600;
+    /* The per-page colour is picked to theme the page, not to sit on the pale
+       tint behind it: raw, the active entry read at 1.2:1 on Getting started
+       and 1.45:1 on the Language reference — the one nav item a reader most
+       needs to find. The 2px rule beside it keeps the undiluted colour. */
+    color: color-mix(in srgb, var(--jjk-c, var(--accent-text)) 35%, var(--text));
+    font-weight: 600;
     border-left: 2px solid var(--jjk-c, var(--accent));
     padding-left: 8px;
   }
   nav.toc-nav .doc-link .desc {
     display: block; font-size: 0.72rem; color: var(--text-muted); font-weight: 400; margin-top: 1px;
   }
-  nav.toc-nav a.doc-link.active .desc { color: var(--accent-text); opacity: 0.8; }
+  /* The sub-label sits on the active item's tinted background, where the
+     accent alone came out at 2.9:1; mixing it toward the body text keeps the
+     accent reading while clearing 4.5:1 in both themes. */
+  nav.toc-nav a.doc-link.active .desc {
+    color: color-mix(in srgb, var(--accent-text) 60%, var(--text));
+  }
 
   /* Main */
   .main-wrap { flex: 1 1 auto; min-width: 0; display: flex; justify-content: center; }
@@ -170,7 +181,14 @@
       transition: transform 0.2s ease; box-shadow: var(--shadow);
     }
     .sidebar.open { transform: translateX(0); }
-    main { padding: 24px 20px 100px; }
+    /* The menu button is fixed at the top-left corner the sidebar slides in
+       under, so with the panel open it sat on the wordmark and the site read
+       "…nain". Reserve the button's width beside the brand row instead. */
+    .brand { padding-left: 46px; }
+    /* The menu button is fixed at top:14 and is 40px tall, so the column has
+       to start below it — otherwise it lands on whatever the page opens with,
+       which on every reference page is the technique banner. */
+    main { padding: 68px 20px 100px; }
     .menu-toggle { display: inline-flex !important; }
     .scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 40; }
     .scrim.show { display: block; }
@@ -188,7 +206,11 @@
   }
   article h1 {
     font-size: 2.1rem; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 0.5em;
-    background: linear-gradient(100deg, var(--text) 55%, var(--jjk-c, var(--accent)) 130%);
+    /* The accent end is mixed back toward --text so the tail of a title that
+       wraps — every page title does at phone widths — cannot fade to a tint
+       with less contrast than the accent colour itself carries. */
+    background: linear-gradient(100deg, var(--text) 55%,
+      color-mix(in srgb, var(--jjk-c, var(--accent)) 70%, var(--text)) 130%);
     background-clip: text; -webkit-background-clip: text; color: transparent;
   }
   article h2 {
@@ -209,6 +231,15 @@
   article code {
     font-family: var(--mono); font-size: 0.86em; background: var(--bg-code);
     padding: 0.15em 0.4em; border-radius: 5px;
+    /* A chip long enough to wrap gets a complete box on each fragment rather
+       than one open-ended pair; long primitive phrases wrap constantly. */
+    -webkit-box-decoration-break: clone; box-decoration-break: clone;
+    /* …and one with no space in it has to be breakable, or it cannot wrap at
+       all: match-pattern.md quotes `xmul(2,4)%&mul[3,7]!^mul(32,64]…` in a
+       sentence, which at a phone width is wider than the column and pushed the
+       whole page sideways. A fenced block is unaffected — its lines never wrap,
+       they scroll inside the <pre>. */
+    overflow-wrap: break-word;
     border: 1px solid color-mix(in srgb, var(--jjk-c, var(--accent)) 30%, var(--border));
   }
   article pre {
@@ -240,10 +271,13 @@
   .tok-num     { color: #a21caf; }
   .tok-op      { color: var(--text-muted); }
   .tok-comment { color: var(--text-muted); font-style: italic; }
+  .tok-def     { color: #15803d; }
+  :root[data-theme="dark"] .tok-def { color: #86efac; }
   :root[data-theme="dark"] .tok-arg { color: #67e8f9; }
   :root[data-theme="dark"] .tok-str { color: #fcd34d; }
   :root[data-theme="dark"] .tok-num { color: #f0abfc; }
   @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .tok-def { color: #86efac; }
     :root:not([data-theme="light"]) .tok-arg { color: #67e8f9; }
     :root:not([data-theme="light"]) .tok-str { color: #fcd34d; }
     :root:not([data-theme="light"]) .tok-num { color: #f0abfc; }
@@ -450,7 +484,12 @@
   .pg-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
   .pg-bar .pg-run {
     padding: 7px 18px; font: 700 0.85rem/1.4 var(--sans); cursor: pointer; color: #fff;
-    background: var(--jjk-c, var(--accent)); border: 1px solid var(--jjk-c, var(--accent)); border-radius: 8px;
+    /* Simple Domain's green is a light one, and white on it read at 1.7:1 —
+       on the page's primary action. Darkening the fill keeps the hue and the
+       glow while the label stays legible whatever colour a page carries. */
+    background: color-mix(in srgb, var(--jjk-c, var(--accent)) 52%, #16161c);
+    border: 1px solid color-mix(in srgb, var(--jjk-c, var(--accent)) 52%, #16161c);
+    border-radius: 8px;
     box-shadow: 0 0 16px -4px var(--jjk-c, var(--accent));
   }
   .pg-bar .pg-run:hover { filter: brightness(1.08); }
@@ -496,12 +535,14 @@
   .hero-inner { position: relative; z-index: 1; max-width: 620px; }
   .hero-eyebrow {
     font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700;
-    color: var(--jjk-c, var(--accent-text)); margin: 0 0 10px;
+    color: color-mix(in srgb, var(--jjk-c, var(--accent-text)) 65%, var(--text));
+    margin: 0 0 10px;
   }
   .hero-title {
     font-size: clamp(2.4rem, 5vw, 3.4rem); font-weight: 800; letter-spacing: -0.03em;
     margin: 0 0 14px; line-height: 1;
-    background: linear-gradient(100deg, var(--text) 45%, var(--jjk-c, var(--accent)) 140%);
+    background: linear-gradient(100deg, var(--text) 45%,
+      color-mix(in srgb, var(--jjk-c, var(--accent)) 70%, var(--text)) 140%);
     background-clip: text; -webkit-background-clip: text; color: transparent;
   }
   .hero-tag { font-size: 1.05rem; color: var(--text-muted); margin: 0 0 22px; max-width: 46ch; }
@@ -519,16 +560,26 @@
 
   /* ---- JJK technique banners (one per doc, all different) ---- */
   .jjk-banner {
-    position: relative; overflow: hidden; height: 86px; margin: 0 0 24px;
+    /* min-height, not height: the label is three lines, and at narrow widths
+       a fixed height cropped the last one against overflow: hidden. */
+    position: relative; overflow: hidden; min-height: 86px; margin: 0 0 24px;
     border-radius: var(--radius); border: 1px solid var(--border);
     background: var(--bg-alt);
     background: linear-gradient(135deg, color-mix(in srgb, var(--jjk-c) 22%, var(--bg-alt)), var(--bg-alt) 75%);
     box-shadow: inset 0 0 30px -12px var(--jjk-c);
-    display: flex; align-items: center; gap: 20px; padding: 0 24px;
+    display: flex; align-items: center; gap: 20px; padding: 14px 24px;
   }
   .jjk-fx { position: relative; width: 96px; height: 54px; flex: none; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--jjk-c) 65%, transparent)); }
   .jjk-banner .jjk-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .jjk-banner .kanji { font-size: 1.15rem; font-weight: 700; color: var(--jjk-c); letter-spacing: 0.02em; text-shadow: 0 0 12px color-mix(in srgb, var(--jjk-c) 50%, transparent); }
+  /* Each banner's colour is chosen for the theme, not for contrast: the
+     yellow of Cursed Speech read at 1.5:1 against its own tinted panel. The
+     kanji is a label, not decoration, so it is mixed toward the body text
+     until it clears 4.5:1; the glow still carries the undiluted colour. */
+  .jjk-banner .kanji {
+    font-size: 1.15rem; font-weight: 700; letter-spacing: 0.02em;
+    color: color-mix(in srgb, var(--jjk-c) 42%, var(--text));
+    text-shadow: 0 0 12px color-mix(in srgb, var(--jjk-c) 50%, transparent);
+  }
   .jjk-banner .name { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text); }
   .jjk-banner .tag { font-size: 0.79rem; color: var(--text-muted); }
 
@@ -804,7 +855,7 @@
   @keyframes jjkSearchScan { 0%, 100% { left: -20%; } 50% { left: 100%; } }
 
   @media (max-width: 860px) {
-    .jjk-banner { height: 68px; padding: 0 16px; gap: 12px; }
+    .jjk-banner { min-height: 68px; padding: 12px 16px; gap: 12px; }
     .jjk-fx { width: 68px; }
   }
 
@@ -831,6 +882,13 @@
       background: #f6f6f6 !important; border: 1px solid #ddd !important;
       color: #000 !important;
     }
+    /* …but not the <code> inside a <pre>, which already has the block's box
+       around it. On paper the block wraps, and a wrapped inline box is drawn
+       once per fragment, so every line of a printed code block came out in a
+       little box of its own. */
+    article pre code {
+      background: none !important; border: none !important; padding: 0 !important;
+    }
     /* Long pipelines and type signatures must wrap rather than vanish off the
        right edge — a printed page has no horizontal scrollbar. */
     article pre { white-space: pre-wrap; word-break: break-word; overflow: visible; }
@@ -841,7 +899,7 @@
        routes are meaningless on paper, so only external ones are expanded. */
     article a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.85em; color: #555; }
     .program-io[open] summary { font-weight: 700; }
-    .tok-kw, .tok-arg, .tok-str, .tok-num, .tok-op, .tok-comment { color: #000 !important; }
+    .tok-kw, .tok-arg, .tok-str, .tok-num, .tok-op, .tok-comment, .tok-def { color: #000 !important; }
     .tok-kw { font-weight: 700; }
     .tok-comment { font-style: italic; color: #555 !important; }
   }
@@ -950,7 +1008,7 @@ const DOCS = [
   { id: "cli",             file: "cli.md",             title: "CLI",                 desc: "The domain binary", group: "Tooling" },
   { id: "diagnostics",     file: "diagnostics.md",     title: "Diagnostics",         desc: "Errors, fixes & linter", group: "Tooling" },
   { id: "tooling",         file: "tooling.md",         title: "REPL & LSP",          desc: "Editor tooling", group: "Tooling" },
-  { id: "optimizer",       file: "optimizer.md",       title: "Optimizer",           desc: "The 30-pass catalog", group: "Internals" },
+  { id: "optimizer",       file: "optimizer.md",       title: "Optimizer",           desc: "The 32-pass catalog", group: "Internals" },
   { id: "compiler",        file: "compiler.md",        title: "Compiler backend",    desc: "Emitting native Go", group: "Internals" },
 ];
 const DOC_BY_ID = Object.fromEntries(DOCS.map(d => [d.id, d]));
@@ -966,7 +1024,7 @@ const DOC_ANIM = {
   "README":          { fx: "rings",     color: "#60a5fa", kanji: "無限",       name: "Infinity",                  tag: "the gap between you and everything, always closing." },
   "getting-started": { fx: "flash",     color: "#e4e4e7", kanji: "黒閃",       name: "Black Flash",               tag: "your first strike — within 0.000001 seconds." },
   "playground":      { fx: "simple",    color: "#4ade80", kanji: "簡易領域",   name: "Simple Domain",             tag: "a small domain of your own — run anything, right here." },
-  "examples":        { fx: "curtain",   color: "#f59e0b", kanji: "帳",         name: "Curtain",                   tag: "nineteen programs, drawn back one at a time." },
+  "examples":        { fx: "curtain",   color: "#f59e0b", kanji: "帳",         name: "Curtain",                   tag: "twenty-one programs, drawn back one at a time." },
   "challenges":      { fx: "blade",     color: "#ef4444", kanji: "呪具",       name: "Cursed Tool",               tag: "thirteen classics — pick one up and swing." },
   "primitive-index": { fx: "bind",      color: "#8b5cf6", kanji: "天与呪縛",   name: "Heavenly Restriction",      tag: "the whole vocabulary, bound to one page." },
   "language":        { fx: "speech",    color: "#facc15", kanji: "呪言",       name: "Cursed Speech",             tag: "every keyword is a command reality obeys." },
@@ -1141,7 +1199,7 @@ function renderDocBanner(docId) {
   const a = DOC_ANIM[docId];
   if (!a) return "";
   return `<div class="jjk-banner" style="--jjk-c:${a.color}">
-    <div class="jjk-fx fx-${a.fx}">${fxMarkup(a.fx)}</div>
+    <div class="jjk-fx fx-${a.fx}" aria-hidden="true">${fxMarkup(a.fx)}</div>
     <div class="jjk-label">
       <span class="kanji">${a.kanji}</span>
       <span class="name">${escapeHtml(a.name)}</span>

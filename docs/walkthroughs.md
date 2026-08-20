@@ -78,7 +78,7 @@ to reach for.
 the average by more than a margin", which needs both a constant and a value
 derived from the list:
 
-```domain
+```domain run
 Cursed Energy: readings.input
 Shikigami: Lines
 Channeled Energy: Convert List to Integers
@@ -88,9 +88,22 @@ Maximum Technique: Count Matching
     Using: (x) -> x - mean > tolerance
 Reveal: stdout
 ```
+```input
+10
+12
+30
+8
+40
+5
+22
+3
+```
+```output
+3
+```
 
-With `10 12 30 8 40 5 22 3` in the file: the mean is 16, the test is `x > 21`,
-and the answer is **3**.
+The mean of those eight readings is 16, so the test is `x > 21`, and three of
+them clear it.
 
 The two prepositions are the whole distinction, and there has to be one,
 because a 1-parameter lambda already means two different things in Domain
@@ -108,7 +121,7 @@ current value in a [measured argument](language.md#measured-arguments):
 `Of` also takes a pipeline, which is what to reach for when the value needs a
 primitive to compute:
 
-```domain
+```domain run
 Cursed Energy: readings.input
 Shikigami: Lines
 Channeled Energy: Convert List to Integers
@@ -120,8 +133,22 @@ Cursed Technique: Filter
     Using: (x) -> x > mean
 Reveal: stdout
 ```
+```input
+10
+12
+30
+8
+40
+5
+22
+3
+```
+```output
+[30, 40, 22]
+```
 
-→ `[30, 40, 22]`, the readings above the same mean of 16.
+The same readings, above the same mean of 16 — reached this time by a stage of
+its own rather than by a lambda.
 
 A binding is in scope for every lambda on its statement and for everything
 nested beneath it; bindings read in written order, so one may be written in
@@ -147,7 +174,7 @@ All four programs below read the same five numbers, `3 1 4 1 5`.
 
 ### `Repeat n` — a count decides
 
-```domain
+```domain run
 Cursed Energy: nums.input
 Shikigami: Lines
 Channeled Energy: Convert List to Integers
@@ -156,8 +183,18 @@ Simple Domain: Repeat 3
         Using: (x) -> x * 2
 Reveal: stdout
 ```
+```input
+3
+1
+4
+1
+5
+```
+```output
+[24, 8, 32, 8, 40]
+```
 
-→ `[24, 8, 32, 8, 40]`. Three doublings, ×8.
+Three doublings, ×8.
 
 The count can itself be measured from the data
 (`Times: (xs) -> length(xs)`), which is how a loop runs as many times as there
@@ -165,7 +202,7 @@ are elements.
 
 ### `While` — a predicate decides
 
-```domain
+```domain run
 Cursed Energy: nums.input
 Shikigami: Lines
 Channeled Energy: Convert List to Integers
@@ -175,14 +212,24 @@ Simple Domain: While
         Using: (x) -> x * 2
 Reveal: stdout
 ```
+```input
+3
+1
+4
+1
+5
+```
+```output
+[24, 8, 32, 8, 40]
+```
 
-→ `[24, 8, 32, 8, 40]`. The same place, reached by a different rule: the sum
+The same place, reached by a different rule: the sum
 runs 14 → 28 → 56 → 112, and the fourth check stops it. The predicate is
 checked *before* each lap, so a list that already fails it is returned untouched.
 
 ### `Iterate Until Fixed Point` — the data decides
 
-```domain
+```domain run
 Cursed Energy: big.input
 Shikigami: Lines
 Channeled Energy: Convert List to Integers
@@ -191,9 +238,18 @@ Simple Domain: Iterate Until Fixed Point
         Using: (x) -> if x > 9 then x / 10 else x
 Reveal: stdout
 ```
+```input
+3452
+17
+8
+90000
+```
+```output
+[3, 1, 8, 9]
+```
 
-With `3452 17 8 90000` → `[3, 1, 8, 9]`. No count and no predicate: it stops
-when a lap changes nothing. `--stats --verbose` shows how many that took:
+Every number down to one digit, with no count and no predicate: it stops when a
+lap changes nothing. `--stats --verbose` shows how many that took:
 
 ```
     4  Iterate Until Fixed Point (5 frames, …  List<Int>     4
@@ -205,7 +261,7 @@ determines it.
 
 ### `For x in <channel>` — a list decides
 
-```domain
+```domain run
 Cursed Energy: nums.input
 Shikigami: Lines
 Channeled Energy: Convert List to Integers
@@ -217,8 +273,18 @@ Simple Domain: For s in shifts
         Using: (x, s) -> x + s
 Reveal: stdout
 ```
+```input
+3
+1
+4
+1
+5
+```
+```output
+[114, 112, 115, 112, 116]
+```
 
-→ `[114, 112, 115, 112, 116]`. One lap per element of the channel, with that
+One lap per element of the channel — +1, then +10, then +100 — with that
 element bound to `s`.
 
 This is the one driver that brings a *name* into the body, and it does it
@@ -245,7 +311,7 @@ consumer brings them back together.
 `examples/05_two_sections.domain`, over a roster and a score list separated by
 a blank line:
 
-```domain
+```domain run
 Cursed Energy: 05_two_sections.input
 Cursed Technique: Split Text by "\n\n"
 
@@ -266,8 +332,21 @@ Maximum Technique: Combine
 
 Reveal: stdout
 ```
+```input
+gojo
+nanami
+itadori
+nobara
 
-→ `4290`: four names, 290 points.
+75
+120
+95
+```
+```output
+4290
+```
+
+Four names and 290 points, combined into one number.
 
 The split happens **once**, above both channels; each takes the section it
 wants. `Combine`'s lambda takes one parameter per channel named in `From:`, in
@@ -284,7 +363,7 @@ happens once and each Part sees the same value.
 
 `examples/17_two_parts.domain`:
 
-```domain
+```domain run
 Cursed Energy: 17_two_parts.input
 Cursed Technique: Split Text by "\n\n"
 Cursed Technique: Split Each by "\n"
@@ -300,8 +379,23 @@ Part "2":
     Maximum Technique: Select Top 3, Sum
     Reveal: stdout
 ```
+```input
+1000
+2000
+3000
 
+4000
+
+5000
+6000
+
+7000
+8000
+9000
+
+10000
 ```
+```output
 Part 1: 24000
 Part 2: 45000
 ```
@@ -323,7 +417,7 @@ once per element, with that element as its current value.
 `examples/19_row_pairs.domain` finds the one evenly-divisible pair in each row
 and divides it:
 
-```domain
+```domain run
 Cursed Energy: 19_row_pairs.input
 Shikigami: Lines
 Cursed Technique: Extract Integers
@@ -336,8 +430,17 @@ Cursed Technique: Map Each
 Maximum Technique: Sum
 Reveal: stdout
 ```
+```input
+5 9 2 8
+9 4 7 3
+3 8 6 5
+```
+```output
+9
+```
 
-Over three rows → `9`.
+One evenly-divisible pair per row, each divided, and the three quotients
+summed.
 
 This is not a `Map Each` feature. A lambda `(x) -> e` and a sub-pipeline both
 turn one value into one value, so a body stands in **wherever a 1-parameter
@@ -352,7 +455,7 @@ two parameters, and the stages that need one say so with the arity named.
 A `Shikigami` is a name for a composition of primitives, with parameters.
 `examples/10_shikigami.domain`:
 
-```domain
+```domain run
 Shikigami "Scaled Sum" (factor: Int)
     Maximum Technique: Sum
     Cursed Technique: Apply
@@ -366,8 +469,16 @@ Shikigami: Scaled Sum
     factor: 7
 Reveal: stdout
 ```
-
-→ `231`.
+```input
+5
+-2
+11
+0
+17
+```
+```output
+231
+```
 
 Two calls there, and one of them is not in the file: `Ints` comes from the
 **prelude**, which is written in Domain and loaded before every program.
@@ -389,7 +500,7 @@ expansion, and `Domain Expansion: Explore` is the answer for a search.
 `Domain Expansion:` names an algorithm, and the compiler treats that as a
 request. `examples/02_pair_sum.domain` asks for the first pair summing to 100:
 
-```domain
+```domain run
 Cursed Energy: 02_pair_sum.input
 Shikigami: Ints
 Domain Expansion: All Pairs
@@ -398,6 +509,20 @@ Domain Expansion: All Pairs
 Maximum Technique: Product
 Reveal: stdout
 ```
+```input
+12
+41
+87
+23
+59
+61
+39
+```
+```output
+2419
+```
+
+`--explain` says how it got there:
 
 ```
 $ domain run 02_pair_sum.domain --explain
@@ -427,7 +552,7 @@ check that for yourself, run both.
 Stock levels, one per line, and two questions about them. This uses bindings
 inside a loop inside a Part:
 
-```domain
+```domain run
 Cursed Energy: stock.input
 Shikigami: Lines
 Channeled Energy: Convert List to Integers
@@ -449,10 +574,15 @@ Part "after restocking":
     Maximum Technique: Sum
     Reveal: stdout
 ```
-
-With `4 11 2 9 7 1`:
-
+```input
+4
+11
+2
+9
+7
+1
 ```
+```output
 Part understocked: 3
 Part after restocking: 44
 ```

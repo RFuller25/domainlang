@@ -234,12 +234,16 @@ type, and everything above reads the same.
 `FormatValue` renders a value in full, `FormatShort` the summary the REPL and
 tracing use:
 
-- Tuple → `(v1, v2, …)`
-- Graph → `{a: [(b, 1), (c, 2)], b: [], c: []}` — deliberately the shape a
-  `Map<K, List<(K, Int)>>` already renders as, so a reader who knows how maps
-  and tuples print can predict a graph. Weights are **always** shown: hiding
-  them when they happen to all be 1 would make the output depend on the data,
-  and both backends have to agree on it byte for byte.
+- Tuple → `[v1, v2, …]` — **the same as a List**, which is what a tuple is at
+  runtime (`[]Value`; the arity and the element types live in the type, not in
+  the value). The parenthesized `(T1, T2)` spelling is how the *type* prints,
+  in an error message or a signature; no value ever renders that way.
+- Graph → `{a: [(b, 1), (c, 2)], b: [], c: []}`. Node keys print as map keys
+  do, and each arc prints as `(to, weight)` — parenthesized, which is the one
+  place a pair renders that way rather than as the `[to, weight]` a Tuple value
+  would give. Weights are **always** shown: hiding them when they happen to all
+  be 1 would make the output depend on the data, and both backends have to
+  agree on it byte for byte.
 - Record → `{a: v1, b: v2}` — the field order the **type** declares, which the
   Reveal sink reads through `FormatValueTyped`. A `*RecordValue` remembers the
   order it was built in and `FormatValue` uses that, which is the same order

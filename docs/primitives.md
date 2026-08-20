@@ -8,7 +8,7 @@ produces, and a mismatch is a positioned error before anything runs.
 Notation: `T`, `U`, `K` are type variables; "keyable" means `Int`, `Text`,
 or a Tuple/Record built from keyable types (so points key Maps and Sets)
 (the legal Map key / Set element types). Lambda-consuming primitives infer
-their output types from the lambda body via the typechecker.
+their output types from the lambda body via the type checker.
 
 Every primitive below is supported by **both** backends (interpreter and
 compiled binary) with identical success output — the AoC-toolbox additions

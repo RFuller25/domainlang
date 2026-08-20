@@ -16,6 +16,9 @@
       "include": "#binding"
     },
     {
+      "include": "#global-declaration"
+    },
+    {
       "include": "#themed-statement"
     },
     {
@@ -26,6 +29,9 @@
     },
     {
       "include": "#lambda-arrow"
+    },
+    {
+      "include": "#walrus"
     },
     {
       "include": "#builtin"
@@ -51,8 +57,9 @@
   ],
   "repository": {
     "comment": {
-      "name": "comment.line.number-sign.domain",
-      "match": "#.*$"
+      "comment": "A comment starts at a '#' or at the word `technically`, and runs to end of line. The word is held to word boundaries so `technicallyOK` stays an identifier, and is matched without regard to case so a sentence may open a line with it.",
+      "name": "comment.line.domain",
+      "match": "(?:#|(?i:\\btechnically\\b)).*$"
     },
     "themed-statement": {
       "comment": "A statement head: the themed keyword, its ':' , and the operation phrase up to end of line. The operation is highlighted in its own context so primitives, control-flow words, modifiers, and literals each get their own colour.",
@@ -75,6 +82,9 @@
         },
         {
           "include": "#lambda-arrow"
+        },
+        {
+          "include": "#walrus"
         },
         {
           "include": "#control-flow"
@@ -111,6 +121,93 @@
         }
       ]
     },
+    "walrus": {
+      "comment": "`name := value`, the expression layer's one construct that writes rather than computes. The name it writes is coloured as the target it is, and `:=` is told apart from the operators around it — reading a lambda means knowing at a glance which of its clauses change something.",
+      "match": "([A-Za-z_][A-Za-z0-9_]*)[ \\t]*(:=)",
+      "captures": {
+        "1": {
+          "name": "variable.other.assignment.domain"
+        },
+        "2": {
+          "name": "keyword.operator.assignment.domain"
+        }
+      }
+    },
+    "global-declaration": {
+      "comment": "`Cursed Object:` declares a global and `Cursed Tool:` changes one, in either of two shapes: the name on the keyword's own line, or a run of indented `NAME As …` lines beneath a bare keyword. The rule is a region so both are one thing — it continues while lines are indented past the opener, which is the rule the lexer applies — and the declaration-name rule inside it colours the name a reader will go looking for.",
+      "begin": "^([ \\t]*)(Cursed Object|Cursed Tool)\\b[ \\t]*(:)?",
+      "beginCaptures": {
+        "2": {
+          "name": "keyword.control.domain"
+        },
+        "3": {
+          "name": "punctuation.separator.key-value.domain"
+        }
+      },
+      "while": "^(?:\\1[ \\t]+\\S|[ \\t]*$)",
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#declaration-name"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#lambda-arrow"
+        },
+        {
+          "include": "#walrus"
+        },
+        {
+          "include": "#control-flow"
+        },
+        {
+          "include": "#primitive"
+        },
+        {
+          "include": "#shikigami-prelude"
+        },
+        {
+          "include": "#io-target"
+        },
+        {
+          "include": "#order-modifier"
+        },
+        {
+          "include": "#builtin"
+        },
+        {
+          "include": "#type-name"
+        },
+        {
+          "include": "#logical-operator"
+        },
+        {
+          "include": "#preposition"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#number"
+        }
+      ]
+    },
+    "declaration-name": {
+      "comment": "The declared name and its preposition, inside a Cursed Object / Cursed Tool region: `total As 0`. Safe to match on shape alone here because the region has already established what the line is — outside it, `Subsets of 3` is an operation phrase of exactly this shape.",
+      "match": "([A-Za-z_][A-Za-z0-9_]*)[ \\t]+(?i:(As|Of))\\b",
+      "captures": {
+        "1": {
+          "name": "variable.other.global.domain"
+        },
+        "2": {
+          "name": "keyword.control.domain"
+        }
+      }
+    },
     "binding": {
       "comment": "A local binding line: `Consider NAME As <expression|lambda>` or `Consider NAME Of <operation|lambda>`. The rest of the line is highlighted like any other expression or phrase.",
       "begin": "^\\s*(?i:(Consider))\\b[ \\t]+([A-Za-z_][A-Za-z0-9_]*)[ \\t]+(?i:(As|Of))\\b",
@@ -135,6 +232,9 @@
         },
         {
           "include": "#lambda-arrow"
+        },
+        {
+          "include": "#walrus"
         },
         {
           "include": "#control-flow"
@@ -198,7 +298,7 @@
     },
     "argument-key": {
       "comment": "Indented named arguments: Using:, Mode:, Seed:, From:, Default:, Mark: ...",
-      "match": "^\\s+([A-Za-z_][A-Za-z0-9_]*)(?=:)",
+      "match": "^\\s+([A-Za-z_][A-Za-z0-9_]*)(?=:(?!=))",
       "captures": {
         "1": {
           "name": "variable.parameter.domain"

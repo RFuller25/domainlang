@@ -14,8 +14,10 @@ domain lsp                           language server over stdio (docs/tooling.md
 domain help | -h | --help            print the full usage text
 ```
 
-Plus the diagnostics command family (full reference in
-[diagnostics.md](diagnostics.md)):
+Plus the expansion commands. The first five are the diagnostics family (full
+reference in [diagnostics.md](diagnostics.md)); the next five run your program
+to answer their question ([below](#measurement-and-exploration)); the last four
+hand you something the binary carries.
 
 ```
 domain expansion: diagnosis <file>        error list with fix suggestions (read-only)
@@ -23,6 +25,13 @@ domain expansion: lint <file>             errors + style warnings + perf hints (
 domain expansion: fix <file>              apply unambiguous fixes in place (original → .bak)
 domain expansion: optimize <file>         optimization report; rewrites the source where possible (.bak)
 domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
+
+domain expansion: bench <file>            time all four backend × optimizer cells
+domain expansion: coverage <folder>       which builtins and primitives a folder never exercises
+domain expansion: stats <folder>          per-program runtime, LOC and optimizer passes, ranked
+domain expansion: battle <a> [--lang L] <b>  race a Domain program against one in another language
+domain expansion: mahoraga <f> <in> <exp>    adapt one program to one input; writes a binary and a recipe
+
 domain expansion: visualize <file>        step through a run in a terminal UI (see below)
 domain expansion: development [file]      write a program in a terminal editor (see below)
 domain expansion: documentation [-p PORT] serve this documentation as a local website (default port 4444)
@@ -728,14 +737,22 @@ indented text instead, which is also how it is tested.
 
 ## Measurement and exploration
 
-Three commands answer their question by running a program more than once and
-comparing the results. All three share one execution layer (`runner`), so they
-agree about what "how long does this take" means: every timed run is a
-subprocess, the input is a redirected regular file rather than a pipe, and the
-reported figure is the best of N runs interleaved between configurations so
-drift lands on all of them equally. This is the methodology
+The five commands below answer their question by *running* a program rather
+than reading it. All five share one execution layer (`runner`), so they agree
+about what "how long does this take" means: every timed run is a subprocess,
+the input is a redirected regular file rather than a pipe, and the reported
+figure is the best of N runs interleaved between configurations so drift lands
+on all of them equally. This is the methodology
 [bench/README.md](../bench/README.md) established for the Domain-vs-Go suite,
 applied to your own programs.
+
+| Command | Asks |
+|---|---|
+| [`bench`](#domain-expansion-bench) | how long does this program take, in each of the four backend × optimizer cells? |
+| [`coverage`](#domain-expansion-coverage) | what does this folder of programs never exercise? |
+| [`stats`](#domain-expansion-stats) | how do a folder's programs compare, ranked? |
+| [`battle`](#domain-expansion-battle) | is this faster than the same answer written in another language? |
+| [`mahoraga`](#domain-expansion-mahoraga) | what schedule of passes suits *this* program on *this* input? |
 
 ### `domain expansion: bench`
 

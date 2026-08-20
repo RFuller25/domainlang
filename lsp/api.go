@@ -299,3 +299,19 @@ func (a *Analysis) DefinitionAt(line int) (DefLocation, bool) {
 	}
 	return a.DefinitionOf(name)
 }
+
+// DefinitionAtPos answers the same question for a position rather than a line:
+// a name under the cursor jumps to where it was declared, and a cursor
+// anywhere else on a `Shikigami:` line jumps to the definition it calls.
+//
+// The name wins when there is one, because a cursor on a word is a question
+// about that word — and because the two never disagree usefully: the only
+// names on a call line are the Shikigami's own.
+//
+// col is a 0-based byte offset into the line.
+func (a *Analysis) DefinitionAtPos(line, col int) (DefLocation, bool) {
+	if sym, ok := a.SymbolAt(line, col); ok {
+		return DefLocation{Name: sym.Name, Pos: sym.Pos, Origin: "local"}, true
+	}
+	return a.DefinitionAt(line)
+}

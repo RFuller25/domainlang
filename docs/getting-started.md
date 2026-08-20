@@ -164,8 +164,9 @@ mix line by line. This guide keeps them, because they are the fastest way to
 learn the roles. See [optional keywords](language.md#optional-keywords) for
 the one thing dropping them costs you.
 
-Two syntax rules: indentation is significant and **spaces only**, and `#`
-starts a comment.
+Two syntax rules: indentation is significant and **spaces only**, and a
+comment starts at `#` — or at the word `technically`, which reads the way an
+aside actually reads: `Reveal: stdout technically it prints`.
 
 ## 4. It fails before it runs
 

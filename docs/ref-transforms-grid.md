@@ -314,6 +314,11 @@ ad
 
 ### Flip Grid — `Grid<T> -> Grid<T>`
 
+```domain
+Cursed Technique: Flip Grid
+    Mode: Horizontal     # Horizontal (default, mirrors left-right) | Vertical
+```
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"
@@ -349,12 +354,6 @@ def
 ```output
 def
 abc
-```
-
-
-```domain
-Cursed Technique: Flip Grid
-    Mode: Horizontal     # Horizontal (default, mirrors left-right) | Vertical
 ```
 
 ### Map Values — `Map<K,V> × (V -> W) -> Map<K,W>`

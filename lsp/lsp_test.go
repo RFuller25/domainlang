@@ -149,6 +149,52 @@ func TestHoverShowsPipelineTypes(t *testing.T) {
 	}
 }
 
+// Hovering a *name* answers about the name rather than about the line it sits
+// on, and the column it arrives as is a UTF-16 offset — which is the same
+// number as the byte offset until something outside the BMP is on the line, so
+// one of these puts an emoji in front of the word.
+func TestHoverOverAVariableSaysWhereItComesFrom(t *testing.T) {
+	src := "Cursed Object: target As 2020\n" +
+		"Cursed Energy: in.txt\n" +
+		"Cursed Technique: Map Each\n" +
+		"    Using: (n) -> n + target    # 🎯 target again\n" +
+		"Cursed Tool: target As target + 1\n" +
+		"Reveal: stdout\n"
+	hover := func(id, line, character int) map[string]any {
+		return map[string]any{
+			"jsonrpc": "2.0", "id": id, "method": "textDocument/hover",
+			"params": map[string]any{
+				"textDocument": map[string]any{"uri": uri},
+				"position":     map[string]any{"line": line, "character": character},
+			},
+		}
+	}
+	// 0-based line 3, on the `target` of `n + target`.
+	results := drive(t, initialize(), didOpen(src), hover(2, 3, 22))
+	res := resultOf(t, results, 2)
+	if res == nil {
+		t.Fatal("hover returned null over a global")
+	}
+	val := res.(map[string]any)["contents"].(map[string]any)["value"].(string)
+	for _, want := range []string{"**target**", "`Int`", "declared on line 1", "written on line 5"} {
+		if !strings.Contains(val, want) {
+			t.Errorf("hover over a global is missing %q, got %q", want, val)
+		}
+	}
+
+	// The second `target` on that line is inside a comment, and past an emoji:
+	// the character offset counts two UTF-16 units for it, so answering by byte
+	// offset alone would land in the wrong place.
+	// The comment's `target` starts at byte 39 and at UTF-16 offset 37.
+	results = drive(t, initialize(), didOpen(src), hover(2, 3, 37))
+	if res := resultOf(t, results, 2); res != nil {
+		val := res.(map[string]any)["contents"].(map[string]any)["value"].(string)
+		if strings.Contains(val, "**target**") {
+			t.Errorf("hover answered about a name inside a comment: %q", val)
+		}
+	}
+}
+
 func TestDefinitionJumpsToShikigami(t *testing.T) {
 	src := "Shikigami \"Halve\"\n    Cursed Technique: Map Each\n        Using: (x) -> x / 2\nCursed Energy: in.txt\nShikigami: Ints\nShikigami: Halve\nReveal: stdout\n"
 	def := map[string]any{

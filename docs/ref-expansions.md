@@ -246,6 +246,17 @@ Size and step must be ≥ 1; a list shorter than the window yields no windows.
 
 ### Permutations — `List<T> -> List<List<T>>`
 
+```domain
+Domain Expansion: Permutations
+```
+
+Every ordering of the list, in lexicographic index order. **Unbounded** —
+Domain used to refuse more than 9 elements, which turned a 10-element input
+(3.6M orderings, comfortable on any machine) into a spurious failure. `n!`
+still explodes, so a large input is slow or memory-hungry rather than
+cleanly refused; `prims.MaxPermutationInput` is a var, so a caller that wants
+a ceiling back can set one, and both backends read the same value.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
@@ -277,19 +288,16 @@ Reveal: stdout
 24
 ```
 
+### Subsets — `List<T> -> List<List<T>>`
 
 ```domain
-Domain Expansion: Permutations
+Domain Expansion: Subsets
 ```
 
-Every ordering of the list, in lexicographic index order. **Unbounded** —
-Domain used to refuse more than 9 elements, which turned a 10-element input
-(3.6M orderings, comfortable on any machine) into a spurious failure. `n!`
-still explodes, so a large input is slow or memory-hungry rather than
-cleanly refused; `prims.MaxPermutationInput` is a var, so a caller that wants
-a ceiling back can set one, and both backends read the same value.
-
-### Subsets — `List<T> -> List<List<T>>`
+The power set. Subset k includes element i iff bit i of k is set, so the
+empty set comes first and the full list last; each subset preserves element
+order. **Unbounded**, for the same reason as `Permutations` (`2^n` still
+explodes; `prims.MaxSubsetInput` restores a ceiling if you want one).
 
 ```domain run
 Cursed Energy: stdin
@@ -319,16 +327,6 @@ a,b,c,d
 ```output
 16
 ```
-
-
-```domain
-Domain Expansion: Subsets
-```
-
-The power set. Subset k includes element i iff bit i of k is set, so the
-empty set comes first and the full list last; each subset preserves element
-order. **Unbounded**, for the same reason as `Permutations` (`2^n` still
-explodes; `prims.MaxSubsetInput` restores a ceiling if you want one).
 
 ### Explore — `S × (S -> List<S>) -> List<S> | Int | Map<S,Int> | V` (S keyable)
 
@@ -472,6 +470,29 @@ compound one with `tuple(...)`.
 
 ### Topological Sort — `Graph<K> | Map<K, List<K>> | List<(K, K)> -> List<K>` (K keyable)
 
+```domain
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Domain Expansion: Topological Sort
+```
+
+A dependency order over an *explicit* graph — the other standard question
+about one, beside Explore's reachability.
+
+Two input shapes, like `Merge Ranges`: an adjacency `Map<K, List<K>>` (a node
+mapped to its successors), or an **edge list** — `List<(K, K)>` or a
+two-element `List<List<K>>`, which is exactly what a positional `Match
+Pattern` produces, so a parsed dependency file needs no reshaping.
+
+Ties break by **first-seen order** (keys in the map's insertion order, then
+successors in list order), so the result is deterministic rather than merely
+valid: two runs of the same program agree, and so do the two backends. A node
+that appears only as a target is still ordered.
+
+A cycle is a runtime error that **names a blocked node** — "there is a cycle"
+alone leaves you to find it by hand in a large input.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"
@@ -540,30 +561,6 @@ c d
 ```output
 4
 ```
-
-
-```domain
-Cursed Technique: Match Pattern
-    Mode: Each
-    Using: "{word} -> {word}"
-Domain Expansion: Topological Sort
-```
-
-A dependency order over an *explicit* graph — the other standard question
-about one, beside Explore's reachability.
-
-Two input shapes, like `Merge Ranges`: an adjacency `Map<K, List<K>>` (a node
-mapped to its successors), or an **edge list** — `List<(K, K)>` or a
-two-element `List<List<K>>`, which is exactly what a positional `Match
-Pattern` produces, so a parsed dependency file needs no reshaping.
-
-Ties break by **first-seen order** (keys in the map's insertion order, then
-successors in list order), so the result is deterministic rather than merely
-valid: two runs of the same program agree, and so do the two backends. A node
-that appears only as a target is still ordered.
-
-A cycle is a runtime error that **names a blocked node** — "there is a cycle"
-alone leaves you to find it by hand in a large input.
 
 ### BFS — `Grid<T> × (T -> Bool) -> Grid<Int> | Graph<K> × Start: -> Map<K,Int>`
 

@@ -117,6 +117,27 @@ func TestOperationUnderWrongKeyword(t *testing.T) {
 	}
 }
 
+// The phrase in the message is the phrase the reader wrote, quoted once.
+// prims quotes it on the way out and the analyzer used to quote what it
+// captured a second time, so an operation carrying a string argument came back
+// with every quote tripled: a line reading `Splitt Each by ","` was reported as
+// `unknown operation "Splitt Each by \\\",\\\""`.
+func TestUnknownOperationMessageQuotesThePhraseOnce(t *testing.T) {
+	src := "Cursed Energy: stdin\n" +
+		"Cursed Technique: Split Text by \";\"\n" +
+		"Cursed Technique: Splitt Each by \",\"\n" +
+		"Reveal: stdout\n"
+	r := analyze(t, src)
+	d := diagWith(r, Error, "unknown operation")
+	if d == nil {
+		t.Fatalf("no unknown-operation diagnostic in %v", r.Diags)
+	}
+	want := `unknown operation "Splitt Each by \",\"" under "Cursed Technique"`
+	if d.Msg != want {
+		t.Errorf("Msg  = %s\nwant = %s", d.Msg, want)
+	}
+}
+
 func TestOperationTypoFuzzyFix(t *testing.T) {
 	src := strings.Replace(day1, "Cursed Technique: Split Each", "Cursed Technique: Splitt Each", 1)
 	r := analyze(t, src)

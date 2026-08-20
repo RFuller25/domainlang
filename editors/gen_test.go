@@ -16,6 +16,7 @@ import (
 	"domain/lexer"
 	"domain/parser"
 	"domain/prims"
+	"domain/token"
 	"domain/typecheck"
 )
 
@@ -473,6 +474,64 @@ func TestForeignBlockRulesCoverEveryLanguage(t *testing.T) {
 			if !strings.Contains(src, lang) {
 				t.Errorf("%s has no foreign-block rule matching %s — such a block would be highlighted as Domain",
 					path, lang)
+			}
+		}
+	}
+}
+
+// Both comment markers the language accepts have to be in both grammars, or a
+// comment reads as code in an editor while the compiler skips it — the most
+// misleading kind of highlighting there is. The word marker is the one that
+// can drift: it is a word, spelled in the token package, and a grammar carries
+// its own copy of that spelling.
+func TestBothGrammarsKnowBothCommentMarkers(t *testing.T) {
+	for _, f := range []struct{ path, rule string }{
+		{tmPath, `"match": "(?:#|(?i:\\b` + token.CommentWord + `\\b)).*$"`},
+		{vimPath, `syn match domainComment /\%(#\|\c\<` + token.CommentWord + `\>\).*$/`},
+	} {
+		if !strings.Contains(readFile(t, f.path), f.rule) {
+			t.Errorf("%s does not open a comment at %q — its comment rule reads:\n%s",
+				f.path, token.CommentWord, commentRuleOf(t, f.path))
+		}
+	}
+}
+
+// commentRuleOf is whatever the grammar currently says a comment is, so a
+// failure above shows what it has instead of asserting into the void.
+func commentRuleOf(t *testing.T, path string) string {
+	t.Helper()
+	for _, line := range strings.Split(readFile(t, path), "\n") {
+		if strings.Contains(line, "domainComment") || strings.Contains(line, `"match": "(?:#`) {
+			return strings.TrimSpace(line)
+		}
+	}
+	return "(no comment rule at all)"
+}
+
+// The three shapes that introduce a name — a `Consider` binding, a
+// `Cursed Object` / `Cursed Tool` declaration, and a `:=` — each need a rule in
+// each grammar. They are hand-written (a name is a shape, not a word list), so
+// nothing else would notice one going missing.
+func TestBothGrammarsColourDeclaredNames(t *testing.T) {
+	rules := map[string][]string{
+		tmPath: {
+			`"binding": {`,            // Consider NAME As …
+			`"global-declaration": {`, // Cursed Object / Cursed Tool
+			`"declaration-name": {`,   //   …including the block form
+			`"walrus": {`,             // NAME := …
+		},
+		vimPath: {
+			"syn match domainBindName",
+			"syn match domainGlobalName",
+			"syn match domainDeclName",
+			"syn match domainWalrusName",
+		},
+	}
+	for path, want := range rules {
+		src := readFile(t, path)
+		for _, rule := range want {
+			if !strings.Contains(src, rule) {
+				t.Errorf("%s has no %s rule — the name it declares would read as ordinary text", path, rule)
 			}
 		}
 	}

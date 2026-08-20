@@ -161,6 +161,44 @@ weights:
 
 ### Building and updating a collection
 
+```domain
+Maximum Technique: Fold                  # a frequency map, in one lambda
+    Seed: (xs) -> emptymap("", 0)
+    Using: (acc, w) -> insert(acc, w, getor(acc, w, 0) + 1)
+```
+
+Every update is functional, but it is not always a copy. Where the optimizer
+can prove nothing reads the copied-from value after an update — which is the
+usual case in a `Fold`, whose accumulator is dead the moment the lambda
+returns — it marks the site and both backends write through instead, so the
+fold above is linear in its writes rather than quadratic in the map. The
+accumulator is cloned once on entry, because a `Part` or a `Channel` may be
+holding the same value; see
+[optimizer.md](optimizer.md#linear-accumulators--the-pass-that-runs-last) for
+what has to be true, and `--no-optimize` for the copying behaviour.
+
+**Three shapes the rewrite does not reach**, because the cost is real and
+silent when it applies:
+
+- **`set` on a `List`.** It always copies. `take`/`drop`/`slice` hand out a
+  subslice of the same backing array, so an in-place write would be visible
+  through one taken earlier. A fold that writes into a long list is quadratic;
+  20,000 writes into a 100k list takes 26 s, against 0.1 s for the same shape
+  over a `Map`. Prefer a `Map<Int, V>` accumulator when the list is large, or
+  rebuild with `concat`, which allocates. See
+  [aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize).
+- **`with` on a `Record`.** Also always a copy, but O(fields) — small enough
+  that it has never been what made anything slow.
+- **Loop bodies.** `Repeat`, `While` and `For` take a sub-pipeline rather than
+  a lambda, so there is no accumulator parameter to follow and no site to mark.
+  A simulation written as `Repeat N` over a `Map` state copies every lap; the
+  same work written as a `Fold` does not.
+
+The proof can fail, and then the copy stays: a body that still reads the
+accumulator *after* updating it needs the old value, so it gets it. `del` is
+never done in place. And a `Count By` or `Group By` still builds one
+collection in one pass, which beats any fold.
+
 A frequency map built one write at a time — `emptymap`'s arguments are type
 witnesses, and `getor` supplies the zero the first write needs:
 
@@ -225,41 +263,3 @@ an in-place update would let the second application see the first one's work.
 | `cellpoints(g)` | `Sparse<T> -> List<(Int, Int)>` | The set cells' coordinates in sorted row-major order. `cells` counts them; this is what walks them. |
 
 So a fold can now carry real state:
-
-```domain
-Maximum Technique: Fold                  # a frequency map, in one lambda
-    Seed: (xs) -> emptymap("", 0)
-    Using: (acc, w) -> insert(acc, w, getor(acc, w, 0) + 1)
-```
-
-Every update is functional, but it is not always a copy. Where the optimizer
-can prove nothing reads the copied-from value after an update — which is the
-usual case in a `Fold`, whose accumulator is dead the moment the lambda
-returns — it marks the site and both backends write through instead, so the
-fold above is linear in its writes rather than quadratic in the map. The
-accumulator is cloned once on entry, because a `Part` or a `Channel` may be
-holding the same value; see
-[optimizer.md](optimizer.md#linear-accumulators--the-pass-that-runs-last) for
-what has to be true, and `--no-optimize` for the copying behaviour.
-
-**Three shapes the rewrite does not reach**, because the cost is real and
-silent when it applies:
-
-- **`set` on a `List`.** It always copies. `take`/`drop`/`slice` hand out a
-  subslice of the same backing array, so an in-place write would be visible
-  through one taken earlier. A fold that writes into a long list is quadratic;
-  20,000 writes into a 100k list takes 26 s, against 0.1 s for the same shape
-  over a `Map`. Prefer a `Map<Int, V>` accumulator when the list is large, or
-  rebuild with `concat`, which allocates. See
-  [aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize).
-- **`with` on a `Record`.** Also always a copy, but O(fields) — small enough
-  that it has never been what made anything slow.
-- **Loop bodies.** `Repeat`, `While` and `For` take a sub-pipeline rather than
-  a lambda, so there is no accumulator parameter to follow and no site to mark.
-  A simulation written as `Repeat N` over a `Map` state copies every lap; the
-  same work written as a `Fold` does not.
-
-The proof can fail, and then the copy stays: a body that still reads the
-accumulator *after* updating it needs the old value, so it gets it. `del` is
-never done in place. And a `Count By` or `Group By` still builds one
-collection in one pass, which beats any fold.

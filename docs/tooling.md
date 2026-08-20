@@ -267,9 +267,9 @@ It fronts the same engines as the CLI, so an editor shows exactly what
 | Capability | What it does |
 |---|---|
 | `publishDiagnostics` | on open/change: the full [diagnostics engine](diagnostics.md) output — errors with "did you mean" suggestions appended, lint warnings, performance hints — with precise ranges |
-| `textDocument/hover` | on a primitive: its **documentation** — keyword, signature, and a one-line definition drawn from [primitives.md](primitives.md) — plus the concrete type step (`List<Int> → Int`) when the program resolves; on a `Shikigami` definition: its signature |
+| `textDocument/hover` | on a **name**: what it is, what type it has, and the line that declares it ([below](#hovering-a-name)); on a primitive: its **documentation** — keyword, signature, and a one-line definition drawn from [primitives.md](primitives.md) — plus the concrete type step (`List<Int> → Int`) when the program resolves; on a `Shikigami` definition: its signature |
 | `textDocument/completion` | context-aware suggestions: themed keywords at the head of a line; the primitives registered under a keyword after its `:` (each with its signature and summary); the argument labels (`Using:`, `Mode:`, `Seed:`, …) on indented lines; and the `Mode:` values |
-| `textDocument/definition` | on a `Shikigami: Name` call: jumps to the definition in the file (prelude names return nothing rather than a bogus location) |
+| `textDocument/definition` | on a **name**: jumps to the `Consider`, `Cursed Object`, parameter list or lambda that introduced it; on a `Shikigami: Name` call: jumps to the definition in the file (prelude names return nothing rather than a bogus location) |
 | `textDocument/codeAction` | one quickfix — "apply N automatic fix(es)" — that applies every confident repair as a single document edit, the same set `domain expansion: fix` would write |
 | `textDocument/inlayHint` | the value **type flowing out of each statement**, at end of line — the REPL's `=> value : Type` feedback, in the editor |
 
@@ -308,6 +308,42 @@ the server never optimizes, so this is both correct and free.
 Also on hover: a `Shikigami` definition shows its parameters and its declared
 signature (`(k: Int) : List<Int> -> Int`) when it has one.
 
+### Hovering a name
+
+Every other answer the server gives is about a **line**, because a line of a
+pipeline is a stage. The question a reader asks most often is about a **word**:
+*what is `total`, and where did it come from?* Point at one and hover:
+
+> **target** — `Int`
+>
+> *global, declared on line 2*
+>
+> ```domain
+> Cursed Object: target As 2020
+> ```
+>
+> *written on line 9*
+
+Five kinds of name are answered, each with the line that introduces it: a
+`Cursed Object` **global**, a `Consider … As/Of` **binding**, a `Consider … As
+(x) -> …` **function binding** (the preposition is the whole difference between
+the two, so hover says which it is), a **Shikigami parameter** with its
+declared type, and a **lambda parameter** — whose type belongs to the primitive
+it is handed to and so is not claimed.
+
+A global also reports the `Cursed Tool` lines that write it, or says that
+nothing does. That is the difference between a constant and something a loop is
+driving, and it is not visible from the declaration alone.
+
+Names are resolved **by scope**, not by spelling: two stages that bind `limit`
+bind two different names, and each hover points at its own. A word inside a
+string literal or a comment is not a name and gets no answer. As everywhere
+else, a program that does not type-check still answers — the index is built from
+the parsed source, and only the *types* need the resolver.
+
+Go-to-definition takes the same route, so the same key that follows a
+`Shikigami:` call follows a name to the line that declares it.
+
 ### Editor wiring
 
 **VS Code** — the binary carries the extension and installs it:
@@ -339,7 +375,7 @@ manually.
 
 **VS Code**: the `editors/vscode` extension is a full language client — it
 ships the grammar **and** launches `domain lsp` itself, so diagnostics, hover,
-completion, go-to-Shikigami, and quick fixes work as soon as it is installed
+completion, go-to-definition, and quick fixes work as soon as it is installed
 (`npm install` once to pull the client library — see
 [editors/README.md](../editors/README.md)). It finds the binary on your `PATH`
 by default; set `domain.server.path` if it lives elsewhere, and use the

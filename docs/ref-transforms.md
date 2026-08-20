@@ -254,46 +254,6 @@ Reveal: stdout
 
 ### Match Pattern — `Text -> V` or `List<Text> -> List<V>`
 
-A typed template with named holes, producing a record per line:
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by "\n"
-Cursed Technique: Match Pattern
-    Mode: Each
-    Using: "{a:int}-{b:int}"
-Reveal: stdout
-```
-```input
-1-2
-30-40
-```
-```output
-[{a: 1, b: 2}, {a: 30, b: 40}]
-```
-
-The holes are typed, so the fields arrive as `Int` rather than as text to be
-converted, and `.field` reads them downstream:
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by "\n"
-Cursed Technique: Match Pattern
-    Mode: Each
-    Using: "{a:int}-{b:int}"
-Maximum Technique: Sum By
-    Using: (r) -> r.b - r.a
-Reveal: stdout
-```
-```input
-1-2
-30-40
-```
-```output
-11
-```
-
-
 ```domain
 Cursed Technique: Match Pattern
     Mode: Each                       # One | Each | Try | Scan; One/Each inferred
@@ -356,7 +316,54 @@ shape, concatenating by shape and losing the input's own order.
 
 Full template grammar: [match-pattern.md](match-pattern.md).
 
+A typed template with named holes, producing a record per line:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{a:int}-{b:int}"
+Reveal: stdout
+```
+```input
+1-2
+30-40
+```
+```output
+[{a: 1, b: 2}, {a: 30, b: 40}]
+```
+
+The holes are typed, so the fields arrive as `Int` rather than as text to be
+converted, and `.field` reads them downstream:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{a:int}-{b:int}"
+Maximum Technique: Sum By
+    Using: (r) -> r.b - r.a
+Reveal: stdout
+```
+```input
+1-2
+30-40
+```
+```output
+11
+```
+
 ### Split Fields — `Text -> List<Text>` or `List<Text> -> List<List<Text>>`
+
+```domain
+Cursed Technique: Split Fields
+```
+
+Splits on runs of whitespace (spaces and tabs), discarding empty fields —
+the classic `fields()` helper. The form is chosen by the input type: bare
+`Text` gives one field list; `List<Text>` splits every line.
 
 ```domain run
 Cursed Energy: stdin
@@ -388,15 +395,6 @@ d e
 ```output
 [3, 2]
 ```
-
-
-```domain
-Cursed Technique: Split Fields
-```
-
-Splits on runs of whitespace (spaces and tabs), discarding empty fields —
-the classic `fields()` helper. The form is chosen by the input type: bare
-`Text` gives one field list; `List<Text>` splits every line.
 
 ### Extract Integers — `Text -> List<Int>` or `List<Text> -> List<List<Int>>`
 
@@ -444,6 +442,16 @@ target y=-5..-1
 
 ### Ragged Columns — `List<Text> -> List<List<Text>>`
 
+```domain
+Cursed Technique: Ragged Columns
+```
+
+The character columns of a block of lines, top to bottom, tolerating
+unpadded (ragged) line lengths by skipping the cells short lines don't have
+— the classic move for fixed-column drawings like AoC 2022 Day 5's crate
+stacks, whose crates for stack k live in column `4(k-1)+1`. See
+`testdata/day5_full.domain` for the full worked parse.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"
@@ -478,17 +486,6 @@ cd
 ```output
 [[a, c], [b, d]]
 ```
-
-
-```domain
-Cursed Technique: Ragged Columns
-```
-
-The character columns of a block of lines, top to bottom, tolerating
-unpadded (ragged) line lengths by skipping the cells short lines don't have
-— the classic move for fixed-column drawings like AoC 2022 Day 5's crate
-stacks, whose crates for stack k live in column `4(k-1)+1`. See
-`testdata/day5_full.domain` for the full worked parse.
 
 ### Window — `List<T> -> List<List<T>>`
 
@@ -1145,6 +1142,21 @@ Reveal: stdout
 
 ### Range — `-> List<Int>`
 
+```domain
+Cursed Technique: Range 5        # [0, 1, 2, 3, 4]
+Cursed Technique: Range 1 16     # [1, …, 15]
+```
+
+The half-open integer range `[lo, hi)`, replacing the current value (like
+`Combine` and `Zip`, which also ignore it). The bounds are
+[measured arguments](#measured-arguments) — `Low:` and `High:` — and this is
+where that matters most: `Range` discards its input, so
+`High: (xs) -> length(xs)` is a range sized from the data that no literal
+spelling can express. Half-open **deliberately**:
+`range(N)` in a `For` header already means `0..N-1`, and two meanings of
+"range" in one language would be worse than the occasional `Range 1 16`. It
+also matches `slice`, `take` and `drop`. An inverted range is a resolve error.
+
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Range 0 to 5
@@ -1170,19 +1182,3 @@ Reveal: stdout
 ```output
 120
 ```
-
-
-```domain
-Cursed Technique: Range 5        # [0, 1, 2, 3, 4]
-Cursed Technique: Range 1 16     # [1, …, 15]
-```
-
-The half-open integer range `[lo, hi)`, replacing the current value (like
-`Combine` and `Zip`, which also ignore it). The bounds are
-[measured arguments](#measured-arguments) — `Low:` and `High:` — and this is
-where that matters most: `Range` discards its input, so
-`High: (xs) -> length(xs)` is a range sized from the data that no literal
-spelling can express. Half-open **deliberately**:
-`range(N)` in a `For` header already means `0..N-1`, and two meanings of
-"range" in one language would be worse than the occasional `Range 1 16`. It
-also matches `slice`, `take` and `drop`. An inverted range is a resolve error.
