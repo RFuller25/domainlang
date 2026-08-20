@@ -60,6 +60,13 @@ func nodeLists(p *ir.Pipeline) [][]*ir.Node {
 			if subs, _ := n.Meta[ir.MetaBindNodes].([][]*ir.Node); subs != nil {
 				lists = append(lists, subs...)
 			}
+			// A `Cursed Object` / `Cursed Tool` declaration's `Of` body is the
+			// same thing under a different keyword, and kept apart for the
+			// same reason. Without this a whole sub-pipeline would run
+			// unoptimized purely for having been written under a declaration.
+			if subs, _ := n.Meta[ir.MetaGlobalNodes].([][]*ir.Node); subs != nil {
+				lists = append(lists, subs...)
+			}
 			if sub := lambdaBodyNodes(n); sub != nil {
 				lists = append(lists, sub)
 			}
@@ -175,10 +182,17 @@ func substIdent(e ast.Expr, name string, repl ast.Expr) ast.Expr {
 // left exactly as written.
 //
 // A lambda body written as a sub-pipeline (BlockBody) carries no expression to
-// look at and no `:=` to find: the statements inside it have their own lambdas,
-// which are checked wherever they are reached.
+// look at and no `:=` to find. That used to make it uninteresting — the
+// statements inside it have their own lambdas, checked wherever they are
+// reached — and it stopped being true when `Cursed Tool` made a *statement*
+// able to write. A global is therefore asked about separately, and the
+// BlockBody case is where it earns its keep; see optimizer/globals.go for what
+// the question now is and why it is deliberately blunt.
 func effectful(l *ast.Lambda) bool {
-	return l != nil && ast.HasUpdate(l.Body)
+	if l == nil {
+		return false
+	}
+	return lambdaImpure(l)
 }
 
 // isTotal reports whether evaluating e can never fail at runtime (assuming it

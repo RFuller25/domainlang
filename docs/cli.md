@@ -800,15 +800,15 @@ domain expansion: coverage examples/ --min 40   # a CI gate
 ```
 
 ```
-examples/ — 20 program(s)
+examples/ — 22 program(s)
 
-  primitives   32 /  85  (38%)
-  builtins     28 / 161  (17%)
+  primitives   35 /  88  (40%)
+  builtins     15 / 176  (9%)
   keywords      7 /   8  (88%)
 
-  Cursed Technique — 18 not exercised
-    Chunk                  List<T> → List<List<T>>       ref-transforms.md#chunk
-    Sliding Reduce         …                             ref-transforms.md#sliding-reduce
+  Channeled Energy — 7 not exercised
+    Convert To Edges       Graph<K> → List<(K, K, Int)>  ref-coercions.md#convert-to-edges
+    Convert To Entries     Map<K,V> → List<(K, V)>       ref-coercions.md#convert-to-entries
     …
 ```
 
@@ -863,7 +863,7 @@ challenges/ — 13 program(s), compile / optimized, best of 3
   slowest         05_window_max (3.06ms) · 04_collatz (3.02ms)
   most rewritten  02_two_sum (1) · 05_window_max (1)
 
-  vocabulary      23 / 85 primitives · 18 / 161 builtins
+  vocabulary      23 / 88 primitives · 18 / 176 builtins
 ```
 
 `bench` is for one program studied properly; `stats` runs one configuration
@@ -997,12 +997,22 @@ faster for unexplained reasons is a liability.
 
 **The eight turns.** Turn 1 is reconnaissance: a baseline of N runs whose mean
 is what everything is compared against and whose spread sets the noise floor,
-plus a CPU profile, the input's measured shape, and the Go the compiler
-actually emitted. Turns 2–8 each adapt to what has been measured — dead
-code for this input, a profile-guided rebuild, pass ablation, pass ordering,
-templated codegen edits, guarded specialisation, pinned specialisation. Turns
-not yet built are reported as such, so the report distinguishes "found
-nothing" from "did not look".
+plus a CPU profile, two further untimed runs — one reporting the heap, one a
+probe build reporting what the program's own bindings and list accumulators
+held — and the Go the compiler actually emitted. Turns 2–8 each adapt to what
+has been measured: dead code for this input, how the program is compiled, pass
+ablation, pass ordering, templated codegen edits, guarded specialisation,
+pinned specialisation. Turns not yet built are reported as such, so the report
+distinguishes "found nothing" from "did not look".
+
+**Turn 3 asks how `go build` should be invoked** — the one question the Domain
+compiler never gets to ask. A rebuild against a profile of this program doing
+this work; a larger inlining budget, which a Domain binary is unusually
+sensitive to because `consider … in` lowers to nested closures and every
+builtin is a call; and this machine's instruction set (`GOAMD64=v3`) where the
+CPU has it. All general tier: a toolchain flag cannot change what a program
+computes. Each is recorded in the recipe, since a binary must never end up
+faster for a reason nobody wrote down.
 
 **Turn 2 watches the program run**, interpreted, once, and looks for stages
 that did nothing to the value that passed through them — a `Filter` that kept
@@ -1021,9 +1031,22 @@ it, the emitted source says the program has anywhere to apply it.
 | Entry | Turn | Precondition | What it does | Tier |
 |---|---|---|---|---|
 | exact list capacity | 6 | the split-and-parse loop reserved `len/2+1`, and the input's segments were counted | reserves the measured count instead — for five-digit numbers the guess over-reserves 2.5× | guarded |
+| one scheduler thread | 6 | the machine has more than one core and the baseline collected at all | `GOMAXPROCS(1)`: a Domain binary is a straight line of loops on one goroutine, and the Ps beyond the first exist for the collector's mark workers | general |
 | collector off for one run | 6 | the baseline actually ran collections, and its heap fits under a limit | `SetGCPercent(-1)` with `SetMemoryLimit` as the backstop: a program that lives 50ms and exits gains nothing by tidying up | guarded |
+| collector four times lazier | 6 | the baseline ran four collections or more | `SetGCPercent(400)` under a wider limit — the answer for a program that allocates far more than it keeps, where switching off is not an option | guarded |
+| measured list capacity | 6 | the probe watched an accumulator the generator reserves *nothing* for grow past a few thousand elements | reserves the length it reached: a list that grows to five million is reallocated and copied twenty-two times on the way there | guarded |
 | ASCII fast path | 7 | the program decodes runes | compiles the byte-indexed loop *and* the decode, choosing per line — correct on any input, faster on plain ones | guarded |
 | no UTF-8 decoding | 8 | every byte of the input is one rune, and the program decodes runes | the same fast path with the check and the fallback removed | pinned |
+| pinned constant | 8 | the probe watched a `Consider` binding hold one value for the whole run, and no stage writes it | emits the value at every site that reads it, so `% l` becomes `% 16` — a mask rather than a hardware division | pinned |
+
+**Two of those rest on a probe build** rather than on the input file: a build
+that reports what its own bindings held and how long its own lists grew, run
+once, untimed, and thrown away. It is the only way to answer either question —
+how many elements a filtered stream produces is a property of the data, and a
+binding hoisted out of the loop it was written in is evaluated once and read a
+million times. A binding that held a *different* value at any point is dropped
+where it is read, so a loop variable can never be pinned; a capacity, being a
+hint that `append` overrides, keeps the largest length it saw.
 
 The turns divide by tier and shape together, so an entry runs in exactly one of
 them: turn 6 takes the parameter edits, turn 7 the specialisations that compile

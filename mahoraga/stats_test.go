@@ -227,3 +227,48 @@ func TestTrimmingDoesNotManufactureAWin(t *testing.T) {
 			a.Mean, a.StdErr, b.Mean, b.StdErr)
 	}
 }
+
+// The screen and the confirmation ask different questions, and the screen is
+// the one that has to be generous: a candidate it discards is never looked at
+// again, and at three runs it has two samples and no spread at all.
+//
+// The case is real. `i15_generators` reserving both of its five-million
+// element accumulators is worth 23% hand-raced, and three screens in a row
+// rejected it on two samples each while the machine drifted underneath them.
+// The minimum is the sample that was least interfered with — the same
+// reasoning TrimSlowest already rests on — so the screen takes whichever view
+// is more favourable and lets the confirmation be strict.
+func TestScreenEffectTakesTheMoreFavourableView(t *testing.T) {
+	champion := Measurement{Mean: 100 * time.Millisecond, Min: 95 * time.Millisecond, Runs: 2}
+
+	// A candidate whose mean was spoiled by one contaminated run, but whose
+	// fastest run is plainly quicker than the champion's fastest.
+	contaminated := Measurement{Mean: 101 * time.Millisecond, Min: 70 * time.Millisecond, Runs: 2}
+	if got := ScreenEffect(champion, contaminated); got < 0.25 {
+		t.Errorf("ScreenEffect = %.3f, want the minima's view (~0.26)", got)
+	}
+	if byMean := effectOf(champion, contaminated); byMean > 0.02 {
+		t.Fatalf("the test case no longer has a mean that hides the win: %.3f", byMean)
+	}
+
+	// And the other way: a candidate that is genuinely faster on average keeps
+	// its own view when the minima happen to agree less.
+	steady := Measurement{Mean: 80 * time.Millisecond, Min: 94 * time.Millisecond, Runs: 2}
+	if got := ScreenEffect(champion, steady); got < 0.19 {
+		t.Errorf("ScreenEffect = %.3f, want the means' view (~0.20)", got)
+	}
+
+	// A candidate that is slower by both views stays slower by both. The screen
+	// is generous, not blind.
+	slower := Measurement{Mean: 130 * time.Millisecond, Min: 125 * time.Millisecond, Runs: 2}
+	if got := ScreenEffect(champion, slower); got > 0 {
+		t.Errorf("ScreenEffect = %.3f for a candidate slower on both views", got)
+	}
+
+	// A missing minimum — a measurement that failed before it recorded one —
+	// falls back to the means rather than reading zero as infinitely fast.
+	noMin := Measurement{Mean: 90 * time.Millisecond, Runs: 2}
+	if got := ScreenEffect(champion, noMin); got < 0.09 || got > 0.11 {
+		t.Errorf("ScreenEffect = %.3f with no minimum, want the means' view (~0.10)", got)
+	}
+}

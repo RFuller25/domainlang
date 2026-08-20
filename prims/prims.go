@@ -127,8 +127,9 @@ func (a ArgSet) Has(name string) bool {
 }
 
 // Lambda returns the lambda supplied for a named argument, if any, rewritten
-// against the `Consider` bindings in scope (prims/locals.go). A statement with
-// no bindings gets back exactly the lambda the user wrote.
+// against the `Consider` bindings and `Cursed Object` globals in scope
+// (prims/locals.go, prims/globals.go). A statement with neither gets back
+// exactly the lambda the user wrote.
 func (a ArgSet) Lambda(name string) (*ast.Lambda, bool) {
 	for _, arg := range a.args {
 		if arg.Name != name {
@@ -145,8 +146,12 @@ func (a ArgSet) Lambda(name string) (*ast.Lambda, bool) {
 }
 
 // bindLambda rewrites one argument's lambda once and remembers the result.
+//
+// Whether there is anything to rewrite against is asked through
+// resolver.rewritesNeeded, shared with rewriteLambda: this is the other place
+// that skips the work, and the two disagreeing would be silent either way.
 func (a ArgSet) bindLambda(arg *ast.Arg, lam *ast.Lambda) *ast.Lambda {
-	if a.res == nil || len(a.res.locals) == 0 {
+	if a.res == nil || !a.res.rewritesNeeded() {
 		return lam
 	}
 	if done, ok := a.rewritten[arg]; ok {
@@ -433,6 +438,34 @@ type resolver struct {
 	// limit: a deeply composed but non-recursive program is legal however deep
 	// it goes, and the old fixed ceiling refused those too.
 	inlining []string
+	// globals is the program's `Cursed Object` table: one entry per declared
+	// global, in declaration order, so an entry's index is its slot. It is a
+	// flat list rather than a stack because globals do not shadow each other —
+	// a second declaration of a live name is an error, not a shadow — and
+	// because the slot numbering has to stay stable for the whole program.
+	globals []globalDecl
+	// globalIndex maps a name to its position in globals, for the lookup
+	// rewriteExpr does on every identifier it cannot otherwise place.
+	globalIndex map[string]int
+	// laterGlobals is every global the program declares *anywhere*, collected
+	// before resolution starts, and used only to explain an identifier that is
+	// declared further down. Without it "unknown identifier" is technically
+	// true and useless: reading a global above its `Cursed Object` is the
+	// mistake the forward-visibility rule invites, so it is worth naming.
+	laterGlobals map[string]token.Position
+	// mutatedGlobals is every global name something in the program can change
+	// after it is declared. Collected before resolution, because a read has to
+	// know it while the write may be a hundred lines further down. See
+	// prims/globals.go and ast.GlobalRef.Mutable.
+	mutatedGlobals map[string]bool
+	// inChannel is set while a Channel body is being resolved, which is where
+	// globals are out of reach in both directions (prims/globals.go).
+	inChannel bool
+	// foreignDepth counts the enclosing Shikigami bodies that came from the
+	// prelude or an imported library, which are sealed off from globals for
+	// the same reason. A counter rather than a flag because such a definition
+	// may call another.
+	foreignDepth int
 }
 
 // Resolve lowers a program into a typed pipeline, matching each statement to a
@@ -514,55 +547,48 @@ func ResolveWith(prog *ast.Program, opts ResolveOptions) (pipe *ir.Pipeline, err
 		return nil, err
 	}
 
-	// Whether anything in the program writes to a name, which is what decides
-	// how the interpreter represents a binding (eval.SetUpdates). Asked once,
-	// here, of everything that can reach the run: the program's own statements
-	// and every definition it could call — the prelude's, the imports', its
-	// own — since a Shikigami body is inlined into the pipeline and its
-	// expressions run like any other.
-	if programUpdates(prog, r.shikigamis) {
-		eval.EnableUpdates()
-	}
-
-	nodes, _, err := r.resolveSequence(prog.Statements, nil, scopeTop)
-	if err != nil {
-		// The partial pipeline rides along with the error; see resolveSequence.
-		return &ir.Pipeline{Nodes: nodes}, err
-	}
-	return &ir.Pipeline{Nodes: nodes}, nil
-}
-
-// programUpdates reports whether any expression that could run contains a
-// `:=`. It is deliberately a whole-program question with a whole-program
-// answer: the interpreter boxes every binding or none, because deciding
-// per-binding would mean re-deriving the answer on every application.
-func programUpdates(prog *ast.Program, defs map[string]*ast.ShikigamiDef) bool {
-	if len(updatedInStatements(prog.Statements)) > 0 {
-		return true
-	}
-	for _, d := range defs {
+	// One traversal of everything that can reach the run — the program's own
+	// statements and every definition it could call, the prelude's included,
+	// since a Shikigami body is inlined into the pipeline and its expressions
+	// run like any other. See programScan for the three questions it settles
+	// and why they share a walk.
+	scan := newProgramScan()
+	scan.walk(prog.Statements, false)
+	for _, d := range r.shikigamis {
 		if d == nil {
 			continue
 		}
-		if len(updatedInStatements(d.Body)) > 0 {
-			return true
-		}
+		// A Shikigami is inlined at call sites that may sit anywhere,
+		// including inside a loop, so its body counts as nested.
+		scan.walk(d.Body, true)
 		for _, b := range d.Binds {
 			if b == nil {
 				continue
 			}
-			names := map[string]bool{}
 			if b.Value != nil {
-				ast.UpdatedNames(b.Value, names)
+				ast.UpdatedNames(b.Value, scan.updated)
 			}
-			updatedInLambda(b.Lambda, names)
-			collectUpdated(b.Body, names)
-			if len(names) > 0 {
-				return true
-			}
+			updatedInLambda(b.Lambda, scan.updated)
+			scan.walk(b.Body, true)
 		}
 	}
-	return false
+	scan.finish()
+
+	// Whether anything writes at all decides how the interpreter represents a
+	// binding: it boxes every binding or none, because deciding per-binding
+	// would mean re-deriving the answer on every application.
+	if len(scan.updated) > 0 {
+		eval.EnableUpdates()
+	}
+	r.laterGlobals = scan.declared
+	r.mutatedGlobals = scan.mutated
+
+	nodes, _, err := r.resolveSequence(prog.Statements, nil, scopeTop)
+	if err != nil {
+		// The partial pipeline rides along with the error; see resolveSequence.
+		return &ir.Pipeline{Nodes: nodes, Globals: len(r.globals)}, r.explainForwardGlobal(err)
+	}
+	return &ir.Pipeline{Nodes: nodes, Globals: len(r.globals)}, nil
 }
 
 // callableNames is the set of Shikigami names a bare phrase may resolve to.
@@ -681,6 +707,12 @@ func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc sc
 			return nodes, nil, err
 		}
 		nodes = append(nodes, node) // a Channel does not change the current value
+	case stmt.Keyword == "Cursed Object" || stmt.Keyword == "Cursed Tool":
+		node, err := r.resolveGlobals(stmt, cur)
+		if err != nil {
+			return nodes, nil, err
+		}
+		nodes = append(nodes, node) // a global declaration does not change the value
 	case stmt.Keyword == "Part":
 		if sc != scopeTop {
 			return nodes, nil, &ResolveError{Pos: stmt.Pos,

@@ -143,6 +143,16 @@ func (g *gen) ownAccumulator(lam *ast.Lambda, accT *ir.Type, seed string) string
 		g.helper("dmSparse", declSparse, "slices")
 		g.helper("dmSparseClone", declSparseClone)
 		return "dmSparseClone(" + seed + ")"
+	case ir.KList:
+		// A List is a Go slice, so seed and accumulator would share a backing
+		// array. `append(nil, …)` is the clone, and it is written inline
+		// rather than as a helper because it needs the element type the
+		// generator already has.
+		elemGo, err := g.goType(accT.Elem)
+		if err != nil {
+			return seed
+		}
+		return "append([]" + elemGo + "(nil), " + seed + "...)"
 	}
 	return seed
 }

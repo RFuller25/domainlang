@@ -577,8 +577,13 @@ const declSparseBound = `func dmSparseBound[T any](s dmSparse[T], which string) 
 // declaration serves every element type; partial ones share dmFail and use
 // the same message wording as the interpreter in eval.evalCall.
 
+// The one unsigned comparison is the standard form of `i < 0 || i >= len(xs)`:
+// a negative i converts to a very large unsigned value and fails the same test,
+// so one branch does the work of two. Worth about 1.6% on an indexing-bound
+// loop, which is small — the measured cost is having a check at all, not how it
+// is written, and see bench/README.md for what removing it would take.
 const declItem = `func dmItem[T any](xs []T, i int64) T {
-	if i < 0 || i >= int64(len(xs)) {
+	if uint64(i) >= uint64(len(xs)) {
 		dmFail("item: index %d out of range (length %d)", i, len(xs))
 	}
 	return xs[i]
@@ -985,12 +990,23 @@ const declSetHas = `func dmSetHas[T comparable](s dmSet[T], v T) bool {
 }`
 
 const declSetAt = `func dmSetAt[T any](xs []T, i int64, v T) []T {
-	if i < 0 || i >= int64(len(xs)) {
+	if uint64(i) >= uint64(len(xs)) {
 		dmFail("set: index %d out of range (length %d)", i, len(xs))
 	}
 	out := append([]T(nil), xs...)
 	out[i] = v
 	return out
+}`
+
+// declSetAtIn is dmSetAt minus the copy: the functional form's own body with
+// the clone removed, which is what makes the two agree by inspection. The
+// bounds check stays — it is the program's semantics, not the copy's.
+const declSetAtIn = `func dmSetAtIn[T any](xs []T, i int64, v T) []T {
+	if uint64(i) >= uint64(len(xs)) {
+		dmFail("set: index %d out of range (length %d)", i, len(xs))
+	}
+	xs[i] = v
+	return xs
 }`
 
 const declGridRow = `func dmGridRow[T any](g dmGrid[T], r int64) []T {
@@ -2222,6 +2238,75 @@ const declAllocReport = `func dmAllocReport() {
 // runner, which implements the other half of the same wire format, can pin
 // the two together in a test without a Go toolchain.
 func DeclAllocReport() string { return declAllocReport }
+
+// declConstProbe is the reconnaissance half of Tuning.Constants: what each
+// `Consider` binding actually held, reported by the binding itself.
+//
+// Only a probe build carries it, and a probe build is never timed — it is
+// compiled, run once, read and thrown away. That is what lets it be a map
+// write per binding evaluation rather than something clever: the cost lands
+// on a run nobody is measuring.
+//
+// It records the *first* value and whether any later evaluation differed,
+// because those are two different findings. A binding inside a loop body is
+// evaluated once per lap, and one that held 16 on all fifty thousand of them
+// is a constant of this run; one that held something new each time is the loop
+// variable and must never be pinned. The count rides along so a reader can
+// tell "held 16 once" from "held 16 fifty thousand times" — the second is
+// worth a build and the first is not.
+//
+// The maximum is here for the other reader. The same hook reports how long a
+// list accumulator grew (Tuning.ListCapacities), and a capacity wants the
+// largest length the site ever reached, not the first — a loop that builds a
+// list twice, short then long, must reserve for the long one. A capacity is a
+// hint, so `varies` disqualifies nothing there; it disqualifies a pin.
+const declConstProbe = `type dmProbeRec struct {
+	first  int64
+	max    int64
+	calls  int64
+	varies bool
+}
+
+var dmProbes = map[string]*dmProbeRec{}
+var dmProbeOrder []string
+
+func dmProbe(key string, v int64) int64 {
+	r := dmProbes[key]
+	if r == nil {
+		r = &dmProbeRec{first: v, max: v}
+		dmProbes[key] = r
+		dmProbeOrder = append(dmProbeOrder, key)
+	}
+	r.calls++
+	if v != r.first {
+		r.varies = true
+	}
+	if v > r.max {
+		r.max = v
+	}
+	return v
+}
+
+func dmProbeReport() {
+	path := os.Getenv("DOMAIN_CONST_PROBE")
+	if path == "" {
+		return
+	}
+	var b strings.Builder
+	for _, k := range dmProbeOrder {
+		r := dmProbes[k]
+		fmt.Fprintf(&b, "%s\t%d\t%d\t%d\t%t\n", k, r.first, r.max, r.calls, r.varies)
+	}
+	_ = os.WriteFile(path, []byte(b.String()), 0o644)
+}`
+
+// EnvConstProbe names the file a probe build writes its bindings into. The
+// reader is mahoraga/probe.go; the two halves are pinned together by a test,
+// like the allocation report's.
+const EnvConstProbe = "DOMAIN_CONST_PROBE"
+
+// DeclConstProbe exposes the emitted probe helper for that test.
+func DeclConstProbe() string { return declConstProbe }
 
 // declCPUProfile is the profile-collection half of what `domain expansion:
 // mahoraga` needs to feed Go's profile-guided optimization.

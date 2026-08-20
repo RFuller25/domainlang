@@ -59,6 +59,13 @@ func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (st
 	}
 	for _, name := range g.bindOrder() {
 		b := g.bindNames[name]
+		if b.lit {
+			// A pinned binding is substituted into the body, so the body
+			// declares no parameter for it and there is nothing to pass. The
+			// same test runs in blockFunc, over the same map, which is what
+			// keeps the call and the signature in step.
+			continue
+		}
 		if !writes[name] {
 			call += ", " + b.expr
 			continue
@@ -127,6 +134,12 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, w
 	reboundBinds := make(exprEnv, len(savedBinds))
 	for _, bname := range g.bindOrder() {
 		b := savedBinds[bname]
+		if b.lit {
+			// Pinned: the constant travels into the body as itself. No
+			// parameter, and emitBlockCall passes no argument.
+			reboundBinds[bname] = b
+			continue
+		}
 		p := g.fresh("bb")
 		bindGo, terr := g.goType(b.typ)
 		if terr != nil {

@@ -66,6 +66,20 @@ func evalExprStep(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 			return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
 		}
 		return Deref(v), nil
+	case *ast.GlobalRef:
+		// A global has no value until the run, so it can never be folded: a
+		// fold happens while the program is still being lowered, when the slot
+		// array belongs to whatever ran last, if anything. Refusing here is
+		// what makes prims.foldLiteral leave such an expression alone — it
+		// treats any error as "does not fold" — and it guards every other
+		// EvalConst caller for free.
+		if folding {
+			return nil, fmt.Errorf("%s: %q is a global, whose value is not known until the program runs",
+				x.Pos, x.Name)
+		}
+		// Otherwise: the whole point of the node — a bounds-checked load, with
+		// the environment untouched. See eval/globals.go.
+		return Global(x.Slot), nil
 	case *ast.BlockBody:
 		// The sub-pipeline form of a lambda body: run the resolved body over
 		// the value bound to the parameter it reads.
@@ -1241,6 +1255,14 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		if i < 0 || i >= int64(len(xs)) {
 			return fail("set: index %d out of range (length %d)", i, len(xs))
 		}
+		// x.InPlace is the optimizer's proof that nothing reads the copied-from
+		// value after this call *and* that no subslice of it was handed out —
+		// the second half is what a List needs and a Map does not, since
+		// take/drop/slice share this backing array. See optimizer/linear.go.
+		if x.InPlace {
+			xs[i] = args[2]
+			return xs, nil
+		}
 		out := append([]ir.Value(nil), xs...)
 		out[i] = args[2]
 		return out, nil
@@ -2116,6 +2138,14 @@ func isRepeatedPattern(s string) bool {
 // name is bound twice: the innermost scope put its own cell in the map, so the
 // map lookup finds that one and the outer binding is untouched.
 func assignTo(x *ast.AssignExpr, env Env, v ir.Value) error {
+	// A global is written by slot, and it is checked first: the resolver only
+	// sets Target when nothing nearer shadowed the name, so a lambda parameter
+	// or a `consider` local of the same spelling never reaches here as a
+	// global in the first place.
+	if x.Target != nil {
+		SetGlobal(x.Target.Slot, v)
+		return nil
+	}
 	if cur, ok := env[x.Name]; ok {
 		c, ok := cur.(*Cell)
 		if !ok {

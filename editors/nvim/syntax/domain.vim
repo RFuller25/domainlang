@@ -16,7 +16,7 @@ syn match domainHole /{\%([^{}]\|{[^{}]*}\)*}/ contained
 
 " Themed pipeline keywords (statement heads). Matched with \ze so the colon
 " and operation phrase keep their own styling. Multi-word forms first.
-syn match domainKeyword /^\s*\%(Reverse Cursed Technique\|Maximum Technique\|Channeled Energy\|Cursed Technique\|Domain Expansion\|Cursed Energy\|Innate Domain\|Simple Domain\|Binding Vow\|Shikigami\|Channel\|Reveal\|Part\)\>/
+syn match domainKeyword /^\s*\%(Reverse Cursed Technique\|Maximum Technique\|Channeled Energy\|Cursed Technique\|Domain Expansion\|Cursed Energy\|Cursed Object\|Innate Domain\|Simple Domain\|Binding Vow\|Cursed Tool\|Shikigami\|Channel\|Reveal\|Part\)\>/
 
 " Foreign-language blocks: `Domain Expansion: Python` (or Go/rask/cRust/Weave) and
 " everything indented beneath it, which is that language's source rather than

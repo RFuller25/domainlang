@@ -19,7 +19,7 @@ expression), named dataflow `Channel`s, loops, measured arguments,
 user-defined `Shikigami` + a prelude, and a **31-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
 `domain build` compiles that same IR into a standalone, aggressively typed Go
-binary — every primitive and all 153 expression builtins have a codegen case,
+binary — every primitive and all 176 expression builtins have a codegen case,
 each pinned by an interpreter-vs-binary oracle test.
 
 **New here? Start with [docs/getting-started.md](docs/getting-started.md)** —
@@ -141,7 +141,7 @@ a Go toolchain, even on machines without Go installed.
 Syntax highlighting for VS Code (TextMate grammar) and Neovim/Vim (runtime
 plugin, also exported by the flake as `packages.<system>.domain-nvim`) lives
 in [`editors/`](editors/README.md). Both grammars are **generated from the
-language itself** — the primitives from the registry, all 153 expression
+language itself** — the primitives from the registry, all 176 expression
 builtins, the keywords — and a test fails if they fall behind it.
 
 The binary carries the VS Code extension and installs it for you:
@@ -220,6 +220,7 @@ Every keyword below is optional except where the row says otherwise — see
 | `Part "label":` | labelled output block (two answers, one parse) | + `Reveal:` inside |
 | `Shikigami "name" (p: T) : In -> Out` | user-defined operation (inlined) | the prelude is written this way |
 | `Consider x As …` / `Consider x Of …` (required) | a local variable for one stage's expressions — `As` a constant or a function, `Of` the current value put through an operation | `Consider total Of Sum` |
+| `Cursed Object:` / `Cursed Tool:` | declare a global / change one — a name whose scope is the rest of the program, not one stage | `Cursed Object: total As 0` |
 | `Binding Vow:` | debug-time assertion over the current value | Count Equals N, All Values > N |
 | `Reveal:` | terminal output sink | stdout |
 
@@ -431,7 +432,7 @@ equality functions; tuple-shaped `Match Pattern` emits positional structs.
 A future primitive that ships without a codegen case fails `domain build`
 with a positioned error and keeps working under `domain run`. Nothing is in
 that state today: the whole surface — parsing/range/set primitives, the
-grid searches, the sparse grid type, and all 153 expression builtins
+grid searches, the sparse grid type, and all 176 expression builtins
 including the point group — compiles, with oracle tests pinning
 interpreter/binary parity (see [`docs/compiler.md`](docs/compiler.md)).
 A foreign block compiles too, with its source embedded as a constant and the

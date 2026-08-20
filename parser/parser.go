@@ -419,6 +419,15 @@ func (p *parser) parseStatement() (*ast.Statement, error) {
 
 	stmt := &ast.Statement{Keyword: keyword, Pos: startPos}
 
+	// `Cursed Object:` / `Cursed Tool:` carry declarations rather than an
+	// operation phrase, so they leave the phrase path entirely. Routing on the
+	// keyword rather than on lookahead is what lets a declaration line drop the
+	// `Consider` word without making `Sort As Text` ambiguous (see
+	// binding.go).
+	if keyword == "Cursed Object" || keyword == "Cursed Tool" {
+		return stmt, p.parseDeclStatement(stmt)
+	}
+
 	// Operation phrase up to NEWLINE (may be empty -> block opener).
 	if p.cur().Kind != token.NEWLINE {
 		op, err := p.parsePhrase()
@@ -438,6 +447,28 @@ func (p *parser) parseStatement() (*ast.Statement, error) {
 		}
 	}
 	return stmt, nil
+}
+
+// parseDeclStatement parses the body of a `Cursed Object:` / `Cursed Tool:`
+// statement: either one declaration on the keyword's own line, or an indented
+// run of them beneath a bare keyword. The cursor is just past the colon.
+func (p *parser) parseDeclStatement(stmt *ast.Statement) error {
+	if p.cur().Kind != token.NEWLINE {
+		d, err := p.parseDecl(stmt.Keyword)
+		if err != nil {
+			return err
+		}
+		stmt.Decls = append(stmt.Decls, d)
+		return nil
+	}
+	if _, err := p.expect(token.NEWLINE); err != nil {
+		return err
+	}
+	if p.cur().Kind != token.INDENT {
+		return p.errBlockf("%s needs a declaration on its own line "+
+			"(`%s: name As value`) or an indented block of them", stmt.Keyword, stmt.Keyword)
+	}
+	return p.parseDeclBlock(stmt)
 }
 
 // parseChannel parses `Channel "name":` followed by an indented sub-pipeline.

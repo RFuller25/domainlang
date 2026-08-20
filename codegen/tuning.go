@@ -97,6 +97,83 @@ type Tuning struct {
 	// primitives where doing nothing to the length means doing nothing at all.
 	ElideNodes []string
 
+	// Constants pins `Consider x As/Of …` bindings to the values they were
+	// measured holding, keyed as ConsiderKey renders them.
+	//
+	// A binding is a value computed once when a scope opens and read by every
+	// lambda under it: a list's length, a modulus, a limit. The compiler emits
+	// it as a Go local because it cannot know what it will hold. A caller who
+	// has *watched* it hold 16 on every one of fifty thousand laps can say so,
+	// and what that buys is not the arithmetic — it is what the Go compiler
+	// does next with a value it can see: `% l` becomes a mask rather than a
+	// division, comparisons fold, and bounds checks against it disappear.
+	//
+	// This is the field that can be wrong on a different input, and wrong
+	// silently: a binary built with `l = 16` on a sixteen-bank input will
+	// happily wrap modulo 16 on a twenty-bank one. Pinned tier, and the search
+	// records what it measured in the recipe's contract.
+	Constants map[string]int64
+
+	// ListCapacities reserves a measured number of elements for the list
+	// accumulators the generator has no estimate for at all, keyed as
+	// ListSiteKey renders them.
+	//
+	// ListCapacity above replaces a *guess* — the split-and-parse loop's
+	// len/2+1. These sites have no guess to replace: a generator loop, an
+	// unfold, a stream with a take limit, all start from `[]T{}` because the
+	// length is not a function of anything in scope. What that costs is
+	// growth: a list that reaches five million elements is reallocated and
+	// copied twenty-two times on the way, and a profile of one such program
+	// spends a third of its time in `growslice`.
+	//
+	// A capacity is a hint and stays correct on any input — append grows a
+	// slice that outgrows it — so this is guarded tier, like the capacity
+	// above. What it can be is *wasteful*: reserving five million elements for
+	// a run that produces ten is 40MB nobody uses, which is why the compiler
+	// does not guess it and why a measurement is what licenses it.
+	//
+	// Keys are positions for the same reason ElideNodes' are: a caller that
+	// measured one schedule may be building another, and a key naming a site
+	// this build does not have is ignored. A stale entry makes a binary slow,
+	// never wrong.
+	ListCapacities map[string]int
+
+	// ProbeConstants makes the generated program report what its bindings
+	// actually held, rather than changing what it computes.
+	//
+	// It is the reconnaissance half of Constants *and* of ListCapacities: one
+	// build, one run, and a file of `key first max calls varies` lines to read
+	// both off. It belongs here rather than in a separate generator because
+	// the *only* reliable account of what a binding held, or of how far a list
+	// grew, is the one the program itself gives — re-deriving either from the
+	// source would be re-implementing the program.
+	//
+	// A probe build is never a measured build. It is compiled, run once
+	// untimed, and thrown away.
+	ProbeConstants bool
+
+	// MaxProcs, when non-zero, is passed to runtime.GOMAXPROCS at startup.
+	//
+	// A Domain binary runs on one goroutine — codegen emits no `go` statement
+	// anywhere, and Channels and Parts are no exception; they compile to
+	// straight-line code that runs one branch after another. So the Ps beyond
+	// the first exist for the collector's mark workers, and setting this to 1
+	// changes nothing about what the program computes on any input, which is
+	// what makes it general tier despite reading like a machine setting.
+	//
+	// It is *not* a compiler default, and the reason is measured rather than
+	// assumed. Over the 37 programs in bench/testdata, `GOMAXPROCS(1)` is a
+	// consistent win on ten (read_length 0.78x, sparse_life 0.80x, while_halve
+	// 0.83x, explore_states 0.82x) and a consistent loss on six
+	// (count_by_entries 1.21x, pipeline_body 1.20x, float_sum 1.14x), both
+	// reproducing across independent runs on an idle box; the geometric mean is
+	// 0.98x and total wall clock 0.97x. Concurrent marking on the spare cores
+	// genuinely pays for itself when a program allocates hard enough, and which
+	// side of that a program falls on is a fact about its allocation rate — a
+	// runtime property the compiler cannot read off the source. That is why this
+	// stays where a measurement can license it, per program, in the search.
+	MaxProcs int
+
 	// MemoryLimitBytes, when non-zero, is passed to debug.SetMemoryLimit as the
 	// backstop under a disabled collector.
 	//
@@ -112,7 +189,72 @@ type Tuning struct {
 // generator behaves exactly as `domain build` does.
 func (t Tuning) Empty() bool {
 	return len(t.ElideNodes) == 0 && t.ListCapacity == 0 && !t.ASCIIText &&
-		!t.ASCIIGuarded && t.GCPercent == 0 && t.MemoryLimitBytes == 0
+		!t.ASCIIGuarded && t.GCPercent == 0 && t.MemoryLimitBytes == 0 &&
+		len(t.Constants) == 0 && !t.ProbeConstants && t.MaxProcs == 0 &&
+		len(t.ListCapacities) == 0
+}
+
+// ListSiteKey identifies a list accumulator across a reload: the node whose
+// loop fills it, and where the user wrote it. The prefix keeps the key space
+// apart from ConsiderKey's, since one probe report carries both.
+func ListSiteKey(n *ir.Node) string { return "list:" + NodeKey(n) }
+
+// ConsiderKey identifies one `Consider` binding across a reload: the node's
+// primitive and position, and the name bound there.
+//
+// The same reasoning as NodeKey, one level finer. A `Consider` node may bind
+// several names and a caller pinning one of them has to name it — and has to
+// name it in terms of what the *user wrote*, not of which local the generator
+// happened to allocate, since a different pass schedule allocates different
+// ones.
+func ConsiderKey(n *ir.Node, name string) string {
+	return NodeKey(n) + "#" + name
+}
+
+// constFor returns the literal a binding was pinned to, if it was.
+//
+// Only Int bindings are pinnable. A pinned Text would put input-derived bytes
+// into the generated program, which is the one thing the tuning boundary
+// exists to prevent — see the mahoraga spec on why "print the answer" has to
+// be unreachable rather than merely rejected, and Facts on why every measured
+// quantity here is a count and never a content.
+func (g *gen) constFor(key string, t *ir.Type) (string, bool) {
+	if len(g.tuning.Constants) == 0 || t == nil || t.Kind != ir.KInt {
+		return "", false
+	}
+	v, ok := g.tuning.Constants[key]
+	if !ok {
+		return "", false
+	}
+	// Written as a conversion rather than a bare literal so the constant
+	// carries its type wherever it is substituted. It is still a constant to
+	// the Go compiler — a conversion of an untyped constant is one — so
+	// nothing is lost, and an inferred `int` in a context expecting an Int is
+	// avoided.
+	return "int64(" + itoa64(v) + ")", true
+}
+
+// probing reports whether this build is a reconnaissance build that reports
+// what its bindings held.
+func (g *gen) probing() bool { return g.tuning.ProbeConstants }
+
+// accumDecl is the declaration of a list accumulator the generator has no
+// estimate for: `v := []T{}` ordinarily, and a reservation when a caller has
+// measured how long it grows.
+func (g *gen) accumDecl(n *ir.Node, v, elemGo string) string {
+	if c := g.tuning.ListCapacities[ListSiteKey(n)]; c > 0 && n != nil {
+		return v + " := make([]" + elemGo + ", 0, " + itoa(c) + ")"
+	}
+	return v + " := []" + elemGo + "{}"
+}
+
+// probeLen reports how long an accumulator grew, on a probe build. It is
+// emitted after the loop that fills it, where the length is final.
+func (g *gen) probeLen(n *ir.Node, v string) {
+	if !g.probing() || n == nil {
+		return
+	}
+	g.wl("dmProbe(%q, int64(len(%s)))", ListSiteKey(n), v)
 }
 
 // NodeKey identifies a pipeline stage across a reload: its primitive and the
@@ -189,6 +331,16 @@ func gcTuningStmt(t Tuning) string {
 		out += "\tdebug.SetGCPercent(" + itoa(t.GCPercent) + ")\n"
 	}
 	return out
+}
+
+// procsTuningStmt is the scheduler setting a tuned binary carries, emitted
+// beside the collector settings at the top of main and for the same reason:
+// after the first allocation it would be resizing a pool that already exists.
+func procsTuningStmt(t Tuning) string {
+	if t.MaxProcs <= 0 {
+		return ""
+	}
+	return "\truntime.GOMAXPROCS(" + itoa(t.MaxProcs) + ")\n"
 }
 
 func itoa(n int) string { return itoa64(int64(n)) }

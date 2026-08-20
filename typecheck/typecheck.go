@@ -39,6 +39,12 @@ func ExprType(e ast.Expr, env Env) (*ir.Type, error) {
 			return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
 		}
 		return t, nil
+	case *ast.GlobalRef:
+		// A global's type is fixed where it was declared and travels on the
+		// node, so there is no second slot table here to fall out of step with
+		// the resolver's. The environment is not consulted at all, which is
+		// also why a global needs no seeding into it.
+		return x.Type, nil
 	case *ast.BlockBody:
 		// A sub-pipeline standing in for an expression: its result type is
 		// whatever the body resolves to against the type bound to the
@@ -94,9 +100,18 @@ func ExprType(e ast.Expr, env Env) (*ir.Type, error) {
 // that took a Float halfway through a stage would make the *reader* of the
 // name wrong rather than the writer. Widen at the binding instead.
 func assignType(x *ast.AssignExpr, env Env) (*ir.Type, error) {
-	want, ok := env[x.Name]
-	if !ok {
-		return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
+	// A global's type came from its declaration rather than from the scope the
+	// write is written in; everything else is looked up by name. The rule
+	// below — the type may not change — is the same one either way.
+	var want *ir.Type
+	if x.Target != nil {
+		want = x.Target.Type
+	} else {
+		t, ok := env[x.Name]
+		if !ok {
+			return nil, fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
+		}
+		want = t
 	}
 	got, err := ExprType(x.Value, env)
 	if err != nil {

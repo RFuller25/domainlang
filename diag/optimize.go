@@ -127,25 +127,49 @@ func findRewrite(prog *ast.Program, src string) *rewriteOp {
 // way — `Of Itself` lowers to exactly the lambda the long form spells out.
 func identityBindingRewrite(prog *ast.Program, src string) *rewriteOp {
 	var found *rewriteOp
+	// try records the rewrite for one binding-or-declaration. head is the text
+	// that must survive on the line ahead of the name — everything that says
+	// *what kind of thing* this is.
+	try := func(b *ast.Binding, head string) {
+		if found != nil || !isIdentityApply(b) {
+			return
+		}
+		_, end := stmtExtent(b.Body[0])
+		del := lineRange(b.Pos.Line, end)
+		delete(del, b.Pos.Line)
+		found = &rewriteOp{
+			info: SourceRewrite{Line: b.Pos.Line, Desc: fmt.Sprintf(
+				"replaced the identity Apply naming %q with `Of Itself`", b.Name)},
+			deleteLines: del,
+			replaceLine: map[int]string{b.Pos.Line: head + b.Name + " Of Itself"},
+		}
+	}
 	var walk func(stmts []*ast.Statement)
 	walk = func(stmts []*ast.Statement) {
 		for _, s := range stmts {
 			for _, b := range s.Binds {
-				if found == nil && isIdentityApply(b) {
-					head := lineAt(src, b.Pos.Line)
-					indent := head[:len(head)-len(strings.TrimLeft(head, " "))]
-					_, end := stmtExtent(b.Body[0])
-					del := lineRange(b.Pos.Line, end)
-					delete(del, b.Pos.Line)
-					found = &rewriteOp{
-						info: SourceRewrite{Line: b.Pos.Line, Desc: fmt.Sprintf(
-							"replaced the identity Apply naming %q with `Of Itself`", b.Name)},
-						deleteLines: del,
-						replaceLine: map[int]string{
-							b.Pos.Line: indent + "Consider " + b.Name + " Of Itself",
-						},
-					}
+				// A binding's Pos is its `Consider` keyword, so the head has
+				// to be rebuilt: indentation plus the word.
+				line := lineAt(src, b.Pos.Line)
+				indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
+				try(b, indent+"Consider ")
+				walk(b.Body)
+			}
+			// A declaration's Pos is its *name*, so everything before it on
+			// the line is the head, whichever form it was written in:
+			// `Cursed Object: ` for the inline one, plain indentation for a
+			// line inside a block. Taking it from the source rather than
+			// rebuilding it is what keeps `Cursed Tool` from becoming
+			// `Cursed Object`, and either from becoming `Consider` — which is
+			// what the first version of this did, turning a global into a
+			// stage binding. The re-parse guard in OptimizeSource caught it,
+			// but a rewrite must not need catching.
+			for _, b := range s.Decls {
+				line := lineAt(src, b.Pos.Line)
+				if b.Pos.Col-1 > len(line) {
+					continue // position and source disagree; leave it alone
 				}
+				try(b, line[:b.Pos.Col-1])
 				walk(b.Body)
 			}
 			walk(s.Block)

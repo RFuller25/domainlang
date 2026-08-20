@@ -67,6 +67,10 @@ func Run(p *ir.Pipeline, ctx *ir.Context) (result ir.Value, err error) {
 	// error, an interrupt — leaves its bindings behind, so each run starts by
 	// clearing them rather than trusting the last one to have unwound.
 	eval.ResetBindings()
+	// Globals are not scoped and so are never unwound by a node on the way
+	// out; the run sizes and clears the whole array up front instead, from the
+	// count the pipeline itself carries.
+	eval.ResetGlobals(p.Globals)
 	var cur ir.Value
 	for _, n := range p.Nodes {
 		// ir.EvalNode reports to ctx.Trace when one is set; without a tracer it

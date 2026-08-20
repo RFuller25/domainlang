@@ -3,6 +3,8 @@ package prims
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	"domain/ast"
 	"domain/eval"
@@ -363,6 +365,122 @@ func runIteration(ctx *ir.Context, nodes []*ir.Node, v ir.Value, label string, t
 	return out, err
 }
 
+// ownLoopState gives a loop's state storage of its own, when the optimizer
+// marked an update in the body as in-place.
+//
+// It is ownAccumulator's twin for a loop, and it exists for the same reason:
+// the analysis proves nothing inside the body reads the copied-from value
+// after a write, and proves nothing at all about who else holds the value the
+// loop was handed. A `Part` or a `Channel` branches from one value —
+// bench/mahoraga/i05_jumps runs two loops over the *same* parsed list, one per
+// Part — so without this the first loop's writes would be visible to the
+// second, which is a wrong answer rather than a slow one.
+//
+// It clones every list the state reaches through tuple fields, which is
+// exactly the set optimizer.ownableLoopState allows a mark to be rooted at.
+// One copy on entry, amortized over every write the loop makes.
+func ownLoopState(body []*ir.Node, v ir.Value, t *ir.Type, meta map[string]any) ir.Value {
+	if len(body) == 0 {
+		return v
+	}
+	// Any stage may carry the marks: the pass looks at every body stage that
+	// threads the state, not only the first.
+	if !anyStageInPlace(body) {
+		return v
+	}
+	return ownValue(v, t, "", ownedFields(meta))
+}
+
+// anyStageInPlace reports whether some body stage carries a marked update.
+func anyStageInPlace(body []*ir.Node) bool {
+	for _, stage := range body {
+		if lam, _ := stage.Meta["lambda"].(*ast.Lambda); lam != nil && ast.HasInPlace(lam.Body) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownedFields reads the state fields the optimizer said a marked update writes
+// through. A loop that has not been through the pass has no entry, and owning
+// everything is the reading that is never wrong.
+func ownedFields(meta map[string]any) map[string]bool {
+	paths, ok := meta[ir.OwnedFields].([]string)
+	if !ok {
+		return map[string]bool{ir.OwnsEverything: true}
+	}
+	out := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		out[p] = true
+	}
+	return out
+}
+
+// needsOwn reports whether the storage at path has to be copied: because a
+// marked update writes it, writes something inside it, or writes a container it
+// sits in.
+func needsOwn(path string, owned map[string]bool) bool {
+	for w := range owned {
+		if w == path || pathAncestor(w, path) || pathAncestor(path, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathAncestor reports whether a is a strict ancestor of b. The root path is an
+// ancestor of everything, which is the case a plain HasPrefix gets wrong: the
+// root is "", so "" + "." is "." and no real path begins with a dot.
+func pathAncestor(a, b string) bool {
+	if a == b {
+		return false
+	}
+	if a == ir.OwnsEverything {
+		return true
+	}
+	return strings.HasPrefix(b, a+".")
+}
+
+func fieldPath(path string, i int) string {
+	if path == "" {
+		return strconv.Itoa(i)
+	}
+	return path + "." + strconv.Itoa(i)
+}
+
+// ownValue deep-copies the storage a marked update reaches, following tuple
+// fields, and leaves everything else shared.
+func ownValue(v ir.Value, t *ir.Type, path string, owned map[string]bool) ir.Value {
+	if t == nil || !needsOwn(path, owned) {
+		return v
+	}
+	switch t.Kind {
+	case ir.KList:
+		xs, err := ir.AsList(v)
+		if err != nil {
+			return v
+		}
+		return append([]ir.Value(nil), xs...)
+	case ir.KTuple:
+		// Elems, not Fields — see the note in codegen's ownValueExpr.
+		xs, err := ir.AsList(v)
+		if err != nil || len(xs) != len(t.Elems) {
+			return v
+		}
+		out := append([]ir.Value(nil), xs...)
+		for i, ft := range t.Elems {
+			out[i] = ownValue(out[i], ft, fieldPath(path, i), owned)
+		}
+		return out
+	}
+	// Every other collection a mark can be rooted at through a tuple field.
+	// optimizer.projectedCollection lets an update write into a Map or Set held
+	// in loop state, so the copy on entry has to reach those too — a Map taken
+	// by reference into the state would have the loop writing through to
+	// whatever the caller still holds.
+	return ir.CloneCollection(v)
+}
+
 func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position) *ir.Node {
 	meta := map[string]any{"kind": "repeat", "nodes": body}
 	timesM.Meta(meta, "n")
@@ -371,6 +489,7 @@ func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position
 		Display: "Repeat " + timesM.Describe(), Pos: pos,
 		Meta: meta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
+			v = ownLoopState(body, v, t, meta)
 			// Measured once, before the first lap: the count is a property of
 			// the value entering the loop, not of each lap's value.
 			n, err := timesM.Resolve(v)
@@ -389,11 +508,15 @@ func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position
 }
 
 func whileNode(body []*ir.Node, lam *ast.Lambda, t *ir.Type, pos token.Position) *ir.Node {
+	// Hoisted so the Eval closure can read what the optimizer records on it
+	// later — the node's Meta and this map are the same map.
+	meta := map[string]any{"kind": "while", "nodes": body, "lambda": lam}
 	return &ir.Node{
 		Prim: "Simple Domain (While)", In: t, Out: t,
 		Display: "While", Pos: pos,
-		Meta: map[string]any{"kind": "while", "nodes": body, "lambda": lam},
+		Meta: meta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
+			v = ownLoopState(body, v, t, meta)
 			for iters := 0; ; iters++ {
 				r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{t}, ambientTypes()...), append([]ir.Value{v}, ambientArgs()...)...)
 				if err != nil {

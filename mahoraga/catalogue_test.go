@@ -83,11 +83,17 @@ func TestCatalogueChecksTheEmittedProgram(t *testing.T) {
 	facts := Facts{Segments: 500, ASCII: true, HeapReported: true, NumGC: 6, HeapSys: 8 << 20}
 
 	// A program with none of the shapes the source-shaped entries apply to.
-	// The collector entry is deliberately not one of them: it rests on a fact
-	// about the *run* — that collections happened — and every program has a
-	// heap, so it has no code shape to look for.
+	// The run-shaped entries are deliberately not among them: the collector
+	// and scheduler settings rest on facts about the *run* — that collections
+	// happened, that the machine has more than one core — and every program
+	// has a heap and a scheduler, so they have no code shape to look for.
+	runShaped := map[string]bool{
+		"collector off for one run":   true,
+		"collector four times lazier": true,
+		"one scheduler thread":        true,
+	}
 	for _, e := range catalogueFor(facts, "package main\nfunc main() {}\n", Pinned) {
-		if e.ID != "collector off for one run" {
+		if !runShaped[e.ID] {
 			t.Errorf("%q applied to a program with nowhere to apply it", e.ID)
 		}
 	}

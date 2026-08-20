@@ -73,11 +73,11 @@ cd editors/vscode
 npm install                       # pulls vscode-languageclient
 
 # Package it:
-npx @vscode/vsce package          # produces domain-language-0.4.0.vsix
-code --install-extension domain-language-0.4.0.vsix
+npx @vscode/vsce package          # produces domain-language-0.5.0.vsix
+code --install-extension domain-language-0.5.0.vsix
 
 # …or symlink it for a live edit loop (then reload VS Code):
-ln -s "$PWD" ~/.vscode/extensions/domain-lang.domain-language-0.4.0
+ln -s "$PWD" ~/.vscode/extensions/domain-lang.domain-language-0.5.0
 ```
 
 The extension finds `domain` on your `PATH`; if the binary lives elsewhere,

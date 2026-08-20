@@ -237,6 +237,30 @@ no other use for them.
 
 ## 14. `set` on a `List` accumulator is still O(size)
 
+**Closed for the `Fold` shape**, by the alias guard this entry proposed:
+`aliasSafe` in `optimizer/linear.go` refuses any lambda that applies `take`,
+`drop` or `slice` to something rooted at the accumulator, and `set` joins the
+in-place whitelist behind it. On the example below — 20,000 writes into a
+100,000-element list — the interpreter goes from **29.9 s to 23 ms** and the
+compiled binary runs it in **4 ms**, answering identically.
+
+**Closed for a loop over a state value too.** `While` and `Repeat` reach the
+pass through a second entry point, since a loop body is a sub-pipeline rather
+than a lambda; the receiver is followed through constant tuple projections, so
+`set(item(state, 0), i, v)` is reachable; and both backends own the state on
+entry, cloning every list it holds through tuple fields — which is exactly the
+set a mark is allowed to be rooted at. On `bench/mahoraga/i05_jumps.domain`,
+**381 ms → 7.6 ms**, and 33 s → 0.17 s at full puzzle size.
+
+What is still refused, and on purpose: a loop body of more than one stage, a
+projection through anything but a constant tuple field, and — the one a user
+will meet — a body that reads *any* field of the state after the write. See
+[optimizer.md](optimizer.md#linear-accumulators--the-pass-that-runs-last) for what that costs
+and how to write around it.
+
+The original entry follows, for the reasoning.
+
+
 Gap 1 closed the quadratic update for `Map`, `Set`, `Grid` and `Sparse`. It did
 not close it for `List`, and the difference is not visible from the outside:
 the same fold shape is fast over one and unusable over the other.

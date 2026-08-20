@@ -63,6 +63,32 @@ Reveal: stdout
 			input: "-9\n0\n3\n17\n40",
 		},
 		{
+			// The same scalar group again, but with *every* argument a literal.
+			// The case above always passes a variable, which is why it never
+			// caught this: a variable is int64-typed and fixes the helper's type
+			// parameter, while an all-constant argument list leaves Go inferring
+			// from untyped constants — and abs, clamp and the two-argument
+			// min/max then failed to compile at all, on programs the interpreter
+			// ran happily. Integer literals are pinned to int64 in codegen now;
+			// this is the shape that regresses if that ever comes undone.
+			name: "integer math group on literals only",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Apply
+    Using: (xs) -> textjoin(list(
+        totext(abs(0 - 5)),
+        totext(clamp(12, 0, 10)),
+        totext(min(3, 9)),
+        totext(max(3, 9)),
+        totext(pow(2, 10)),
+        totext(gcd(12, 18)),
+        totext(isqrt(49))
+    ), "|")
+Reveal: stdout
+`,
+			input: "ignored",
+		},
+		{
 			name: "ikke in filters and conditionals",
 			src: `Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"

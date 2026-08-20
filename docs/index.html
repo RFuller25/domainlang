@@ -925,7 +925,7 @@ const DOCS = [
   { id: "getting-started", file: "getting-started.md", title: "Getting started",     desc: "Install & first program", group: "Introduction" },
   { id: "walkthroughs",    file: "walkthroughs.md",    title: "Walkthroughs",        desc: "Features as whole programs", group: "Introduction" },
   { id: "playground",      kind: "playground",         title: "Playground",          desc: "Run Domain in the browser", group: "Introduction" },
-  { id: "examples",        kind: "gallery",            title: "Examples",            desc: "20 annotated programs", group: "Programs", galleryGroup: "examples" },
+  { id: "examples",        kind: "gallery",            title: "Examples",            desc: "21 annotated programs", group: "Programs", galleryGroup: "examples" },
   { id: "challenges",      kind: "gallery",            title: "Challenges",          desc: "13 classic problems", group: "Programs", galleryGroup: "challenges" },
   { id: "language",        file: "language.md",        title: "Language reference",  desc: "Source structure & keywords", group: "Reference" },
   { id: "primitives",      file: "primitives.md",      title: "Primitives",          desc: "The reference, by keyword class", group: "Reference" },
@@ -1391,13 +1391,64 @@ function addRunButtons() {
     const tag = pre.querySelector(".lang-tag");
     if (!tag || tag.textContent !== "domain") continue;
     if (pre.querySelector("[data-run-block]")) continue;
-    // Display-only blocks (marked `domain ignore` in the Markdown) are not
-    // programs, and the doc tests skip them for the same reason.
-    if (!/Reveal|Cursed|Maximum|Domain Expansion/.test(pre.textContent)) continue;
+    // A Run button belongs where pressing it will work, and that is exactly a
+    // `run` block: the info string is the page's own promise that this is a
+    // whole program with the input shown beneath it, and the Go suite runs
+    // every one of them and diffs the output.
+    //
+    // The rule used to be a keyword heuristic over the block's text, which was
+    // wrong in both directions. It put buttons on fragments — a list of four
+    // `Domain Expansion:` lines reads exactly like a program — and on whole
+    // programs that read a file the browser has no filesystem for, so a reader
+    // pressing Run on walkthroughs.md got "" is not an integer every time. It
+    // also *withheld* one from the program written without its optional
+    // keywords, which is the example that teaches they are optional.
+    //
+    // Pages whose examples are plain ```domain blocks therefore have no Run
+    // buttons. That is not a loss: those buttons could only ever fail. Giving
+    // such a page working buttons means giving its examples an ```input block,
+    // which is the same thing that makes them testable.
+    if (!(pre.dataset.flags || "").split(/\s+/).includes("run")) continue;
     pre.insertAdjacentHTML("beforeend",
       `<button class="explain-btn" type="button" data-run-block data-explain>Explain</button>` +
       `<button class="run-btn" type="button" data-run-block>Run</button>`);
   }
+}
+
+// blockContext gathers what a program block needs to actually run: the
+// ```input block beneath it, and any ```lib blocks — the stdin and the
+// imported libraries the page already shows the reader. Without them, pressing
+// Run on a documented example fails on an empty box or a missing import
+// instead of reproducing the output printed directly beneath it.
+//
+// It mirrors docs.Examples on the Go side, including why it stops at the next
+// Domain block: without that, a program written without an input would scan on
+// and adopt the *next* example's, which fails somewhere other than where the
+// mistake is.
+function blockContext(pre) {
+  const ctx = { input: "", libs: {} };
+  for (let el = pre.nextElementSibling; el; el = el.nextElementSibling) {
+    if (el.tagName !== "PRE") {
+      // Prose may sit between an example and its input; a heading means the
+      // example is over.
+      if (/^H[1-6]$/.test(el.tagName)) break;
+      continue;
+    }
+    const tag = el.querySelector(".lang-tag")?.textContent;
+    if (tag === "domain") break;
+    const text = () => el.querySelector("code")?.innerText ?? "";
+    if (tag === "input") ctx.input = text();
+    // ```lib aoc.domain — the path rides in the info string, which reaches the
+    // DOM as data-flags. The `.domain` suffix is dropped because the module
+    // keys its virtual filesystem by the target *as written in the program*
+    // ("Innate Domain: aoc"), which is also how gallery.json stores them; the
+    // block names a filename because the Go harness writes a real file.
+    if (tag === "lib") {
+      const path = (el.dataset.flags || "").split(/\s+/)[0];
+      if (path) ctx.libs[path.replace(/\.domain$/, "")] = text();
+    }
+  }
+  return ctx;
 }
 
 // Scroll to the requested anchor, or to the top when there isn't one.
@@ -1421,9 +1472,12 @@ async function renderGalleryPage(doc) {
       `<p>Couldn't load <code>gallery.json</code>, so there is nothing to show here.</p>` +
       `<p>It is generated from the repository: <code>go test ./docs -update</code>.</p></div>`, headings: [] };
   }
+  // Counted from the data rather than written out: this said "Nineteen" for as
+  // long as there had been more than nineteen, and a number word in prose is
+  // exactly the kind of thing nobody re-checks while editing the sentence.
   const intro = doc.galleryGroup === "examples"
-    ? `<p>Nineteen small, self-contained programs. Each one is run against its own input in both optimizer modes and checked against the exact output below, so none of them can quietly rot.</p>`
-    : `<p>Thirteen classic programming problems — FizzBuzz through Game of Life — written as pipelines. Same golden testing as the examples.</p>`;
+    ? `<p>${programs.length} small, self-contained programs. Each one is run against its own input in both optimizer modes and checked against the exact output below, so none of them can quietly rot.</p>`
+    : `<p>${programs.length} classic programming problems — FizzBuzz through Game of Life — written as pipelines. Same golden testing as the examples.</p>`;
   const rendered = renderGallery(programs, { runnable: playgroundReady() });
   return {
     html: `<h1>${escapeHtml(doc.title)}</h1>${intro}${rendered.html}`,
@@ -1736,7 +1790,9 @@ document.addEventListener("click", async e => {
       out.className = "run-host";
       pre.after(out);
     }
-    runInto(out, code.innerText, "", { explain: blockRun.hasAttribute("data-explain") });
+    const ctx = blockContext(pre);
+    runInto(out, code.innerText, ctx.input,
+      { explain: blockRun.hasAttribute("data-explain"), libs: ctx.libs });
   }
 });
 

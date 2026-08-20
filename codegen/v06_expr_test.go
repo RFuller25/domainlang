@@ -128,6 +128,31 @@ Reveal: stdout
 			input: "ignored",
 		},
 		{
+			// fill's result stored in a tuple field, which is the shape that
+			// caught a backend divergence: dmFill is generic, and letting Go
+			// infer T from an Int literal — an untyped constant — gave `int`
+			// and produced a []int where the rest of the program had agreed on
+			// []int64. Ranging over the list compiles either way, so a test
+			// that only sums it passes against the broken codegen; storing it
+			// in a tuple field is what fails to compile. The interpreter has
+			// no such split, hence a divergence rather than a type error.
+			name: "fill in a tuple field",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (xs) ->
+        consider st as tuple(fill(4, 7), first(xs))
+        in textjoin(list(
+            totext(sum(item(st, 0))),
+            totext(length(item(st, 0))),
+            totext(item(st, 1))
+        ), "|")
+Reveal: stdout
+`,
+			input: "5",
+		},
+		{
 			name: "range and fill",
 			src: `Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"

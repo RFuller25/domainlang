@@ -125,7 +125,7 @@ func Analyze(path, src string) (r *Report) {
 	// statement the resolver never reached never had the chance to read its
 	// arguments, and would report every one of them as ignored.
 	if r.Program != nil && r.Pipe != nil {
-		r.Diags = append(r.Diags, lintResolved(r.Program, working)...)
+		r.Diags = append(r.Diags, lintResolved(r.Program, r.Pipe, working)...)
 	}
 	sortDiags(r.Diags)
 	return r

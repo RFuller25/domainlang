@@ -2,7 +2,9 @@ package codegen
 
 import (
 	"fmt"
+	"strings"
 
+	"domain/ast"
 	"domain/ir"
 )
 
@@ -95,14 +97,24 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 	}
 
 	v := g.fresh("v")
-	g.wl("%s := %s", v, in)
+	// A loop whose body writes into the state in place takes its own copy of
+	// it first — prims.ownLoopState is the interpreter's half of this, and the
+	// two have to agree about which programs make the copy. See
+	// optimizer/linear.go for what the analysis does and does not prove.
+	g.wl("%s := %s", v, g.ownLoopState(n, body, in))
 
 	emitBody := func() error {
 		cur, err := g.emitSequence(body, v)
 		if err != nil {
 			return err
 		}
-		g.wl("%s = %s", v, cur)
+		// A body of pure passthroughs gives back the variable it was handed,
+		// and `v = v` is noise in the emitted source — worth skipping now that
+		// a loop body of nothing but `Cursed Tool` writes is an ordinary shape
+		// rather than the curiosity an all-vows body was.
+		if cur != v {
+			g.wl("%s = %s", v, cur)
+		}
 		return nil
 	}
 
@@ -236,4 +248,172 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 	default:
 		return "", unsupported(n, "loop kind %q", kind)
 	}
+}
+
+// ownLoopState is the expression a loop seeds its state from: the value it was
+// handed, or a copy of it when the optimizer marked an update in the body as
+// in-place.
+//
+// The copy reaches exactly the fields the optimizer says a marked update writes
+// through, which is the promise ownableLoopState makes on the analysis side.
+//
+// Exactly those, and no more. Copying the whole state instead is correct and was
+// badly wrong in cost: day 6 of the AoC suite writes a sixteen-element list in an
+// inner loop and carries a map beside it that grows to twelve thousand entries,
+// so owning the state wholesale cloned that map once per lap of the *outer*
+// loop — reintroducing one level up the quadratic this pass exists to remove,
+// and making the program 1.8x slower than before the pass could see it at all.
+func (g *gen) ownLoopState(n *ir.Node, body []*ir.Node, in string) string {
+	if len(body) == 0 || n.In == nil {
+		return in
+	}
+	// Any stage may carry the marks: the pass looks at every body stage that
+	// threads the state, not only the first.
+	if !anyStageInPlace(body) {
+		return in
+	}
+	owned, err := g.ownValueExpr(in, n.In, "", ownedFields(n))
+	if err != nil {
+		return in
+	}
+	return owned
+}
+
+// anyStageInPlace reports whether some body stage carries a marked update.
+func anyStageInPlace(body []*ir.Node) bool {
+	for _, stage := range body {
+		if lam, _ := stage.Meta["lambda"].(*ast.Lambda); lam != nil && ast.HasInPlace(lam.Body) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownedFields reads the paths the optimizer recorded for this loop. A node
+// without them predates the record or came from a caller that does not set it,
+// and owning everything is the reading that is never wrong.
+func ownedFields(n *ir.Node) map[string]bool {
+	paths, ok := n.Meta[ir.OwnedFields].([]string)
+	if !ok {
+		return map[string]bool{ir.OwnsEverything: true}
+	}
+	out := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		out[p] = true
+	}
+	return out
+}
+
+// needsOwn reports whether the storage at path has to be copied: because a
+// marked update writes it, writes something inside it, or writes a container it
+// sits in.
+func needsOwn(path string, owned map[string]bool) bool {
+	for w := range owned {
+		if w == path || pathAncestor(w, path) || pathAncestor(path, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathAncestor reports whether a is a strict ancestor of b. The root path is an
+// ancestor of everything, which is the case a plain HasPrefix gets wrong: the
+// root is "", so "" + "." is "." and no real path begins with a dot.
+func pathAncestor(a, b string) bool {
+	if a == b {
+		return false
+	}
+	if a == ir.OwnsEverything {
+		return true
+	}
+	return strings.HasPrefix(b, a+".")
+}
+
+// fieldPath extends a projection path with one tuple index.
+func fieldPath(path string, i int) string {
+	if path == "" {
+		return itoa(i)
+	}
+	return path + "." + itoa(i)
+}
+
+// ownValueExpr is the Go expression copying the storage inside a value that a
+// marked update reaches, leaving the rest of it shared.
+func (g *gen) ownValueExpr(expr string, t *ir.Type, path string, owned map[string]bool) (string, error) {
+	if !needsOwn(path, owned) {
+		return expr, nil
+	}
+	switch t.Kind {
+	case ir.KList:
+		elemGo, err := g.goType(t.Elem)
+		if err != nil {
+			return "", err
+		}
+		return "append([]" + elemGo + "(nil), " + expr + "...)", nil
+	case ir.KTuple:
+		tupGo, err := g.goType(t)
+		if err != nil {
+			return "", err
+		}
+		out := tupGo + "{"
+		// Elems, not Fields: Fields is the record's and is empty for a tuple,
+		// which emits `Tup1{}` — a zero value, and a program that fails with
+		// "index 0 out of range (length 0)" on its first lap.
+		for i, ft := range t.Elems {
+			field := "(" + expr + ").f" + itoa(i)
+			copied := field
+			if ft != nil && ownableField(ft) {
+				if copied, err = g.ownValueExpr(field, ft, fieldPath(path, i), owned); err != nil {
+					return "", err
+				}
+			}
+			if i > 0 {
+				out += ", "
+			}
+			out += copied
+		}
+		return out + "}", nil
+
+	// The rest of the collections a mark can be rooted at through a tuple
+	// field. optimizer.projectedCollection lets an update write into any of
+	// these when it sits in loop state, so each one has to get storage of its
+	// own here — a Map copied by reference into the state tuple would have the
+	// loop writing through to whatever the caller still holds. Every clone is
+	// one already declared for the functional path.
+	case ir.KMap:
+		g.helper("dmMap", declMap)
+		g.helper("dmMapClone", declMapClone)
+		return "dmMapClone(" + expr + ")", nil
+	case ir.KSet:
+		g.helper("dmSet", declSet)
+		g.helper("dmSetClone", declSetClone)
+		return "dmSetClone(" + expr + ")", nil
+	case ir.KGrid:
+		g.helper("dmGrid", declGrid)
+		g.helper("dmGridClone", declGridClone)
+		return "dmGridClone(" + expr + ")", nil
+	case ir.KSparse:
+		g.helper("dmSparse", declSparse, "slices")
+		g.helper("dmSparseClone", declSparseClone)
+		return "dmSparseClone(" + expr + ")", nil
+	case ir.KGraph:
+		// dmGraph carries its own clone method — the one the functional
+		// addnode/addedge call before mutating — so there is no free function
+		// to declare here.
+		g.helper("dmGraph", declGraph)
+		return "(" + expr + ").clone()", nil
+	}
+	return expr, nil
+}
+
+// ownableField reports whether a state field holds storage ownValueExpr can
+// copy. It mirrors optimizer.ownableLoopState's field test: what the analysis
+// allows a mark to reach, the clone on entry has to be able to own. Whether it
+// *does* is needsOwn's question.
+func ownableField(t *ir.Type) bool {
+	switch t.Kind {
+	case ir.KList, ir.KTuple, ir.KMap, ir.KSet, ir.KGrid, ir.KSparse, ir.KGraph:
+		return true
+	}
+	return false
 }

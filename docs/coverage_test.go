@@ -162,7 +162,7 @@ var coveredSections = map[string][]string{
 	"language.md": {
 		"Local bindings", "Measured arguments", "Channels", "Part",
 		"Shikigami", "Parameters", "Declared signatures", "Innate Domain",
-		"The prelude", "Simple Domain", "Binding Vows", "Reveal",
+		"The prelude", "Simple Domain", "Cursed Object", "Binding Vows", "Reveal",
 	},
 	// The expression layer: its own constructs, then one entry per builtin
 	// category — per the reference's own grouping, since two examples per

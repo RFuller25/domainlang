@@ -17,6 +17,7 @@ package lsp
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -79,7 +80,11 @@ func (a *Analysis) TypeHints() []TypeHint {
 			if label, ok := hintFor(st, outByLine); ok {
 				hints = append(hints, TypeHint{Line: st.Pos.Line, Label: label})
 			}
-			for _, b := range st.Binds {
+			// Binds and Decls both name a value on a line of their own, and
+			// both want the type shown after it. A `Cursed Object` line is
+			// where a global's type is fixed for the whole program, so it is
+			// the one hint a reader is most likely to go looking for.
+			for _, b := range slices.Concat(st.Binds, st.Decls) {
 				if t, ok := bindByLine[b.Pos.Line]; ok && t != nil {
 					hints = append(hints, TypeHint{Line: b.Pos.Line, Label: ": " + t.String(), Binding: true})
 				}
@@ -113,6 +118,12 @@ func (a *Analysis) typesByLine() (outByLine, bindByLine map[int]*ir.Type) {
 				for _, b := range binds {
 					bindByLine[b.Pos().Line] = b.Type()
 					walk(b.BlockNodes())
+				}
+			}
+			if writes, _ := n.Meta[ir.MetaGlobals].([]ir.GlobalWrite); writes != nil {
+				for _, w := range writes {
+					bindByLine[w.Pos().Line] = w.Type()
+					walk(w.BlockNodes())
 				}
 			}
 			if pos, ok := n.Meta["callPos"].(token.Position); ok && n.Out != nil {

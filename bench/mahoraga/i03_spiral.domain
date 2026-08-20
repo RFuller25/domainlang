@@ -1,0 +1,61 @@
+Cursed Energy: stdin
+Ints
+Channel "square":
+    Apply
+        Using: (x) -> consider s as ceil(sqrt(first(x))) in if s % 2 = 0 then s + 1 else s
+Channel "real":
+    Apply
+        Using: (x) -> first(x)
+
+Part "1":
+    Combine
+        From: square, real
+        Using: (s, r) ->
+            consider d as (s - 1) / 2 in
+            consider m as s * s in
+            d + min(list(
+                abs(r - (m - d)),
+                abs(r - (m - (s - 1) - d)),
+                abs(r - (m - 2 * (s - 1) - d)),
+                abs(r - (m - 3 * (s - 1) - d))
+            ))
+    stdout
+
+Part "2":
+    Apply
+        Using: (x) -> tuple(first(x), insert(emptymap(tuple(0, 0), 0), tuple(0, 0), 1), 0, 0, 1, 0, 1, 1, 0, 1)
+    While
+        Using: (st) -> item(st, 9) <= item(st, 0)
+        Apply
+            Using: (st) ->
+                consider n as item(st, 0) in
+                consider map as item(st, 1) in
+                consider x as item(st, 2) in
+                consider y as item(st, 3) in
+                consider dx as item(st, 4) in
+                consider dy as item(st, 5) in
+                consider legLen as item(st, 6) in
+                consider legLeft as item(st, 7) in
+                consider turnPhase as item(st, 8) in
+                consider nx as x + dx in
+                consider ny as y + dy in
+                consider s as
+                    getor(map, tuple(nx - 1, ny - 1), 0) + getor(map, tuple(nx, ny - 1), 0) + getor(map, tuple(nx + 1, ny - 1), 0) +
+                    getor(map, tuple(nx - 1, ny), 0) + getor(map, tuple(nx + 1, ny), 0) +
+                    getor(map, tuple(nx - 1, ny + 1), 0) + getor(map, tuple(nx, ny + 1), 0) + getor(map, tuple(nx + 1, ny + 1), 0)
+                in
+                consider newMap as insert(map, tuple(nx, ny), s) in
+                consider newLegLeft as legLeft - 1 in
+                if newLegLeft > 0 then
+                    tuple(n, newMap, nx, ny, dx, dy, legLen, newLegLeft, turnPhase, s)
+                else
+                    consider ndx as -dy in
+                    consider ndy as dx in
+                    if turnPhase = 0 then
+                        tuple(n, newMap, nx, ny, ndx, ndy, legLen, legLen, 1, s)
+                    else
+                        consider newLegLen as legLen + 1 in
+                        tuple(n, newMap, nx, ny, ndx, ndy, newLegLen, newLegLen, 0, s)
+    Apply
+        Using: (st) -> item(st, 9)
+    stdout

@@ -138,6 +138,17 @@ type Recipe struct {
 	// making it — and is the search's account of how quiet the machine was.
 	DriftedRaces int `json:"drifted_races,omitempty"`
 
+	// Races is how many races were run at all, which is what makes
+	// DriftedRaces readable. It is not the number of candidates: a candidate
+	// that survives its screen is raced twice.
+	Races int `json:"races,omitempty"`
+
+	// SecondLook is how many candidates were re-raced at full length after the
+	// turns, having looked faster than the champion without being
+	// distinguishable from it. It is the count the search acted on rather than
+	// merely reported; Inconclusive is what remained unsettled after it.
+	SecondLook int `json:"second_look,omitempty"`
+
 	// dir is where this recipe lives, for resolving Profile. It is not part of
 	// the file: a recipe that recorded its own location would stop being
 	// correct the moment anyone moved it.
@@ -184,26 +195,39 @@ type BuildJSON struct {
 // type rather than the codegen one embedded, so the recipe's field names and
 // the compiler's struct can move independently — a recipe is a file format.
 type TuningJSON struct {
-	ListCapacity     int      `json:"list_capacity,omitempty"`
-	ASCIIText        bool     `json:"ascii_text,omitempty"`
-	GCPercent        int      `json:"gc_percent,omitempty"`
-	MemoryLimitBytes int64    `json:"memory_limit_bytes,omitempty"`
-	ElideNodes       []string `json:"elide_nodes,omitempty"`
+	ListCapacity     int            `json:"list_capacity,omitempty"`
+	ListCapacities   map[string]int `json:"list_capacities,omitempty"`
+	ASCIIText        bool           `json:"ascii_text,omitempty"`
+	ASCIIGuarded     bool           `json:"ascii_guarded,omitempty"`
+	GCPercent        int            `json:"gc_percent,omitempty"`
+	MemoryLimitBytes int64          `json:"memory_limit_bytes,omitempty"`
+	MaxProcs         int            `json:"max_procs,omitempty"`
+	ElideNodes       []string       `json:"elide_nodes,omitempty"`
+
+	// Constants are the `Consider` bindings pinned to a measured value, keyed
+	// as codegen.ConsiderKey renders them. A map rather than a list because
+	// that is what the compiler takes, and because a recipe read back has to
+	// produce the same binary rather than a similar one.
+	Constants map[string]int64 `json:"constants,omitempty"`
 }
 
 func tuningJSON(t codegen.Tuning) TuningJSON {
 	return TuningJSON{
 		ListCapacity: t.ListCapacity, ASCIIText: t.ASCIIText,
-		GCPercent: t.GCPercent, MemoryLimitBytes: t.MemoryLimitBytes,
-		ElideNodes: t.ElideNodes,
+		ASCIIGuarded: t.ASCIIGuarded, GCPercent: t.GCPercent,
+		MemoryLimitBytes: t.MemoryLimitBytes, MaxProcs: t.MaxProcs,
+		ElideNodes: t.ElideNodes, Constants: t.Constants,
+		ListCapacities: t.ListCapacities,
 	}
 }
 
 func (t TuningJSON) tuning() codegen.Tuning {
 	return codegen.Tuning{
 		ListCapacity: t.ListCapacity, ASCIIText: t.ASCIIText,
-		GCPercent: t.GCPercent, MemoryLimitBytes: t.MemoryLimitBytes,
-		ElideNodes: t.ElideNodes,
+		ASCIIGuarded: t.ASCIIGuarded, GCPercent: t.GCPercent,
+		MemoryLimitBytes: t.MemoryLimitBytes, MaxProcs: t.MaxProcs,
+		ElideNodes: t.ElideNodes, Constants: t.Constants,
+		ListCapacities: t.ListCapacities,
 	}
 }
 
@@ -276,6 +300,31 @@ type FactsJSON struct {
 	HeapSys     uint64 `json:"heap_sys,omitempty"`
 	TotalAlloc  uint64 `json:"total_alloc,omitempty"`
 	NumGC       uint32 `json:"num_gc,omitempty"`
+
+	// Constants are the bindings the probe build watched hold one value for a
+	// whole run — the reconnaissance turn 8's pins are chosen from.
+	Constants []ConstantJSON `json:"constants,omitempty"`
+
+	// ListSites are the list accumulators the same probe watched grow, with
+	// the longest each reached. Turn 6's reservations are chosen from these.
+	ListSites []ListSiteJSON `json:"list_sites,omitempty"`
+}
+
+// ListSiteJSON is one list accumulator measured growing.
+type ListSiteJSON struct {
+	Key    string `json:"key"`
+	Line   int    `json:"line,omitempty"`
+	Length int    `json:"length"`
+	Fills  int64  `json:"fills,omitempty"`
+}
+
+// ConstantJSON is one binding measured holding one value.
+type ConstantJSON struct {
+	Key   string `json:"key"`
+	Name  string `json:"name,omitempty"`
+	Line  int    `json:"line,omitempty"`
+	Value int64  `json:"value"`
+	Calls int64  `json:"calls,omitempty"`
 }
 
 // Adaptation is one thing tried, with what it measured and whether it stuck.
@@ -398,6 +447,21 @@ func (r *Recipe) noteTurnSkipped() { r.TurnsSkipped++ }
 // it was, and nothing more: the race's comparisons are internal to it.
 func (r *Recipe) noteDriftedRace() { r.DriftedRaces++ }
 
+// noteRace counts a race, drifted or not.
+func (r *Recipe) noteRace() { r.Races++ }
+
+// noteSecondLook records how many candidates were re-raced after the turns.
+//
+// It also clears the inconclusive count, because those candidates are no
+// longer inconclusive: they have been measured again, at full length, and
+// whatever the second look decided is the answer. A verdict that kept the old
+// count would be advising a reader to raise `--runs` to settle questions the
+// search has just settled.
+func (r *Recipe) noteSecondLook(n int) {
+	r.SecondLook = n
+	r.Inconclusive = 0
+}
+
 // setBestRatio records the champion's cost as a fraction of the baseline's,
 // composed from the ratios each accepted race measured.
 func (r *Recipe) setBestRatio(ratio float64) { r.BestRatio = ratio }
@@ -435,6 +499,21 @@ func (r *Recipe) setFacts(f Facts) {
 	}
 	if f.HeapReported {
 		r.Facts.HeapSys, r.Facts.TotalAlloc, r.Facts.NumGC = f.HeapSys, f.TotalAlloc, f.NumGC
+	}
+	// Every binding the probe watched, not only the ones that were pinned. A
+	// reader deciding whether to trust a pinned constant wants to see the
+	// observation it rests on — that this binding was evaluated fifty thousand
+	// times and never moved — and a reader wondering why a binding was *not*
+	// pinned wants to see that it was looked at.
+	for _, c := range f.Constants {
+		r.Facts.Constants = append(r.Facts.Constants, ConstantJSON{
+			Key: c.Key, Name: c.Name, Line: c.Line, Value: c.Value, Calls: c.Calls,
+		})
+	}
+	for _, site := range f.ListSites {
+		r.Facts.ListSites = append(r.Facts.ListSites, ListSiteJSON{
+			Key: site.Key, Line: site.Line, Length: site.Length, Fills: site.Fills,
+		})
 	}
 }
 

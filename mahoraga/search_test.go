@@ -1,6 +1,7 @@
 package mahoraga
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -355,5 +356,69 @@ func TestTooFewSamplesIsNotDistinguishable(t *testing.T) {
 	cand = measurementFrom(msSamples(5, 5, 5, 5), true)
 	if !Distinguishable(champ, cand, 0.02) {
 		t.Error("a 50% difference over four samples was not distinguishable")
+	}
+}
+
+// The second look exists because "I could not tell" was a verdict the search
+// printed and never acted on. What it re-races is exactly the candidates that
+// earned that verdict — never the ones that were plainly slower, and never a
+// candidate whose binary was never built.
+func TestOnlyUnsettledCandidatesGetASecondLook(t *testing.T) {
+	s := &Search{}
+	s.noteUnclear(true, 6, "templated codegen edits", Candidate{Label: "promising"}, "/tmp/bin-a", 0.28)
+	s.noteUnclear(false, 4, "pass ablation", Candidate{Label: "plainly slower"}, "/tmp/bin-b", -0.11)
+	s.noteUnclear(true, 4, "pass ablation", Candidate{Label: "never built"}, "", 0.40)
+
+	if len(s.unclear) != 1 || s.unclear[0].cand.Label != "promising" {
+		t.Fatalf("the second look queued %+v", s.unclear)
+	}
+}
+
+// Most promising first, and bounded. A search on a machine where everything is
+// inconclusive must not double in length, and the candidates it then declines
+// to re-race are the ones that looked least like a win.
+func TestSecondLookQueueIsOrderedAndBounded(t *testing.T) {
+	s := &Search{}
+	for i := range maxSecondLook + 3 {
+		s.noteUnclear(true, 6, "turn", Candidate{Label: fmt.Sprint(i)}, "/tmp/bin", float64(i)/100)
+	}
+	q := s.secondLookQueue()
+	if len(q) != maxSecondLook {
+		t.Fatalf("queued %d candidates, want %d", len(q), maxSecondLook)
+	}
+	for i := 1; i < len(q); i++ {
+		if q[i-1].eff < q[i].eff {
+			t.Errorf("the queue is not ordered by effect: %+v", q)
+		}
+	}
+	if q[0].eff != float64(maxSecondLook+2)/100 {
+		t.Errorf("the most promising candidate is not first: %+v", q[0])
+	}
+}
+
+// The inconclusive count is what the verdict tells a reader to spend more runs
+// on. Once the second look has re-raced them at full length they are no longer
+// unsettled — whatever it decided is the answer — so a recipe that still
+// advised `--runs` would be advising a reader to settle a settled question.
+func TestASecondLookClearsWhatItReAsked(t *testing.T) {
+	r := newRecipe(Options{Program: "p.domain", Input: "in", Expected: "want"})
+	r.markInconclusive(true)
+	r.markInconclusive(true)
+	if r.Inconclusive != 2 {
+		t.Fatalf("inconclusive = %d before the second look, want 2", r.Inconclusive)
+	}
+
+	r.noteSecondLook(2)
+	if r.SecondLook != 2 {
+		t.Errorf("second_look = %d, want 2", r.SecondLook)
+	}
+	if r.Inconclusive != 0 {
+		t.Errorf("inconclusive = %d after re-asking, want 0", r.Inconclusive)
+	}
+	// Anything the second look could still not settle counts again, and that is
+	// the number a reader should act on.
+	r.markInconclusive(true)
+	if r.Inconclusive != 1 {
+		t.Errorf("inconclusive = %d after the second look left one open, want 1", r.Inconclusive)
 	}
 }

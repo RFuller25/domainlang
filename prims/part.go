@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"domain/ast"
+	"domain/eval"
 	"domain/ir"
 )
 
@@ -61,6 +62,18 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 			prev := ctx.PartLabel
 			ctx.PartLabel = label
 			defer func() { ctx.PartLabel = prev }()
+
+			// Globals are restored on the way out for the same reason the
+			// pipeline value is passed through: sibling Parts branch from one
+			// state, and "Part 1 sorting cannot disturb what Part 2 sees"
+			// (docs/language.md) is a guarantee about everything a Part can
+			// reach, not only about the value. Without this a `Cursed Tool`
+			// inside one Part would silently change what the next one reads.
+			//
+			// A Part runs once per program rather than once per element, so
+			// the copy costs nothing at the scale it happens.
+			savedGlobals := eval.SnapshotGlobals()
+			defer eval.RestoreGlobals(savedGlobals)
 
 			// The body's result is what the Part actually computed; the node
 			// itself passes its input through. A body that failed reports nil.

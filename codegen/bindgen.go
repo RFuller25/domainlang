@@ -37,7 +37,28 @@ func (g *gen) emitConsider(n *ir.Node, in string) (string, error) {
 	g.bindNames = scoped
 	defer func() { g.bindNames = saved }()
 
+	// A binding some stage under this scope writes to with `:=` is not a
+	// constant of the run whatever a probe saw at its definition, and pinning
+	// one would produce a program that quietly ignores the write. The same
+	// walk the block bodies use to find their pointer parameters answers it.
+	written := blockUpdates(body, bindingNames(binds))
+
 	for _, b := range binds {
+		key := ConsiderKey(n, b.Name())
+		// A pinned binding becomes the literal it was measured holding, at
+		// every site that reads it, and its value expression is not emitted at
+		// all. Substituting at the reads rather than at the definition is the
+		// whole point: `length(x)` is one load, but a local the Go compiler
+		// has to read is a local it can fold nothing through, and a `% l`
+		// against a literal 16 is a mask rather than a division.
+		//
+		// The check comes before bindValue because bindValue *emits* — a
+		// block-valued binding writes its stages out as statements — and those
+		// would be dead code the pin could not remove.
+		if lit, ok := g.constFor(key, b.Type()); ok && !written[b.Name()] {
+			scoped[b.Name()] = exprBinding{expr: lit, typ: b.Type(), lit: true}
+			continue
+		}
 		expr, err := g.bindValue(n, b, in)
 		if err != nil {
 			return "", err
@@ -49,11 +70,30 @@ func (g *gen) emitConsider(n *ir.Node, in string) (string, error) {
 		v := g.fresh("dmBind")
 		g.wl("var %s %s = %s", v, goType, expr)
 		g.wl("_ = %s", v)
+		// A probe build reports what the binding held, once per evaluation.
+		// The report is what a later build's Constants are read off, and it is
+		// emitted here — at the binding, inside whatever loop the binding
+		// lives in — because a value that is constant for the run and a value
+		// that changes every lap are indistinguishable from anywhere else.
+		if g.probing() && b.Type() != nil && b.Type().Kind == ir.KInt {
+			g.wl("dmProbe(%q, %s)", key, v)
+		}
 		// Registered after its own value is compiled, so a binding written in
 		// terms of an earlier one sees that one and never itself.
 		scoped[b.Name()] = exprBinding{expr: v, typ: b.Type(), cell: "&" + v}
 	}
 	return g.emitSequence(body, in)
+}
+
+// bindingNames is the environment blockUpdates needs to be asked about a
+// scope's own bindings: it reports only names it is given, and what this
+// caller wants to know is which of *these* are written.
+func bindingNames(binds []ir.Binding) exprEnv {
+	env := make(exprEnv, len(binds))
+	for _, b := range binds {
+		env[b.Name()] = exprBinding{}
+	}
+	return env
 }
 
 // bindValue compiles one binding's value against the value entering the scope.

@@ -865,3 +865,35 @@ func mergeJSONArrays(t *testing.T, arrays []json.RawMessage) json.RawMessage {
 	}
 	return out
 }
+
+// The renderer carries a code block's info-string flags through to the DOM, as
+// `data-flags` on the <pre>.
+//
+// The site needs them to decide where a Run button belongs. It used to guess
+// from the block's text — looking for themed keywords — and the guess was
+// wrong in both directions: a `domain ignore` fragment listing several
+// `Domain Expansion:` lines got a button that could only fail, and the program
+// written *without* its optional keywords, which is the example teaching that
+// they are optional, got none. It also needs them to find a ```lib block's
+// path, since that rides in the info string too.
+func TestCodeBlockFlagsReachTheDOM(t *testing.T) {
+	for _, tc := range []struct{ name, md, wantAttr string }{
+		{"run", "```domain run\nCursed Energy: stdin\n```\n", `data-flags="run"`},
+		{"ignore", "```domain ignore\nDomain Expansion: BFS from 0 0\n```\n", `data-flags="ignore"`},
+		{"lib path", "```lib aoc.domain\nShikigami \"X\"\n```\n", `data-flags="aoc.domain"`},
+		{"no flags", "```domain\nCursed Energy: stdin\n```\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html := renderMarkdown(t, tc.md)
+			if tc.wantAttr == "" {
+				if strings.Contains(html, "data-flags") {
+					t.Errorf("a block with no flags got one:\n%s", html)
+				}
+				return
+			}
+			if !strings.Contains(html, tc.wantAttr) {
+				t.Errorf("want %s in:\n%s", tc.wantAttr, html)
+			}
+		})
+	}
+}

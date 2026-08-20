@@ -171,6 +171,42 @@ func measurementFrom(samples []time.Duration, correct bool) Measurement {
 	return m
 }
 
+// ScreenEffect is how promising a *cheap* measurement looks: the better of
+// what the means say and what the minima say.
+//
+// The screen and the confirmation are asking different questions and this is
+// where that stops being a slogan. A confirmation asks "is this real", and the
+// answer has to be conservative or the search ships noise. A screen asks "is
+// this worth measuring properly", and there the expensive mistake is the other
+// one — a candidate discarded here is never looked at again.
+//
+// At the default three runs a screen has two samples after the warmup, which
+// is below MinSamplesForSpread *and* below MinSamplesForTrim: no standard
+// error, no trimming, just two wall-clock numbers off a machine that may be
+// doing something else. Under those conditions the minimum is the better
+// statistic, for the reason TrimSlowest already gives — interference is
+// one-sided, so the fastest run is the one that was least interfered with.
+//
+// This cost a measured 28%: `i15_generators` reserving both of its
+// five-million-element accumulators is worth 23% by hand, and three separate
+// screens rejected it at -0.8%, -17% and -23% on two samples each, on a run
+// whose own report said 61 of 70 races had drifted. Taking the more
+// favourable view here promotes such a candidate to a real measurement, which
+// is then free to reject it on the evidence.
+func ScreenEffect(champion, candidate Measurement) float64 {
+	byMean := relativeGain(float64(champion.Mean), float64(candidate.Mean))
+	byMin := relativeGain(float64(champion.Min), float64(candidate.Min))
+	return max(byMean, byMin)
+}
+
+// relativeGain is how much smaller b is than a, as a fraction of a.
+func relativeGain(a, b float64) float64 {
+	if a <= 0 || b <= 0 {
+		return 0
+	}
+	return (a - b) / a
+}
+
 // Distinguishable reports whether two measurements differ by more than their
 // combined uncertainty — the question "is this candidate actually different
 // from the champion, or did I just measure twice?"

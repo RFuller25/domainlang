@@ -1,0 +1,39 @@
+Cursed Energy: stdin
+Ints
+Apply
+    Using: (x) -> tuple(x, 0, length(x), 0)
+Part "1":
+    while
+        Consider l of (x) -> item(x, 2)
+        Using: (x) -> item(x, 1) > -1 and item(x, 1) < l
+        Apply
+            Using: (x) -> consider i as item(x, 1) in
+                        consider c as item(x, 3) in
+                        consider steps as item(item(x, 0), i) in
+                        consider current_val as item(item(x, 0), i) in
+                        consider newl as set(item(x,0), i, current_val + 1) in
+                        tuple(newl, i + steps, l, c + 1)
+
+
+    Apply
+        Using: (x) -> item(x, 3)
+
+    stdout
+
+Part "2":
+    while
+        Consider l of (x) -> item(x, 2)
+        Using: (x) -> item(x, 1) > -1 and item(x, 1) < l
+        Apply
+            Using: (x) -> consider i as item(x, 1) in
+                        consider c as item(x, 3) in
+                        consider steps as item(item(x, 0), i) in
+                        consider current_val as item(item(x, 0), i) in
+                        consider newl as set(item(x,0), i, if current_val >= 3 then current_val - 1 else current_val + 1) in
+                        tuple(newl, i + steps, l, c + 1)
+
+
+    Apply
+        Using: (x) -> item(x, 3)
+
+    stdout

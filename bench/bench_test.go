@@ -275,6 +275,7 @@ func TestSpeedRatio(t *testing.T) {
 		t.Skip("set DOMAIN_BENCH=1 to measure (runs every program at full scale)")
 	}
 	requireGo(t)
+	requireIdle(t)
 	const reps = 5
 	const target = 2.0
 

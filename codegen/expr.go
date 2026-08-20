@@ -32,6 +32,16 @@ type exprBinding struct {
 	// bound without one — they are not variables this package owns, and the
 	// resolver refuses a write to any of them long before the backend runs.
 	cell string
+
+	// lit says expr is a compile-time constant rather than a variable — a
+	// `Consider` binding pinned to a measured value (see Tuning.Constants).
+	//
+	// It matters at exactly one place: a block body's function receives the
+	// bindings in scope as parameters, and a parameter is not a constant. A
+	// pinned binding is substituted into the body instead and no parameter is
+	// declared for it, which is the difference between a modulus the Go
+	// compiler can turn into a mask and one it has to read from an argument.
+	lit bool
 }
 
 type exprEnv map[string]exprBinding
@@ -40,7 +50,14 @@ type exprEnv map[string]exprBinding
 func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 	switch x := e.(type) {
 	case *ast.IntLit:
-		return strconv.FormatInt(x.Value, 10), ir.Int(), nil
+		// Wrapped for the same reason FloatLit is: an unwrapped integer literal
+		// is an *untyped constant* in Go, and a generic helper whose type
+		// parameter is fixed only by a scalar argument then infers `int` rather
+		// than the int64 the rest of the program agrees on. That is a backend
+		// divergence, not a type error in the program — the interpreter has no
+		// such split — and it bit fill, abs, clamp and the two-argument min/max
+		// before the literal was pinned here instead of at each call site.
+		return "int64(" + strconv.FormatInt(x.Value, 10) + ")", ir.Int(), nil
 	case *ast.FloatLit:
 		// Wrapped so the literal stays float64-typed in any Go context, even
 		// when FormatFloat prints an integer-looking "2".
@@ -89,6 +106,15 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 					return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
 				}
 			}
+		}
+		return b.expr, b.typ, nil
+	case *ast.GlobalRef:
+		// No environment is consulted at all: the read was resolved to a slot
+		// while the program was lowered, and the slot is a package-level
+		// variable here. See codegen/globalgen.go.
+		b, err := g.globalRef(x)
+		if err != nil {
+			return "", nil, err
 		}
 		return b.expr, b.typ, nil
 	case *ast.UnaryExpr:
@@ -193,10 +219,22 @@ func (g *gen) orderArgs(exprs []ast.Expr, args []string, types []*ir.Type) error
 // substituted Shikigami parameter — were refused at resolve time and reach
 // here without a cell.
 func (g *gen) compileAssign(x *ast.AssignExpr, env exprEnv) (string, *ir.Type, error) {
-	b, ok := env[x.Name]
-	if !ok {
-		if b, ok = g.bindNames[x.Name]; !ok {
-			return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+	var b exprBinding
+	if x.Target != nil {
+		// A global: the resolver set Target only when nothing nearer shadowed
+		// the name, so the environment is not consulted — the same reason a
+		// read of one does not consult it.
+		gb, err := g.globalRef(x.Target)
+		if err != nil {
+			return "", nil, err
+		}
+		b = gb
+	} else {
+		var ok bool
+		if b, ok = env[x.Name]; !ok {
+			if b, ok = g.bindNames[x.Name]; !ok {
+				return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+			}
 		}
 	}
 	// Nothing else in an environment is a variable: a parameter may be an
@@ -264,22 +302,60 @@ func (g *gen) compileAlso(x *ast.AlsoExpr, env exprEnv) (string, *ir.Type, error
 // shadowing one of those inside the generated function would break unrelated
 // code in the same expression.
 func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) {
-	val, valT, err := g.compileExpr(x.Value, env)
-	if err != nil {
-		return "", nil, err
-	}
-	goValT, err := g.goType(valT)
-	if err != nil {
-		return "", nil, err
-	}
-	local := "dmLet" + fieldName(x.Name)
-	// Shadow in a copy so sibling expressions keep the outer binding.
-	inner := make(exprEnv, len(env)+1)
+	// A chain of `consider a as … in consider b as … in …` becomes *one*
+	// closure with sequential declarations, not one closure per binding.
+	//
+	// Nesting them is what a naive lowering does and it does not survive
+	// contact with a real program: the decode step of an instruction
+	// interpreter is a chain of forty-odd bindings, and forty nested closures
+	// took the Go compiler a hundred seconds and then the OOM killer — on a
+	// program the interpreter runs without complaint. Flattening removes the
+	// limit rather than reporting it.
+	//
+	// It buys no speed. Hand-flattening the five-deep chain in a tight loop
+	// measured 75.4 ms against 73.8 ms, because Go inlines the nest perfectly
+	// well when it is small enough to compile at all. This is entirely about
+	// the compiler's own appetite.
+	var decls strings.Builder
+	inner := make(exprEnv, len(env)+4)
 	for k, v := range env {
 		inner[k] = v
 	}
-	inner[x.Name] = exprBinding{expr: local, typ: valT, cell: "&" + local}
-	body, bodyT, err := g.compileExpr(x.Body, inner)
+	// Locals declared in this block, so a binding that shadows an earlier one
+	// gets a fresh Go name. Nested closures gave each binding its own scope for
+	// free; in one block a repeated `consider x` would be a redeclaration.
+	declared := map[string]int{}
+
+	cur := x
+	for {
+		// The value is compiled in the scope *before* its own binding, which is
+		// what `inner` holds at this point: earlier bindings of the chain are
+		// visible, this one is not.
+		val, valT, err := g.compileExpr(cur.Value, inner)
+		if err != nil {
+			return "", nil, err
+		}
+		goValT, err := g.goType(valT)
+		if err != nil {
+			return "", nil, err
+		}
+		local := "dmLet" + fieldName(cur.Name)
+		if n := declared[local]; n > 0 {
+			local += "_" + itoa(n)
+		}
+		declared["dmLet"+fieldName(cur.Name)]++
+		decls.WriteString("\t\tvar " + local + " " + goValT + " = " + val + "\n")
+		decls.WriteString("\t\t_ = " + local + "\n")
+		inner[cur.Name] = exprBinding{expr: local, typ: valT, cell: "&" + local}
+
+		next, ok := cur.Body.(*ast.LetExpr)
+		if !ok {
+			break
+		}
+		cur = next
+	}
+
+	body, bodyT, err := g.compileExpr(cur.Body, inner)
 	if err != nil {
 		return "", nil, err
 	}
@@ -287,8 +363,8 @@ func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) 
 	if err != nil {
 		return "", nil, err
 	}
-	return "func() " + goBodyT + " {\n\t\tvar " + local + " " + goValT + " = " + val +
-		"\n\t\t_ = " + local + "\n\t\treturn " + body + "\n\t}()", bodyT, nil
+	return "func() " + goBodyT + " {\n" + decls.String() +
+		"\t\treturn " + body + "\n\t}()", bodyT, nil
 }
 
 // compileCond lowers `if c then a else b` to an immediately-invoked func
@@ -1081,6 +1157,14 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "", nil, err
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
+		// x.InPlace is the optimizer's proof that nothing reads the copied-from
+		// value after this call and that no subslice of it escaped — see
+		// optimizer/linear.go, and note that the List guard is stronger than
+		// the one the Map and Grid updates need.
+		if x.InPlace {
+			g.helper("dmSetAtIn", declSetAtIn)
+			return "dmSetAtIn(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		}
 		g.helper("dmSetAt", declSetAt)
 		return "dmSetAt(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
 	case "row", "col":
@@ -1445,7 +1529,18 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	case "fill":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmFill", declFill)
-		return "dmFill(" + args[0] + ", " + args[1] + ")", ir.List(types[1]), nil
+		// Instantiate explicitly rather than letting Go infer T from the
+		// value expression. An Int literal is an untyped constant, so
+		// inference gives `int` and the result is a []int where the rest of
+		// the program has agreed on []int64 — which compiles everywhere the
+		// list is only ranged over, and fails the moment it is stored in a
+		// tuple field. The interpreter has no such split, so this was a
+		// backend divergence rather than a type error in the program.
+		elem, terr := g.goType(types[1])
+		if terr != nil {
+			return "", nil, terr
+		}
+		return "dmFill[" + elem + "](" + args[0] + ", " + args[1] + ")", ir.List(types[1]), nil
 
 	// -- text --------------------------------------------------------------------
 	case "split":

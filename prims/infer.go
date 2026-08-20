@@ -113,16 +113,23 @@ func inferSequence(stmts []*ast.Statement, names map[string]bool, source bool) e
 		}
 		// A `Consider x Of <operation>` source is an ordinary statement whose
 		// keyword may have been left out like any other's, and it runs on the
-		// current value rather than reading an input.
+		// current value rather than reading an input. A `Cursed Object` /
+		// `Cursed Tool` declaration takes the same right-hand side and so
+		// needs the same pass — they share parseOfSource, so anything writable
+		// after one preposition is writable after the other.
 		if err := inferBinds(s.Binds, names); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if err := inferBinds(s.Decls, names); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-// inferBinds infers the keywords of the statements behind `Consider x Of …`
-// bindings.
+// inferBinds infers the keywords of the statements behind an `Of` right-hand
+// side — a `Consider x Of …` binding or a `Cursed Object` / `Cursed Tool`
+// declaration, which are the same shape.
 func inferBinds(binds []*ast.Binding, names map[string]bool) error {
 	var firstErr error
 	for _, b := range binds {
@@ -275,15 +282,46 @@ func isSourcePhrase(op *ast.Operation) bool {
 // other one.
 func checkShikigamiName(def *ast.ShikigamiDef) error {
 	name := strings.TrimSpace(def.Name)
-	reject := func(what string) error {
+	if name == "" {
+		return &ResolveError{Pos: def.Pos, Msg: "Shikigami needs a name"}
+	}
+	if what, taken := reservedMeaning(name); taken {
 		return &ResolveError{Pos: def.Pos, Msg: fmt.Sprintf(
 			"Shikigami %q is named after %s; the themed keyword is optional, so a call to it would be indistinguishable from the built-in — pick another name",
 			def.Name, what)}
 	}
-	if name == "" {
-		return &ResolveError{Pos: def.Pos, Msg: "Shikigami needs a name"}
-	}
+	return nil
+}
 
+// checkDeclaredName refuses a declared name that already means something else
+// in the language. It is the same test checkShikigamiName applies, phrased for
+// a declaration rather than a definition: role names what is being declared
+// ("a global"), and the position is the declaration's.
+//
+// The two share reservedMeaning rather than each keeping a list, because a
+// name that would be ambiguous as a Shikigami is ambiguous as a global for the
+// same reason — both are read from an expression or a prefix-free line, and
+// neither has a slot to disambiguate it.
+func checkDeclaredName(name, role string, pos token.Position) error {
+	if strings.TrimSpace(name) == "" {
+		return &ResolveError{Pos: pos, Msg: role + " needs a name"}
+	}
+	if what, taken := reservedMeaning(name); taken {
+		return &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+			"%q is already %s, so it cannot also be %s — pick another name", name, what, role)}
+	}
+	return nil
+}
+
+// reservedMeaning reports what a name already means in the language, if it
+// means anything: a primitive (by id or by a phrase that spells it), a themed
+// keyword, a loop kind, a vow predicate, a Reveal sink, an input source, or an
+// expression builtin.
+func reservedMeaning(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", false
+	}
 	op := namePhrase(name)
 	for _, p := range Registry {
 		// A primitive's own ID is reserved outright; beyond that, so is any
@@ -291,28 +329,28 @@ func checkShikigamiName(def *ast.ShikigamiDef) error {
 		// with a filler word ("Convert To Grid") is not load-bearing word for
 		// word, and a matcher's alternative spellings are not IDs.
 		if strings.EqualFold(name, p.ID) || (!catchAllKeywords[p.Keyword] && namesPrimitive(p, op.Words)) {
-			return reject(fmt.Sprintf("the built-in operation %q (%s)", p.ID, p.Keyword))
+			return fmt.Sprintf("the built-in operation %q (%s)", p.ID, p.Keyword), true
 		}
 	}
 	if _, _, ok := ast.KeywordPrefix(strings.Fields(name)); ok {
-		return reject("a themed keyword")
+		return "a themed keyword", true
 	}
 	switch {
 	case isLoopPhrase(op):
-		return reject("a Simple Domain loop kind")
+		return "a Simple Domain loop kind", true
 	case isVowPhrase(op):
-		return reject("a Binding Vow predicate")
+		return "a Binding Vow predicate", true
 	case isSinkPhrase(op):
-		return reject("the Reveal sink")
+		return "the Reveal sink", true
 	case isSourcePhrase(op):
-		return reject("an input source")
+		return "an input source", true
 	}
 	for _, b := range typecheck.Builtins {
 		if strings.EqualFold(name, b) {
-			return reject(fmt.Sprintf("the expression builtin %q", b))
+			return fmt.Sprintf("the expression builtin %q", b), true
 		}
 	}
-	return nil
+	return "", false
 }
 
 // namePhrase reads a Shikigami name as the operation phrase a prefix-free call

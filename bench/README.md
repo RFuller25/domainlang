@@ -420,3 +420,129 @@ None of these change what a program means; they change what the compiler
 materializes on the way. The same theme runs through the Sparse plane case
 above: the gap that is left, everywhere it is left, is a value the generated
 program builds and the hand-written one never does.
+
+## The tight-loop residual: measured, and not where it was expected
+
+The gaps above are all *materialization* — a value the generated program builds
+and the hand-written one never does. A tight loop over a state tuple has no such
+value, and it is still slower than hand-written Go, so it was worth asking where
+that goes. Two plausible answers turn out to be wrong, which is worth writing
+down so they are not re-derived.
+
+The program is the array-walk shape: a `While` threading `(List, Int, Int, Int)`,
+every field bound to a name before the write so the in-place rewrite applies,
+3,000,000 steps over 1.5M cells. Measured one process at a time on an idle box,
+`min` of 7.
+
+| | | |
+|---|---:|---|
+| Domain, as emitted | 73.8 ms | 1.40× |
+| Domain, guarded index helpers replaced by `xs[i]` | 64.6 ms | 1.23× |
+| hand-written Go | 52.6 ms | 1.00× |
+
+**It is not per-lap tuple allocation.** The obvious hypothesis — the loop rebuilds
+a 4-tuple every lap, so keep the fields in locals and rebuild only on exit — is
+optimizing something that already costs nothing. `go build -gcflags=-m` on the
+emitted source reports no `Tup` escaping to the heap at all: Go's escape analysis
+already keeps the whole state in registers and stack. A scalar-replacement pass
+would have nothing to collect.
+
+**It is not the `consider` lowering either.** Each `consider` becomes a nested
+`func() T { … }()` capturing the state, and the array walk nests five of them per
+lap, which reads like an obvious per-lap cost. Hand-flattening them into
+sequential `var` declarations in one body — nothing else changed — measured
+75.4 ms against 73.8 ms, i.e. no difference outside noise. Go inlines them.
+(Flattening is still worth doing for the reason in the ergonomics notes: a large
+`consider` chain can exhaust the Go compiler. It is not a speed argument.)
+
+**What does cost is the guarded index helpers.** `dmItem` and `dmSetAtIn` are
+calls carrying their own `i < 0 || i >= len(xs)` test so the failure is Domain's
+message rather than a Go panic, and that explicit test is also what stops Go
+eliminating its own bounds check. Replacing the two calls with direct indexing —
+which changes the diagnostic on an out-of-range index, so it is a measurement
+rather than a patch — is worth 1.14× on this loop and closes roughly 40% of the
+distance to hand-written Go.
+
+So the lever on tight loops is bounds-check elimination, not allocation.
+
+### What was done about it, and what was not
+
+Rewriting the check as one unsigned comparison — `uint64(i) >= uint64(len(xs))`,
+where a negative index converts to a very large unsigned value and fails the same
+test — is sound, local, and landed. It is worth about 1.6%, which is the useful
+half of the finding: **the cost is having a branch at all, not how it is
+written.** Both remaining routes to removing it were rejected on their merits.
+
+*Proving the index in range* is the honest version, and on the shape above it
+means proving that the loop's length field still equals the length of the loop's
+list field, on every lap, across a state tuple both are threaded through. That is
+an invariant analysis, and the failure mode of getting it wrong is not a slow
+program or a wrong answer but an out-of-bounds write. Thirteen percent on
+indexing-bound loops does not buy that risk, and the fusion work above is a
+larger lever on more programs.
+
+*Letting Go's own bounds check panic and translating it at the top level* costs
+nothing in the fast path and was rejected for a different reason: a recovered
+runtime panic cannot say which builtin failed, so `item: index 99 out of range
+(length 3)` becomes a generic Go message, and interpreter/binary parity on error
+output is a rule this repo enforces with differential tests.
+
+The measurements are recorded here so the next attempt starts from them rather
+than from the tuple-allocation hypothesis.
+
+## Verifying the in-place widening against the AoC 2017 suite
+
+The 25-program suite that motivated the accumulator work lives on a branch that
+was never merged, so it is not in this tree. It is still the only check that
+matters for a pass whose whole job is to remove a copy, and running the compiler
+against it found two things no unit test in this repo could have.
+
+Method: every program built with the compiler before and after the change, run
+one process at a time on an idle box, `min` of 5 with the warmup discarded, every
+answer checked against the suite's `expected/`.
+
+**It found a regression the change itself introduced.** Day 6 came out 1.8×
+*slower*. Its outer search carries a map that grows to twelve thousand entries
+and its inner redistribution loop writes only the sixteen-element list beside it,
+and owning the whole state on entry to the inner loop cloned that map once per lap
+of the outer one — the quadratic the pass exists to remove, one level up. The
+copy is now narrowed to the fields a marked update actually writes.
+
+**It found a restriction nobody had written down.** The pass only looked at a
+loop body of *one* stage. Day 6's outer body is an `Apply` plus a nested loop, so
+its map insert — the entire reason that program is slow — was never considered at
+all. Nothing in the source shows which side of that line a program falls on.
+
+With both fixed:
+
+| | before | after | |
+|---|---:|---:|---|
+| day 6, Memory Reallocation | 54.5 ms | 3.8 ms | 14.5× |
+| day 23, Coprocessor Conflagration | 22.6 ms | 5.6 ms | 4.0× |
+| day 7, Recursive Circus | 25.8 ms | 16.8 ms | 1.5× |
+
+The remaining 22 programs are within noise, which is the expected shape: the pass
+only pays where a collection is threaded through a loop.
+
+Days 22 and 25 do not compile at all with the earlier compiler — both call
+`fill(n, 0)` and store the result where its element type has to agree with the
+rest of the program, which is the generic-instantiation bug fixed on this branch.
+That is two of twenty-five programs that a unit test found and no benchmark
+would have.
+
+### What the natural spelling costs now
+
+Days 22 and 25 were both written *around* the old limitation — a flat List with
+hand-computed indices instead of the Map the other language columns use — and
+their headers say so. Rewritten the natural way, both now run where they
+previously could not, and both are slower than the workaround:
+
+| | hand-indexed List | natural Map | |
+|---|---:|---:|---|
+| day 22, Sporifica Virus | 411.9 ms | 1156.3 ms | 2.81× |
+| day 25, The Halting Problem | ~1.3–1.8 s | ~2.2 s | ~1.3× |
+
+That is the right answer, not a disappointment: indexing beats hashing, and it
+did before the pass existed. What changed is that the natural spelling is now a
+*performance choice* rather than a program that never finishes, and the cost of
+choosing it is a number rather than a cliff.

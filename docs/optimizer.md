@@ -137,6 +137,7 @@ are marked, and both backends write through instead of copying.
 | # | Pattern | Cost |
 |---|---------|------|
 | 31 | an update rooted at a `Fold`/`Reduce`/`Fold From:` accumulator, with no read of it afterwards | O(size) per write → O(1) |
+| 31 | the same over a `List` accumulator, where no `take`/`drop`/`slice` is applied to it anywhere in the lambda | O(size) per write → O(1) |
 
 ```
 [explain] Domain made 1 accumulator update(s) in Fold write in place — the copy was never read. Guaranteed hit.
@@ -161,27 +162,79 @@ Three things make it safe rather than merely plausible:
 `Scan`, `Iterate` and `Iterate Until Fixed Point` are excluded by
 construction: the first two keep every intermediate accumulator in their
 output, and the third compares the previous value against the new one to
-detect convergence. So are `Repeat`, `While` and `For`: the pass drives off a
-primitive whose lambda threads an accumulator, and a loop body is a
-sub-pipeline rather than a lambda, so there is no accumulator parameter to
-follow. A simulation written as `Repeat N` over a state value still copies.
+detect convergence. `For` is excluded too: its body sees an ambient parameter as
+well as the threaded value, which is a second reader this analysis has not
+been taught about.
+
+**`While` and `Repeat` are in**, through a second entry point rather than a row
+in the table above. A loop body is a sub-pipeline, not a lambda, so the
+accumulator is the value entering the body and the lambda to analyse belongs to
+the body's own stage — and only when the loop has exactly one stage, since with
+two it is the *first stage's* output a write would alias, which is different
+reasoning.
+
+The simulation shape this exists for keeps its list inside a state tuple, so
+the receiver is followed through constant tuple projections: `set(item(state,
+0), i, v)`. Constant indices and tuple fields only — a variable index names a
+different list on different laps, and a projection through a list reaches
+storage the clone on entry does not own.
+
+| # | Pattern | Cost |
+|---|---------|------|
+| 31 | a `set` rooted at a `While`/`Repeat` state, or at a constant tuple field of one, with no read of the state afterwards | O(size) per lap → O(1) |
+
+```
+[explain] Domain made 1 state update(s) in While write in place — the copy was never read. Guaranteed hit.
+```
+
+**How the tuple is written decides whether it fires.** The rule is "no read of
+the state after the site", and it does not distinguish a read of field 2 from
+a read of the list in field 0 — so
+
+```domain ignore
+Using: (s) -> consider i as item(s, 1) in
+              consider n as set(item(s, 0), i, item(item(s, 0), i) + 1) in
+              tuple(n, i + 1, item(s, 2), item(s, 3))   # reads s after the write
+```
+
+is refused, and the same program with `item(s, 2)` and `item(s, 3)` bound
+before the write is rewritten. That is conservative rather than clever, and
+deliberately so: the alternative is reasoning about which field aliases which,
+and the cost of being wrong is a silently different answer.
+
+On `bench/mahoraga/i05_jumps.domain` — a jump-offset walk over a 384-element
+list, which is written the second way — the compiled binary goes from **381 ms
+to 7.6 ms**, and at full puzzle size from 33 s to 0.17 s.
 
 Three builtins that *look* like they belong are also excluded, each for its
 own reason:
 
 - **`del`** — removing a key shifts the key order, which a list taken from the
   accumulator earlier *would* see, unlike an append.
-- **`set` (List)** — a `List` is a Go slice at run time, and `take`, `drop` and
-  `slice` hand out a subslice of the *same backing array* in both backends
-  (`xs[:n]`, in `eval/eval.go` and in the generated runtime's `dmTake`). An
-  in-place write is therefore visible through any subslice taken earlier, so
-  "is the accumulator dead?" stops being a question about the accumulator
-  alone. `concat` is not an alias source — it allocates.
 - **`with` (Record)** — excluded on cost, not safety. A record copy is
   O(fields), which was never what made anything quadratic.
 
-The `set` exclusion has a measured price, recorded in
-[aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize). See
+**`set` (List) is in, behind a guard rather than an argument.** A `List` is a
+Go slice at run time, and `take`, `drop` and `slice` hand out a subslice of the
+*same backing array* in both backends (`xs[:n]`, in `eval/eval.go` and in the
+generated runtime's `dmTake`). An in-place write is visible through any
+subslice taken earlier, so for a List — and for no other accumulator — "is the
+accumulator dead?" is not a question about the accumulator alone. So the pass
+asks a second question, `aliasSafe`: is any subslice-producing builtin applied
+to anything rooted at the accumulator, anywhere in the lambda? If so the whole
+lambda is refused, not merely that site, because the subslice may be taken
+before the write as easily as after.
+
+The guard is conservative in the direction that matters: it asks nothing about
+where the subslice *goes*, so `sum(take(acc, 3))` is refused even though its
+result is a number. The alternative is an escape analysis, and the cost of
+being wrong is a program that answers differently for a reason no reader can
+see. `concat` needs no guard — it allocates — and `item` reads one element out,
+so the next-pointer fold this exists for passes untouched.
+
+On the example [aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize)
+recorded for it — 20,000 writes into a 100,000-element list — the interpreter
+goes from **29.9 s to 23 ms**, and the compiled binary runs it in 4 ms. See
 `optimizer/linear.go`.
 
 ## The safety rules every pass obeys
@@ -280,6 +333,38 @@ and discarding a write loses it.
 The cost lands on the stage that writes, not on the program: a pipeline where
 one `Map Each` updates a counter still gets every rewrite its other stages
 earn.
+
+## Stages that touch a global
+
+A [global](language.md#cursed-object--globals) widens that question in two ways
+a binding did not.
+
+**A `Cursed Tool` is a statement, not a `:=`.** A lambda whose body is an
+indented sub-pipeline containing one carries a write that no expression walk
+finds, so `ast.HasUpdate` answers "no write here" perfectly correctly and
+perfectly uselessly. Such a lambda is treated as effectful too.
+
+**A write is visible to other stages, not only to the next element.** So the
+question for a *reader* is whether anything can change what it reads:
+
+- A global **nothing writes after it is declared** is a constant of the run.
+  Every reader of it sits after its declaration — visibility is forward-only —
+  so reading it is as pure as reading a literal, and those stages keep every
+  rewrite. `Cursed Object: target As 2020` followed by a pair scan against
+  `target` still becomes the hash-set scan.
+- A global something **can** write — a `Cursed Tool`, a `:=`, or a declaration
+  written somewhere that runs more than once — costs each stage that reads it
+  the same rewrites a writing lambda loses.
+
+Mutability is decided once, when the program is resolved, and travels on the
+resolved read (`ast.GlobalRef.Mutable`). It is deliberately over-approximated:
+a `:=` counts by spelling alone, without asking whether something nearer
+shadowed the global at that point. Being wrong that way costs a stage its
+rewrites; being wrong the other way is a wrong answer.
+
+`domain expansion: lint` reports every stage that paid, and names the globals
+that cost it — the failure mode here is a program that silently got slower, and
+the usual fix is to stop writing the global.
 
 ## Local bindings and node lists
 

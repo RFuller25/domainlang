@@ -346,6 +346,16 @@ func (n *Node) Foreign() (string, bool) {
 // Pipeline is the linear chain of resolved nodes.
 type Pipeline struct {
 	Nodes []*Node
+	// Globals is how many `Cursed Object` slots the program declares, which is
+	// the size of the array a run needs (eval.ResetGlobals).
+	//
+	// It rides on the pipeline rather than being set on the eval package when
+	// the program is resolved, because resolving and running are not paired:
+	// the language server and the REPL resolve one program while another is
+	// still running, and their slot numbering has nothing to do with each
+	// other. Tying the count to the pipeline means a run always sizes its
+	// array from the program it is actually running.
+	Globals int
 }
 
 // RuntimeError is an error raised while interpreting a node; it carries the
@@ -369,3 +379,20 @@ func (e *RuntimeError) Error() string {
 	}
 	return fmt.Sprintf("%s: %s (in %s)", e.Pos, e.Msg, e.Prim)
 }
+
+// OwnedFields is the Meta key under which a loop node carries the state fields
+// its body updates in place, as projection paths — "" for the whole state, "1"
+// for item(s, 1), "1.0" for item(item(s, 1), 0).
+//
+// The optimizer's linear-accumulator pass writes it; both backends read it to
+// decide what the copy on entry has to cover. It lives here rather than in
+// either of them because it is a fact recorded on the node, and because prims
+// cannot import the optimizer — the optimizer's own tests import prims.
+//
+// A node without the key has not been through the pass, and owning everything
+// is the reading that is never wrong.
+const OwnedFields = "inplace_owned_fields"
+
+// OwnsEverything is the path naming the accumulator itself, which asks the
+// backends to copy the whole state.
+const OwnsEverything = ""

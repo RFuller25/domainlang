@@ -28,6 +28,8 @@ var Keywords = []string{
 	"Maximum Technique",
 	"Domain Expansion",
 	"Reverse Cursed Technique",
+	"Cursed Object",
+	"Cursed Tool",
 	"Simple Domain",
 	"Channel",
 	"Part",
@@ -40,17 +42,28 @@ var Keywords = []string{
 // that keyword and how many words it spans. The longest keyword wins, so a
 // keyword that is a prefix of another can never mask it.
 func KeywordPrefix(words []string) (keyword string, n int, ok bool) {
-	for _, kw := range Keywords {
-		kwWords := strings.Fields(kw)
+	for i, kwWords := range keywordWords {
 		if len(kwWords) <= n || len(words) < len(kwWords) {
 			continue
 		}
 		if slices.EqualFunc(kwWords, words[:len(kwWords)], strings.EqualFold) {
-			keyword, n, ok = kw, len(kwWords), true
+			keyword, n, ok = Keywords[i], len(kwWords), true
 		}
 	}
 	return keyword, n, ok
 }
+
+// keywordWords is Keywords pre-split, because KeywordPrefix is asked once per
+// statement by the parser and splitting every keyword on every call made the
+// cost of the list its own length: adding two keywords added two allocations
+// to every statement in every program. Built once, read-only thereafter.
+var keywordWords = func() [][]string {
+	out := make([][]string, len(Keywords))
+	for i, kw := range Keywords {
+		out[i] = strings.Fields(kw)
+	}
+	return out
+}()
 
 // Program is an ordered list of pipeline statements, plus any Shikigami
 // (user-defined operation) definitions and `Innate Domain` imports collected
@@ -162,6 +175,18 @@ type Statement struct {
 	Args        []*Arg       // named arguments from an indented block (Mode:, Using:)
 	Binds       []*Binding   // `Consider x As/Of …` lines from an indented block
 	Block       []*Statement // an indented sub-pipeline (mutually exclusive with Args)
+	// Decls are the global declarations on a `Cursed Object:` (declare) or
+	// `Cursed Tool:` (assign) statement, written either on the keyword's own
+	// line or as a run of lines in its indented block.
+	//
+	// They reuse *Binding because the right-hand side is the same three forms
+	// a `Consider` takes, with the same two prepositions meaning the same two
+	// things — but they are kept in their own field rather than in Binds
+	// because the two are opposites in the way that matters to every consumer:
+	// a Bind names a value for one statement, and a Decl names one for the
+	// rest of the program. Nothing that walks Binds wants to find a global in
+	// there.
+	Decls []*Binding
 	// Foreign is the verbatim body of a foreign-language statement
 	// (`Domain Expansion: Python` and its siblings). It excludes Args and
 	// Block: the indented region beneath such a statement is source in another
@@ -407,6 +432,16 @@ type AssignExpr struct {
 	Name  string
 	Value Expr
 	Pos   token.Position
+
+	// Target is set by the resolver when Name turned out to be a global
+	// (`Cursed Object`) that nothing nearer shadows. It carries the slot the
+	// write lands in, so a global assignment costs a slice store rather than a
+	// walk of the binding stack looking for a name — the write side of the
+	// same trade GlobalRef makes for reads.
+	//
+	// Nil means the ordinary path: a `consider` local or a stage binding,
+	// found by name in the environment.
+	Target *GlobalRef
 }
 
 // AlsoExpr is `BODY also C1, C2, …`: the clauses are evaluated after the body,

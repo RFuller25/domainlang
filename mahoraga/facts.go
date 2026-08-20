@@ -50,6 +50,18 @@ type Facts struct {
 	HeapSys    uint64
 	TotalAlloc uint64
 	NumGC      uint32
+
+	// Constants are the `Consider` bindings a probe build watched hold one
+	// value for an entire run. See probe.go: they are the only facts here
+	// measured from inside the program rather than from the input file, and
+	// the only ones a *different* input could change without changing the
+	// file's shape at all.
+	Constants []Constant
+
+	// ListSites are the list accumulators the same probe watched grow — the
+	// ones the generator reserves nothing for because nothing in scope
+	// predicts their length.
+	ListSites []ListSite
 }
 
 // readFacts measures an input file.

@@ -169,19 +169,33 @@ func collectUpdated(stmts []*ast.Statement, names map[string]bool) {
 				updatedInLambda(lam.Lambda, names)
 			}
 		}
-		for _, b := range s.Binds {
-			if b == nil {
-				continue
-			}
-			// A binding may be written in terms of the ones above it, so its
-			// own value can perfectly well update one of them.
-			if b.Value != nil {
-				ast.UpdatedNames(b.Value, names)
-			}
-			updatedInLambda(b.Lambda, names)
-			collectUpdated(b.Body, names)
-		}
+		// Binds and Decls carry the same three right-hand-side forms, and a
+		// write can be in any of them: a binding may be written in terms of
+		// the ones above it, so its own value can perfectly well update one,
+		// and a `Cursed Object` / `Cursed Tool` value is an expression like
+		// any other. Missing either is not silent — rewriteExpr refuses a
+		// write to a name this scan let get folded — but it refuses a program
+		// that should have worked.
+		// Two loops rather than one over a concatenation: this runs over every
+		// statement of every reachable definition, and slices.Concat here cost
+		// an allocation per statement.
+		collectUpdatedBinds(s.Binds, names)
+		collectUpdatedBinds(s.Decls, names)
 		collectUpdated(s.Block, names)
+	}
+}
+
+// collectUpdatedBinds collects the writes in a run of bindings or declarations.
+func collectUpdatedBinds(binds []*ast.Binding, names map[string]bool) {
+	for _, b := range binds {
+		if b == nil {
+			continue
+		}
+		if b.Value != nil {
+			ast.UpdatedNames(b.Value, names)
+		}
+		updatedInLambda(b.Lambda, names)
+		collectUpdated(b.Body, names)
 	}
 }
 
@@ -365,11 +379,24 @@ func literalOf(v ir.Value, pos token.Position) (ast.Expr, bool) {
 // Rewriting expressions against the bindings in scope
 // ---------------------------------------------------------------------------
 
-// rewriteLambda rewrites a lambda body against the bindings in scope. The
-// parameters shadow bindings of the same name, so a lambda that was correct
-// before a binding was added stays correct after.
+// rewritesNeeded reports whether anything in scope could change an expression:
+// a `Consider` binding to substitute or inline, or a `Cursed Object` global to
+// resolve to its slot.
+//
+// It exists so the two places that skip rewriting cannot disagree about when
+// it is safe to skip — this one and ArgSet.bindLambda. Getting it wrong in
+// either direction is silent: too eager costs the pointer-identity that keeps
+// a program without bindings byte-for-byte what it parsed as, and too lazy
+// leaves a global read as a bare identifier that nothing later binds.
+func (r *resolver) rewritesNeeded() bool {
+	return len(r.locals) > 0 || len(r.globals) > 0
+}
+
+// rewriteLambda rewrites a lambda body against the bindings and globals in
+// scope. The parameters shadow both, so a lambda that was correct before
+// either was added stays correct after.
 func (r *resolver) rewriteLambda(lam *ast.Lambda) (*ast.Lambda, error) {
-	if lam == nil || len(r.locals) == 0 {
+	if lam == nil || !r.rewritesNeeded() {
 		return lam, nil
 	}
 	shadowed := make(map[string]bool, len(lam.Params))
@@ -398,6 +425,20 @@ func (r *resolver) rewriteExpr(e ast.Expr, shadowed map[string]bool) (ast.Expr, 
 		}
 		b := r.lookupLocal(x.Name)
 		if b == nil {
+			// Not a binding, but it may be a global — and this is the rewrite
+			// the whole design rests on: the read becomes a slot index now, so
+			// that nothing has to look it up by name later. A lambda
+			// parameter, a `consider` local or a stage binding of the same
+			// spelling shadows it, which is why this is reached only after
+			// both of those have been asked.
+			if g, slot, ok := r.lookupGlobal(x.Name); ok {
+				if seal, sealed := r.sealedFrom(); sealed {
+					return nil, &ResolveError{Pos: x.Pos, Msg: fmt.Sprintf(
+						"%q is a global and cannot be read inside %s — %s",
+						x.Name, seal.what, seal.why)}
+				}
+				return r.globalRefTo(g, slot, x.Name, x.Pos), nil
+			}
 			return x, nil
 		}
 		b.src.Used = true
@@ -424,6 +465,13 @@ func (r *resolver) rewriteExpr(e ast.Expr, shadowed map[string]bool) (ast.Expr, 
 						"%q is a value, not a function, so it cannot be called", id.Name)}
 				}
 				return inlineCall(b, args, x.Pos)
+			}
+			// A global is always a value: `Cursed Object` refuses a lambda
+			// outright, since Domain has no function values to hold.
+			if _, _, ok := r.lookupGlobal(id.Name); ok {
+				return nil, &ResolveError{Pos: x.Pos, Msg: fmt.Sprintf(
+					"%q is a global, which is a value rather than a function, so it cannot be called",
+					id.Name)}
 			}
 		}
 		if !changed {
@@ -524,11 +572,28 @@ func (r *resolver) rewriteExpr(e ast.Expr, shadowed map[string]bool) (ast.Expr, 
 				}
 			}
 		}
-		v, err := r.rewriteExpr(x.Value, shadowed)
-		if err != nil || v == x.Value {
-			return x, err
+		// A write to a global resolves to its slot, the same trade GlobalRef
+		// makes for reads. It is asked only after lookupLocal above found
+		// nothing, so a nearer name of the same spelling still wins.
+		var target *ast.GlobalRef
+		if !shadowed[x.Name] && r.lookupLocal(x.Name) == nil {
+			if g, slot, ok := r.lookupGlobal(x.Name); ok {
+				if seal, sealed := r.sealedFrom(); sealed {
+					return nil, &ResolveError{Pos: x.Pos, Msg: fmt.Sprintf(
+						"%q is a global and cannot be written inside %s — %s",
+						x.Name, seal.what, seal.why)}
+				}
+				target = r.globalRefTo(g, slot, x.Name, x.Pos)
+			}
 		}
-		return &ast.AssignExpr{Name: x.Name, Value: v, Pos: x.Pos}, nil
+		v, err := r.rewriteExpr(x.Value, shadowed)
+		if err != nil {
+			return nil, err
+		}
+		if v == x.Value && target == nil {
+			return x, nil
+		}
+		return &ast.AssignExpr{Name: x.Name, Value: v, Pos: x.Pos, Target: target}, nil
 
 	case *ast.AlsoExpr:
 		body, err := r.rewriteExpr(x.Body, shadowed)

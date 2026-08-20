@@ -72,6 +72,14 @@ func render(e ast.Expr) (string, int) {
 		return strconv.Quote(x.Value), bpAtom
 	case *ast.Ident:
 		return x.Name, bpAtom
+	case *ast.GlobalRef:
+		// A resolved read of a `Cursed Object` global. It renders as the name
+		// the user wrote, which is what it was before the resolver turned it
+		// into a slot — the formatter never sees one (it works on the parse),
+		// but the visualizer and the diagnostics engine print resolved
+		// expressions and would otherwise call a perfectly ordinary name
+		// unrenderable.
+		return x.Name, bpAtom
 	case *ast.FieldAccess:
 		return expr(x.Target, bpAtom) + "." + x.Field, bpAtom
 	case *ast.CallExpr:

@@ -1,12 +1,12 @@
 package docs_test
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -135,15 +135,50 @@ func TestEveryBuiltinIsDocumented(t *testing.T) {
 		t.Errorf("builtins missing from the expression reference: %s", strings.Join(missing, ", "))
 	}
 
-	// The count appears in several places as a selling point; pin it to the
-	// table it counts.
-	want := fmt.Sprintf("%d builtin", len(typecheck.Builtins))
-	for _, page := range []string{"README.md", "expressions.md", "compiler.md", "getting-started.md"} {
-		src := docFile(t, page)
-		if !strings.Contains(src, fmt.Sprintf("%d builtin", len(typecheck.Builtins))) &&
-			regexp.MustCompile(`\b\d+ builtin`).MatchString(src) {
-			t.Errorf("docs/%s quotes a builtin count that is not %q", page, want)
+	// The count appears in several places as a selling point; pin every
+	// mention of it to the table it counts.
+	//
+	// Every mention on every page, checked against the table it counts.
+	//
+	// Two things let this rot before. The check asked whether the *right*
+	// string appeared anywhere on the page and whether `\d+ builtin` matched
+	// at all, so "153 expression builtins" — a word between the number and
+	// the noun — never matched the pattern and never ran the guard. And
+	// `docFile` reads the *embedded* docs directory, so "README.md" here has
+	// always meant docs/README.md: the repository's own README, which carried
+	// the stale number in three places, was never being read. Both are why
+	// the root files below go through repoFile.
+	checkCounts(t, `\b(\d+) (?:expression )?builtins?\b`, len(typecheck.Builtins), "builtins",
+		[]string{"expressions.md", "compiler.md", "getting-started.md", "cli.md", "README.md"},
+		[]string{"README.md"})
+}
+
+// The primitive count is quoted the same way and rots the same way — cli.md
+// carried "85 primitives" in a sample long after the registry held 88.
+func TestEveryPrimitiveCountIsCurrent(t *testing.T) {
+	checkCounts(t, `\b(\d+) primitives?\b`, len(prims.Registry), "primitives",
+		[]string{"language.md", "primitives.md", "getting-started.md", "cli.md", "README.md"},
+		[]string{"README.md"})
+}
+
+// checkCounts holds every mention of a count to the number the code reports.
+// docPages are read from the embedded site; repoPages from the repository
+// root, which is a different file even when the name is the same.
+func checkCounts(t *testing.T, pattern string, want int, noun string, docPages, repoPages []string) {
+	t.Helper()
+	re := regexp.MustCompile(pattern)
+	check := func(where, src string) {
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			if m[1] != strconv.Itoa(want) {
+				t.Errorf("%s says %q, but there are %d %s", where, m[0], want, noun)
+			}
 		}
+	}
+	for _, page := range docPages {
+		check("docs/"+page, docFile(t, page))
+	}
+	for _, page := range repoPages {
+		check(page, repoFile(t, page))
 	}
 }
 
@@ -216,6 +251,37 @@ func TestRunnableProgramCountsAreCurrent(t *testing.T) {
 	}
 	check(t, "README.md", repoFile(t, "README.md"), "challenges", count("challenges"))
 	check(t, "challenges/README.md", repoFile(t, "challenges/README.md"), "challenges", count("challenges"))
+}
+
+// The site's own navigation quotes the gallery sizes as digits, which the
+// number-word check above cannot see — and which nothing else was reading. It
+// said "20 annotated programs" for as long as there had been twenty-one.
+func TestSiteNavCountsAreCurrent(t *testing.T) {
+	src := docFile(t, "index.html")
+	count := func(dir string) int {
+		hits, err := filepath.Glob(filepath.Join("..", dir, "*.domain"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(hits)
+	}
+	for _, want := range []struct {
+		noun string
+		n    int
+	}{
+		{"annotated programs", count("examples")},
+		{"classic problems", count("challenges")},
+	} {
+		re := regexp.MustCompile(`(\d+) ` + regexp.QuoteMeta(want.noun))
+		m := re.FindStringSubmatch(src)
+		if m == nil {
+			t.Errorf("docs/index.html no longer describes the gallery as %q", want.noun)
+			continue
+		}
+		if m[1] != strconv.Itoa(want.n) {
+			t.Errorf("docs/index.html says %q, but there are %d", m[0], want.n)
+		}
+	}
 }
 
 // Every CLI flag the binary accepts is documented. A flag nobody can discover

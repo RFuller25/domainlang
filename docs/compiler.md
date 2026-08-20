@@ -162,6 +162,41 @@ go test ./bench                                          # the two must agree
 DOMAIN_BENCH=1 go test ./bench -run TestSpeedRatio -v    # the 2× gate
 ```
 
+## Globals compile to package-level variables
+
+A [`Cursed Object`](language.md#cursed-object--globals) slot becomes a
+package-level Go variable of the concrete type its declaration fixed:
+
+```go
+var dmGlobal0 int64
+```
+
+Package level rather than a local in `main` is required, not stylistic. A
+`Using:` written as an indented pipeline compiles to a top-level function —
+which is the same structural fact that makes a `From:` channel impossible
+there, since a channel's local is not in scope in a function of its own. A
+package-level variable is in scope in every function this backend emits, so a
+global works in exactly the place a channel cannot, and a write from inside a
+compiled body needs no pointer threading.
+
+A `Part` saves the globals declared above it into locals on entry and restores
+them on exit, which is the compiled half of the isolation the interpreter gets
+from snapshotting its slot array.
+
+One honest note on speed. Tuples already lower to Go structs of concrete
+fields, which the Go compiler keeps in registers across a loop; a package-level
+variable is globally visible and so must be a real load and store. So in
+*compiled* code a global is not free: on a 500 000-lap generator loop, writing
+the state as a global measures about **15% slower** than threading it through a
+tuple, repeatably across runs.
+
+Interpreted, the same pair goes the other way and by much more — roughly
+**2.8× faster** with globals — because that is where the tuple really is
+allocated every lap. `domain run` is the default and `domain build` is the
+opt-in, so that is the trade the feature makes. Caching a global in a local
+across a loop that provably cannot observe it would close the compiled gap; it
+is not done yet.
+
 ## Documented semantic deltas
 
 Success output is byte-identical to the interpreter; two deliberate

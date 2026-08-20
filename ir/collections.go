@@ -340,6 +340,17 @@ func CloneCollection(v Value) Value {
 		return x.Clone()
 	case *SparseValue:
 		return x.Clone()
+	case *GraphValue:
+		// addnode and addedge are in the optimizer's in-place set, so a Graph
+		// accumulator reaches this the same way the others do. It was missing
+		// while every other collection was here, which left a marked graph fold
+		// writing into storage its seed still pointed at.
+		return x.Clone()
+	case []Value:
+		// A List is a Go slice, so the seed and the accumulator would share one
+		// backing array without this. Every other case here clones a struct
+		// with interior storage; this one clones the storage itself.
+		return append([]Value(nil), x...)
 	}
 	return v
 }

@@ -94,6 +94,17 @@ func (s *Search) findIdleStages() ([]IdleStage, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Whether there is anything here that *could* be idle is a question about
+	// the program, and it costs a walk of the node list. Asking it first is
+	// worth a paragraph because of what it saves: the interpreted run is the
+	// slowest thing in the search — bounded at ninety seconds, and a program
+	// that takes half a second compiled can spend all ninety of them — and on
+	// a program with no Filter, no Unique and no Merge Ranges it can only ever
+	// report nothing. Two of the four programs in bench/mahoraga are that
+	// shape.
+	if !hasIdleCandidate(pipe, spans) {
+		return nil, nil
+	}
 
 	counter := runner.NewNodeCounter()
 	var out bytes.Buffer
@@ -133,6 +144,27 @@ func (s *Search) findIdleStages() ([]IdleStage, error) {
 		})
 	})
 	return idle, nil
+}
+
+// hasIdleCandidate reports whether the program contains a stage that could be
+// found idle at all: one of the whitelisted primitives, and one that emits
+// code. A program with none cannot produce a finding, so the run that would
+// look for one is a run whose answer is already known.
+func hasIdleCandidate(pipe *ir.Pipeline, spans map[*ir.Node]codegen.Span) bool {
+	found := false
+	prims.WalkNodes(pipe, func(n *ir.Node) {
+		if found {
+			return
+		}
+		if _, eligible := idleStagePrims[n.Prim]; !eligible {
+			return
+		}
+		if _, emits := spans[n]; !emits {
+			return
+		}
+		found = true
+	})
+	return found
 }
 
 // runInterpreterBounded runs the interpreter with a deadline, and *stops* it

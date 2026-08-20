@@ -303,6 +303,15 @@ func bindLines(prog *ast.Program) map[int]*ast.Binding {
 				lines[b.Pos.Line] = b
 				walk(b.Body)
 			}
+			// A `Cursed Object` / `Cursed Tool` declaration line is *not*
+			// registered: renderBinding normalizes a `Consider NAME As|Of`
+			// head, and a declaration has no `Consider` to normalize —
+			// feeding one through would write the word in. Its `Of` body is
+			// still walked, so a `Consider` written inside a declaration's
+			// sub-pipeline is normalized like any other.
+			for _, d := range s.Decls {
+				walk(d.Body)
+			}
 			walk(s.Block)
 		}
 	}

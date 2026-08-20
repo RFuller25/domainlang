@@ -35,7 +35,13 @@ func (r *resolver) resolveChannel(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("channel %q has an empty body", name), NeedsBlock: true}
 	}
 
+	// Globals are out of reach inside a channel body, in both directions: see
+	// resolver.sealedFrom. Saved and restored rather than cleared, so a
+	// construct that ever nests inside a channel does not silently unseal.
+	wasInChannel := r.inChannel
+	r.inChannel = true
 	subNodes, subType, err := r.resolveSequence(stmt.Block, cur, scopeChannel)
+	r.inChannel = wasInChannel
 	if err != nil {
 		return nil, err
 	}

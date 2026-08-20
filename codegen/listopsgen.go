@@ -184,7 +184,10 @@ func (g *gen) emitUnfold(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "lambda: %v", err)
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.wl("%s := []%s{}", v, elemGo)
+	// No estimate exists here: how many elements an Unfold produces is a
+	// property of its own predicate, not of anything in scope. A caller who
+	// has measured it says so through Tuning.ListCapacities.
+	g.wl("%s", g.accumDecl(n, v, elemGo))
 	g.wl("%s := %s", cur, in)
 	g.wl("for %s {", condBody)
 	g.in()
@@ -199,6 +202,7 @@ func (g *gen) emitUnfold(n *ir.Node, in string) (string, error) {
 	g.wl("%s = %s", cur, stepBody)
 	g.out()
 	g.wl("}")
+	g.probeLen(n, v)
 	return v, nil
 }
 
@@ -240,7 +244,11 @@ func (g *gen) emitStream(n *ir.Node, in string) (string, error) {
 	}
 
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.wl("%s := []%s{}", v, outElemGo)
+	// The fused stream has no estimate either, and here the absence is
+	// expensive: a `take` limit bounds the list from above but says nothing
+	// about how many elements the filters will let through, so the generator
+	// starts from nothing and the slice grows by doubling all the way up.
+	g.wl("%s", g.accumDecl(n, v, outElemGo))
 	g.wl("%s := %s", cur, in)
 	g.wl("%s := 0", raw)
 	g.wl("for %s {", condBody)
@@ -297,6 +305,7 @@ func (g *gen) emitStream(n *ir.Node, in string) (string, error) {
 	g.wl("%s = %s", cur, stepBody)
 	g.out()
 	g.wl("}")
+	g.probeLen(n, v)
 	return v, nil
 }
 

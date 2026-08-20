@@ -83,3 +83,13 @@ editors/vscode/package-lock.json
 /two_sum
 /union_count
 /window_max
+
+# The mahoraga benchmark suite's own output: one adapted binary and one recipe
+# per program per side of an A/B, written by bench/mahoraga/run_ab.sh. The
+# programs, the inputs and the expected answers are committed; what a search
+# produced on one machine on one afternoon is not.
+/bench/mahoraga/before/
+/bench/mahoraga/after/
+/bench/mahoraga/out/
+/bench/mahoraga/fixed/
+/bench/mahoraga/after2/

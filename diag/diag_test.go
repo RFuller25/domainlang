@@ -786,3 +786,113 @@ Reveal: stdout
 		t.Errorf("a fully shadowed binding was not reported: %v", r.Diags)
 	}
 }
+
+// The hint that says why a copy stayed.
+//
+// `lint` advertises performance hints, and the largest one the language has to
+// give was the one it would not say: a loop deep-copying a map on every lap was
+// reported as "clean — no errors, warnings, or hints". The pass knew the reason
+// and threw it away.
+func TestLintReportsWhyAnUpdateStillCopies(t *testing.T) {
+	// A map in loop state, written every lap, with the state read again after
+	// the write — so the copy is observed and the pass is right to keep it.
+	const readAfter = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (xs) -> tuple(xs, emptymap(0, 0), 0)
+Simple Domain: While
+    Using: (s) -> item(s, 2) < 40
+    Cursed Technique: Apply
+        Using: (s) -> consider m as insert(item(s, 1), item(s, 2), 1) in
+                      tuple(item(s, 0), m, item(s, 2) + size(item(s, 1)))
+Cursed Technique: Apply
+    Using: (s) -> size(item(s, 1))
+Reveal: stdout
+`
+	r := analyze(t, readAfter)
+	d := diagWith(r, Hint, "copies the whole collection on every pass")
+	if d == nil {
+		t.Fatalf("no hint about the retained copy, got %v", r.Diags)
+	}
+	if !strings.Contains(d.Msg, "read again after this update") {
+		t.Errorf("hint does not name the reason: %q", d.Msg)
+	}
+	if d.Code != "perf" {
+		t.Errorf("code = %q, want perf", d.Code)
+	}
+	// A cost, not a mistake: some of these refusals are the only correct answer.
+	if d.Severity != Hint {
+		t.Errorf("severity = %v, want Hint", d.Severity)
+	}
+
+	// The same program with the other fields bound first qualifies, and must
+	// draw no hint at all — otherwise the advice is noise on the programs that
+	// took it.
+	const bound = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (xs) -> tuple(xs, emptymap(0, 0), 0)
+Simple Domain: While
+    Using: (s) -> item(s, 2) < 40
+    Cursed Technique: Apply
+        Using: (s) -> consider xs as item(s, 0) in
+                      consider n as item(s, 2) in
+                      consider m as insert(item(s, 1), n, 1) in
+                      tuple(xs, m, n + 1)
+Cursed Technique: Apply
+    Using: (s) -> size(item(s, 1))
+Reveal: stdout
+`
+	if d := diagWith(analyze(t, bound), Hint, "copies the whole collection"); d != nil {
+		t.Errorf("the rewrite applies here, so there is nothing to advise: %q", d.Msg)
+	}
+}
+
+// The reason has to be the one that actually applied, and it has to point at the
+// update it is about — a body where one update qualifies and another does not is
+// where a report that names the wrong site shows up.
+func TestLintNamesTheRightDeclinedUpdate(t *testing.T) {
+	const src = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Maximum Technique: Fold
+    Seed: (xs) -> emptymap(0, emptyset(0))
+    Using: (acc, x) -> insert(acc, x % 3, insert(getor(acc, x % 3, emptyset(0)), x))
+Cursed Technique: Apply
+    Using: (m) -> size(m)
+Reveal: stdout
+`
+	r := analyze(t, src)
+	d := diagWith(r, Hint, "copies the whole collection")
+	if d == nil {
+		t.Fatalf("no hint for the inner insert, got %v", r.Diags)
+	}
+	if !strings.Contains(d.Msg, "receiver is not the accumulator") {
+		t.Errorf("wrong reason: %q", d.Msg)
+	}
+	// The outer insert is rooted at acc and was rewritten; only the inner one,
+	// reached through getor, still copies. Exactly one hint, and it is the
+	// inner call — which is further along the line than the outer one.
+	n := 0
+	for _, x := range r.Diags {
+		if x.Severity == Hint && strings.Contains(x.Msg, "copies the whole collection") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("got %d hints, want exactly the inner insert", n)
+	}
+	// Both inserts are on one line, so the column is what tells them apart.
+	line := d.LineText
+	outer := strings.Index(line, "insert(acc") + 1
+	if outer <= 0 {
+		t.Fatalf("hint landed on an unexpected line: %q", line)
+	}
+	if d.Pos.Col <= outer {
+		t.Errorf("hint points at column %d, at or before the outer insert at %d; "+
+			"the outer one was rewritten and the inner one is what still copies",
+			d.Pos.Col, outer)
+	}
+}

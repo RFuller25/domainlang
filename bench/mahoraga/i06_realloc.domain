@@ -1,0 +1,32 @@
+Cursed Energy: stdin
+Split "\t"
+Convert to Integers
+
+Iterate 50000
+    consider l of (x) -> length(x)
+    Apply
+        Using: (x) -> consider m as max(x) in
+                          consider i as indexof(x, m) in
+                          consider val as item(x, i) in
+                          tuple(set(x, i, 0), i, val)
+    Repeat
+        Times: (x) -> item(x, 2)
+        Apply
+            Using: (x) -> consider ni as (item(x, 1) + 1) % l in
+                          tuple(set(item(x, 0), ni, item(item(x,0), ni) + 1), ni, item(x, 2))
+    Apply
+        Using: (x) -> item(x, 0)
+Map Each
+        Map Each
+            Using: (x) -> totext(x)
+        Apply
+            Using: (x) -> textjoin(x, "-")
+Find Cycle
+Part "1":
+    Apply
+        Using: (x) -> item(x, 0) + item(x, 1) + 1
+    stdout
+Part "2":
+    Apply
+        Using: (x) -> item(x, 1)
+    stdout

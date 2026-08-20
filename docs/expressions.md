@@ -420,6 +420,7 @@ lives:
 |---|---|
 | a `consider` local | until the expression ends — it cannot escape one evaluation of the lambda |
 | a `Consider … As/Of` **stage binding** | for the whole stage: the next element sees it, and so does the next lap of a loop |
+| a `Cursed Object` **global** | for the rest of the program: every later stage sees it, including after the loop that wrote it ([language.md](language.md#cursed-object--globals)) |
 
 Everything else is refused where it is written, because in each case there is
 nothing to write *to*: a **lambda parameter** is bound afresh by whatever
@@ -436,8 +437,10 @@ to right, so `n + (n := x) + n` reads the old `n`, writes, and reads the new
 one. Both backends agree on this; the compiler emits explicit sequencing to
 guarantee it, since Go's own evaluation order does not.
 
-Writing to a **stage binding** is the kind that carries: it is the one value
-that survives from one element to the next without a `Fold`.
+Writing to a **stage binding** is the kind that carries within a stage: it is
+the one value that survives from one element to the next without a `Fold`.
+Writing to a **global** carries further still — out of the statement entirely,
+so a loop can leave a count behind for the stages after it.
 
 > **Known bug — writing to a `consider` local does not work.** The form below
 > is the intended one and is what this section describes, but every spelling of

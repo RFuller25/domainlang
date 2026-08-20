@@ -49,6 +49,7 @@ mistyped pipeline fails with a positioned error, never mid-run.
 | an indented body under a `Using:`-taking stage | a sub-pipeline standing in for the lambda ([expressions.md](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)) |
 | `Consider name As …` / `Consider name Of …` (keyword required) | a local binding for the stage's expressions ([expressions.md](expressions.md#stage-bindings--consider--as--consider--of)) |
 | `Part "label":` | a labelled output block branching from the current value |
+| `Cursed Object:` / `Cursed Tool:` | declare a global / change one ([below](#cursed-object--globals)) |
 | `Shikigami "name" (params) : In -> Out` / `Shikigami: Name` | user-defined operation definition / call |
 | `Binding Vow:` | debug-time assertion over the current value |
 | `Reveal:` | terminal output sink |
@@ -1065,6 +1066,146 @@ Reveal: stdout
 ```output
 1
 ```
+
+## Cursed Object — globals
+
+`Consider` names a value for one statement. **`Cursed Object`** names one for
+the rest of the program, and **`Cursed Tool`** changes it:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Object: bump As 10
+Cursed Technique: Map Each
+    Using: (x) -> x + bump
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[11, 12, 13]
+```
+
+The difference from a `Consider` is scope, and it is the whole point. A
+binding's writes already survive from one element to the next and across a
+loop's laps — but the *name* dies with the statement, so a loop that counts
+something has to smuggle the count out through the loop's own value. Because a
+loop body must preserve its value type, that means every lap carries a tuple
+built out of scope rather than out of shape. A global does not:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> toint(t)
+Cursed Object: laps As 0
+Simple Domain: While
+    Using: (v) -> v > 1
+    Cursed Technique: Apply
+        Using: (n) -> (n / 2) also laps := laps + 1
+Cursed Technique: Apply
+    Using: (v) -> laps
+Reveal: stdout
+```
+```input
+20
+```
+```output
+4
+```
+
+### The two prepositions
+
+`As` and `Of` mean exactly what they mean on a `Consider`, and for the same
+reason: a 1-parameter lambda already means two different things in Domain
+depending on the slot it is written in, and a declaration has no slot to
+disambiguate it.
+
+| Written | Binds | Computed |
+|---|---|---|
+| `Cursed Object: n As 0` | a value | where the line is written |
+| `Cursed Object: n As k + 1` | an expression over globals already declared | where the line is written |
+| `Cursed Object: n Of (xs) -> length(xs)` | a value from the pipeline value arriving here | where the line is written |
+| `Cursed Object: n Of Sum` | the same, written as an operation | where the line is written |
+| `Cursed Object: n Of` + an indented pipeline | the same, written as a sub-pipeline | where the line is written |
+| `Cursed Object: n Of Itself` | the value arriving here, unchanged | where the line is written |
+
+**`As` never sees the pipeline value; `Of` always does.** A global may not be a
+function — Domain has no function values to hold one — so `Cursed Object: f As
+(x) -> …` is refused and points at `Consider`, which is inlined at its call
+sites.
+
+Several declarations can share one keyword, and each sees the ones above it:
+
+```domain
+Cursed Object:
+    a As 2
+    b As a * 5
+    c As a + b
+```
+
+### Scope
+
+A global is in scope **from its own line to the end of the program**, and it
+outlives whatever block it was written in — which is what a `Consider` cannot
+do. Reading one above its declaration is an error that says so rather than
+leaving "unknown identifier" to stand on its own.
+
+A name nearer wins, exactly as everywhere else: a lambda parameter, a
+`consider` local, or a `Consider … As/Of` stage binding of the same spelling
+shadows the global for its extent.
+
+A global may not take a name the language already means — a primitive, a themed
+keyword, a loop kind, a vow predicate, a `Reveal` sink, an input source, an
+expression builtin, or a Channel. Its type is fixed by its declaration, and
+`Cursed Tool` and `:=` are checked against it; widen at the declaration.
+
+### A declaration is a statement, so it re-runs
+
+`Cursed Object` inside a loop body re-declares its global every lap, which
+means a counter written that way never counts. `Cursed Tool` is what the
+accumulating case is spelled with, and the linter warns about the trap:
+
+```domain ignore
+Simple Domain: Repeat 10
+    Cursed Object: n As 0        # 0 again every lap — almost certainly a mistake
+    Cursed Tool:   n As n + 1    # what was meant, with n declared above the loop
+```
+
+A declaration written `Of` something is exempt: it reads the value arriving on
+that lap, so re-running it is the point.
+
+### Where globals cannot reach
+
+Three boundaries, each protecting a guarantee the language already makes.
+
+- **`Part` blocks are isolated.** Sibling Parts branch from the same upstream
+  value, and "Part 1 sorting cannot disturb what Part 2 sees" covers the
+  globals a Part can reach as well as the value it was handed. A Part's writes
+  are discarded when it ends.
+- **`Channel` bodies are sealed both ways.** A channel is computed once, before
+  whatever consumes it; a body that read or wrote a global would make the order
+  it ran in observable, which is the hazard channels exist to avoid.
+- **A Shikigami from the prelude or an `Innate Domain` import is sealed.** Its
+  author never saw this program's names. A Shikigami defined in your own file
+  is not: it is inlined at its call sites and reads and writes globals like any
+  other stage.
+
+### What it costs
+
+A global read is resolved to a slot index while the program is lowered, so it
+costs a bounds-checked load in the interpreter and a package-level variable in
+a compiled binary — cheaper than a `Consider` binding, which is seeded by name
+into the environment every lambda application builds.
+
+The cost that is real is to the optimizer. A stage reading a global that
+**something writes after it is declared** is no longer a pure function of its
+input, so it keeps its lambda exactly as written: no algorithm substitution, no
+fusion, no expression simplification (see [optimizer.md](optimizer.md)). A
+global nothing writes is a constant of the run and costs its readers nothing —
+`Cursed Object: target As 2020` leaves every rewrite intact. `domain expansion:
+lint` names each stage that paid.
 
 ## Binding Vows — debug assertions
 

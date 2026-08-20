@@ -27,6 +27,7 @@ package mahoraga
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"domain/codegen"
@@ -106,6 +107,24 @@ var catalogue = []entry{
 		Apply: func(f Facts, t *codegen.Tuning) { t.ListCapacity = f.Segments },
 	},
 	{
+		ID:   "one scheduler thread",
+		Tier: General,
+		Why:  "the machine has one core, so there is nothing to switch off",
+		Applies: func(f Facts, _ string) (string, bool) {
+			// Like the collector entries, this is about the run rather than
+			// about the emitted code, so there is no shape to look for. A
+			// Domain binary is a straight line of loops on one goroutine; the
+			// Ps beyond the first exist for the collector's mark workers, and
+			// on a run that collects at all they cost coordination the program
+			// never asked for.
+			if runtime.NumCPU() < 2 || !f.HeapReported || f.NumGC == 0 {
+				return "", false
+			}
+			return fmt.Sprintf("one scheduler thread instead of %d", runtime.NumCPU()), true
+		},
+		Apply: func(_ Facts, t *codegen.Tuning) { t.MaxProcs = 1 },
+	},
+	{
 		ID:   "collector off for one run",
 		Tier: Guarded,
 		Why:  "the baseline never collected, so there is nothing to collect less of",
@@ -131,6 +150,40 @@ var catalogue = []entry{
 		Apply: func(f Facts, t *codegen.Tuning) {
 			t.GCPercent = -1
 			t.MemoryLimitBytes = memoryLimitFor(f.HeapSys)
+		},
+	},
+	{
+		ID:   "collector four times lazier",
+		Tier: Guarded,
+		Why:  "the baseline collected too little for a lazier collector to save anything",
+		Applies: func(f Facts, _ string) (string, bool) {
+			// The entry beside this one switches the collector off, which is
+			// the right answer for a program whose whole heap fits under the
+			// limit that keeps it safe. This is the answer for the other
+			// shape: a program that allocates far more than it keeps — a loop
+			// rebuilding a list every lap — where the limit is reached however
+			// lazy the collector is, and what is available is fewer, larger
+			// collections rather than none.
+			//
+			// Four collections is the floor for asking. Below it there is not
+			// enough collection happening for a quarter of it to be worth a
+			// build.
+			if !f.HeapReported || f.NumGC < 4 {
+				return "", false
+			}
+			if f.HeapSys > maxHeapForGCOff {
+				return "", false
+			}
+			return fmt.Sprintf("collector four times lazier (%d collections in the baseline)",
+				f.NumGC), true
+		},
+		Apply: func(f Facts, t *codegen.Tuning) {
+			t.GCPercent = 400
+			// A wider backstop than the disabled collector's, because this
+			// entry means to let the heap grow: a limit at four times the
+			// observed heap would be reached immediately and would turn the
+			// collector's own pacing back on, which is the thing being tuned.
+			t.MemoryLimitBytes = memoryLimitFor(f.HeapSys * 2)
 		},
 	},
 	{

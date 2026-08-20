@@ -93,7 +93,18 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 		return nil, nil, r.wrapShikigamiErr(name, stmt.Pos, err)
 	}
 	r.inlining = append(r.inlining, name)
+	// A definition that came from the prelude or an imported library is sealed
+	// off from the calling program's globals (prims/globals.go). Counted
+	// rather than flagged, so a local definition called *from* a foreign one
+	// stays sealed too: it is running on the foreign one's behalf.
+	foreign := r.origins[name].Origin != "" && r.origins[name].Origin != "local"
+	if foreign {
+		r.foreignDepth++
+	}
 	nodes, out, err := r.resolveSequence(body, cur, scopeNested)
+	if foreign {
+		r.foreignDepth--
+	}
 	r.inlining = r.inlining[:len(r.inlining)-1]
 	pop()
 	if err != nil {
@@ -381,6 +392,14 @@ func substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Stat
 	}
 	if len(stmt.Binds) > 0 {
 		ns.Binds = substituteBinds(stmt.Binds, env)
+	}
+	// A `Cursed Object` / `Cursed Tool` declaration takes the same right-hand
+	// side a binding does, so a parameter written in one has to be substituted
+	// the same way. Without this a global declared inside a Shikigami body
+	// cannot use the definition's own parameters, which is the one thing a
+	// body is written in terms of.
+	if len(stmt.Decls) > 0 {
+		ns.Decls = substituteBinds(stmt.Decls, env)
 	}
 	return &ns
 }

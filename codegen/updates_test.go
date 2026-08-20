@@ -308,3 +308,175 @@ Reveal: stdout
 		t.Fatalf("an ordering wrapper was emitted for a program with no updates:\n%s", goSrc)
 	}
 }
+
+// The in-place List write, three ways.
+//
+// This is the test the alias guard has to pass, and it is deliberately the
+// heaviest one in this file. Every program runs three times: interpreted with
+// the optimizer (which may mark the `set` in place), interpreted without it
+// (which always copies), and compiled with it. All three have to agree.
+//
+// The failure it is looking for is not a crash. A guard that let a subslice
+// through produces a program that answers a *different number*, quietly, for
+// a reason invisible in the source — which is why the negative cases here
+// (the ones that take a subslice of the accumulator) matter more than the
+// positive ones.
+func TestListSetInPlaceAgreesEveryWay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles binaries; skipped in -short mode")
+	}
+	requireGo(t)
+
+	const header = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+`
+	const tail = `Cursed Technique: Apply
+    Using: (a) -> sum(a)
+Reveal: stdout
+`
+	cases := []struct{ name, src string }{
+		{"next-pointer walk", header + `Maximum Technique: Fold
+    Seed: (xs) -> range(0, 20)
+    Using: (acc, x) -> set(acc, mod(x, 20), item(acc, mod(x + 1, 20)))
+` + tail},
+		{"two chained writes", header + `Maximum Technique: Fold
+    Seed: (xs) -> range(0, 20)
+    Using: (acc, x) -> set(set(acc, mod(x, 20), x), 0, x)
+` + tail},
+		{"conditional write", header + `Maximum Technique: Fold
+    Seed: (xs) -> range(0, 20)
+    Using: (acc, x) -> if x > 3 then set(acc, mod(x, 20), x) else acc
+` + tail},
+		// The guard's own cases: a body that hands out a subslice of the
+		// accumulator must answer the same as the copying form, which it can
+		// only do if the pass refused to mark it.
+		{"take of the accumulator", header + `Maximum Technique: Fold
+    Seed: (xs) -> range(0, 20)
+    Using: (acc, x) -> set(acc, mod(x, 20), sum(take(acc, 5)))
+` + tail},
+		{"drop of the accumulator", header + `Maximum Technique: Fold
+    Seed: (xs) -> range(0, 20)
+    Using: (acc, x) -> set(acc, mod(x, 20), sum(drop(acc, 15)))
+` + tail},
+		// The seed is the pipeline value here, so what keeps a later stage
+		// seeing the list it was handed is the clone on entry — the half of
+		// the safety argument the analysis does not make.
+		{"seed shared with a later stage", header + `Maximum Technique: Fold
+    Seed: (xs) -> xs
+    Using: (acc, x) -> set(acc, mod(x, length(acc)), 999)
+` + tail},
+	}
+	input := []byte("3\n1\n4\n1\n5\n9\n2\n6\n")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipe, want := oracleFront(t, tc.src, true, input)
+			_, naive := oracleFront(t, tc.src, false, input)
+			if want != naive {
+				t.Errorf("optimized interpreter said %q, naive said %q", want, naive)
+			}
+			if got := buildAndRun(t, pipe, input, codegen.Options{}); got != want {
+				t.Errorf("the binary said %q, the interpreter %q", got, want)
+			}
+		})
+	}
+}
+
+// A loop that writes into the list inside its state tuple.
+//
+// This is the shape a simulation takes when a loop threads one value and the
+// program needs somewhere to keep its other variables: `set(item(state, 0),
+// i, v)`, with the list reached through a constant tuple field.
+//
+// The second case is the one with teeth. Two `Part` blocks run the same loop
+// over the *same* parsed list, which is `bench/mahoraga/i05_jumps` exactly —
+// and if the loop does not take its own copy of the state on entry, the first
+// Part's writes are visible to the second and both answers change. Nothing
+// about that failure is visible in the source, which is why it is here.
+func TestLoopStateInPlaceAgreesEveryWay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles binaries; skipped in -short mode")
+	}
+	requireGo(t)
+
+	const header = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (x) -> tuple(x, 0, length(x), 0)
+`
+	cases := []struct{ name, src string }{
+		{"while over a state tuple", header + `Simple Domain: While
+    Using: (s) -> item(s, 1) < item(s, 2)
+    Cursed Technique: Apply
+        Using: (s) -> consider i as item(s, 1) in
+                      consider n as set(item(s, 0), i, item(item(s, 0), i) + 1) in
+                      tuple(n, i + 1, item(s, 2), item(s, 3))
+Cursed Technique: Apply
+    Using: (s) -> sum(item(s, 0))
+Reveal: stdout
+`},
+		{"two Parts over one list", header + `Part "1":
+    Simple Domain: While
+        Using: (s) -> item(s, 1) < item(s, 2)
+        Cursed Technique: Apply
+            Using: (s) -> consider i as item(s, 1) in
+                          consider n as set(item(s, 0), i, item(item(s, 0), i) + 1) in
+                          tuple(n, i + 1, item(s, 2), item(s, 3))
+    Cursed Technique: Apply
+        Using: (s) -> sum(item(s, 0))
+    Reveal: stdout
+Part "2":
+    Simple Domain: While
+        Using: (s) -> item(s, 1) < item(s, 2)
+        Cursed Technique: Apply
+            Using: (s) -> consider i as item(s, 1) in
+                          consider n as set(item(s, 0), i, item(item(s, 0), i) + 10) in
+                          tuple(n, i + 1, item(s, 2), item(s, 3))
+    Cursed Technique: Apply
+        Using: (s) -> sum(item(s, 0))
+    Reveal: stdout
+`},
+		{"repeat over a state tuple", header + `Simple Domain: Repeat 3
+    Cursed Technique: Apply
+        Using: (s) -> consider n as set(item(s, 0), 0, item(item(s, 0), 0) + 1) in
+                      tuple(n, item(s, 1), item(s, 2), item(s, 3))
+Cursed Technique: Apply
+    Using: (s) -> sum(item(s, 0))
+Reveal: stdout
+`},
+		// The refusals. A state read after the write, and a subslice of the
+		// list handed out, both have to answer as the copying form does.
+		{"state read after the write", header + `Simple Domain: While
+    Using: (s) -> item(s, 1) < item(s, 2)
+    Cursed Technique: Apply
+        Using: (s) -> tuple(set(item(s, 0), item(s, 1), 7), item(s, 1) + 1, item(s, 2), item(s, 3))
+Cursed Technique: Apply
+    Using: (s) -> sum(item(s, 0))
+Reveal: stdout
+`},
+		{"subslice of the state's list", header + `Simple Domain: While
+    Using: (s) -> item(s, 1) < item(s, 2)
+    Cursed Technique: Apply
+        Using: (s) -> consider i as item(s, 1) in
+                      consider n as set(item(s, 0), i, sum(take(item(s, 0), 2))) in
+                      tuple(n, i + 1, item(s, 2), item(s, 3))
+Cursed Technique: Apply
+    Using: (s) -> sum(item(s, 0))
+Reveal: stdout
+`},
+	}
+	input := []byte("3\n1\n4\n1\n5\n9\n2\n6\n")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipe, want := oracleFront(t, tc.src, true, input)
+			_, naive := oracleFront(t, tc.src, false, input)
+			if want != naive {
+				t.Errorf("optimized interpreter said %q, naive said %q", want, naive)
+			}
+			if got := buildAndRun(t, pipe, input, codegen.Options{}); got != want {
+				t.Errorf("the binary said %q, the interpreter %q", got, want)
+			}
+		})
+	}
+}

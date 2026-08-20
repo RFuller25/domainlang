@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -91,6 +92,10 @@ type Search struct {
 	// is still re-measured and still written.
 	stop     chan struct{}
 	stopOnce sync.Once
+
+	// unclear are the candidates that looked faster and could not be told
+	// apart from the champion, kept for the second look after the turns.
+	unclear []unresolved
 
 	// skip is the turn a caller has asked to abandon, or zero. Turn 4 tries one
 	// candidate per optimizer pass and turn 5 sixteen orderings, so a turn that
@@ -293,6 +298,11 @@ func (s *Search) race(candBin string, runs int) (base, champ, cand Measurement) 
 // noteDrift records how far the baseline binary has moved from what it cost in
 // turn 1, so a search run on a busy machine says so.
 func (s *Search) noteDrift(base Measurement) {
+	// Every race is counted, drifted or not, because the drifted figure is
+	// only readable against the number of races that were run. A screen and a
+	// confirmation are two races on one candidate, so counting adaptations
+	// instead — as the report used to — could say "63 of 48 races".
+	s.recipe.noteRace()
 	if s.baseline.Mean <= 0 || base.Mean <= 0 {
 		return
 	}
@@ -378,10 +388,13 @@ func (s *Search) consider(turn int, turnName string, c Candidate, index, total i
 	}
 	// The screen only has to look promising: it is a cheap measurement, so
 	// requiring the full threshold here would discard candidates that a proper
-	// measurement would have kept.
-	if eff := effectOf(champS, screen); eff < s.threshold()/2 {
+	// measurement would have kept. ScreenEffect takes the more favourable of
+	// the means and the minima for the same reason — see stats.go, and the 28%
+	// win that reached this line three times and was thrown out at each.
+	if eff := ScreenEffect(champS, screen); eff < s.threshold()/2 {
 		why, unclear := s.rejectReasonFor(champS, screen)
-		s.reject(turn, turnName, c, screen, champS, eff, why, unclear)
+		s.reject(turn, turnName, c, screen, champS, effectOf(champS, screen), why, unclear)
+		s.noteUnclear(unclear, turn, turnName, c, bin, eff)
 		return false
 	}
 
@@ -390,6 +403,18 @@ func (s *Search) consider(turn int, turnName string, c Candidate, index, total i
 		s.reject(turn, turnName, c, confirm, champC, 0, confirm.Failure, false)
 		return false
 	}
+	return s.decide(turn, turnName, c, bin, baseC, champC, confirm)
+}
+
+// decide is the accept-or-reject half of consider, over a confirmation race
+// that has already been run.
+//
+// It is its own method because the second look runs exactly this decision over
+// exactly these three measurements, and a search whose two acceptance paths
+// could drift apart would be one where "what does it take to be kept" had two
+// answers.
+func (s *Search) decide(turn int, turnName string, c Candidate, bin string,
+	baseC, champC, confirm Measurement) bool {
 	// The real decision: is this measurably different from the champion, given
 	// how precisely each is known — and both figures taken in the same minute,
 	// alternating, so neither carries drift the other does not.
@@ -445,6 +470,118 @@ func (s *Search) rejectReasonFor(champ, m Measurement) (reason string, inconclus
 	return fmt.Sprintf("%.1f%%, but inside the measurement's own uncertainty", eff*100), true
 }
 
+// noteUnclear remembers a candidate the measurement could not settle, so the
+// second look can come back to it.
+//
+// Only the ones whose rejection reason was "I cannot tell", never the ones
+// that were plainly slower: re-racing a candidate that lost by ten percent is
+// spending a minute to be told again. The binary is remembered rather than the
+// intention to rebuild one, because it is already sitting in the work
+// directory and rebuilding it would be the expensive half.
+func (s *Search) noteUnclear(unclear bool, turn int, turnName string, c Candidate, bin string, eff float64) {
+	if !unclear || bin == "" {
+		return
+	}
+	s.unclear = append(s.unclear, unresolved{
+		turn: turn, turnName: turnName, cand: c, bin: bin, eff: eff,
+	})
+}
+
+// unresolved is one candidate that looked faster and could not be told apart
+// from the champion.
+type unresolved struct {
+	turn     int
+	turnName string
+	cand     Candidate
+	bin      string
+	eff      float64
+}
+
+// maxSecondLook bounds the second look. Each one is a full-length race and no
+// build at all, so the cost is real but small beside a turn; the cap is there
+// so a search on a hopeless machine, where everything is inconclusive, does
+// not double in length.
+const maxSecondLook = 6
+
+// secondLook re-races the candidates the measurement could not settle, at full
+// length, once the turns are done.
+//
+// The search already knows how to say "this looked faster and I could not tell
+// it apart from the champion" — the recipe counts them and the verdict prints
+// the count with a suggestion to raise `--runs`. That is a remedy nobody can
+// act on until the search has finished and a machine-hour has been spent, and
+// it leaves real wins on the table: on `i15_generators` the capacity entry was
+// worth 28% by hand and never got past a two-sample screen.
+//
+// So the search takes the remedy itself. The candidates come back most
+// promising first, they are raced against whatever the champion has *become*
+// (which is why they are re-raced rather than re-scored), and they face the
+// same acceptance test as everything else. A candidate built on an older
+// champion has to beat the current one on the clock to be kept, so a stale
+// configuration loses the race it deserves to lose rather than being reasoned
+// about.
+func (s *Search) secondLook() error {
+	if len(s.unclear) == 0 || s.stopping() {
+		return nil
+	}
+	pending := s.secondLookQueue()
+	s.emit(Event{Kind: TurnStart, Turn: secondLookTurn, TurnName: secondLookName})
+	s.recipe.noteSecondLook(len(pending))
+	for i, u := range pending {
+		// `q` stops the search and `s` abandons the phase in flight, exactly as
+		// they do in a turn — a second look on a slow program is minutes, and a
+		// user watching it has to be able to say "enough" here too.
+		if s.stopping() || s.skipped(secondLookTurn) {
+			break
+		}
+		s.emit(Event{Kind: CandidateStart, Turn: u.turn, TurnName: secondLookName,
+			Candidate: u.cand.Label, Index: i + 1, Total: len(pending)})
+		base, champ, m := s.race(u.bin, s.opts.baselineRuns())
+		if !m.OK() {
+			s.reject(u.turn, secondLookName, u.cand, m, champ, 0, m.Failure, false)
+			continue
+		}
+		s.decide(u.turn, secondLookName, u.cand, u.bin, base, champ, m)
+	}
+	s.emit(Event{Kind: TurnEnd, Turn: secondLookTurn, TurnName: secondLookName})
+	return nil
+}
+
+// secondLookQueue is the unresolved candidates in the order they are re-raced:
+// most promising first, and no more than the cap.
+//
+// Most promising first is what makes the cap defensible. A search on a machine
+// where everything is inconclusive has to stop somewhere, and the ones it
+// stops before are then the ones that looked least like a win.
+func (s *Search) secondLookQueue() []unresolved {
+	pending := append([]unresolved(nil), s.unclear...)
+	slices.SortStableFunc(pending, func(a, b unresolved) int {
+		switch {
+		case a.eff > b.eff:
+			return -1
+		case a.eff < b.eff:
+			return 1
+		}
+		return 0
+	})
+	if len(pending) > maxSecondLook {
+		pending = pending[:maxSecondLook]
+	}
+	return pending
+}
+
+// secondLookTurn is the turn number the second look reports itself under.
+//
+// Nine, and the wheel has eight handles: the display draws handles for turns
+// 1..8 and ignores anything past them, which is the intended behaviour here.
+// The second look is not a ninth kind of adaptation — every candidate in it
+// belongs to the turn that proposed it, and each *candidate* event carries
+// that turn, so the handle that lights when one is finally accepted is the
+// handle that found it.
+const secondLookTurn = 9
+
+const secondLookName = "second look"
+
 // reject records a candidate that did not earn acceptance. The effect is passed
 // in rather than recomputed: it belongs to the race the rejection came from, and
 // re-deriving it from the champion's stale figure is exactly the mistake the
@@ -474,7 +611,7 @@ type turn struct {
 var turns = []turn{
 	{1, "baseline and reconnaissance", true, (*Search).turnBaseline},
 	{2, "idle for this input", true, (*Search).turnIdle},
-	{3, "profile-guided rebuild", true, (*Search).turnPGO},
+	{3, "how the program is compiled", true, (*Search).turnRebuild},
 	{4, "pass ablation", true, (*Search).turnAblation},
 	{5, "pass ordering", true, (*Search).turnOrdering},
 	{6, "templated codegen edits", true, (*Search).turnCatalogue},
@@ -493,6 +630,9 @@ func (s *Search) Run() (*Recipe, error) {
 			return nil, fmt.Errorf("turn %d (%s): %w", t.n, t.name, err)
 		}
 		s.emit(Event{Kind: TurnEnd, Turn: t.n, TurnName: t.name})
+	}
+	if err := s.secondLook(); err != nil {
+		return nil, err
 	}
 	if err := s.finish(); err != nil {
 		return nil, err

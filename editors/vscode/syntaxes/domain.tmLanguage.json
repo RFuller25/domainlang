@@ -56,7 +56,7 @@
     },
     "themed-statement": {
       "comment": "A statement head: the themed keyword, its ':' , and the operation phrase up to end of line. The operation is highlighted in its own context so primitives, control-flow words, modifiers, and literals each get their own colour.",
-      "begin": "^\\s*(Reverse Cursed Technique|Maximum Technique|Channeled Energy|Cursed Technique|Domain Expansion|Cursed Energy|Innate Domain|Simple Domain|Binding Vow|Shikigami|Channel|Reveal|Part)\\b[ \\t]*(:)?",
+      "begin": "^\\s*(Reverse Cursed Technique|Maximum Technique|Channeled Energy|Cursed Technique|Domain Expansion|Cursed Energy|Cursed Object|Innate Domain|Simple Domain|Binding Vow|Cursed Tool|Shikigami|Channel|Reveal|Part)\\b[ \\t]*(:)?",
       "beginCaptures": {
         "1": {
           "name": "keyword.control.domain"

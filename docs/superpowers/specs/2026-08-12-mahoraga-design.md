@@ -949,3 +949,151 @@ Also: `input_fingerprint.lines` counted raw `'\n'` bytes while
 "segments: 2" about the same 55-byte file. Both were right by their own
 definition and the pair was useless; the fingerprint now counts lines the way a
 reader does, and a test asserts the two agree.
+
+---
+
+# Status: what a four-program benchmark suite found
+
+`bench/mahoraga/` is four working Domain programs, four inputs, and the same
+search run over each by two builds of the compiler. It exists because the
+catalogue had been extended by reasoning about what *ought* to be slow, and the
+only way to find out what actually is is to profile programs nobody wrote for
+the benchmark. The four are a spiral walk (dominated by process startup — the
+control), a jump-offset walk, fifty thousand rounds of memory reallocation, and
+a pair of generators filtered down to five million elements each.
+
+Three findings, in the order of how much they were worth.
+
+## The list nobody could estimate: 2.2× on one program
+
+A profile of the generator program spends **34% of its run inside
+`runtime.growslice`**. The fused Unfold+Filter+take stream emits
+
+```go
+v19 := []int64{}      // and appends five million times
+```
+
+because nothing in scope predicts how many elements a filter will let through
+— the `take` limit bounds it from above, but reserving five million elements
+for a run that produces ten is forty megabytes nobody uses. So the generator
+reserves nothing, and the slice is reallocated and copied twenty-two times on
+its way to five million.
+
+This is exactly the shape of question the command exists for, and the answer is
+a measurement rather than an analysis: a **probe build** — a build of the same
+program that reports how long each unestimated accumulator grew, run once,
+untimed, and thrown away. `Tuning.ListCapacities` then reserves it. Guarded
+tier, and genuinely so: a capacity is a hint `append` overrides, so the binary
+stays correct on any input; what it can be on a different input is wasteful,
+which is a cost the recipe records rather than a correctness claim.
+
+Measured alone, on the generator program: **1.5s → 0.69s**.
+
+## The scheduler: 4.4× on another
+
+`i05_jumps` spends **half its run in `futex`, `madvise`, `osyield` and
+`lock2`** — the collector's mark workers, four of them on a four-core box,
+coordinating over a program that is a straight line of loops on one goroutine.
+`GOMAXPROCS(1)` is one line in `main` and changes nothing about what the
+program computes on any input, which is why the entry is general tier despite
+reading like a machine setting. It is the largest single entry in the
+catalogue and it is not a code transformation at all.
+
+The collector entry beside it gained a twin. Switching the collector *off* is
+right for a program whose whole heap fits under the limit that keeps it safe;
+a program that allocates far more than it keeps reaches that limit whatever it
+does, and what is available there is fewer, larger collections —
+`SetGCPercent(400)` under a wider backstop.
+
+## Pinned constants: real, and smaller than it looks
+
+The entry the suite was built to evaluate. A `Consider l Of length` is a Go
+local because the compiler cannot know what it holds; a probe build that
+watches it hold 16 on every one of fifty thousand laps licenses emitting `16`,
+and what that buys is not the arithmetic but what the Go compiler does next —
+`% l` against a local is a hardware division and `% 16` is a mask.
+
+Two things had to be got right for it to be worth anything at all, and both
+were wrong in the first version:
+
+- **Substitute at the reads, not at the definition.** A binding that reaches a
+  block body's function arrives as a *parameter*, and a parameter is not a
+  constant. A pinned binding is now substituted into the body and no parameter
+  is declared for it.
+- **One evaluation is not "cold".** The obvious threshold — do not spend a
+  build on a binding evaluated once — is exactly backwards: the generator
+  hoists a `Consider` out of the loop it was written in, so the binding a
+  fifty-thousand-lap loop reads on every lap is evaluated exactly once.
+
+Measured: **inside the noise floor on all four programs**, and the profile says
+why — the modulus it optimizes is 6% of one program and absent from the other
+three. It is kept, and reported as what it is. The mechanism is what the
+capacity entry above is built on, the entry is honest about its size, and a
+recipe that records "tried, and it was noise" is more useful than one that does
+not mention it.
+
+## What the A/B said, and the one thing it got wrong
+
+The same four programs, searched by both builds at `--runs 7`:
+
+| Program | before | after |
+|---|---:|---:|
+| `i03_spiral` | 1.00× | 1.00× |
+| `i05_jumps` | 1.44× | **2.37×** |
+| `i06_realloc` | 1.00× | 1.00× |
+| `i15_generators` | 1.40× | **1.97×** |
+
+The two unbeaten programs stayed unbeaten under five new kinds of candidate,
+which is the result the control was there to check.
+
+`i15_generators` is the one to read carefully, and the first version of this
+section read it wrong. It claimed the search had thrown away a 28% win by
+rejecting the measured-capacity entry. That number came from hand-racing the
+binaries without discarding a cold first run — precisely the effect
+`WarmupRuns` exists to remove, in a file that argues at length about
+measurement — and it does not survive being measured properly. Seven
+alternating rounds, first dropped, minima:
+
+| `i15_generators` build | min |
+|---|---:|
+| `domain build` baseline | 1080ms |
+| default schedule + `GOMAXPROCS(1)` | 753ms |
+| the same plus both measured capacities | 642ms |
+| the champion the search shipped | 646ms |
+| the same plus both measured capacities | 643ms |
+
+The capacity entry is worth about 15% where nothing else has got there. On the
+champion the search actually found it is worth nothing: a shuffled pass order
+had already reached the same place, and the screen's 0.1% is what a redundant
+candidate correctly measures. **The search was right.**
+
+Two things do survive. The first is that the printed speedup is not to be
+trusted on a drifting box — 1.97× re-measures as 1.45× — which is a reporting
+problem rather than a search one, and the drift figure beside it is the
+warning. The second is narrower than the retracted claim and still true: a
+screen at `--screen-runs 3` has two samples after the warmup, below
+`MinSamplesForSpread` and below `MinSamplesForTrim`, so it compares two raw
+wall-clock numbers carrying no uncertainty at all. `ScreenEffect` takes the
+more favourable of the means and the minima there — the reasoning TrimSlowest
+already rests on, applied where there is nothing else to reason with — and the
+second look re-races the candidates whose rejection was "I cannot tell".
+Neither changed an outcome on this suite. They are insurance, and the honest
+status of insurance that has not yet paid out is *unproven*.
+
+One smaller thing the same program taught, and this one is already fixed:
+reserving either of its two five-million-element lists is worth 11% and
+reserving both is worth 23%. Offering one site per candidate — the wheel's
+rule everywhere else — put a real win on the wrong side of the noise twice.
+Turn 6 now offers the whole set first and the individual sites after it.
+
+## What is left
+
+`set` on a List is excluded from the linear-accumulator pass by design
+(`optimizer/linear.go`: `take`/`drop`/`slice` hand out subslices of the same
+backing array, so "who else can see this" stops being a question about the
+accumulator alone). `i05_jumps` is a loop threading a list through `set`, and
+at full puzzle size it takes **33 seconds** — a million copies of a
+384-element list — where an in-place update with the pass's existing
+clone-once-on-entry firewall would take well under one. That is the largest
+number this suite turned up and the only one that needs a new analysis rather
+than a new measurement.

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"domain/ast"
+	"domain/ir"
+	"domain/optimizer"
 	"domain/prims"
 	"domain/typecheck"
 )
@@ -38,7 +40,7 @@ func Lint(prog *ast.Program, src string) []Diagnostic {
 // reads back what the resolver recorded on the tree. Analyze calls it only
 // when resolution succeeded, since a statement that never resolved never had
 // the chance to read its arguments.
-func lintResolved(prog *ast.Program, src string) []Diagnostic {
+func lintResolved(prog *ast.Program, pipe *ir.Pipeline, src string) []Diagnostic {
 	var ds []Diagnostic
 	add := func(d Diagnostic) {
 		d.LineText = lineAt(src, d.Pos.Line)
@@ -46,7 +48,202 @@ func lintResolved(prog *ast.Program, src string) []Diagnostic {
 	}
 	lintUnusedArgs(prog, add)
 	lintBindings(prog, add)
+	lintDeclinedInPlace(pipe, add)
+	lintGlobalStandDowns(pipe, add)
+	lintGlobalDeclaredInALoop(prog, add)
 	return ds
+}
+
+// lintDeclinedInPlace reports the accumulator updates that will copy their
+// receiver on every pass, and why.
+//
+// This is the largest performance fact the language has to offer about a program
+// and it was the one thing lint would not say: a search deep-copying a map on
+// each of twelve thousand laps was pronounced "clean — no errors, warnings, or
+// hints", while `optimize` reported the rewrites that *did* apply and stayed
+// silent about the one that did not. The pass already computes every reason
+// below and threw them away.
+//
+// Reported as hints, never warnings. Some of these refusals are the only correct
+// answer — a copy that is genuinely read has to happen — so the reader is being
+// told about a cost, not corrected.
+func lintDeclinedInPlace(pipe *ir.Pipeline, add func(Diagnostic)) {
+	if pipe == nil {
+		return
+	}
+	// The InPlace marks are what makes a site "declined", and they are set by
+	// the pass rather than by the resolver, so the pipeline has to have been
+	// through the optimizer before the question means anything. Analyze resolves
+	// but does not optimize, so this runs it — on a pipeline nobody else holds,
+	// since the marks would otherwise leak into a caller expecting an
+	// unoptimized tree.
+	optimizer.Optimize(pipe, true)
+
+	for _, d := range optimizer.DeclinedInPlace(pipe) {
+		msg, help, notes := declinedAdvice(d)
+		add(Diagnostic{
+			Severity: Hint, Code: "perf", Pos: d.Pos,
+			Msg: fmt.Sprintf("`%s` copies %s on every pass through %s — %s",
+				d.Update, receiverWord(d.Update), d.Prim, msg),
+			Help:  help,
+			Notes: notes,
+		})
+	}
+}
+
+// lintGlobalStandDowns reports the stages that kept their lambda exactly as
+// written because it touches a `Cursed Object` global.
+//
+// Same reasoning as lintDeclinedInPlace one function up: the cost is real, the
+// program still gives the right answer, and nothing else would ever say so.
+//
+// Only stages reading a *mutable* global are reported. A global nothing writes
+// after it is declared is a constant of the run and keeps its readers' rewrites
+// intact, so the distinction is the whole message: the fix for a stage that
+// appears here is very often to stop writing the global.
+//
+// Hints, not warnings. Reaching for a global is a legitimate thing to do and
+// this is the price list, not a correction.
+func lintGlobalStandDowns(pipe *ir.Pipeline, add func(Diagnostic)) {
+	if pipe == nil {
+		return
+	}
+	for _, d := range optimizer.GlobalStandDowns(pipe) {
+		add(Diagnostic{
+			Severity: Hint, Code: "perf", Pos: d.Pos,
+			Msg: fmt.Sprintf("%s touches %s, which something writes after it is declared, "+
+				"so its rewrites (fusion, algorithm substitution, expression simplification) "+
+				"are stood down",
+				d.Prim, strings.Join(quoteAll(d.Names), " and ")),
+			Help: "a stage reading a global that changes is not a pure function of its input, " +
+				"so the optimizer leaves it alone. A global nothing writes after it is declared " +
+				"costs its readers nothing, so the fix is usually to stop writing it — or to " +
+				"move the work that does not need it into a stage of its own",
+		})
+	}
+}
+
+// lintGlobalDeclaredInALoop warns about a `Cursed Object` written inside a
+// loop body whose value cannot depend on the lap.
+//
+// A declaration is a statement, so it re-runs wherever it is written — inside
+// a loop that means it re-initialises every lap, and a counter written that
+// way silently never counts. `Cursed Tool` is what the accumulating case is
+// spelled with, and the difference is invisible until the answer is wrong.
+//
+// Only a declaration whose value is a plain expression is flagged. One written
+// `Of` something reads the value arriving on that lap, so re-running it is the
+// whole point and there is nothing to warn about.
+func lintGlobalDeclaredInALoop(prog *ast.Program, add func(Diagnostic)) {
+	if prog == nil {
+		return
+	}
+	var walk func(stmts []*ast.Statement, inLoop bool)
+	walk = func(stmts []*ast.Statement, inLoop bool) {
+		for _, s := range stmts {
+			if s == nil {
+				continue
+			}
+			if inLoop && s.Keyword == "Cursed Object" {
+				for _, d := range s.Decls {
+					if d == nil || d.Of {
+						continue
+					}
+					add(Diagnostic{
+						Severity: Warning, Code: "loop-declaration", Pos: d.Pos,
+						Msg: fmt.Sprintf(
+							"`Cursed Object: %s` is inside a loop body, so it is re-declared every lap "+
+								"and never carries a value from one lap to the next", d.Name),
+						Help: fmt.Sprintf(
+							"declare it above the loop and write `Cursed Tool: %s As …` inside, "+
+								"which changes the value instead of replacing it", d.Name),
+					})
+				}
+			}
+			walk(s.Block, inLoop || s.Keyword == "Simple Domain")
+			for _, b := range slices.Concat(s.Binds, s.Decls) {
+				if b != nil {
+					walk(b.Body, inLoop)
+				}
+			}
+		}
+	}
+	walk(prog.Statements, false)
+	for _, d := range prog.Shikigamis {
+		if d != nil {
+			walk(d.Body, false)
+		}
+	}
+}
+
+// quoteAll wraps each name in backticks for a message.
+func quoteAll(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "`" + n + "`"
+	}
+	return out
+}
+
+// receiverWord names what an update would copy, in the terms the program uses.
+func receiverWord(update string) string {
+	switch update {
+	case "setat":
+		return "the whole grid"
+	case "put":
+		return "the whole sparse grid"
+	case "set":
+		return "the whole list"
+	case "addnode", "addedge":
+		return "the whole graph"
+	}
+	return "the whole collection"
+}
+
+// declinedAdvice turns a refusal into something a reader can act on, or into an
+// honest statement that there is nothing to do.
+func declinedAdvice(d optimizer.Declined) (msg, help string, notes []string) {
+	switch d.Reason {
+	case optimizer.DeclinedReadAfter:
+		return "the accumulator is read again after this update, so the copy is observed",
+			"bind the other fields to names *before* this update, then build the result from those names",
+			[]string{
+				"the rule is \"nothing reads the accumulator after the write\", and it does not " +
+					"distinguish a read of one field from a read of another",
+				"if the later read is genuinely of the value before this update, the copy is " +
+					"required and there is nothing to change",
+			}
+	case optimizer.DeclinedNotRooted:
+		return "its receiver is not the accumulator, so nothing is known about who else holds it",
+			"write the update against the accumulator, or a constant tuple field of it, rather than " +
+				"against a value computed from it",
+			[]string{
+				"a receiver reached through `getor`, a variable index, or a list element is refused: " +
+					"the copy on entry does not own it",
+			}
+	case optimizer.DeclinedKind:
+		return "the state field it writes to is not a collection this pass updates in place",
+			"no source change helps here", nil
+	case optimizer.DeclinedEffectful:
+		return "the body writes a binding with `:=`, which stands every rewrite in it down",
+			"compute the value without the assignment if the update is the expensive part of this stage",
+			[]string{
+				"the pass reasons about evaluation order, and a write is what makes the order " +
+					"observable in a way the expression tree does not show",
+			}
+	case optimizer.DeclinedAliasEscape:
+		return "`take`, `drop` or `slice` is applied to the accumulator somewhere in this body",
+			"copy the subslice — `concat(take(xs, n), emptylist(...))` — or index with `item` instead",
+			[]string{
+				"a subslice shares the list's storage in both backends, so an in-place write would " +
+					"be visible through it",
+			}
+	case optimizer.DeclinedUnownableState:
+		return "the loop's state is not one the backends can copy on entry",
+			"keep the collection in a constant tuple field of the state rather than inside a list",
+			nil
+	}
+	return "the optimizer declined it", "", nil
 }
 
 // lintBindings warns about a `Consider` binding nothing reads. An `As`
