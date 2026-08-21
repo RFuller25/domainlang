@@ -1388,6 +1388,293 @@ const declGraphWeightOr = `func dmGraphWeightOr[K comparable](g dmGraph[K], a, b
 	return d
 }`
 
+// The node-level readers. Each mirrors the ir.GraphValue method of the same
+// name, walking the adjacency in the same order so both backends hand back the
+// same list.
+const declGraphRoots = `func dmGraphRoots[K comparable](g dmGraph[K]) []K {
+	incoming := make([]bool, len(g.nodes))
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			incoming[e.to] = true
+		}
+	}
+	out := []K{}
+	for i, n := range g.nodes {
+		if !incoming[i] {
+			out = append(out, n)
+		}
+	}
+	return out
+}`
+
+const declGraphLeaves = `func dmGraphLeaves[K comparable](g dmGraph[K]) []K {
+	out := []K{}
+	for i, n := range g.nodes {
+		if len(g.adj[i]) == 0 {
+			out = append(out, n)
+		}
+	}
+	return out
+}`
+
+const declGraphInDegree = `func dmGraphInDegree[K comparable](g dmGraph[K], n K) int64 {
+	j, ok := g.index[n]
+	if !ok {
+		return 0
+	}
+	var count int64
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			if e.to == j {
+				count++
+			}
+		}
+	}
+	return count
+}`
+
+const declGraphWeightSum = `func dmGraphWeightSum[K comparable](g dmGraph[K]) int64 {
+	var total int64
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			total += e.w
+		}
+	}
+	return total
+}`
+
+// dmGraphDelNode is dmGraphSub over everything but one node, which is what
+// deleting a node is: the adjacency holds indices, so the graph is rebuilt
+// either way.
+const declGraphDelNode = `func dmGraphDelNode[K comparable](g dmGraph[K], n K) dmGraph[K] {
+	if _, ok := g.index[n]; !ok {
+		return g.clone()
+	}
+	keep := make([]K, 0, len(g.nodes)-1)
+	for _, node := range g.nodes {
+		if node != n {
+			keep = append(keep, node)
+		}
+	}
+	return dmGraphSub(g, keep)
+}`
+
+// dmGraphReachable is a breadth-first walk from the start, which is included:
+// it is reachable from itself by a path of no arcs.
+const declGraphReachable = `func dmGraphReachable[K comparable](g dmGraph[K], start K) []K {
+	i, ok := g.index[start]
+	if !ok {
+		return []K{}
+	}
+	seen := make([]bool, len(g.nodes))
+	out := []K{}
+	queue := []int{i}
+	seen[i] = true
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		out = append(out, g.nodes[cur])
+		for _, e := range g.adj[cur] {
+			if seen[e.to] {
+				continue
+			}
+			seen[e.to] = true
+			queue = append(queue, e.to)
+		}
+	}
+	return out
+}`
+
+// dmGraphHasCycle peels nodes with nothing pointing at them, the same measure
+// Topological Sort uses: what cannot be peeled is a cycle.
+const declGraphHasCycle = `func dmGraphHasCycle[K comparable](g dmGraph[K]) bool {
+	indeg := make([]int, len(g.nodes))
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			indeg[e.to]++
+		}
+	}
+	queue := []int{}
+	for i, d := range indeg {
+		if d == 0 {
+			queue = append(queue, i)
+		}
+	}
+	ordered := 0
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		ordered++
+		for _, e := range g.adj[cur] {
+			indeg[e.to]--
+			if indeg[e.to] == 0 {
+				queue = append(queue, e.to)
+			}
+		}
+	}
+	return ordered != len(g.nodes)
+}`
+
+// dmGraphUndirected adds only the missing reverse of each arc: an arc that is
+// already there in both directions keeps both weights.
+const declGraphUndirected = `func dmGraphUndirected[K comparable](g dmGraph[K]) dmGraph[K] {
+	out := g.clone()
+	for i, arcs := range g.adj {
+		for _, e := range arcs {
+			if _, ok := out.weight(g.nodes[e.to], g.nodes[i]); !ok {
+				out.addEdge(g.nodes[e.to], g.nodes[i], e.w)
+			}
+		}
+	}
+	return out
+}`
+
+// dmGraphMerge writes b's nodes and arcs into a copy of a, so an arc both
+// carry takes b's weight — addEdge's last-write-wins rule.
+const declGraphMerge = `func dmGraphMerge[K comparable](a, b dmGraph[K]) dmGraph[K] {
+	out := a.clone()
+	for _, n := range b.nodes {
+		out.addNode(n)
+	}
+	for i, arcs := range b.adj {
+		for _, e := range arcs {
+			out.addEdge(b.nodes[i], b.nodes[e.to], e.w)
+		}
+	}
+	return out
+}`
+
+// dmGraphMST mirrors prims.graphMST: Kruskal over the arcs read as undirected,
+// cheapest first with ties broken by insertion order, so both backends choose
+// the same tree. A graph in several pieces gives a spanning forest.
+const declGraphMST = `func dmGraphMST[K comparable](g dmGraph[K]) dmGraph[K] {
+	type dmMSTArc struct {
+		w    int64
+		from int
+		to   int
+	}
+	arcs := []dmMSTArc{}
+	for i := range g.nodes {
+		for _, e := range g.adj[i] {
+			if i == e.to {
+				continue
+			}
+			arcs = append(arcs, dmMSTArc{w: e.w, from: i, to: e.to})
+		}
+	}
+	sort.SliceStable(arcs, func(x, y int) bool {
+		if arcs[x].w != arcs[y].w {
+			return arcs[x].w < arcs[y].w
+		}
+		if arcs[x].from != arcs[y].from {
+			return arcs[x].from < arcs[y].from
+		}
+		return arcs[x].to < arcs[y].to
+	})
+	parent := make([]int, len(g.nodes))
+	rank := make([]int, len(g.nodes))
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(x int) int {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+	out := dmNewGraph[K]()
+	for _, n := range g.nodes {
+		out.addNode(n)
+	}
+	for _, a := range arcs {
+		x, y := find(a.from), find(a.to)
+		if x == y {
+			continue
+		}
+		if rank[x] < rank[y] {
+			x, y = y, x
+		}
+		parent[y] = x
+		if rank[x] == rank[y] {
+			rank[x]++
+		}
+		out.addEdge(g.nodes[a.from], g.nodes[a.to], a.w)
+	}
+	return out
+}`
+
+// dmGraphSCC mirrors prims.graphSCC: Kosaraju, both passes iterative and both
+// taking adjacency in insertion order, each component's nodes in the graph's
+// insertion order and the components in the order the second pass finds them.
+const declGraphSCC = `func dmGraphSCC[K comparable](g dmGraph[K]) [][]K {
+	n := len(g.nodes)
+	radj := make([][]int, n)
+	for i := range n {
+		for _, e := range g.adj[i] {
+			radj[e.to] = append(radj[e.to], i)
+		}
+	}
+	seen := make([]bool, n)
+	order := make([]int, 0, n)
+	next := make([]int, n)
+	for start := range n {
+		if seen[start] {
+			continue
+		}
+		seen[start] = true
+		stack := []int{start}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			if next[cur] < len(g.adj[cur]) {
+				to := g.adj[cur][next[cur]].to
+				next[cur]++
+				if !seen[to] {
+					seen[to] = true
+					stack = append(stack, to)
+				}
+				continue
+			}
+			order = append(order, cur)
+			stack = stack[:len(stack)-1]
+		}
+	}
+	comp := make([]int, n)
+	for i := range comp {
+		comp[i] = -1
+	}
+	out := [][]K{}
+	for i := len(order) - 1; i >= 0; i-- {
+		root := order[i]
+		if comp[root] != -1 {
+			continue
+		}
+		id := len(out)
+		members := []int{}
+		comp[root] = id
+		stack := []int{root}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			members = append(members, cur)
+			for _, from := range radj[cur] {
+				if comp[from] == -1 {
+					comp[from] = id
+					stack = append(stack, from)
+				}
+			}
+		}
+		sort.Ints(members)
+		nodes := make([]K, len(members))
+		for k, m := range members {
+			nodes[k] = g.nodes[m]
+		}
+		out = append(out, nodes)
+	}
+	return out
+}`
+
 const declGraphAddNode = `func dmGraphAddNode[K comparable](g dmGraph[K], n K) dmGraph[K] {
 	out := g.clone()
 	out.addNode(n)

@@ -272,6 +272,14 @@
     "page": "ref-transforms.md"
   },
   {
+    "id": "Convert To Adjacency",
+    "keyword": "Channeled Energy",
+    "signature": "Graph\u003cK\u003e → Map\u003cK, List\u003cK\u003e\u003e",
+    "summary": "Drops a Graph into the adjacency map Convert To Graph reads back; every node is a key, and the weights go.",
+    "anchor": "convert-to-adjacency",
+    "page": "ref-coercions.md"
+  },
+  {
     "id": "Convert To Edges",
     "keyword": "Channeled Energy",
     "signature": "Graph\u003cK\u003e → List\u003c(K, K, Int)\u003e",
@@ -632,11 +640,27 @@
     "page": "ref-expansions.md"
   },
   {
+    "id": "Minimum Spanning Tree",
+    "keyword": "Domain Expansion",
+    "signature": "Graph\u003cK\u003e → Graph\u003cK\u003e",
+    "summary": "The cheapest arcs that keep the graph connected, read as undirected; a graph in pieces gives a forest.",
+    "anchor": "minimum-spanning-tree",
+    "page": "ref-expansions.md"
+  },
+  {
     "id": "Permutations",
     "keyword": "Domain Expansion",
     "signature": "List\u003cT\u003e → List\u003cList\u003cT\u003e\u003e",
     "summary": "Every ordering of the list (bounded: more than 9 elements errors).",
     "anchor": "permutations",
+    "page": "ref-expansions.md"
+  },
+  {
+    "id": "Root",
+    "keyword": "Domain Expansion",
+    "signature": "Graph\u003cK\u003e → K",
+    "summary": "The one node with no incoming arc; an error unless the graph has exactly one.",
+    "anchor": "root",
     "page": "ref-expansions.md"
   },
   {
@@ -669,6 +693,14 @@
     "signature": "List\u003cT\u003e × (T → K) → List\u003cT\u003e",
     "summary": "Stable sort by the lambda's Int key, ascending by default.",
     "anchor": "sort-by",
+    "page": "ref-expansions.md"
+  },
+  {
+    "id": "Strongly Connected Components",
+    "keyword": "Domain Expansion",
+    "signature": "Graph\u003cK\u003e → List\u003cList\u003cK\u003e\u003e",
+    "summary": "The groups of nodes that can all reach each other, in a topological order of the groups — the directed question Connected Components does not ask.",
+    "anchor": "strongly-connected-components",
     "page": "ref-expansions.md"
   },
   {

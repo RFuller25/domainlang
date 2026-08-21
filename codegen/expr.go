@@ -1521,6 +1521,67 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmGraph", declGraph)
 		g.helper("dmGraphRoot", declGraphRoot, "fmt")
 		return "dmGraphRoot(" + args[0] + ")", types[0].Elem, nil
+	case "indegree":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("indegree needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphInDegree", declGraphInDegree)
+		return "dmGraphInDegree(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "roots", "leaves":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("%s needs a Graph argument, got %s", name, types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		fn, decl := "dmGraphRoots", declGraphRoots
+		if name == "leaves" {
+			fn, decl = "dmGraphLeaves", declGraphLeaves
+		}
+		g.helper(fn, decl)
+		return fn + "(" + args[0] + ")", ir.List(types[0].Elem), nil
+	case "reachable":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("reachable needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphReachable", declGraphReachable)
+		return "dmGraphReachable(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+	case "delnode":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("delnode needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphSub", declGraphSub) // dmGraphDelNode is written in terms of it
+		g.helper("dmGraphDelNode", declGraphDelNode)
+		return "dmGraphDelNode(" + args[0] + ", " + args[1] + ")", types[0], nil
+	case "hascycle":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("hascycle needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphHasCycle", declGraphHasCycle)
+		return "dmGraphHasCycle(" + args[0] + ")", ir.Bool(), nil
+	case "weightsum":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("weightsum needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphWeightSum", declGraphWeightSum)
+		return "dmGraphWeightSum(" + args[0] + ")", ir.Int(), nil
+	case "undirected":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("undirected needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphUndirected", declGraphUndirected)
+		return "dmGraphUndirected(" + args[0] + ")", types[0], nil
+	case "mergegraphs":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("mergegraphs needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphMerge", declGraphMerge)
+		return "dmGraphMerge(" + args[0] + ", " + args[1] + ")", types[0], nil
 	case "flipedges":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("flipedges needs a Graph argument, got %s", types[0])

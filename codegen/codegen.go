@@ -701,6 +701,14 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitConvertToGraph(n, in)
 	case "Convert To Edges":
 		return g.emitConvertToEdges(n, in)
+	case "Convert To Adjacency":
+		return g.emitConvertToAdjacency(n, in)
+	case "Root":
+		return g.emitGraphRoot(n, in)
+	case "Minimum Spanning Tree":
+		return g.emitMinimumSpanningTree(n, in)
+	case "Strongly Connected Components":
+		return g.emitStronglyConnectedComponents(n, in)
 	case "Convert To Entries":
 		return g.emitConvertToEntries(n, in)
 	case "Convert To Map":

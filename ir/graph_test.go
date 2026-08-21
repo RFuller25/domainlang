@@ -382,3 +382,198 @@ func TestGraphWeightOf(t *testing.T) {
 		t.Errorf("WeightOf(a) after re-weighting = %d, want 14", got)
 	}
 }
+
+// Leaves is Roots' mirror, and an isolated node is both.
+func TestGraphLeaves(t *testing.T) {
+	gv := g([3]any{"a", "b", int64(1)}, [3]any{"a", "c", int64(1)})
+	gv.AddNode("q")
+	got := gv.Leaves()
+	if len(got) != 3 || got[0] != "b" || got[1] != "c" || got[2] != "q" {
+		t.Errorf("Leaves = %v, want [b c q]", got)
+	}
+	if roots := gv.Roots(); len(roots) != 2 || roots[0] != "a" || roots[1] != "q" {
+		t.Errorf("Roots = %v, want [a q] — an isolated node is both", roots)
+	}
+}
+
+// InDegree counts the arcs coming in without building the reversed graph the
+// vocabulary used to make people build.
+func TestGraphInDegree(t *testing.T) {
+	gv := g([3]any{"a", "c", int64(1)}, [3]any{"b", "c", int64(1)}, [3]any{"c", "d", int64(1)})
+	for _, c := range []struct {
+		node string
+		want int
+	}{{"c", 2}, {"a", 0}, {"d", 1}, {"zzz", 0}} {
+		if got := gv.InDegree(c.node); got != c.want {
+			t.Errorf("InDegree(%q) = %d, want %d", c.node, got, c.want)
+		}
+	}
+	// It has to agree with the flipedges spelling it replaces.
+	f := gv.Flipped()
+	for _, n := range gv.Nodes() {
+		if a, b := gv.InDegree(n), f.Degree(n); a != b {
+			t.Errorf("InDegree(%v) = %d but Flipped().Degree = %d", n, a, b)
+		}
+	}
+	// A self-loop is an arc in as well as out.
+	self := g([3]any{"x", "x", int64(1)})
+	if got := self.InDegree("x"); got != 1 {
+		t.Errorf("InDegree of a self-loop = %d, want 1", got)
+	}
+}
+
+// DelNode is DelEdge's counterpart: the node goes, and so does every arc that
+// touched it in either direction.
+func TestGraphDelNode(t *testing.T) {
+	gv := g([3]any{"a", "b", int64(1)}, [3]any{"b", "c", int64(2)}, [3]any{"c", "a", int64(3)})
+	out := gv.DelNode("b")
+
+	if out.Has("b") {
+		t.Error("the deleted node is still there")
+	}
+	if out.HasEdge("a", "b") || out.HasEdge("b", "c") {
+		t.Error("an arc touching the deleted node survived")
+	}
+	if !out.HasEdge("c", "a") {
+		t.Error("an arc between two surviving nodes was dropped")
+	}
+	if w, _ := out.Weight("c", "a"); w != 3 {
+		t.Errorf("a surviving arc lost its weight: %d", w)
+	}
+	// The original is untouched, and the survivors keep their order.
+	if gv.Len() != 3 || !gv.Has("b") {
+		t.Error("DelNode mutated its receiver")
+	}
+	if ns := out.Nodes(); len(ns) != 2 || ns[0] != "a" || ns[1] != "c" {
+		t.Errorf("surviving nodes = %v, want [a c]", ns)
+	}
+	// Deleting something absent is a copy, not a corruption.
+	if same := gv.DelNode("zzz"); same.Len() != 3 || same.EdgeCount() != 3 {
+		t.Error("deleting an absent node changed the graph")
+	}
+}
+
+// Reachable is a breadth-first walk that includes its start.
+func TestGraphReachable(t *testing.T) {
+	gv := g(
+		[3]any{"a", "b", int64(1)}, [3]any{"a", "c", int64(1)},
+		[3]any{"b", "d", int64(1)}, [3]any{"e", "f", int64(1)},
+	)
+	got := gv.Reachable("a")
+	if len(got) != 4 || got[0] != "a" || got[3] != "d" {
+		t.Errorf("Reachable(a) = %v, want [a b c d] in breadth-first order", got)
+	}
+	if got := gv.Reachable("d"); len(got) != 1 || got[0] != "d" {
+		t.Errorf("Reachable(d) = %v, want [d] — a node reaches itself", got)
+	}
+	// Arcs are directed, so a piece of the graph the start cannot walk to is
+	// not reachable from it.
+	if got := gv.Reachable("a"); len(got) != 4 {
+		t.Errorf("Reachable(a) = %v, want not to include the e/f component", got)
+	}
+	if got := gv.Reachable("zzz"); len(got) != 0 {
+		t.Errorf("Reachable of an absent node = %v, want none", got)
+	}
+	// A cycle terminates rather than walking forever.
+	cyc := g([3]any{"x", "y", int64(1)}, [3]any{"y", "x", int64(1)})
+	if got := cyc.Reachable("x"); len(got) != 2 {
+		t.Errorf("Reachable over a cycle = %v, want both nodes once", got)
+	}
+}
+
+func TestGraphHasCycle(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		gv   *GraphValue
+		want bool
+	}{
+		{"a tree", g([3]any{"a", "b", int64(1)}, [3]any{"a", "c", int64(1)}), false},
+		{"a diamond", g(
+			[3]any{"a", "b", int64(1)}, [3]any{"a", "c", int64(1)},
+			[3]any{"b", "d", int64(1)}, [3]any{"c", "d", int64(1)}), false},
+		{"a cycle", g([3]any{"a", "b", int64(1)}, [3]any{"b", "a", int64(1)}), true},
+		{"a self-loop", g([3]any{"a", "a", int64(1)}), true},
+		{"a cycle off to one side", g(
+			[3]any{"a", "b", int64(1)}, [3]any{"x", "y", int64(1)}, [3]any{"y", "x", int64(1)}), true},
+		{"empty", NewGraphValue(), false},
+	} {
+		if got := c.gv.HasCycle(); got != c.want {
+			t.Errorf("%s: HasCycle = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// Undirected fills in the missing reverse of each arc and leaves an arc that
+// is already there alone — including its weight.
+func TestGraphUndirected(t *testing.T) {
+	gv := g([3]any{"a", "b", int64(3)}, [3]any{"b", "a", int64(5)}, [3]any{"b", "c", int64(7)})
+	out := gv.Undirected()
+
+	if w, _ := out.Weight("a", "b"); w != 3 {
+		t.Errorf("an existing arc was re-weighted: a->b = %d, want 3", w)
+	}
+	if w, _ := out.Weight("b", "a"); w != 5 {
+		t.Errorf("the other existing direction was re-weighted: b->a = %d, want 5", w)
+	}
+	if w, ok := out.Weight("c", "b"); !ok || w != 7 {
+		t.Errorf("the missing reverse was not added at its arc's weight: %d %v", w, ok)
+	}
+	if out.EdgeCount() != 4 {
+		t.Errorf("EdgeCount = %d, want 4 — one reverse added, two already there", out.EdgeCount())
+	}
+	if gv.EdgeCount() != 3 {
+		t.Error("Undirected mutated its receiver")
+	}
+	// Every arc now has its reverse, which is the property the name promises.
+	for _, e := range out.Edges() {
+		p := e.([]Value)
+		if !out.HasEdge(p[1], p[0]) {
+			t.Errorf("arc %v -> %v has no reverse", p[0], p[1])
+		}
+	}
+}
+
+// MergeGraphs is a union, with the second graph's weight winning a repeat —
+// AddEdge's rule, since that is what writing b's arcs into a does.
+func TestGraphMerge(t *testing.T) {
+	a := g([3]any{"a", "b", int64(1)}, [3]any{"b", "c", int64(2)})
+	b := g([3]any{"b", "c", int64(9)}, [3]any{"c", "d", int64(3)})
+	out := MergeGraphs(a, b)
+
+	if out.Len() != 4 {
+		t.Errorf("%d nodes, want 4", out.Len())
+	}
+	if ns := out.Nodes(); ns[0] != "a" || ns[3] != "d" {
+		t.Errorf("node order = %v, want a's order then b's new ones", ns)
+	}
+	if w, _ := out.Weight("b", "c"); w != 9 {
+		t.Errorf("the shared arc = %d, want 9 — the second graph writes last", w)
+	}
+	if out.EdgeCount() != 3 {
+		t.Errorf("EdgeCount = %d, want 3 — the shared arc is one arc", out.EdgeCount())
+	}
+	if a.EdgeCount() != 2 || b.EdgeCount() != 2 {
+		t.Error("MergeGraphs mutated one of its arguments")
+	}
+	// An isolated node in either graph survives the merge.
+	lone := NewGraphValue()
+	lone.AddNode("q")
+	if !MergeGraphs(a, lone).Has("q") {
+		t.Error("an isolated node was lost in the merge")
+	}
+}
+
+func TestGraphWeightSum(t *testing.T) {
+	gv := g([3]any{"a", "b", int64(3)}, [3]any{"a", "c", int64(4)}, [3]any{"b", "c", int64(5)})
+	if got := gv.WeightSum(); got != 12 {
+		t.Errorf("WeightSum = %d, want 12", got)
+	}
+	// A re-weighted arc counts once, at its later weight.
+	gv.AddEdge("a", "b", 10)
+	if got := gv.WeightSum(); got != 19 {
+		t.Errorf("WeightSum after re-weighting = %d, want 19", got)
+	}
+	if got := NewGraphValue().WeightSum(); got != 0 {
+		t.Errorf("WeightSum of an empty graph = %d, want 0", got)
+	}
+}

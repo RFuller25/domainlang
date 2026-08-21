@@ -138,6 +138,38 @@ it is total for the same reason `degree` is. Both read *out*-arcs, like every
 other reader here; `flipedges` is how each asks the other direction, as the
 third answer above does.
 
+`roots` is the total twin `root` is partial against — the same question,
+answered with however many there are — and the rest of the group asks the
+whole graph about itself rather than one arc at a time:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Channeled Energy: Convert To Graph
+Cursed Technique: Apply
+    Using: (g) -> textjoin(list(
+        textjoin(roots(g), "/"),
+        textjoin(leaves(g), "/"),
+        totext(indegree(g, "d")),
+        textjoin(reachable(g, "b"), "/"),
+        if hascycle(g) then "cycle" else "no cycle",
+        textjoin(nodes(delnode(g, "b")), "/")
+    ), " ")
+Reveal: stdout
+```
+```input
+a -> b
+a -> c
+b -> d
+c -> d
+```
+```output
+a d 2 b/d no cycle a/c/d
+```
+
 
 A `Graph<K>` is a **directed**, `Int`-weighted adjacency over keyable nodes.
 See [data-model.md](data-model.md) for the full contract; the short version is
@@ -177,8 +209,17 @@ be a `Map` key, a `Set` element, or sorted.
 | `root(g)` | `Graph<K> -> K` | The one node with no incoming arc. **Error** when there is none (a cycle reaches everything) or several (a forest) — a self-loop counts as an arc in. The total question is `Keep If (n) -> degree(flipedges(g), n) = 0` over `nodes(g)`. |
 | `flipedges(g)` | `Graph<K> -> Graph<K>` | Every arc reversed, node order kept. (`reverse` and `transpose` are taken.) |
 | `subgraph(g, ks)` | `Graph<K> × List<K> -> Graph<K>` | Restricted to `ks`, keeping only arcs with both endpoints in it. A name not in `g` is skipped, not invented. |
+| `roots(g)` | `Graph<K> -> List<K>` | Every node with no arc coming in, in insertion order — `root`'s total twin. Empty for a graph whose cycle reaches everything. |
+| `leaves(g)` | `Graph<K> -> List<K>` | Every node with no arc going out. An isolated node is both a root and a leaf. |
+| `indegree(g, k)` | `Graph<K> × K -> Int` | Arcs coming *in*; 0 for a node not in the graph. `degree`'s mirror, without building `flipedges(g)` to count them. |
+| `reachable(g, k)` | `Graph<K> × K -> List<K>` | Every node reachable from `k` by following arcs, breadth-first. Includes `k`; empty for a node not in the graph. |
+| `hascycle(g)` | `Graph<K> -> Bool` | Whether a directed cycle exists — what `Topological Sort` refuses, asked without the refusal. A self-loop counts. |
+| `weightsum(g)` | `Graph<K> -> Int` | Every arc's weight, added up. |
+| `delnode(g, k)` | `Graph<K> × K -> Graph<K>` | A copy without `k` and without every arc that touched it, either way round. `deledge`'s node-level counterpart. |
+| `undirected(g)` | `Graph<K> -> Graph<K>` | A copy with each arc's reverse present, at that arc's weight. An arc already there in both directions keeps both weights. |
+| `mergegraphs(a, b)` | `Graph<K> × Graph<K> -> Graph<K>` | The union of two graphs: `a`'s nodes in order then `b`'s new ones, every arc of both. A shared arc takes `b`'s weight. |
 | `size(g)` | `Graph<K> -> Int` | Node count. The arc count is `length(edges(g))` — a different question. |
-| `contains(g, k)` | `Graph<K> × K -> Bool` | Node membership. |
+| `contains(g, k)` | `Graph<K> × K -> Bool` | Node membership — the `hasnode` a reader might look for, spelled the way `Set` and `Map` already spell it. |
 
 Every update is **functional**, like `insert`/`put`/`setat`: it returns a new
 graph and leaves its receiver untouched. The dead-receiver rewrite below

@@ -153,6 +153,56 @@ Reveal: stdout
 			input: "ignored",
 		},
 		{
+			// The node-level and whole-graph vocabulary, in one program: every
+			// reader that walks the adjacency, and the three updates that
+			// rebuild it. Each is a second handwritten implementation of one
+			// specification, which is where a divergence would appear.
+			name: "node-level and whole-graph readers",
+			src: `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) ->
+        consider g as graph(list(tuple("a", "b", 3), tuple("a", "c", 4), tuple("b", "d", 5)))
+        in consider cyc as graph(list(tuple("x", "y"), tuple("y", "x")))
+        in textjoin(list(
+            textjoin(roots(g), "/"),
+            textjoin(leaves(g), "/"),
+            textjoin(roots(cyc), "/"),
+            totext(indegree(g, "d")),
+            totext(indegree(g, "a")),
+            totext(indegree(g, "zzz")),
+            totext(weightsum(g)),
+            if hascycle(g) then "Y" else "N",
+            if hascycle(cyc) then "Y" else "N",
+            textjoin(reachable(g, "a"), "/"),
+            textjoin(reachable(g, "b"), "/"),
+            totext(length(reachable(g, "zzz"))),
+            textjoin(nodes(delnode(g, "b")), "/"),
+            totext(length(edges(delnode(g, "b")))),
+            totext(size(delnode(g, "zzz"))),
+            totext(length(edges(undirected(g)))),
+            totext(weightor(undirected(g), "b", "a", 0 - 1)),
+            textjoin(nodes(mergegraphs(g, cyc)), "/"),
+            totext(length(edges(mergegraphs(g, cyc)))),
+            totext(weightor(mergegraphs(g, graph(list(tuple("a", "b", 99)))), "a", "b", 0 - 1))
+        ), "|")
+Reveal: stdout
+`,
+			input: "ignored",
+		},
+		{
+			// The whole-graph updates at a Reveal: the rendering is where an
+			// order divergence between the two backends would show.
+			name: "undirected and merged graphs render alike",
+			src: `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) ->
+        consider g as graph(list(tuple("a", "b", 3), tuple("b", "a", 5), tuple("b", "c", 7)))
+        in mergegraphs(undirected(g), addnode(emptygraph(""), "q"))
+Reveal: stdout
+`,
+			input: "ignored",
+		},
+		{
 			// Tuple nodes: a coordinate graph, which goes through the interned
 			// tuple struct rather than a scalar key.
 			name: "graph over tuple nodes",
@@ -167,7 +217,10 @@ Cursed Technique: Apply
             totext(weight(g, point(0, 0), point(1, 1))),
             totext(item(first(edgesof(g, point(0, 0))), 1)),
             totext(prow(root(g))),
-            totext(weightof(g, point(0, 0)))
+            totext(weightof(g, point(0, 0))),
+            totext(length(reachable(g, point(0, 0)))),
+            totext(indegree(g, point(1, 1))),
+            totext(size(delnode(g, point(1, 1))))
         ), "|")
 Reveal: stdout
 `,
@@ -386,6 +439,95 @@ Reveal: stdout
 				got := buildAndRun(t, pipe, []byte(p.input), codegen.Options{})
 				if got != want {
 					t.Errorf("stdout mismatch\ninterpreter: %q\nbinary:      %q", want, got)
+				}
+			})
+		}
+	}
+}
+
+// The pipeline-level graph vocabulary, on the same terms: the interpreter and
+// the binary have to print the same bytes. Three of these are handwritten
+// twice — Kruskal's tie-breaking, Kosaraju's two walks, and the adjacency
+// map's key order — which is exactly where an order divergence would hide.
+func TestCompiledGraphPrimitivesMatchInterpreter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles binaries; skipped in -short mode")
+	}
+	requireGo(t)
+	const head = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+`
+	const weighted = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} {word} {int}"
+Channeled Energy: Convert To Graph
+    Mode: Undirected
+`
+	const reveal = "Reveal: stdout\n"
+	progs := []struct {
+		name  string
+		src   string
+		input string
+	}{
+		{
+			name:  "root over a parsed listing",
+			src:   head + "Domain Expansion: Root\n" + reveal,
+			input: "b c\na b\na d",
+		},
+		{
+			name: "minimum spanning tree",
+			src: weighted + "Domain Expansion: Minimum Spanning Tree\n" +
+				"Channeled Energy: Convert To Edges\n" + reveal,
+			input: "a b 1\nb c 5\na c 3\nc d 2",
+		},
+		{
+			// Equal weights are where the tie-breaking shows: two arcs at the
+			// same cost have to be taken in the same order by both backends.
+			name:  "minimum spanning forest with ties",
+			src:   weighted + "Domain Expansion: Minimum Spanning Tree\n" + reveal,
+			input: "a b 2\na c 2\nb c 2\nx y 2\nx z 9",
+		},
+		{
+			name:  "strongly connected components",
+			src:   head + "Domain Expansion: Strongly Connected Components\n" + reveal,
+			input: "a b\nb c\nc a\nb d\nd e\ne d\nf f",
+		},
+		{
+			name:  "strongly connected components over a dag",
+			src:   head + "Domain Expansion: Strongly Connected Components\n" + reveal,
+			input: "a b\nb c\na c",
+		},
+		{
+			name:  "convert to adjacency",
+			src:   head + "Channeled Energy: Convert To Adjacency\n" + reveal,
+			input: "a b\nb c\na c",
+		},
+		{
+			// The round trip back into a Graph, which is what the adjacency
+			// shape is for.
+			name: "adjacency round trip into a topological order",
+			src: head + "Channeled Energy: Convert To Adjacency\n" +
+				"Channeled Energy: Convert To Graph\nDomain Expansion: Topological Sort\n" + reveal,
+			input: "a b\nb c\na c\nd a",
+		},
+	}
+	for _, p := range progs {
+		for _, optimize := range []bool{true, false} {
+			mode := "naive"
+			if optimize {
+				mode = "optimized"
+			}
+			t.Run(p.name+"/"+mode, func(t *testing.T) {
+				t.Parallel()
+				pipe := compilePipeline(t, p.src, optimize)
+				want := runInterpreter(t, pipe, []byte(p.input))
+				got := buildAndRun(t, pipe, []byte(p.input), codegen.Options{})
+				if got != want {
+					t.Errorf("interpreter and binary disagree:\n  interpreter: %q\n  binary:      %q", want, got)
 				}
 			})
 		}

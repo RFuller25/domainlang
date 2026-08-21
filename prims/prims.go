@@ -343,6 +343,7 @@ var Registry = []*Primitive{
 	// ordering is not load-bearing here, but the coercions stay together.
 	convertToGraph,
 	convertToEdges,
+	convertToAdjacency,
 	convertToMap,
 	// Maximum Technique (reductions) — By-variants before their bare forms.
 	sumBy, // before Sum Each Group / Sum
@@ -376,6 +377,8 @@ var Registry = []*Primitive{
 	// before Sort, whose matcher accepts any phrase containing "Sort".
 	topologicalSort,
 	shortestPath,
+	minimumSpanningTree,
+	graphRoot,
 	sortBy,
 	sortPrim,
 	slidingReduce,
@@ -391,6 +394,9 @@ var Registry = []*Primitive{
 	bfs,
 	dijkstra,
 	floodFill,
+	// Before Connected Components, whose matcher takes any phrase carrying
+	// both of its words — "Strongly Connected Components" is one of them.
+	stronglyConnectedComponents,
 	connectedComponents,
 	// Reverse Cursed Technique (inversions).
 	reverse,

@@ -914,6 +914,181 @@ e f
 2
 ```
 
+### Root — `Graph<K> -> K`
+
+```domain
+Domain Expansion: Root
+```
+
+The one node with no incoming arc — the top of a `parent -> child` listing,
+without a lambda to ask for it. The stage form of the `root` builtin, and it
+says the same things.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word}"
+Channeled Energy: Convert To Graph
+Domain Expansion: Root
+Reveal: stdout
+```
+```input
+a -> b
+a -> c
+b -> d
+```
+```output
+a
+```
+
+The order the arcs were read in does not matter — the root is the node nothing
+points at, wherever it turns up in the input:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word}){word}"
+Channeled Energy: Convert To Graph
+Domain Expansion: Root
+Reveal: stdout
+```
+```input
+B)C
+COM)B
+C)D
+```
+```output
+COM
+```
+
+**Error** unless there is exactly one: a forest has several and a graph whose
+cycle reaches every node has none, and each failure says which it is. A
+self-loop counts as an arc in. Where "not exactly one" is the expected answer
+rather than a fault, `roots(g)` in a lambda hands back however many there are.
+
+### Minimum Spanning Tree — `Graph<K> -> Graph<K>`
+
+```domain
+Domain Expansion: Minimum Spanning Tree
+```
+
+The cheapest set of arcs that keeps everything connected — Kruskal under the
+hood, over the arcs read as **undirected**, since a spanning tree is a question
+about connection rather than direction.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} {word} {int}"
+Channeled Energy: Convert To Graph
+    Mode: Undirected
+Domain Expansion: Minimum Spanning Tree
+Cursed Technique: Apply
+    Using: (g) -> weightsum(g)
+Reveal: stdout
+```
+```input
+a b 1
+b c 5
+a c 3
+c d 2
+```
+```output
+6
+```
+
+Arcs are taken cheapest first, ties broken by the order they were read, so the
+tree is the same one on every run and in both backends. The chosen arcs keep
+the direction they had; `undirected(g)` in a lambda is there for a caller who
+wants both ways.
+
+A graph in several pieces gives a spanning **forest** rather than an error —
+one tree per piece, which is the same answer to the same question:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} {word} {int}"
+Channeled Energy: Convert To Graph
+    Mode: Undirected
+Domain Expansion: Minimum Spanning Tree
+Channeled Energy: Convert To Edges
+Reveal: stdout
+```
+```input
+a b 4
+a c 1
+x y 7
+```
+```output
+[[a, c, 1], [a, b, 4], [x, y, 7]]
+```
+
+### Strongly Connected Components — `Graph<K> -> List<List<K>>`
+
+```domain
+Domain Expansion: Strongly Connected Components
+```
+
+The groups of nodes that can all reach each other, following the arcs the way
+they point. This is the question `Connected Components` does *not* ask: that
+one reads the arcs as undirected and answers how many pieces there are.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Domain Expansion: Strongly Connected Components
+Reveal: stdout
+```
+```input
+a b
+b c
+c a
+b d
+d e
+e d
+```
+```output
+[[a, b, c], [d, e]]
+```
+
+A node in no cycle is a component of one, so every node appears exactly once
+and an acyclic graph has as many components as it has nodes:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Domain Expansion: Strongly Connected Components
+Maximum Technique: Count
+Reveal: stdout
+```
+```input
+a b
+b c
+a c
+```
+```output
+3
+```
+
+It answers the components rather than a count, unlike `Connected Components`:
+`Count` is one stage away from a list, as above, and the members are not
+recoverable from a number. The components come out in a topological order of
+the groups — one that can reach another comes first — and each component's
+nodes in the graph's insertion order.
+
 ### Foreign Block — `T -> Text`, or a declared `In -> Out`
 
 ```domain
