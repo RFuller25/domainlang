@@ -820,7 +820,7 @@ domain expansion: coverage examples/ --min 40   # a CI gate
 examples/ — 22 program(s)
 
   primitives   35 /  88  (40%)
-  builtins     15 / 176  (9%)
+  builtins     15 / 178  (8%)
   keywords      7 /   8  (88%)
 
   Channeled Energy — 7 not exercised
@@ -880,7 +880,7 @@ challenges/ — 13 program(s), compile / optimized, best of 3
   slowest         05_window_max (3.06ms) · 04_collatz (3.02ms)
   most rewritten  02_two_sum (1) · 05_window_max (1)
 
-  vocabulary      23 / 88 primitives · 18 / 176 builtins
+  vocabulary      23 / 88 primitives · 18 / 178 builtins
 ```
 
 `bench` is for one program studied properly; `stats` runs one configuration

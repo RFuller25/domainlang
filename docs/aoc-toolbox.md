@@ -156,6 +156,8 @@ optimizer is allowed to substitute.
 | shortest distances to every state | `Domain Expansion: Explore` `Mode: Distances` → `Map<S, Int>` |
 | `TopoSort(deps)` | `Domain Expansion: Topological Sort` — takes a `Graph<K>`, an adjacency Map, or an edge list |
 | an adjacency list you keep and re-query | `Graph<K>` — built once with `Convert To Graph`, then `neighbors`/`weight`/`degree` in any lambda |
+| the root of a parsed `parent -> child` listing | expr `root(g)` — the one node with no arc in; an error when a forest or a cycle means there is not exactly one |
+| how much a node's arcs weigh in total | expr `weightof(g, k)` — `degree` with the weights counted; `weightof(flipedges(g), k)` asks it of the arcs coming in |
 
 ## Memoization
 

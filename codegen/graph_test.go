@@ -130,6 +130,29 @@ Reveal: stdout
 			input: "a -> b\nb -> c\na -> c",
 		},
 		{
+			// root and weightof: the two readers that ask about a node rather
+			// than an arc. The graph is the parent -> child listing they are
+			// for, weighted so weightof is not just degree in disguise.
+			name: "root and node weight",
+			src: `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) ->
+        consider g as graph(list(tuple("a", "b", 3), tuple("a", "c", 4), tuple("b", "d", 5)))
+        in textjoin(list(
+            root(g),
+            totext(weightof(g, "a")),
+            totext(weightof(g, "b")),
+            totext(weightof(g, "d")),
+            totext(weightof(g, "zzz")),
+            totext(weightof(flipedges(g), "d")),
+            root(addnode(emptygraph(""), "q")),
+            totext(degree(g, "a"))
+        ), "|")
+Reveal: stdout
+`,
+			input: "ignored",
+		},
+		{
 			// Tuple nodes: a coordinate graph, which goes through the interned
 			// tuple struct rather than a scalar key.
 			name: "graph over tuple nodes",
@@ -142,7 +165,9 @@ Cursed Technique: Apply
             totext(length(edges(g))),
             totext(prow(first(neighbors(g, point(0, 0))))),
             totext(weight(g, point(0, 0), point(1, 1))),
-            totext(item(first(edgesof(g, point(0, 0))), 1))
+            totext(item(first(edgesof(g, point(0, 0))), 1)),
+            totext(prow(root(g))),
+            totext(weightof(g, point(0, 0)))
         ), "|")
 Reveal: stdout
 `,

@@ -289,3 +289,96 @@ func TestGraphIsNeitherKeyableNorOrdered(t *testing.T) {
 		t.Error("a tuple holding a Graph is ordered")
 	}
 }
+
+// Roots is the "who is the top of this" question, and it is asked of an edge
+// list parsed out of text: a tree has one root, a forest several, a graph whose
+// cycle swallows every node none at all.
+func TestGraphRoots(t *testing.T) {
+	names := func(vs []Value) []string {
+		out := make([]string, len(vs))
+		for i, v := range vs {
+			out[i] = v.(string)
+		}
+		return out
+	}
+	equal := func(got []string, want ...string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	tree := g([3]any{"a", "b", int64(1)}, [3]any{"a", "c", int64(1)}, [3]any{"b", "d", int64(1)})
+	if got := names(tree.Roots()); !equal(got, "a") {
+		t.Errorf("tree roots = %v, want [a]", got)
+	}
+
+	// A forest keeps both roots, in insertion order.
+	forest := g([3]any{"a", "b", int64(1)}, [3]any{"c", "d", int64(1)})
+	if got := names(forest.Roots()); !equal(got, "a", "c") {
+		t.Errorf("forest roots = %v, want [a c]", got)
+	}
+
+	// A cycle through every node leaves none.
+	cycle := g([3]any{"a", "b", int64(1)}, [3]any{"b", "a", int64(1)})
+	if got := cycle.Roots(); len(got) != 0 {
+		t.Errorf("cycle roots = %v, want none", names(got))
+	}
+
+	// An isolated node is a root: nothing points at it.
+	lone := NewGraphValue()
+	lone.AddNode("q")
+	if got := names(lone.Roots()); !equal(got, "q") {
+		t.Errorf("isolated node roots = %v, want [q]", got)
+	}
+
+	// A self-loop is an incoming arc, so a node that only points at itself is
+	// not a root — nothing else can reach it either.
+	self := g([3]any{"a", "a", int64(1)})
+	if got := self.Roots(); len(got) != 0 {
+		t.Errorf("self-loop roots = %v, want none", names(got))
+	}
+
+	if got := NewGraphValue().Roots(); len(got) != 0 {
+		t.Errorf("empty graph roots = %v, want none", names(got))
+	}
+}
+
+// WeightOf is Degree with the weights counted: out-arcs only, and 0 for a node
+// the graph does not have, because the readers are total.
+func TestGraphWeightOf(t *testing.T) {
+	gv := g([3]any{"a", "b", int64(3)}, [3]any{"a", "c", int64(4)}, [3]any{"b", "c", int64(5)})
+	gv.AddNode("q")
+
+	for _, c := range []struct {
+		node string
+		want int64
+	}{
+		{"a", 7},
+		{"b", 5},
+		{"c", 0}, // arcs come in, none go out
+		{"q", 0}, // isolated
+		{"zzz", 0},
+	} {
+		if got := gv.WeightOf(c.node); got != c.want {
+			t.Errorf("WeightOf(%q) = %d, want %d", c.node, got, c.want)
+		}
+	}
+
+	// The in-weight is the out-weight of the flipped graph, which is how the
+	// rest of the vocabulary asks a question of the other direction.
+	if got := gv.Flipped().WeightOf("c"); got != 9 {
+		t.Errorf("in-weight of c = %d, want 9", got)
+	}
+
+	// A re-weighted arc is counted once, at its later weight.
+	gv.AddEdge("a", "b", 10)
+	if got := gv.WeightOf("a"); got != 14 {
+		t.Errorf("WeightOf(a) after re-weighting = %d, want 14", got)
+	}
+}

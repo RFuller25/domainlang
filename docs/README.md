@@ -44,7 +44,7 @@ the buttons.
 | [walkthroughs.md](walkthroughs.md) | Whole programs, start to finish: bindings, all four loops, Channels, Parts, pipeline bodies, Shikigami, the optimizer |
 | [language.md](language.md) | Source structure: the two layers, keywords, statements, arguments, Channels, Shikigami, loops, vows |
 | [primitives.md](primitives.md) | Every pipeline primitive: signature, arguments, errors, two runnable examples each — an index over seven pages, one per keyword class |
-| [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, `consider`, `:=`, stage bindings. The 176 builtin functions are on six pages linked from it |
+| [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, `consider`, `:=`, stage bindings. The 178 builtin functions are on six pages linked from it |
 | [aoc-toolbox.md](aoc-toolbox.md) | The classic AoC helper library (parsing, grids, searches, math, ranges, combinatorics) mapped onto Domain, item by item |
 | [data-model.md](data-model.md) | The value and type model (Int, Float, Text, Bool, List, Tuple, Record, Map, Set, Grid, Sparse): representation, construction, equality, rendering |
 | [match-pattern.md](match-pattern.md) | The `Match Pattern` typed-hole template language: syntax, output shapes, lowering, and failure modes |
@@ -59,7 +59,7 @@ the buttons.
 **Every example in the reference runs.** A block marked ```domain run carries
 the input it is given and the output it must print; both backends execute it
 in both optimizer modes and the printed answer is diffed, so nothing on these
-pages can drift from what the language does. 252 runnable examples at present,
+pages can drift from what the language does. 253 runnable examples at present,
 at least two for every primitive, language construct and builtin group.
 
 ## Quick orientation

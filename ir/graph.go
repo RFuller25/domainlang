@@ -309,3 +309,50 @@ func GraphEqual(a, b *GraphValue) bool {
 	}
 	return true
 }
+
+// Roots returns the nodes with no incoming arc, in insertion order.
+//
+// This is the "who is the top of this" question an edge list parsed out of
+// text asks — a `Convert To Graph`ed `parent -> child` listing has exactly one
+// root when it is a tree, none when a cycle swallows every node, and several
+// when it is a forest. Answering with the whole list rather than a single node
+// keeps the method total; the `root` builtin is what turns "not exactly one"
+// into an error a reader can act on.
+//
+// A self-loop counts as an incoming arc, so a node that only points at itself
+// is not a root: it is unreachable from anywhere else, which is the property a
+// root is being asked about.
+func (g *GraphValue) Roots() []Value {
+	incoming := make([]bool, len(g.nodes))
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			incoming[e.To] = true
+		}
+	}
+	out := make([]Value, 0, 1)
+	for i, n := range g.nodes {
+		if !incoming[i] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// WeightOf is the total weight of a node's out-arcs — Degree with the weights
+// counted rather than the arcs. An absent node weighs 0, for the reason it has
+// degree 0: the readers are total.
+//
+// Out-arcs, like Degree, Neighbors and EdgesOf. The in-weight is
+// g.Flipped().WeightOf(n), which is the same trick the rest of the vocabulary
+// uses to ask a question of the other direction.
+func (g *GraphValue) WeightOf(n Value) int64 {
+	i, ok := g.IndexOf(n)
+	if !ok {
+		return 0
+	}
+	var total int64
+	for _, e := range g.adj[i] {
+		total += e.W
+	}
+	return total
+}

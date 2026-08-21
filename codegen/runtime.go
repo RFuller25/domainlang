@@ -1314,6 +1314,65 @@ const declGraphDegree = `func dmGraphDegree[K comparable](g dmGraph[K], n K) int
 	return int64(len(g.adj[i]))
 }`
 
+// dmGraphWeightOf mirrors ir.GraphValue.WeightOf: the total weight of a node's
+// out-arcs, 0 for a node the graph does not have.
+const declGraphWeightOf = `func dmGraphWeightOf[K comparable](g dmGraph[K], n K) int64 {
+	i, ok := g.index[n]
+	if !ok {
+		return 0
+	}
+	var total int64
+	for _, e := range g.adj[i] {
+		total += e.w
+	}
+	return total
+}`
+
+// dmGraphRoot mirrors the interpreter's `root`: the one node with no incoming
+// arc, and an error naming what it found instead when there is not exactly
+// one. The node names are rendered with %v, the same latitude dmGraphWeight
+// takes — the wording of a failure is not part of the byte parity the two
+// backends keep, the answers are.
+const declGraphRoot = `func dmGraphRoot[K comparable](g dmGraph[K]) K {
+	var zero K
+	incoming := make([]bool, len(g.nodes))
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			incoming[e.to] = true
+		}
+	}
+	var roots []K
+	for i, n := range g.nodes {
+		if !incoming[i] {
+			roots = append(roots, n)
+		}
+	}
+	if len(roots) == 1 {
+		return roots[0]
+	}
+	if len(g.nodes) == 0 {
+		dmFail("root: the graph is empty")
+		return zero
+	}
+	if len(roots) == 0 {
+		dmFail("root: every node has an incoming arc, so the graph has no root")
+		return zero
+	}
+	names := ""
+	for i, n := range roots {
+		if i == 3 {
+			names += ", ..."
+			break
+		}
+		if i > 0 {
+			names += ", "
+		}
+		names += fmt.Sprintf("%v", n)
+	}
+	dmFail("root: %d nodes have no incoming arc (%s); a rooted graph has exactly one", len(roots), names)
+	return zero
+}`
+
 const declGraphWeightAt = `func dmGraphWeight[K comparable](g dmGraph[K], a, b K) int64 {
 	w, ok := g.weight(a, b)
 	if !ok {

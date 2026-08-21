@@ -231,6 +231,10 @@ var Builtins = []string{
 	"graph", "emptygraph", "addnode", "addedge", "deledge",
 	"nodes", "edges", "neighbors", "edgesof", "hasedge",
 	"weight", "weightor", "degree", "flipedges", "subgraph",
+	// The two questions an edge list parsed out of text asks that the readers
+	// above could not: which node is the top of it, and what a node's arcs
+	// weigh in total.
+	"root", "weightof",
 }
 
 // PointType is the expression-layer representation of a 2D point: an
@@ -282,6 +286,7 @@ var builtinArity = map[string]int{
 	"graph": 1, "emptygraph": 1, "addnode": 2, "addedge": -1, "deledge": 3,
 	"nodes": 1, "edges": 1, "neighbors": 2, "edgesof": 2, "hasedge": 3,
 	"weight": 3, "weightor": 4, "degree": 2, "flipedges": 1, "subgraph": 2,
+	"root": 1, "weightof": 2,
 	"insert": -1, // 2 over a Set, 3 over a Map
 	"del":    2,  // Set × elem, or Map × key
 	"union":  2, "intersect": 2, "difference": 2,
@@ -1227,6 +1232,27 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, fmt.Errorf("%s: degree node must be %s, got %s", x.Pos, g.Elem, args[1])
 		}
 		return ir.Int(), nil
+	case "weightof":
+		// degree with the weights counted rather than the arcs, and total for
+		// the same reason: a node that is not in the graph weighs 0.
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: weightof node must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return ir.Int(), nil
+	case "root":
+		// The one node with no incoming arc. Partial, like weight: "not
+		// exactly one root" is a fact about the data that a caller has to
+		// hear about, and a total twin would have to invent a node to answer
+		// with. Filtering nodes(g) is the way to ask the total question.
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		return g.Elem, nil
 	case "flipedges":
 		g, err := needGraph(x, name, args, 0)
 		if err != nil {

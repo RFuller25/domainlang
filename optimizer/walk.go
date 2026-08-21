@@ -236,10 +236,11 @@ func isTotal(e ast.Expr) bool {
 			// in the graph rather than failing, and every update is a functional
 			// copy that cannot reject its input. `weight` is deliberately absent
 			// — it errors on a missing arc, which is what `weightor` is for, the
-			// same split as get/getor.
+			// same split as get/getor, and so is `root`, which errors unless
+			// exactly one node has no incoming arc.
 			"graph", "emptygraph", "addnode", "addedge", "deledge",
 			"nodes", "edges", "neighbors", "edgesof", "hasedge",
-			"weightor", "degree", "flipedges", "subgraph":
+			"weightor", "degree", "weightof", "flipedges", "subgraph":
 			// total builtins (take/drop/slice clamp)
 		default:
 			return false // item, first, last, min, max, get, at are partial

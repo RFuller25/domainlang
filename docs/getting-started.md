@@ -230,7 +230,7 @@ Four things worth noticing:
 - `if … then … else …` is an expression with lazy arms, so
   `if length(xs) = 0 then -1 else first(xs)` is safe. `and` and `or`
   short-circuit.
-- There are 176 builtins available inside lambdas — lists, math, text, bits,
+- There are 178 builtins available inside lambdas — lists, math, text, bits,
   points, grids, sparse planes. The full table is in
   [expressions.md](expressions.md).
 
