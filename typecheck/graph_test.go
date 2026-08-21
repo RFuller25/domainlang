@@ -43,6 +43,11 @@ func TestGraphBuiltinTypes(t *testing.T) {
 	wantType(t, `(g) -> weight(g, "a", "b")`, ir.Int(), gt)
 	wantType(t, `(g) -> weightor(g, "a", "b", 0)`, ir.Int(), gt)
 	wantType(t, `(g) -> degree(g, "a")`, ir.Int(), gt)
+	wantType(t, `(g) -> weightof(g, "a")`, ir.Int(), gt)
+	// root answers a node, so its type is the graph's node type — the one
+	// reader whose result is not a list, a count or a Bool.
+	wantType(t, "(g) -> root(g)", ir.Text(), gt)
+	wantType(t, "(g) -> root(g)", ir.Int(), gi)
 
 	// size and contains are extended rather than duplicated under new names.
 	wantType(t, "(g) -> size(g)", ir.Int(), gt)
@@ -52,6 +57,7 @@ func TestGraphBuiltinTypes(t *testing.T) {
 	pt := ir.Tuple(ir.Int(), ir.Int())
 	gp := graphT(pt)
 	wantType(t, "(g) -> nodes(g)", ir.List(pt), gp)
+	wantType(t, "(g) -> root(g)", pt, gp)
 	wantType(t, "(g) -> addedge(g, point(0, 0), point(1, 1))", gp, gp)
 }
 
@@ -72,6 +78,8 @@ func TestGraphBuiltinTypeErrors(t *testing.T) {
 		{"subgraph wants a list", `(g) -> subgraph(g, "a")`, []*ir.Type{gt}, "subgraph needs List<Text>"},
 		{"subgraph element type", "(g) -> subgraph(g, list(1))", []*ir.Type{gt}, "subgraph needs List<Text>"},
 		{"neighbors node type", "(g) -> neighbors(g, 1)", []*ir.Type{gt}, "neighbors node must be Text"},
+		{"weightof node type", "(g) -> weightof(g, 1)", []*ir.Type{gt}, "weightof node must be Text"},
+		{"root of a list", "(xs) -> root(xs)", []*ir.Type{ir.List(ir.Int())}, "root needs a Graph argument"},
 		// Construction shapes.
 		{"graph of scalars", "(xs) -> graph(xs)", []*ir.Type{ir.List(ir.Int())}, "graph needs an edge list"},
 		{"graph of 1-tuples", "(xs) -> graph(xs)",

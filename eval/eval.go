@@ -1591,6 +1591,29 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("%v", err)
 		}
 		return int64(g.Degree(args[1])), nil
+	case "weightof":
+		g, err := asGraph(args[0], "weightof")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.WeightOf(args[1]), nil
+	case "root":
+		g, err := asGraph(args[0], "root")
+		if err != nil {
+			return fail("%v", err)
+		}
+		roots := g.Roots()
+		switch {
+		case len(roots) == 1:
+			return roots[0], nil
+		case g.Len() == 0:
+			return fail("root: the graph is empty")
+		case len(roots) == 0:
+			return fail("root: every node has an incoming arc, so the graph has no root")
+		default:
+			return fail("root: %d nodes have no incoming arc (%s); a rooted graph has exactly one",
+				len(roots), namesOf(roots))
+		}
 	case "flipedges":
 		g, err := asGraph(args[0], "flipedges")
 		if err != nil {
@@ -2455,6 +2478,24 @@ func asGraph(v ir.Value, name string) (*ir.GraphValue, error) {
 		return nil, fmt.Errorf("%s: expected a Graph, got %s", name, ir.DescribeValue(v))
 	}
 	return g, nil
+}
+
+// namesOf renders a handful of values for an error message, capped so a graph
+// with two hundred roots reports the first few rather than all of them.
+func namesOf(vs []ir.Value) string {
+	const show = 3
+	var sb strings.Builder
+	for i, v := range vs {
+		if i == show {
+			sb.WriteString(", ...")
+			break
+		}
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(ir.FormatValue(v))
+	}
+	return sb.String()
 }
 
 // isFloatOperand reports whether a runtime value routes arithmetic through

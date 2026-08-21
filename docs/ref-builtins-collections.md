@@ -102,6 +102,42 @@ Reveal: stdout
 {a: [(b, 1), (c, 7)], b: [], c: [], q: []}
 ```
 
+A parsed `parent -> child` listing asks two questions that are about a *node*
+rather than an arc: which one is the top of it, and what its arcs weigh in
+total.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} -> {word} ({int})"
+Channeled Energy: Convert To Graph
+Cursed Technique: Apply
+    Using: (g) -> textjoin(list(
+        root(g),
+        totext(weightof(g, root(g))),
+        totext(weightof(flipedges(g), "d"))
+    ), " ")
+Reveal: stdout
+```
+```input
+a -> b (3)
+a -> c (4)
+b -> d (5)
+```
+```output
+a 7 5
+```
+
+`root` is the one graph reader that is **partial**: a forest has several roots
+and a graph whose cycle reaches every node has none, and both are facts about
+the data that a caller has to hear about rather than receive a made-up node
+for. `weightof` is `degree` with the weights counted rather than the arcs, and
+it is total for the same reason `degree` is. Both read *out*-arcs, like every
+other reader here; `flipedges` is how each asks the other direction, as the
+third answer above does.
+
 
 A `Graph<K>` is a **directed**, `Int`-weighted adjacency over keyable nodes.
 See [data-model.md](data-model.md) for the full contract; the short version is
@@ -137,6 +173,8 @@ be a `Map` key, a `Set` element, or sorted.
 | `weight(g, a, b)` | `Graph<K> × K × K -> Int` | The arc's weight. **Error** if there is no such arc. |
 | `weightor(g, a, b, d)` | `Graph<K> × K × K × Int -> Int` | `weight` with a default — the total twin, exactly as `getor` is to `get`. |
 | `degree(g, k)` | `Graph<K> × K -> Int` | Out-arc count; 0 for a node not in the graph. |
+| `weightof(g, k)` | `Graph<K> × K -> Int` | The total weight of `k`'s out-arcs — `degree` with the weights counted. 0 for a node not in the graph; the in-weight is `weightof(flipedges(g), k)`. |
+| `root(g)` | `Graph<K> -> K` | The one node with no incoming arc. **Error** when there is none (a cycle reaches everything) or several (a forest) — a self-loop counts as an arc in. The total question is `Keep If (n) -> degree(flipedges(g), n) = 0` over `nodes(g)`. |
 | `flipedges(g)` | `Graph<K> -> Graph<K>` | Every arc reversed, node order kept. (`reverse` and `transpose` are taken.) |
 | `subgraph(g, ks)` | `Graph<K> × List<K> -> Graph<K>` | Restricted to `ks`, keeping only arcs with both endpoints in it. A name not in `g` is skipped, not invented. |
 | `size(g)` | `Graph<K> -> Int` | Node count. The arc count is `length(edges(g))` — a different question. |

@@ -1506,6 +1506,21 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmGraph", declGraph)
 		g.helper("dmGraphDegree", declGraphDegree)
 		return "dmGraphDegree(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "weightof":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("weightof needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphWeightOf", declGraphWeightOf)
+		return "dmGraphWeightOf(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "root":
+		if types[0] == nil || types[0].Kind != ir.KGraph {
+			return "", nil, fmt.Errorf("root needs a Graph argument, got %s", types[0])
+		}
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmGraph", declGraph)
+		g.helper("dmGraphRoot", declGraphRoot, "fmt")
+		return "dmGraphRoot(" + args[0] + ")", types[0].Elem, nil
 	case "flipedges":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("flipedges needs a Graph argument, got %s", types[0])
