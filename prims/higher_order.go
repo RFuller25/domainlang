@@ -337,7 +337,11 @@ var maxPrim = reduceIntPrim("Max", func(op *ast.Operation) bool {
 }, func(acc, x int64) int64 { return max(acc, x) })
 
 var minPrim = reduceIntPrim("Min", func(op *ast.Operation) bool {
-	return hasWord(op, "Min") || hasWord(op, "Minimum")
+	// "Spanning" is what tells this apart from Domain Expansion: Minimum
+	// Spanning Tree, the way "Group" and "Each" tell Sum from Sum Each Group.
+	// Without it a prefix-free `Minimum Spanning Tree` names two primitives
+	// under two keywords, which is ambiguous rather than merely surprising.
+	return (hasWord(op, "Min") || hasWord(op, "Minimum")) && !hasWord(op, "Spanning")
 }, func(acc, x int64) int64 { return min(acc, x) })
 
 var product = reduceIntPrim("Product", func(op *ast.Operation) bool {

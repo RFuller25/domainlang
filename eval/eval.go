@@ -1614,6 +1614,64 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("root: %d nodes have no incoming arc (%s); a rooted graph has exactly one",
 				len(roots), namesOf(roots))
 		}
+	case "indegree":
+		g, err := asGraph(args[0], "indegree")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return int64(g.InDegree(args[1])), nil
+	case "roots":
+		g, err := asGraph(args[0], "roots")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.Roots(), nil
+	case "leaves":
+		g, err := asGraph(args[0], "leaves")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.Leaves(), nil
+	case "reachable":
+		g, err := asGraph(args[0], "reachable")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.Reachable(args[1]), nil
+	case "delnode":
+		g, err := asGraph(args[0], "delnode")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.DelNode(args[1]), nil
+	case "hascycle":
+		g, err := asGraph(args[0], "hascycle")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.HasCycle(), nil
+	case "weightsum":
+		g, err := asGraph(args[0], "weightsum")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.WeightSum(), nil
+	case "undirected":
+		g, err := asGraph(args[0], "undirected")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return g.Undirected(), nil
+	case "mergegraphs":
+		a, err := asGraph(args[0], "mergegraphs")
+		if err != nil {
+			return fail("%v", err)
+		}
+		b, err := asGraph(args[1], "mergegraphs")
+		if err != nil {
+			return fail("%v", err)
+		}
+		return ir.MergeGraphs(a, b), nil
 	case "flipedges":
 		g, err := asGraph(args[0], "flipedges")
 		if err != nil {

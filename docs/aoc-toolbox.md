@@ -158,6 +158,13 @@ optimizer is allowed to substitute.
 | an adjacency list you keep and re-query | `Graph<K>` — built once with `Convert To Graph`, then `neighbors`/`weight`/`degree` in any lambda |
 | the root of a parsed `parent -> child` listing | expr `root(g)` — the one node with no arc in; an error when a forest or a cycle means there is not exactly one |
 | how much a node's arcs weigh in total | expr `weightof(g, k)` — `degree` with the weights counted; `weightof(flipedges(g), k)` asks it of the arcs coming in |
+| in-degree, without reversing the graph to get it | expr `indegree(g, k)`; `roots(g)` / `leaves(g)` for the nodes with none either way |
+| `Reachable(from)` / a transitive closure | expr `reachable(g, k)` — breadth-first, including the start |
+| `HasCycle(g)` | expr `hascycle(g)` — what `Topological Sort` refuses, asked without the refusal |
+| removing a node and everything attached to it | expr `delnode(g, k)`; `mergegraphs(a, b)` and `undirected(g)` for the other whole-graph edits |
+| `Kruskal` / `Prim` (minimum spanning tree) | `Domain Expansion: Minimum Spanning Tree` over a `Graph<K>` — a forest when the graph is in pieces |
+| `Tarjan` / `Kosaraju` (strongly connected components) | `Domain Expansion: Strongly Connected Components` → `List<List<K>>`, in a topological order of the groups |
+| an adjacency map to hand to something else | `Channeled Energy: Convert To Adjacency` → `Map<K, List<K>>`; `Convert To Edges` when the weights matter |
 
 ## Memoization
 

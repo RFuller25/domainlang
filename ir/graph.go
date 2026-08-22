@@ -356,3 +356,179 @@ func (g *GraphValue) WeightOf(n Value) int64 {
 	}
 	return total
 }
+
+// Leaves returns the nodes with no outgoing arc, in insertion order — the
+// other end of the question Roots asks. A node with neither arc is both a root
+// and a leaf, which is the right answer for an isolated one.
+func (g *GraphValue) Leaves() []Value {
+	out := make([]Value, 0, 1)
+	for i, n := range g.nodes {
+		if len(g.adj[i]) == 0 {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// InDegree is a node's incoming-arc count, the mirror of Degree.
+//
+// It costs a walk of the whole adjacency, because arcs are stored only in the
+// direction they point. That is still cheaper than the g.Flipped().Degree(n)
+// it replaces, which builds an entire reversed graph to count one node's arcs.
+// An absent node has in-degree 0, like Degree.
+func (g *GraphValue) InDegree(n Value) int {
+	j, ok := g.IndexOf(n)
+	if !ok {
+		return 0
+	}
+	count := 0
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			if e.To == j {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// WeightSum is the total weight of every arc in the graph.
+func (g *GraphValue) WeightSum() int64 {
+	var total int64
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			total += e.W
+		}
+	}
+	return total
+}
+
+// DelNode returns a copy without the node and without every arc that touched
+// it, in either direction. The nodes that remain keep their order.
+//
+// DelEdge's counterpart: a node could be brought in by AddNode or by an arc's
+// endpoint and never leave. It is expressed as a Subgraph because that is
+// exactly what it is — everything but one node — and a rebuild is unavoidable
+// either way, since the adjacency is held as indices into the node list.
+func (g *GraphValue) DelNode(n Value) *GraphValue {
+	if !g.Has(n) {
+		return g.Clone()
+	}
+	keep := make([]Value, 0, len(g.nodes)-1)
+	k := KeyOf(n)
+	for _, node := range g.nodes {
+		if KeyOf(node) != k {
+			keep = append(keep, node)
+		}
+	}
+	return g.Subgraph(keep)
+}
+
+// Reachable returns every node reachable from the start by following arcs, in
+// breadth-first discovery order — so the list reads outward from the start,
+// the same order graph BFS settles them in.
+//
+// The start is included: it is reachable from itself by a path of no arcs, the
+// same reason Shortest Path from a node to itself is that one node. A node the
+// graph does not have reaches nothing, rather than being an error, so the
+// builtin over this stays total.
+func (g *GraphValue) Reachable(start Value) []Value {
+	i, ok := g.IndexOf(start)
+	if !ok {
+		return []Value{}
+	}
+	seen := make([]bool, len(g.nodes))
+	out := make([]Value, 0, 1)
+
+	var q Queue[int]
+	seen[i] = true
+	q.Push(i)
+	for {
+		cur, ok := q.Pop()
+		if !ok {
+			break
+		}
+		out = append(out, g.nodes[cur])
+		for _, e := range g.adj[cur] {
+			if seen[e.To] {
+				continue
+			}
+			seen[e.To] = true
+			q.Push(e.To)
+		}
+	}
+	return out
+}
+
+// HasCycle reports whether the graph has a directed cycle, by the same measure
+// Topological Sort uses: peel nodes with nothing left pointing at them, and a
+// cycle is what is left over when nothing can be peeled. A self-loop is a
+// cycle — it is a node that can never be ordered before itself.
+func (g *GraphValue) HasCycle() bool {
+	indeg := make([]int, len(g.nodes))
+	for _, arcs := range g.adj {
+		for _, e := range arcs {
+			indeg[e.To]++
+		}
+	}
+	var q Queue[int]
+	for i, d := range indeg {
+		if d == 0 {
+			q.Push(i)
+		}
+	}
+	ordered := 0
+	for {
+		cur, ok := q.Pop()
+		if !ok {
+			break
+		}
+		ordered++
+		for _, e := range g.adj[cur] {
+			indeg[e.To]--
+			if indeg[e.To] == 0 {
+				q.Push(e.To)
+			}
+		}
+	}
+	return ordered != len(g.nodes)
+}
+
+// Undirected returns the graph with every arc's reverse present, so a walk can
+// go either way along it.
+//
+// An arc that is already there is left alone rather than re-weighted: a->b
+// weighing 3 and b->a weighing 5 is a graph that means both, and the mode on
+// `Convert To Graph` inserts a pair at one weight only because it is reading
+// an edge list where no reverse exists yet. Only the missing direction is
+// added, at the weight of the arc it mirrors.
+func (g *GraphValue) Undirected() *GraphValue {
+	out := g.Clone()
+	for i, arcs := range g.adj {
+		for _, e := range arcs {
+			if !out.HasEdge(g.nodes[e.To], g.nodes[i]) {
+				out.AddEdge(g.nodes[e.To], g.nodes[i], e.W)
+			}
+		}
+	}
+	return out
+}
+
+// MergeGraphs returns the union of two graphs: every node of a in its order,
+// then b's new ones, and every arc of both.
+//
+// An arc both graphs carry takes b's weight, because that is what writing b's
+// arcs into a does and AddEdge's rule is last write wins. Neither argument is
+// touched.
+func MergeGraphs(a, b *GraphValue) *GraphValue {
+	out := a.Clone()
+	for _, n := range b.nodes {
+		out.AddNode(n)
+	}
+	for i, arcs := range b.adj {
+		for _, e := range arcs {
+			out.AddEdge(b.nodes[i], b.nodes[e.To], e.W)
+		}
+	}
+	return out
+}

@@ -235,6 +235,11 @@ var Builtins = []string{
 	// above could not: which node is the top of it, and what a node's arcs
 	// weigh in total.
 	"root", "weightof",
+	// The rest of the node-level vocabulary: the total twin of root and its
+	// mirror, the arcs coming in, a node-level delete to match deledge, and the
+	// four whole-graph questions an edge list makes worth asking.
+	"roots", "leaves", "indegree", "delnode", "reachable",
+	"hascycle", "undirected", "mergegraphs", "weightsum",
 }
 
 // PointType is the expression-layer representation of a 2D point: an
@@ -287,6 +292,8 @@ var builtinArity = map[string]int{
 	"nodes": 1, "edges": 1, "neighbors": 2, "edgesof": 2, "hasedge": 3,
 	"weight": 3, "weightor": 4, "degree": 2, "flipedges": 1, "subgraph": 2,
 	"root": 1, "weightof": 2,
+	"roots": 1, "leaves": 1, "indegree": 2, "delnode": 2, "reachable": 2,
+	"hascycle": 1, "undirected": 1, "mergegraphs": 2, "weightsum": 1,
 	"insert": -1, // 2 over a Set, 3 over a Map
 	"del":    2,  // Set × elem, or Map × key
 	"union":  2, "intersect": 2, "difference": 2,
@@ -1253,6 +1260,70 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		return g.Elem, nil
+	case "indegree":
+		// Degree's mirror. It walks the adjacency rather than keeping a reverse
+		// index, which is still cheaper than the flipedges the vocabulary made
+		// people write to ask it.
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: indegree node must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return ir.Int(), nil
+	case "roots", "leaves":
+		// roots is root's total twin, the way weightor is weight's: the same
+		// question, answered with however many there are.
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		return ir.List(g.Elem), nil
+	case "reachable":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: reachable node must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return ir.List(g.Elem), nil
+	case "delnode":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if !args[1].Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: delnode value must be %s, got %s", x.Pos, g.Elem, args[1])
+		}
+		return g, nil
+	case "hascycle":
+		if _, err := needGraph(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		return ir.Bool(), nil
+	case "weightsum":
+		if _, err := needGraph(x, name, args, 0); err != nil {
+			return nil, err
+		}
+		return ir.Int(), nil
+	case "undirected":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		return g, nil
+	case "mergegraphs":
+		g, err := needGraph(x, name, args, 0)
+		if err != nil {
+			return nil, err
+		}
+		if args[1] == nil || args[1].Kind != ir.KGraph || !args[1].Elem.Equal(g.Elem) {
+			return nil, fmt.Errorf("%s: mergegraphs needs two graphs of the same node type, got %s and %s",
+				x.Pos, g, args[1])
+		}
+		return g, nil
 	case "flipedges":
 		g, err := needGraph(x, name, args, 0)
 		if err != nil {

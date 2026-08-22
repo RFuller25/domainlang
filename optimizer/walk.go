@@ -240,7 +240,9 @@ func isTotal(e ast.Expr) bool {
 			// exactly one node has no incoming arc.
 			"graph", "emptygraph", "addnode", "addedge", "deledge",
 			"nodes", "edges", "neighbors", "edgesof", "hasedge",
-			"weightor", "degree", "weightof", "flipedges", "subgraph":
+			"weightor", "degree", "weightof", "flipedges", "subgraph",
+			"roots", "leaves", "indegree", "delnode", "reachable",
+			"hascycle", "undirected", "mergegraphs", "weightsum":
 			// total builtins (take/drop/slice clamp)
 		default:
 			return false // item, first, last, min, max, get, at are partial

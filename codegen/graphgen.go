@@ -338,6 +338,63 @@ func (g *gen) emitGraphComponents(n *ir.Node, in string) (string, error) {
 	return v, nil
 }
 
+// The pipeline-level graph vocabulary. Each mirrors the interpreter's function
+// of the same job in prims/graph.go — same order, same choices — so the two
+// backends print the same bytes.
+
+func (g *gen) emitGraphRoot(n *ir.Node, in string) (string, error) {
+	g.helper("dmFail", declFail, "fmt", "os")
+	g.helper("dmGraph", declGraph)
+	g.helper("dmGraphRoot", declGraphRoot, "fmt")
+	v := g.fresh("rt")
+	// The builtin and the stage say the same three things; the message prefix
+	// is the builtin's, which is the name a reader is likelier to have met.
+	g.wl("%s := dmGraphRoot(%s)", v, in)
+	return v, nil
+}
+
+func (g *gen) emitMinimumSpanningTree(n *ir.Node, in string) (string, error) {
+	g.helper("dmGraph", declGraph)
+	g.helper("dmGraphMST", declGraphMST, "sort")
+	v := g.fresh("mst")
+	g.wl("%s := dmGraphMST(%s)", v, in)
+	return v, nil
+}
+
+func (g *gen) emitStronglyConnectedComponents(n *ir.Node, in string) (string, error) {
+	g.helper("dmGraph", declGraph)
+	g.helper("dmGraphSCC", declGraphSCC, "sort")
+	v := g.fresh("scc")
+	g.wl("%s := dmGraphSCC(%s)", v, in)
+	return v, nil
+}
+
+// emitConvertToAdjacency drops a Graph into the adjacency Map<K, List<K>> that
+// Convert To Graph reads back. Every node is a key, isolated ones included, and
+// the weights go — Convert To Edges is the way out that keeps them.
+func (g *gen) emitConvertToAdjacency(n *ir.Node, in string) (string, error) {
+	nodeGo, err := g.goType(n.In.Elem)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.helper("dmGraph", declGraph)
+	g.helper("dmMap", declMap)
+	out, i, succ, e := g.fresh("adj"), g.fresh("i"), g.fresh("succ"), g.fresh("e")
+	g.wl("%s := dmNewMap[%s, []%s]()", out, nodeGo, nodeGo)
+	g.wl("for %s := range %s.nodes {", i, in)
+	g.in()
+	g.wl("%s := make([]%s, 0, len(%s.adj[%s]))", succ, nodeGo, in, i)
+	g.wl("for _, %s := range %s.adj[%s] {", e, in, i)
+	g.in()
+	g.wl("%s = append(%s, %s.nodes[%s.to])", succ, succ, in, e)
+	g.out()
+	g.wl("}")
+	g.wl("%s.put(%s.nodes[%s], %s)", out, in, i, succ)
+	g.out()
+	g.wl("}")
+	return out, nil
+}
+
 func (g *gen) emitShortestPath(n *ir.Node, in string) (string, error) {
 	nodeGo, err := g.goType(n.Out.Elem)
 	if err != nil {

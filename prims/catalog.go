@@ -29,7 +29,7 @@ var gridTransforms = map[string]bool{
 
 // keywordPages maps each themed keyword to the reference page documenting it.
 // Deriving the page from the keyword rather than storing it per entry is what
-// keeps the catalog's 77 literals unchanged: the page a primitive is on is
+// keeps the catalog's 81 literals unchanged: the page a primitive is on is
 // already determined by the class it belongs to.
 var keywordPages = map[string]string{
 	"Cursed Energy":            "ref-sources.md",
@@ -207,8 +207,16 @@ var Catalog = map[string]PrimDoc{
 		"Builds a directed, Int-weighted graph from an edge list or an adjacency map; Mode: Undirected inserts both arcs.", "convert-to-graph"},
 	"Convert To Edges": {"Convert To Edges", "Channeled Energy", "Graph<K> → List<(K, K, Int)>",
 		"Drops a Graph back into the list vocabulary as (from, to, weight) triples — the way back out.", "convert-to-edges"},
+	"Convert To Adjacency": {"Convert To Adjacency", "Channeled Energy", "Graph<K> → Map<K, List<K>>",
+		"Drops a Graph into the adjacency map Convert To Graph reads back; every node is a key, and the weights go.", "convert-to-adjacency"},
 	"Convert To Map": {"Convert To Map", "Channeled Energy", "List<(K, V)> → Map<K,V>",
 		"Builds a Map from key/value pairs; last write wins.", "convert-to-map"},
+	"Root": {"Root", "Domain Expansion", "Graph<K> → K",
+		"The one node with no incoming arc; an error unless the graph has exactly one.", "root"},
+	"Minimum Spanning Tree": {"Minimum Spanning Tree", "Domain Expansion", "Graph<K> → Graph<K>",
+		"The cheapest arcs that keep the graph connected, read as undirected; a graph in pieces gives a forest.", "minimum-spanning-tree"},
+	"Strongly Connected Components": {"Strongly Connected Components", "Domain Expansion", "Graph<K> → List<List<K>>",
+		"The groups of nodes that can all reach each other, in a topological order of the groups — the directed question Connected Components does not ask.", "strongly-connected-components"},
 	"Topological Sort": {"Topological Sort", "Domain Expansion", "Graph<K> | Map<K, List<K>> | List<(K, K)> → List<K>",
 		"A dependency order over an explicit graph; a cycle is a runtime error naming a blocked node.", "topological-sort"},
 	"Foreign Block": {"Foreign Block", "Domain Expansion", "T → Text, or a declared `In -> Out`",

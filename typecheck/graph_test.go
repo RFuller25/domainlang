@@ -48,6 +48,16 @@ func TestGraphBuiltinTypes(t *testing.T) {
 	// reader whose result is not a list, a count or a Bool.
 	wantType(t, "(g) -> root(g)", ir.Text(), gt)
 	wantType(t, "(g) -> root(g)", ir.Int(), gi)
+	wantType(t, "(g) -> roots(g)", ir.List(ir.Text()), gt)
+	wantType(t, "(g) -> leaves(g)", ir.List(ir.Text()), gt)
+	wantType(t, `(g) -> indegree(g, "a")`, ir.Int(), gt)
+	wantType(t, `(g) -> reachable(g, "a")`, ir.List(ir.Text()), gt)
+	wantType(t, "(g) -> hascycle(g)", ir.Bool(), gt)
+	wantType(t, "(g) -> weightsum(g)", ir.Int(), gt)
+	// The whole-graph updates return the same graph type, like the arc ones.
+	wantType(t, `(g) -> delnode(g, "a")`, gt, gt)
+	wantType(t, "(g) -> undirected(g)", gt, gt)
+	wantType(t, "(g) -> mergegraphs(g, g)", gt, gt)
 
 	// size and contains are extended rather than duplicated under new names.
 	wantType(t, "(g) -> size(g)", ir.Int(), gt)
@@ -80,6 +90,14 @@ func TestGraphBuiltinTypeErrors(t *testing.T) {
 		{"neighbors node type", "(g) -> neighbors(g, 1)", []*ir.Type{gt}, "neighbors node must be Text"},
 		{"weightof node type", "(g) -> weightof(g, 1)", []*ir.Type{gt}, "weightof node must be Text"},
 		{"root of a list", "(xs) -> root(xs)", []*ir.Type{ir.List(ir.Int())}, "root needs a Graph argument"},
+		{"roots of a list", "(xs) -> roots(xs)", []*ir.Type{ir.List(ir.Int())}, "roots needs a Graph argument"},
+		{"indegree node type", "(g) -> indegree(g, 1)", []*ir.Type{gt}, "indegree node must be Text"},
+		{"reachable node type", "(g) -> reachable(g, 1)", []*ir.Type{gt}, "reachable node must be Text"},
+		{"delnode value type", "(g) -> delnode(g, 1)", []*ir.Type{gt}, "delnode value must be Text"},
+		{"mergegraphs needs a second graph", `(g) -> mergegraphs(g, "a")`, []*ir.Type{gt},
+			"mergegraphs needs two graphs of the same node type"},
+		{"mergegraphs node types differ", "(g, h) -> mergegraphs(g, h)", []*ir.Type{gt, gi},
+			"mergegraphs needs two graphs of the same node type"},
 		// Construction shapes.
 		{"graph of scalars", "(xs) -> graph(xs)", []*ir.Type{ir.List(ir.Int())}, "graph needs an edge list"},
 		{"graph of 1-tuples", "(xs) -> graph(xs)",

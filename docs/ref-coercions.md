@@ -366,6 +366,55 @@ Arcs come out in node insertion order, and each node's arcs in theirs — the
 same order the graph renders in.
 
 
+### Convert To Adjacency — `Graph<K> -> Map<K, List<K>>`
+
+The other way back out: the adjacency `Map<K, List<K>>` that `Convert To Graph`
+reads *in*, which is the shape `Topological Sort` and the map vocabulary
+already speak.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Channeled Energy: Convert To Adjacency
+Reveal: stdout
+```
+```input
+a b
+b c
+a c
+```
+```output
+{a: [b, c], b: [c], c: []}
+```
+
+Every node is a key, isolated ones included — an adjacency listing with a node
+missing is a different graph. **The weights go**: a `Map<K, List<K>>` has
+nowhere to put them, and `Convert To Edges` is the way out that keeps them. So
+the round trip through this one is lossy on a weighted graph and exact on an
+unweighted one, where every arc weighs 1 anyway:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Channeled Energy: Convert To Adjacency
+Channeled Energy: Convert To Graph
+Domain Expansion: Topological Sort
+Reveal: stdout
+```
+```input
+a b
+b c
+a c
+```
+```output
+[a, b, c]
+```
+
+
 ### Convert To Entries — `Map<K,V> -> List<(K, V)>`
 
 ```domain

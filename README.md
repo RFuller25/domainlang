@@ -19,7 +19,7 @@ expression), named dataflow `Channel`s, loops, measured arguments,
 user-defined `Shikigami` + a prelude, and a **32-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
 `domain build` compiles that same IR into a standalone, aggressively typed Go
-binary — every primitive and all 178 expression builtins have a codegen case,
+binary — every primitive and all 187 expression builtins have a codegen case,
 each pinned by an interpreter-vs-binary oracle test.
 
 **New here? Start with [docs/getting-started.md](docs/getting-started.md)** —
@@ -436,7 +436,7 @@ equality functions; tuple-shaped `Match Pattern` emits positional structs.
 A future primitive that ships without a codegen case fails `domain build`
 with a positioned error and keeps working under `domain run`. Nothing is in
 that state today: the whole surface — parsing/range/set primitives, the
-grid searches, the sparse grid type, and all 178 expression builtins
+grid searches, the sparse grid type, and all 187 expression builtins
 including the point group — compiles, with oracle tests pinning
 interpreter/binary parity (see [`docs/compiler.md`](docs/compiler.md)).
 A foreign block compiles too, with its source embedded as a constant and the
