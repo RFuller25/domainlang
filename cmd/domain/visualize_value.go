@@ -88,6 +88,8 @@ func valueBody(v recordedValue, w int) []string {
 	switch {
 	case strings.HasPrefix(v.typ, "Grid"), strings.HasPrefix(v.typ, "Sparse"):
 		out = gridBody(body, w)
+	case strings.HasPrefix(v.typ, "Graph"):
+		out = graphBody(body, w)
 	case isCollectionType(v.typ):
 		out = collectionBody(body, w)
 	case v.typ == "Text":

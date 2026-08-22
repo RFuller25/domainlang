@@ -54,13 +54,16 @@ const (
 
 // screen is what fills the terminal: the two-pane stepper, or one of the views
 // that earn the whole width — the emitted Go, which is a program in its own
-// right and unreadable in half a pane, and the key list.
+// right and unreadable in half a pane, the key list, and a value, which is
+// every type the command is named after and the one thing a stepper exists to
+// show.
 type screen int
 
 const (
 	screenTree screen = iota
 	screenGo
 	screenHelp
+	screenValue
 )
 
 // visRow is one visible line of the tree: a node plus its indentation depth.
@@ -103,6 +106,14 @@ type visualModel struct {
 
 	// helpTop scrolls the key list, which outgrew a short terminal.
 	helpTop int
+
+	// valueTop scrolls the full-screen value, and valueWrap says whether it is
+	// wrapping long lines rather than cutting them. The pane has to cut — a
+	// wrapped line would break the column the tree sits in — but a screen with
+	// the whole width has no column to protect, and a reader who opened this
+	// asked to see all of it.
+	valueTop  int
+	valueWrap bool
 
 	// goFind is the code screen's own search. It is separate from the tree's
 	// filter because the two search different things and share no rows.
@@ -371,6 +382,8 @@ func (m *visualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.togglePane(paneDiff)
 		case "c":
 			m.openGo()
+		case "f":
+			m.openValue()
 		case "?":
 			m.openHelp()
 		case "H":
@@ -534,6 +547,35 @@ func (m *visualModel) updateScreen(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.screen == screenValue {
+		body := m.valueScreenBody()
+		last := max(0, len(body)-max(1, m.height-3))
+		switch key {
+		case "esc", "q", "f":
+			m.screen, m.valueTop = screenTree, 0
+		case "?":
+			m.openHelp()
+		case "down", "j":
+			m.valueTop = min(m.valueTop+1, last)
+		case "up", "k":
+			m.valueTop = max(m.valueTop-1, 0)
+		case "ctrl+d", "pgdown", " ":
+			m.valueTop = min(m.valueTop+page, last)
+		case "ctrl+u", "pgup":
+			m.valueTop = max(m.valueTop-page, 0)
+		case "g":
+			m.valueTop = 0
+		case "G":
+			m.valueTop = last
+		case "z":
+			// Wrapping is the other way to see all of a value: a long line is
+			// cut at the right edge by default, and this folds it instead.
+			m.valueWrap, m.valueTop = !m.valueWrap, 0
+		case "y":
+			return m, m.yankValue()
+		}
+		return m, nil
+	}
 	last := max(0, len(m.goSrc())-max(1, m.height-3))
 	switch key {
 	case "esc", "q", "c":
@@ -607,6 +649,133 @@ func (m *visualModel) goStart() int {
 func (m *visualModel) openGo() {
 	m.screen = screenGo
 	m.goTop = m.goStart()
+}
+
+// openValue shows the selected row's value over the whole terminal.
+//
+// The pane is half a screen wide and shares its height with everything else the
+// row has to say — the type, the timings, the input line, the headings. For a
+// scalar that is plenty. For the values this command exists to show it is not:
+// a 40-column pane cuts a grid into a column of stumps, wraps nothing, and
+// leaves a graph's drawing folded at the width where its branches stop lining
+// up. The stepper already has the idea that some things earn the whole terminal
+// — the emitted Go is one — and a value is the other.
+//
+// It is the same renderers, at the width they were written for. Nothing here
+// knows what type it is showing: valueBody already asks that question, so a
+// grid gets its ruler across the full width, a list its index, a graph its
+// drawing, and every type the language grows next arrives here for free.
+func (m *visualModel) openValue() {
+	m.screen, m.valueTop = screenValue, 0
+}
+
+// valueScreenValue is what the full-screen view shows: the selected row's
+// output, or a frame's result, which is the value that row actually holds.
+//
+// The *input* is deliberately not offered. The recorder keeps only a short
+// rendering of it (interp.Step.InShort) — in a pipeline it is the previous
+// step's output, and keeping both would double every recording — so a
+// full-screen input would be a screen showing one truncated line. `d` is where
+// the two are compared, and it does the work of recovering the input honestly.
+func (m *visualModel) valueScreenValue() (recordedValue, string) {
+	if node := m.selectedNode(); node != nil && node.Step == nil {
+		if b := node.Block; b != nil {
+			return recordedOf(b), node.Frame + " · result"
+		}
+		return recordedValue{}, node.Frame
+	}
+	node := m.selectedNode()
+	if node == nil || node.Step == nil {
+		return recordedValue{}, ""
+	}
+	// A block — a Channel, a Part — hands its input straight back to the
+	// pipeline, so the value it holds is its body's result, which is what the
+	// pane shows under `result` and what a reader opening this wants to see.
+	if b := node.Block; b != nil {
+		return recordedOf(b), node.Step.Node.Display + " · result"
+	}
+	return stepValue(node.Step), node.Step.Node.Display
+}
+
+// valueScreenBody is the rendered value, at the screen's width. Both the view
+// and the scroll that has to know where the bottom is build it the same way.
+func (m *visualModel) valueScreenBody() []string {
+	v, _ := m.valueScreenValue()
+	if v.text() == "" {
+		return []string{styDim.Render("  (this row holds no value)")}
+	}
+	w := max(m.width-2, 20)
+	if !m.valueWrap {
+		return valueBody(v, w)
+	}
+	// Wrapping folds each rendered line into the width rather than cutting it,
+	// keeping the renderer's own structure — a grid's gutter, a list's index —
+	// on the first line of each fold and indenting the rest under it.
+	var out []string
+	for _, line := range valueBody(v, maxWrapWidth) {
+		folded := wrapVis(line, w)
+		if len(folded) == 0 {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, folded[0])
+		for _, rest := range folded[1:] {
+			out = append(out, "    "+rest)
+		}
+	}
+	return out
+}
+
+// maxWrapWidth is the width the renderers build at before wrapping folds their
+// lines. It is wide enough that nothing cuts itself first — a truncation the
+// renderer did cannot be unfolded — and bounded so a pathological line does not
+// become a pathological number of folds.
+const maxWrapWidth = 4000
+
+// valueView renders a value across the whole terminal: what it is, then the
+// value, then its own keys.
+func (m *visualModel) valueView() string {
+	v, where := m.valueScreenValue()
+	body := m.valueScreenBody()
+
+	var b strings.Builder
+	head := styTitle.Render("  value ") + styDim.Render(truncateVis(where, max(10, m.width-30)))
+	fmt.Fprintf(&b, "%s\n", pad(head, m.width))
+
+	what := []string{}
+	if v.typ != "" {
+		what = append(what, styType.Render(v.typ))
+	}
+	if v.sizeOK {
+		what = append(what, styDim.Render(plural(v.size, "element")))
+	}
+	what = append(what, styDim.Render(plural(len(body), "line")))
+	if m.valueWrap {
+		what = append(what, styDim.Render("wrapped"))
+	}
+	fmt.Fprintf(&b, "%s\n", pad("  "+strings.Join(what, styDim.Render(" · ")), m.width))
+
+	rows := max(m.height-3, 1)
+	for i := range rows {
+		line := ""
+		if j := m.valueTop + i; j < len(body) {
+			line = body[j]
+		}
+		fmt.Fprintf(&b, "%s\n", pad(line, m.width))
+	}
+
+	pos := fmt.Sprintf("  %d/%d", min(m.valueTop+1, len(body)), len(body))
+	wrap := "z wrap"
+	if m.valueWrap {
+		wrap = "z cut"
+	}
+	b.WriteString(pad(styDim.Render(pos+" · ")+
+		styKey.Render("j k g G")+styDim.Render(" scroll · ")+
+		styKey.Render(wrap)+styDim.Render(" · ")+
+		styKey.Render("y")+styDim.Render(" copy · ")+
+		styKey.Render("esc")+styDim.Render(" back · ")+
+		styKey.Render("?")+styDim.Render(" keys"), m.width))
+	return b.String()
 }
 
 // openHelp shows the key list over whatever is on screen.
@@ -814,6 +983,8 @@ func (m *visualModel) View() tea.View {
 		return fullScreen(m.goView())
 	case screenHelp:
 		return fullScreen(m.helpView())
+	case screenValue:
+		return fullScreen(m.valueView())
 	}
 	treeW := max(m.width*m.treeShare/100, 30)
 	detailW := m.detailWidth()
@@ -1030,6 +1201,7 @@ func (m *visualModel) helpBody() []string {
 			{"o", "open the program at this stage's line in $EDITOR"},
 		}},
 		{"screens", [][2]string{
+			{"f", "the selected value, over the whole screen, scrolling"},
 			{"c", "the emitted Go, opened at the selected row's code"},
 			{"?", "this list"},
 			{"q", "quit"},

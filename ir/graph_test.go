@@ -577,3 +577,28 @@ func TestGraphWeightSum(t *testing.T) {
 		t.Errorf("WeightSum of an empty graph = %d, want 0", got)
 	}
 }
+
+// A graph's short form and its size are what a trace, a --json export and the
+// visualizer's columns show. Without a case of its own a Graph fell to
+// FormatShort's default and rendered as Go's view of the struct — `&{[a b c]
+// map[a:0 b:1…` — which is the representation leaking, not the value.
+func TestGraphShortFormAndSize(t *testing.T) {
+	gv := g([3]any{"a", "b", int64(1)}, [3]any{"b", "c", int64(2)})
+	gv.AddNode("q")
+
+	if got := FormatShort(gv); got != "Graph 4 nodes (2 arcs)" {
+		t.Errorf("FormatShort = %q, want %q", got, "Graph 4 nodes (2 arcs)")
+	}
+	// The node count, which is what size(g) answers in the language.
+	if n, ok := SizeOf(gv); !ok || n != 4 {
+		t.Errorf("SizeOf = %d, %v; want 4, true", n, ok)
+	}
+	if got := FormatShort(NewGraphValue()); got != "Graph 0 nodes (0 arcs)" {
+		t.Errorf("empty graph FormatShort = %q", got)
+	}
+	// The long form is still the adjacency listing: the short one is a summary,
+	// not a replacement.
+	if got := FormatValue(gv); got != "{a: [(b, 1)], b: [(c, 2)], c: [], q: []}" {
+		t.Errorf("FormatValue = %q", got)
+	}
+}

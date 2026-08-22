@@ -549,6 +549,12 @@ func FormatShort(v Value) string {
 			return "Sparse 0x0 (0 set)"
 		}
 		return fmt.Sprintf("Sparse %dx%d (%d set)", maxR-minR+1, maxC-minC+1, x.Len())
+	case *GraphValue:
+		// Its counts, the way a Grid gives its dimensions: an adjacency listed
+		// in full is what the *long* form is for, and a graph reaching the
+		// default below rendered as Go's view of the struct — `&{[a b c]
+		// map[a:0 b:1…` — which is the representation, not the value.
+		return fmt.Sprintf("Graph %d nodes (%d arcs)", x.Len(), x.EdgeCount())
 	default:
 		return fmt.Sprintf("%v", v)
 	}

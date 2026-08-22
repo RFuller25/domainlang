@@ -362,6 +362,7 @@ legend wide enough to hold every key is the loudest thing on the screen.
 | `t` | the timing profile — call sites ranked by self time |
 | `s` | the program source, with each line's share of the run |
 | `e` | the optimizer's rewrites |
+| `f` | the selected value, full screen and scrolling (see [below](#the-value-screen-f)) |
 | `c` | the emitted Go, full screen (see [below](#the-code-screen-c)) |
 | `r` | record the program again, keeping this view (see [below](#recording-again-r-and---watch)) |
 | `w` | write the recording beside the program as JSON |
@@ -480,6 +481,37 @@ hundredth element is somewhere you can scroll to rather than somewhere off the
 right edge. `Text` keeps its line structure and shows its trailing whitespace as
 `·`, which is the difference that most often explains why the next stage could
 not parse it.
+
+A **`Graph`** is drawn. Nodes are drawn once, at the first place a walk reaches
+them, and the arcs between them as branches — starting from the roots, which is
+where a `parent -> child` listing parsed out of text wants to be read from:
+
+```
+6 nodes · 5 arcs · 2 roots · weighted · acyclic
+
+a
+└─[1]─ b
+       ├─[2]─ d
+       │      └─[4]─ f
+       └─[3]─ e
+
+c
+└─[1]─ e ↩
+```
+
+That is a spanning tree of the graph with the arcs that could not fit into a
+tree **marked rather than dropped**: `↩` means "this node is drawn above", which
+is what a second parent, a cross arc and a cycle all look like from here. A
+drawing that dropped those arcs would be a different graph, and one that
+followed them would not terminate. The weights ride on the arcs where there are
+any, and are left off entirely where every arc weighs 1. A graph whose cycle
+reaches every node has no root to start from and draws anyway, from wherever the
+walk has not been; an isolated node is a piece of its own.
+
+Past a few hundred arcs a drawing is mostly `↩` markers, so it gives way to a
+listing — one node per line with its arcs — which stays readable at any size.
+The line above the drawing is worth reading on its own: `has a cycle` is the
+answer to the question `Topological Sort` refuses to be asked twice.
 
 ### Recording again (`r`, and `--watch`)
 
@@ -656,6 +688,43 @@ the *definition's* positions, and `token.Position` carries no file, so a line
 number would confidently point at the wrong line of your program. Those nodes
 are marked at resolve time (`ir.MetaForeign`) and left out of the per-line
 profile.
+
+### The value screen (`f`)
+
+The pane is half a screen wide and shares its height with everything else the
+row has to say — the type, the timings, the input line, the headings. For a
+number that is plenty. For the values this command exists to show it is not: a
+40-column pane cuts a grid into a column of stumps and leaves a graph's drawing
+folded at the width where its branches stop lining up.
+
+`f` gives the selected row's value the whole terminal, and scrolls:
+
+```
+  value Convert To Graph
+  Graph<Text> · 6 elements · 12 lines
+  6 nodes · 6 arcs · 2 roots · weighted · has a cycle
+```
+
+| | |
+|---|---|
+| `j`/`k`, arrows | scroll a line |
+| `ctrl+d`/`ctrl+u`, `pgdn`/`pgup`, space | scroll half a screen |
+| `g`/`G` | the top and the end of the value |
+| `z` | fold long lines into the width instead of cutting them |
+| `y` | copy the value to the clipboard |
+| `esc`, `q`, `f` | back to the tree |
+
+It is the same renderers the pane uses, at the width they were written for, so
+every type arrives in the shape it already had: a grid with its ruler across
+the full width, a list with its index, `Text` with its whitespace visible, a
+graph drawn. `z` is the other half of seeing all of it — a line wider than the
+terminal has no width left to give, so it folds rather than being cut.
+
+The screen shows the row's **output** — a block's `result`, where the row is a
+`Channel` or a `Part`. The input is not offered: the recorder keeps only a
+short rendering of it, since in a pipeline it is the previous step's output and
+keeping both would double every recording. `d` is where the two are compared,
+and it recovers the input honestly.
 
 ### The code screen (`c`)
 
