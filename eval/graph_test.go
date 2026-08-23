@@ -135,3 +135,30 @@ func TestGraphNodeUpdatesAreFunctional(t *testing.T) {
 		t.Errorf("the receiver was mutated: %d nodes, %d arcs", base.Len(), base.EdgeCount())
 	}
 }
+
+// `pluck` is the missing half of keys/values: the values under the keys you
+// name, in the order you name them.
+func TestPluckBuiltin(t *testing.T) {
+	m := `tomap(list(tuple("a", 10), tuple("b", 20), tuple("c", 30)))`
+	for _, c := range []struct {
+		src  string
+		want ir.Value
+	}{
+		{`sum(pluck(` + m + `, list("a", "c")))`, int64(40)},
+		{`item(pluck(` + m + `, list("c", "b")), 0)`, int64(30)},
+		// The order is the *keys'* order, not the map's.
+		{`item(pluck(` + m + `, list("c", "b")), 1)`, int64(20)},
+		{`length(pluck(` + m + `, emptylist("")))`, int64(0)},
+		// A key may be named twice: it is a list of lookups, not a set.
+		{`sum(pluck(` + m + `, list("a", "a")))`, int64(20)},
+	} {
+		if got := mustEval(t, "(s) -> "+c.src, ""); got != c.want {
+			t.Errorf("%s = %v, want %v", c.src, got, c.want)
+		}
+	}
+
+	// Partial, like `get`: a missing key is the caller's list and the map
+	// disagreeing about what exists, and skipping it would make a sum over the
+	// result quietly wrong.
+	wantErr(t, `(s) -> sum(pluck(`+m+`, list("a", "zzz")))`, "no entry for zzz", "")
+}

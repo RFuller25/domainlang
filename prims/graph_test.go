@@ -200,3 +200,187 @@ func TestConvertToAdjacency(t *testing.T) {
 		t.Errorf("the round trip changed the graph:\n  direct: %q\n  back:   %q", direct, roundTrip)
 	}
 }
+
+// Accumulate Up is the fold the vocabulary could not express: what everything
+// under a node comes to, children first.
+func TestAccumulateUp(t *testing.T) {
+	const src = graphHead + `Domain Expansion: Accumulate Up
+    Using: (n) -> 1
+Reveal: stdout
+`
+	// A tree: each node's subtree size, counting itself.
+	got, err := runProgramWithInput(t, src, "a b\na c\nb d")
+	if err != nil {
+		t.Fatalf("Accumulate Up: %v", err)
+	}
+	if strings.TrimSpace(got) != "{a: 4, b: 2, c: 1, d: 1}" {
+		t.Errorf("subtree sizes = %q, want {a: 4, b: 2, c: 1, d: 1}", got)
+	}
+
+	// Not a tree: a node under two parents is folded into both, because it is
+	// genuinely under both. a counts d twice — once through b, once through c.
+	dag, err := runProgramWithInput(t, src, "a b\na c\nb d\nc d")
+	if err != nil {
+		t.Fatalf("Accumulate Up over a DAG: %v", err)
+	}
+	if strings.TrimSpace(dag) != "{a: 5, b: 2, c: 2, d: 1}" {
+		t.Errorf("DAG totals = %q, want {a: 5, b: 2, c: 2, d: 1}", dag)
+	}
+
+	// A cycle has no "children first" to fold in, and says which node it
+	// blocked — the same thing Topological Sort says.
+	if _, err := runProgramWithInput(t, src, "x y\ny x\na b"); err == nil {
+		t.Error("a cycle should be a runtime error")
+	} else if !strings.Contains(err.Error(), "has a cycle") {
+		t.Errorf("error %q does not name the cycle", err)
+	}
+}
+
+// Combine: replaces the fold, and folds a node's children in adjacency order
+// so a Combine: that is not commutative still gives one answer.
+func TestAccumulateUpCombine(t *testing.T) {
+	const src = graphHead + `Domain Expansion: Accumulate Up
+    Using: (n) -> length(n)
+    Combine: (a, b) -> max(a, b)
+Reveal: stdout
+`
+	got, err := runProgramWithInput(t, src, "a bb\na ccc\nbb dddd")
+	if err != nil {
+		t.Fatalf("Accumulate Up, Combine: %v", err)
+	}
+	if strings.TrimSpace(got) != "{a: 4, bb: 4, ccc: 3, dddd: 4}" {
+		t.Errorf("widest name below each node = %q, want {a: 4, bb: 4, ccc: 3, dddd: 4}", got)
+	}
+
+	// Adjacency order is the fold order, so a non-commutative Combine: is
+	// still one answer rather than whichever the queue happened to finish.
+	const sub = graphHead + `Domain Expansion: Accumulate Up
+    Using: (n) -> 10
+    Combine: (a, b) -> a - b
+Reveal: stdout
+`
+	first, err := runProgramWithInput(t, sub, "a b\na c")
+	if err != nil {
+		t.Fatalf("non-commutative Combine: %v", err)
+	}
+	again, err := runProgramWithInput(t, sub, "a b\na c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != again {
+		t.Errorf("two runs of the same program disagreed: %q then %q", first, again)
+	}
+	// 10 - 10 - 10 over a's two children, left to right.
+	if strings.TrimSpace(first) != "{a: -10, b: 10, c: 10}" {
+		t.Errorf("left-to-right fold = %q, want {a: -10, b: 10, c: 10}", first)
+	}
+}
+
+// The shape-preserving maps keep the type they were given, and say what a
+// non-injective mapping does to it.
+func TestShapePreservingMaps(t *testing.T) {
+	for _, c := range []struct{ name, src, input, want string }{
+		{
+			// Four elements in, three out: a Set is what merging is for.
+			name: "Map Elements merges",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Set
+Cursed Technique: Map Elements
+    Using: (t) -> lower(t)
+Reveal: stdout
+`,
+			input: "Fire,WATER,fire,Wind",
+			want:  "{fire, water, wind}",
+		},
+		{
+			name: "Map Keys keeps the values",
+			src: `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> tomap(list(tuple("a", 1), tuple("b", 2)))
+Cursed Technique: Map Keys
+    Using: (k) -> upper(k)
+Reveal: stdout
+`,
+			input: "ignored",
+			want:  "{A: 1, B: 2}",
+		},
+		{
+			// Two keys mapping to one keep the later value — insert's rule.
+			name: "Map Keys collides to the later value",
+			src: `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> tomap(list(tuple(point(0, 0), "a"), tuple(point(0, 5), "b")))
+Cursed Technique: Map Keys
+    Using: (p) -> prow(p)
+Reveal: stdout
+`,
+			input: "ignored",
+			want:  "{0: b}",
+		},
+		{
+			// An isolated node survives, and arcs keep their weights.
+			name: "Map Nodes relabels",
+			src: graphHead + `Cursed Technique: Map Nodes
+    Using: (n) -> slice(n, 0, 1)
+Reveal: stdout
+`,
+			input: "alpha beta\nbeta gamma",
+			want:  "{a: [(b, 1)], b: [(g, 1)], g: []}",
+		},
+		{
+			// Two nodes mapping to one become one node holding both arcs.
+			name: "Map Nodes merges",
+			src: graphHead + `Cursed Technique: Map Nodes
+    Using: (n) -> slice(n, 0, 1)
+Reveal: stdout
+`,
+			input: "ax b\nay c",
+			want:  "{a: [(b, 1), (c, 1)], b: [], c: []}",
+		},
+		{
+			// The bridge from a node-weighted graph to an arc-weighted one:
+			// weigh every arc by what entering its destination costs.
+			name: "Map Weights carries a node cost onto in-arcs",
+			src: `Cursed Energy: stdin
+Cursed Object: cost As tomap(list(tuple("a", 5), tuple("b", 2), tuple("c", 9)))
+` + graphHead[len("Cursed Energy: stdin\n"):] + `Cursed Technique: Map Weights
+    Using: (f, t, w) -> getor(cost, t, 0)
+Domain Expansion: Dijkstra
+    Start: "a"
+Reveal: stdout
+`,
+			input: "a b\nb c\na c",
+			want:  "{a: 0, b: 2, c: 9}",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := runProgramWithInput(t, c.src, c.input)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			if strings.TrimSpace(got) != c.want {
+				t.Errorf("got %q, want %q", strings.TrimSpace(got), c.want)
+			}
+		})
+	}
+}
+
+// Map Each still flattens every shape to a List — that is what these are the
+// counterpart to, not a replacement for.
+func TestMapEachStillProducesAList(t *testing.T) {
+	got, err := runProgramWithInput(t, `Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Set
+Cursed Technique: Map Each
+    Using: (t) -> lower(t)
+Reveal: stdout
+`, "Fire,fire,Wind")
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	// A List, with the duplicate still in it: Map Each does not merge.
+	if strings.TrimSpace(got) != "[fire, fire, wind]" {
+		t.Errorf("Map Each over a Set = %q, want the flattened list [fire, fire, wind]", got)
+	}
+}

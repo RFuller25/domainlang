@@ -1170,6 +1170,24 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("keys: expected a Map, got %s", ir.DescribeValue(args[0]))
 		}
 		return append([]ir.Value(nil), m.Keys()...), nil
+	case "pluck":
+		m, ok := args[0].(*ir.MapValue)
+		if !ok {
+			return fail("pluck: expected a Map, got %s", ir.DescribeValue(args[0]))
+		}
+		ks, err := ir.AsList(args[1])
+		if err != nil {
+			return fail("pluck: %v", err)
+		}
+		out := make([]ir.Value, len(ks))
+		for i, k := range ks {
+			v, ok := m.Get(k)
+			if !ok {
+				return fail("pluck: no entry for %s", ir.FormatValue(k))
+			}
+			out[i] = v
+		}
+		return out, nil
 	case "values":
 		m, ok := args[0].(*ir.MapValue)
 		if !ok {

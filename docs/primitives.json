@@ -120,12 +120,44 @@
     "page": "ref-transforms.md"
   },
   {
+    "id": "Map Elements",
+    "keyword": "Cursed Technique",
+    "signature": "Set\u003cT\u003e × (T → U) → Set\u003cU\u003e",
+    "summary": "Maps a Set's elements and keeps a Set; two elements mapping to one value are one element.",
+    "anchor": "map-elements",
+    "page": "ref-transforms.md"
+  },
+  {
+    "id": "Map Keys",
+    "keyword": "Cursed Technique",
+    "signature": "Map\u003cK,V\u003e × (K → J) → Map\u003cJ,V\u003e",
+    "summary": "Maps a Map's keys and keeps the Map; two keys mapping to one keep the later value.",
+    "anchor": "map-keys",
+    "page": "ref-transforms.md"
+  },
+  {
+    "id": "Map Nodes",
+    "keyword": "Cursed Technique",
+    "signature": "Graph\u003cK\u003e × (K → J) → Graph\u003cJ\u003e",
+    "summary": "Relabels a Graph's nodes, keeping every arc and weight; two nodes mapping to one become one node holding both their arcs.",
+    "anchor": "map-nodes",
+    "page": "ref-transforms.md"
+  },
+  {
     "id": "Map Values",
     "keyword": "Cursed Technique",
     "signature": "Map\u003cK,V\u003e × (V → W) → Map\u003cK,W\u003e",
     "summary": "Transforms every value, keys and order unchanged — the reduce half of a Group By.",
     "anchor": "map-values",
     "page": "ref-transforms-grid.md"
+  },
+  {
+    "id": "Map Weights",
+    "keyword": "Cursed Technique",
+    "signature": "Graph\u003cK\u003e × ((K, K, Int) → Int) → Graph\u003cK\u003e",
+    "summary": "Re-weights every arc from its endpoints and its old weight — how a node-weighted graph becomes one the search vocabulary reads.",
+    "anchor": "map-weights",
+    "page": "ref-transforms.md"
   },
   {
     "id": "Match Pattern",
@@ -574,6 +606,14 @@
     "summary": "Set union over the groups, deduplicated left-to-right (T keyable).",
     "anchor": "intersect--union--difference",
     "page": "ref-reductions.md"
+  },
+  {
+    "id": "Accumulate Up",
+    "keyword": "Domain Expansion",
+    "signature": "Graph\u003cK\u003e × (K → Int) → Map\u003cK,Int\u003e",
+    "summary": "Folds each node's own value together with everything under it, children first; a cycle is a runtime error.",
+    "anchor": "accumulate-up",
+    "page": "ref-expansions.md"
   },
   {
     "id": "All Pairs",

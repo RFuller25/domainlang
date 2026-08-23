@@ -16,8 +16,10 @@ import (
 	"strings"
 
 	"domain/ast"
+	"domain/eval"
 	"domain/ir"
 	"domain/token"
+	"domain/typecheck"
 )
 
 // graphEdgeNode reports the node type of an edge-list input, and whether the
@@ -742,6 +744,185 @@ var convertToAdjacency = &Primitive{
 					m.Put(g.NodeAt(i), succ)
 				}
 				return m, nil
+			},
+		}, nil
+	},
+}
+
+// ---------------------------------------------------------------------------
+// Accumulate Up — rolling a value up a graph.
+//
+// The vocabulary could search a graph, order it and take it apart, but it
+// could not *aggregate over* one. "What does this subtree come to" — the
+// weight of a tower, the size of a directory, the number of orbits — is a
+// question about node values rather than about arcs, and the reduction that
+// answers a path question (fold the node's weight onto its in-arcs and run
+// Dijkstra) does not answer it at all.
+//
+// What answers it is a fold in *reverse* topological order: every node's
+// children are finished before the node is, so one pass suffices and nothing
+// is recomputed. That is expressible today — Topological Sort, reverse, Fold,
+// pushing each total into its parent — and it is six lines of pipeline to say
+// one thing, which is what a primitive is for.
+// ---------------------------------------------------------------------------
+
+// graphAccumulateUp folds each node's own value together with its children's
+// totals, children first. It reports the node a cycle blocked, because a cycle
+// has no "children first" to fold in — the same thing Topological Sort says,
+// for the same reason.
+//
+// A node is ready when every arc *out* of it leads somewhere finished, which
+// is out-degree counting down where Topological Sort counts in-degree down.
+// Its children are then read in **adjacency order**, so Combine: folds them
+// left to right in the order the graph holds them rather than in the order the
+// queue happened to finish them: a Combine: that is not commutative still
+// gives one answer, and both backends give the same one.
+//
+// On a graph that is not a tree, a node under two parents is folded into each
+// of them — it is genuinely under both, and "how much is under here" counts it
+// once per parent that reaches it.
+func graphAccumulateUp(g *ir.GraphValue, own func(ir.Value) (int64, error),
+	combine func(int64, int64) (int64, error), prim string, pos token.Position) (*ir.MapValue, error) {
+	n := g.Len()
+	parents := make([][]int, n)
+	outstanding := make([]int, n)
+	var q ir.Queue[int]
+	for i := range n {
+		outstanding[i] = len(g.AdjOf(i))
+		if outstanding[i] == 0 {
+			q.Push(i)
+		}
+		for _, e := range g.AdjOf(i) {
+			parents[e.To] = append(parents[e.To], i)
+		}
+	}
+
+	totals := make([]int64, n)
+	done := 0
+	for {
+		cur, ok := q.Pop()
+		if !ok {
+			break
+		}
+		done++
+		v, err := own(g.NodeAt(cur))
+		if err != nil {
+			return nil, err
+		}
+		// Every child is finished by now, so this reads their totals rather
+		// than waiting to be told them.
+		for _, e := range g.AdjOf(cur) {
+			v, err = combine(v, totals[e.To])
+			if err != nil {
+				return nil, err
+			}
+		}
+		totals[cur] = v
+		for _, p := range parents[cur] {
+			outstanding[p]--
+			if outstanding[p] == 0 {
+				q.Push(p)
+			}
+		}
+	}
+	if done != n {
+		for i := range n {
+			if outstanding[i] > 0 {
+				return nil, runtimeErr(prim, pos,
+					"the graph has a cycle (%s is still waiting on what is under it after %d of %d nodes were folded)",
+					ir.FormatValue(g.NodeAt(i)), done, n)
+			}
+		}
+	}
+	// Insertion order, like every other Map a graph produces.
+	out := ir.NewMapSized(n)
+	for i := range n {
+		out.Put(g.NodeAt(i), totals[i])
+	}
+	return out, nil
+}
+
+var accumulateUp = &Primitive{
+	ID:      "Accumulate Up",
+	Keyword: "Domain Expansion",
+	Match:   func(op *ast.Operation) bool { return hasWord(op, "Accumulate") && hasWord(op, "Up") },
+	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
+		if err := graphInput("Accumulate Up", in, pos); err != nil {
+			return nil, err
+		}
+		lam, err := requireLambda(args, 1, "Accumulate Up", pos)
+		if err != nil {
+			return nil, err
+		}
+		ownT, err := typecheck.LambdaType(lam, append([]*ir.Type{in.Elem}, ambientTypes()...)...)
+		if err != nil {
+			return nil, &ResolveError{Pos: pos, Msg: "Accumulate Up: " + err.Error()}
+		}
+		if !ownT.Equal(ir.Int()) {
+			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+				"Accumulate Up: Using: must return Int — the node's own value — got %s", ownT)}
+		}
+		// Combine: is optional and defaults to +, which is what "how much is
+		// under here" means almost every time it is asked.
+		combine, hasCombine := args.Lambda("Combine")
+		if hasCombine {
+			ct, err := typecheck.LambdaType(combine, append([]*ir.Type{ir.Int(), ir.Int()}, ambientTypes()...)...)
+			if err != nil {
+				return nil, &ResolveError{Pos: pos, Msg: "Accumulate Up: Combine: " + err.Error()}
+			}
+			if !ct.Equal(ir.Int()) {
+				return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
+					"Accumulate Up: Combine: must return Int, got %s", ct)}
+			}
+		}
+		display := "Accumulate Up"
+		if hasCombine {
+			display += ", Combine:"
+		}
+		meta := map[string]any{"lambda": lam, "node": in.Elem}
+		if hasCombine {
+			meta["combine"] = combine
+		}
+		return &ir.Node{
+			Prim: "Accumulate Up", In: in, Out: ir.Map(in.Elem, ir.Int()),
+			Display: display, Swappable: true,
+			Meta: meta, Pos: pos,
+			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+				g, ok := v.(*ir.GraphValue)
+				if !ok {
+					return nil, runtimeErr("Accumulate Up", pos,
+						"expected a Graph, got %s", ir.DescribeValue(v))
+				}
+				own := func(n ir.Value) (int64, error) {
+					r, err := eval.EvalLambdaTyped(lam,
+						append([]*ir.Type{in.Elem}, ambientTypes()...),
+						append([]ir.Value{n}, ambientArgs()...)...)
+					if err != nil {
+						return 0, runtimeErr("Accumulate Up", pos, "%s: %v", ir.FormatValue(n), err)
+					}
+					i, ok := r.(int64)
+					if !ok {
+						return 0, runtimeErr("Accumulate Up", pos, "Using: did not return an Int")
+					}
+					return i, nil
+				}
+				fold := func(a, b int64) (int64, error) { return a + b, nil }
+				if hasCombine {
+					fold = func(a, b int64) (int64, error) {
+						r, err := eval.EvalLambdaTyped(combine,
+							append([]*ir.Type{ir.Int(), ir.Int()}, ambientTypes()...),
+							append([]ir.Value{a, b}, ambientArgs()...)...)
+						if err != nil {
+							return 0, runtimeErr("Accumulate Up", pos, "Combine: %v", err)
+						}
+						i, ok := r.(int64)
+						if !ok {
+							return 0, runtimeErr("Accumulate Up", pos, "Combine: did not return an Int")
+						}
+						return i, nil
+					}
+				}
+				return graphAccumulateUp(g, own, fold, "Accumulate Up", pos)
 			},
 		}, nil
 	},

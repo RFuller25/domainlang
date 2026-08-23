@@ -58,6 +58,9 @@ func TestGraphBuiltinTypes(t *testing.T) {
 	wantType(t, `(g) -> delnode(g, "a")`, gt, gt)
 	wantType(t, "(g) -> undirected(g)", gt, gt)
 	wantType(t, "(g) -> mergegraphs(g, g)", gt, gt)
+	// pluck is the Map counterpart the graph readers reach for: the values
+	// under a list of keys, which is what neighbors(g, n) hands you.
+	wantType(t, `(m) -> pluck(m, list("a"))`, ir.List(ir.Int()), ir.Map(ir.Text(), ir.Int()))
 
 	// size and contains are extended rather than duplicated under new names.
 	wantType(t, "(g) -> size(g)", ir.Int(), gt)
@@ -90,6 +93,9 @@ func TestGraphBuiltinTypeErrors(t *testing.T) {
 		{"neighbors node type", "(g) -> neighbors(g, 1)", []*ir.Type{gt}, "neighbors node must be Text"},
 		{"weightof node type", "(g) -> weightof(g, 1)", []*ir.Type{gt}, "weightof node must be Text"},
 		{"root of a list", "(xs) -> root(xs)", []*ir.Type{ir.List(ir.Int())}, "root needs a Graph argument"},
+		{"pluck of a list", "(xs) -> pluck(xs, xs)", []*ir.Type{ir.List(ir.Int())}, "pluck needs a Map argument"},
+		{"pluck key type", "(m) -> pluck(m, list(1))", []*ir.Type{ir.Map(ir.Text(), ir.Int())},
+			"pluck needs List<Text> of keys"},
 		{"roots of a list", "(xs) -> roots(xs)", []*ir.Type{ir.List(ir.Int())}, "roots needs a Graph argument"},
 		{"indegree node type", "(g) -> indegree(g, 1)", []*ir.Type{gt}, "indegree node must be Text"},
 		{"reachable node type", "(g) -> reachable(g, 1)", []*ir.Type{gt}, "reachable node must be Text"},

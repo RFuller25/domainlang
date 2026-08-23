@@ -29,7 +29,7 @@ var gridTransforms = map[string]bool{
 
 // keywordPages maps each themed keyword to the reference page documenting it.
 // Deriving the page from the keyword rather than storing it per entry is what
-// keeps the catalog's 81 literals unchanged: the page a primitive is on is
+// keeps the catalog's 86 literals unchanged: the page a primitive is on is
 // already determined by the class it belongs to.
 var keywordPages = map[string]string{
 	"Cursed Energy":            "ref-sources.md",
@@ -197,6 +197,14 @@ var Catalog = map[string]PrimDoc{
 		"The inverse of Convert To Grid, so a grid can drop back to lists.", "convert-to-rows"},
 	"Find Cycle": {"Find Cycle", "Maximum Technique", "List<T> → (Int, Int)",
 		"Where a trajectory first repeats and its period — what turns a billion iterations into arithmetic.", "find-cycle"},
+	"Map Elements": {"Map Elements", "Cursed Technique", "Set<T> × (T → U) → Set<U>",
+		"Maps a Set's elements and keeps a Set; two elements mapping to one value are one element.", "map-elements"},
+	"Map Keys": {"Map Keys", "Cursed Technique", "Map<K,V> × (K → J) → Map<J,V>",
+		"Maps a Map's keys and keeps the Map; two keys mapping to one keep the later value.", "map-keys"},
+	"Map Nodes": {"Map Nodes", "Cursed Technique", "Graph<K> × (K → J) → Graph<J>",
+		"Relabels a Graph's nodes, keeping every arc and weight; two nodes mapping to one become one node holding both their arcs.", "map-nodes"},
+	"Map Weights": {"Map Weights", "Cursed Technique", "Graph<K> × ((K, K, Int) → Int) → Graph<K>",
+		"Re-weights every arc from its endpoints and its old weight — how a node-weighted graph becomes one the search vocabulary reads.", "map-weights"},
 	"Map Values": {"Map Values", "Cursed Technique", "Map<K,V> × (V → W) → Map<K,W>",
 		"Transforms every value, keys and order unchanged — the reduce half of a Group By.", "map-values"},
 	"Filter Entries": {"Filter Entries", "Cursed Technique", "Map<K,V> × ((K, V) → Bool) → Map<K,V>",
@@ -213,6 +221,8 @@ var Catalog = map[string]PrimDoc{
 		"Builds a Map from key/value pairs; last write wins.", "convert-to-map"},
 	"Root": {"Root", "Domain Expansion", "Graph<K> → K",
 		"The one node with no incoming arc; an error unless the graph has exactly one.", "root"},
+	"Accumulate Up": {"Accumulate Up", "Domain Expansion", "Graph<K> × (K → Int) → Map<K,Int>",
+		"Folds each node's own value together with everything under it, children first; a cycle is a runtime error.", "accumulate-up"},
 	"Minimum Spanning Tree": {"Minimum Spanning Tree", "Domain Expansion", "Graph<K> → Graph<K>",
 		"The cheapest arcs that keep the graph connected, read as undirected; a graph in pieces gives a forest.", "minimum-spanning-tree"},
 	"Strongly Connected Components": {"Strongly Connected Components", "Domain Expansion", "Graph<K> → List<List<K>>",

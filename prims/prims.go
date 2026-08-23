@@ -324,6 +324,13 @@ var Registry = []*Primitive{
 	matchPattern,
 	takeItem,
 	mapCells,
+	// The shape-preserving maps, one per collection kind, beside Map Cells
+	// which is the one that was already here. None of their phrases carries
+	// "Each", so unlike Map Values they need no ordering against Map Each.
+	mapElements,
+	mapKeys,
+	mapNodes,
+	mapWeights,
 	findCells,
 	rangePrim, // before Merge Ranges: its matcher excludes that phrase
 	transpose,
@@ -378,6 +385,7 @@ var Registry = []*Primitive{
 	topologicalSort,
 	shortestPath,
 	minimumSpanningTree,
+	accumulateUp,
 	graphRoot,
 	sortBy,
 	sortPrim,

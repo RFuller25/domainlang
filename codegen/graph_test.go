@@ -534,6 +534,145 @@ Channeled Energy: Convert To Graph
 	}
 }
 
+// The fold and the shape-preserving maps, on the same terms as the rest: the
+// interpreter and the binary have to print the same bytes. Each of these is a
+// second handwritten implementation, and each has a merging or ordering rule
+// that is exactly where the two would drift apart.
+func TestCompiledFoldAndShapeMapsMatchInterpreter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles binaries; skipped in -short mode")
+	}
+	requireGo(t)
+	const head = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+`
+	const reveal = "Reveal: stdout\n"
+	progs := []struct {
+		name  string
+		src   string
+		input string
+	}{
+		{
+			name:  "accumulate up over a tree",
+			src:   head + "Domain Expansion: Accumulate Up\n    Using: (n) -> 1\n" + reveal,
+			input: "a b\na c\nb d",
+		},
+		{
+			// A shared child is folded into both parents.
+			name:  "accumulate up over a dag",
+			src:   head + "Domain Expansion: Accumulate Up\n    Using: (n) -> 1\n" + reveal,
+			input: "a b\na c\nb d\nc d",
+		},
+		{
+			// Adjacency order is the fold order, and a non-commutative
+			// Combine: is where a different order would show.
+			name: "accumulate up with a non-commutative combine",
+			src: head + "Domain Expansion: Accumulate Up\n    Using: (n) -> 10\n" +
+				"    Combine: (a, b) -> a - b\n" + reveal,
+			input: "a b\na c\na d",
+		},
+		{
+			name: "accumulate up with combine max",
+			src: head + "Domain Expansion: Accumulate Up\n    Using: (n) -> length(n)\n" +
+				"    Combine: (a, b) -> max(a, b)\n" + reveal,
+			input: "a bb\na ccc\nbb dddd",
+		},
+		{
+			name: "map elements merges",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Set
+Cursed Technique: Map Elements
+    Using: (t) -> lower(t)
+` + reveal,
+			input: "Fire,WATER,fire,Wind",
+		},
+		{
+			name: "map elements changes the element type",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Set
+Cursed Technique: Map Elements
+    Using: (t) -> length(t)
+` + reveal,
+			input: "aa,bb,c,ddd",
+		},
+		{
+			name: "map keys collides to the later value",
+			src: `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> tomap(list(tuple(point(0, 0), "a"), tuple(point(0, 5), "b"), tuple(point(1, 2), "c")))
+Cursed Technique: Map Keys
+    Using: (p) -> prow(p)
+` + reveal,
+			input: "ignored",
+		},
+		{
+			name:  "map nodes relabels and merges",
+			src:   head + "Cursed Technique: Map Nodes\n    Using: (n) -> slice(n, 0, 1)\n" + reveal,
+			input: "ax b\nay c\nzz zz",
+		},
+		{
+			name: "map weights from a node cost",
+			src: `Cursed Energy: stdin
+Cursed Object: cost As tomap(list(tuple("a", 5), tuple("b", 2), tuple("c", 9)))
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Cursed Technique: Map Weights
+    Using: (f, t, w) -> getor(cost, t, 0)
+Domain Expansion: Dijkstra
+    Start: "a"
+` + reveal,
+			input: "a b\nb c\na c",
+		},
+		{
+			name: "map weights from the old weight",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} {word} {int}"
+Channeled Energy: Convert To Graph
+Cursed Technique: Map Weights
+    Using: (f, t, w) -> w * 2
+Channeled Energy: Convert To Edges
+` + reveal,
+			input: "a b 3\nb c 5",
+		},
+		{
+			// pluck is partial, and the two backends have to agree on the
+			// answer as well as on the failure.
+			name: "pluck over a graph's neighbours",
+			src: head + `Cursed Technique: Apply
+    Using: (g) ->
+        consider size as tomap(list(tuple("a", 5), tuple("b", 2), tuple("c", 9), tuple("d", 4)))
+        in totext(sum(pluck(size, neighbors(g, "a"))))
+` + reveal,
+			input: "a b\na c\nb d",
+		},
+	}
+	for _, p := range progs {
+		for _, optimize := range []bool{true, false} {
+			mode := "naive"
+			if optimize {
+				mode = "optimized"
+			}
+			t.Run(p.name+"/"+mode, func(t *testing.T) {
+				t.Parallel()
+				pipe := compilePipeline(t, p.src, optimize)
+				want := runInterpreter(t, pipe, []byte(p.input))
+				got := buildAndRun(t, pipe, []byte(p.input), codegen.Options{})
+				if got != want {
+					t.Errorf("interpreter and binary disagree:\n  interpreter: %q\n  binary:      %q", want, got)
+				}
+			})
+		}
+	}
+}
+
 // weight is the partial one in the group: a missing arc must fail in both
 // backends, or the two disagree about whether the program runs at all.
 func TestCompiledGraphWeightFailsInBothBackends(t *testing.T) {
