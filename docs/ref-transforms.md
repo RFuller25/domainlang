@@ -165,6 +165,207 @@ Reveal: stdout
 [1, 7]
 ```
 
+`Map Each` takes a `List`, a `Set` or a `Map` and always hands back a **`List`**.
+That is right for what it is — the lambda may change the element type, and the
+result has an order the input need not have had — but it means the only way to
+map a `Set` and still have a `Set` was `Map Each` then `Convert To Set`, and the
+only way to map a `Map`'s *keys* was to take it apart into entries and build it
+again. Two primitives already closed that gap for two of the types:
+[`Map Cells`](ref-transforms-grid.md) keeps a `Grid` (and a `Sparse`)
+and [`Map Values`](ref-transforms-grid.md) keeps a `Map`. These are
+the rest of the row.
+
+| | |
+|---|---|
+| `Map Elements` | `Set<T> × (T -> U) -> Set<U>` |
+| `Map Keys` | `Map<K,V> × (K -> J) -> Map<J,V>` |
+| `Map Nodes` | `Graph<K> × (K -> J) -> Graph<J>` |
+| `Map Weights` | `Graph<K> × ((K, K, Int) -> Int) -> Graph<K>` |
+
+The last two are the graph's answer to the pair `Map Keys` and `Map Values` are
+for a `Map`: one changes what the things are called, the other changes what the
+arcs between them weigh.
+
+**A mapping that is not injective merges.** That is what these types mean, and
+each says below what merging does to it. A primitive that refused it would be
+refusing an ordinary use — folding case, rounding a coordinate, interning a
+long name — rather than catching a mistake.
+
+### Map Elements — `Set<T> × (T -> U) -> Set<U>`
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Set
+Cursed Technique: Map Elements
+    Using: (t) -> lower(t)
+Reveal: stdout
+```
+```input
+Fire,WATER,fire,Wind
+```
+```output
+{fire, water, wind}
+```
+
+Four elements in, three out: `Fire` and `fire` are one element once the case is
+folded, which is what a `Set` is for. The element type may change, and the new
+one must be keyable — the rule every `Set` element follows:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Set
+Cursed Technique: Map Elements
+    Using: (t) -> length(t)
+Reveal: stdout
+```
+```input
+aa,bb,c,ddd
+```
+```output
+{2, 1, 3}
+```
+
+### Map Keys — `Map<K,V> × (K -> J) -> Map<J,V>`
+
+`Map Values`' other half. The values ride along untouched, in the order their
+keys were in:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Maximum Technique: Count By
+    Using: (w) -> w
+Cursed Technique: Map Keys
+    Using: (k) -> upper(k)
+Reveal: stdout
+```
+```input
+ab,cd,ab
+```
+```output
+{AB: 2, CD: 1}
+```
+
+Two keys mapping to one keep the **later** value written, which is `insert`'s
+rule. Rounding a coordinate is the usual way to meet it:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> tomap(list(tuple(point(0, 0), "a"), tuple(point(0, 5), "b"), tuple(point(1, 2), "c")))
+Cursed Technique: Map Keys
+    Using: (p) -> prow(p)
+Reveal: stdout
+```
+```input
+```
+```output
+{0: b, 1: c}
+```
+
+### Map Nodes — `Graph<K> × (K -> J) -> Graph<J>`
+
+Relabels a graph. Every arc and every weight survives, isolated nodes included
+— the nodes are renamed first, so an arc's endpoints always agree with the node
+list:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Cursed Technique: Map Nodes
+    Using: (n) -> slice(n, 0, 1)
+Reveal: stdout
+```
+```input
+alpha beta
+beta gamma
+```
+```output
+{a: [(b, 1)], b: [(g, 1)], g: []}
+```
+
+Two nodes mapping to one become **one node holding both their arcs** — which is
+what interning a long name to a short one is for, and what makes it worth
+saying out loud:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Cursed Technique: Map Nodes
+    Using: (n) -> slice(n, 0, 1)
+Reveal: stdout
+```
+```input
+ax b
+ay c
+```
+```output
+{a: [(b, 1), (c, 1)], b: [], c: []}
+```
+
+### Map Weights — `Graph<K> × ((K, K, Int) -> Int) -> Graph<K>`
+
+Re-weights every arc. The lambda takes three parameters — the arc's `from`, its
+`to`, and its old weight — because an arc's new weight is almost never a
+function of its old one alone.
+
+That is what makes this the bridge from a **node-weighted** graph to one the
+search vocabulary reads: weigh every arc by what it costs to *enter* its
+destination, and `Dijkstra` answers the node-weighted question unchanged.
+
+```domain run
+Cursed Energy: stdin
+Cursed Object: cost As tomap(list(tuple("a", 5), tuple("b", 2), tuple("c", 9)))
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert To Graph
+Cursed Technique: Map Weights
+    Using: (f, t, w) -> getor(cost, t, 0)
+Domain Expansion: Dijkstra
+    Start: "a"
+Reveal: stdout
+```
+```input
+a b
+b c
+a c
+```
+```output
+{a: 0, b: 2, c: 9}
+```
+
+Entering `c` costs 9 whichever way you go, and going through `b` first costs 11,
+so the direct arc wins. The start node's own weight is not counted — nothing
+enters it — which is the one thing to add by hand if the question wants it.
+
+The old weight is there for the ordinary case of scaling one:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} {word} {int}"
+Channeled Energy: Convert To Graph
+Cursed Technique: Map Weights
+    Using: (f, t, w) -> w * 2
+Channeled Energy: Convert To Edges
+Reveal: stdout
+```
+```input
+a b 3
+b c 5
+```
+```output
+[[a, b, 6], [b, c, 10]]
+```
+
 ### Filter — `List<T> × (T -> Bool) -> List<T>`
 
 ```domain

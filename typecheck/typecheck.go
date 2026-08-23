@@ -235,6 +235,10 @@ var Builtins = []string{
 	// above could not: which node is the top of it, and what a node's arcs
 	// weigh in total.
 	"root", "weightof",
+	// The missing half of keys/values: reading a *chosen* set of keys out of a
+	// Map, which is what every "look these up" loop wants and what the
+	// expression layer had no way to say.
+	"pluck",
 	// The rest of the node-level vocabulary: the total twin of root and its
 	// mirror, the arcs coming in, a node-level delete to match deledge, and the
 	// four whole-graph questions an edge list makes worth asking.
@@ -291,7 +295,7 @@ var builtinArity = map[string]int{
 	"graph": 1, "emptygraph": 1, "addnode": 2, "addedge": -1, "deledge": 3,
 	"nodes": 1, "edges": 1, "neighbors": 2, "edgesof": 2, "hasedge": 3,
 	"weight": 3, "weightor": 4, "degree": 2, "flipedges": 1, "subgraph": 2,
-	"root": 1, "weightof": 2,
+	"root": 1, "weightof": 2, "pluck": 2,
 	"roots": 1, "leaves": 1, "indegree": 2, "delnode": 2, "reachable": 2,
 	"hascycle": 1, "undirected": 1, "mergegraphs": 2, "weightsum": 1,
 	"insert": -1, // 2 over a Set, 3 over a Map
@@ -897,6 +901,19 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	case "values":
 		if args[0] == nil || args[0].Kind != ir.KMap {
 			return nil, fmt.Errorf("%s: values needs a Map argument, got %s", x.Pos, args[0])
+		}
+		return ir.List(args[0].Elem), nil
+	case "pluck":
+		// `keys` and `values` read a Map whole; this reads the values under
+		// keys you name, in the order you name them. It is partial, like
+		// `get`: a missing key means the caller's list and the map disagree
+		// about what exists, and a silently skipped entry would make a `sum`
+		// over the result quietly wrong.
+		if args[0] == nil || args[0].Kind != ir.KMap {
+			return nil, fmt.Errorf("%s: pluck needs a Map argument, got %s", x.Pos, args[0])
+		}
+		if args[1] == nil || args[1].Kind != ir.KList || !args[1].Elem.Equal(args[0].Key) {
+			return nil, fmt.Errorf("%s: pluck needs List<%s> of keys, got %s", x.Pos, args[0].Key, args[1])
 		}
 		return ir.List(args[0].Elem), nil
 	case "tolist":

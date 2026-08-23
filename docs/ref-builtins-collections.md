@@ -54,6 +54,7 @@ without one, and a frequency map is normally queried through `getor`.
 | `getor(m, k, d)` | `Map<K,V> × K × V -> V` | Total lookup: the value, or `d` when absent. |
 | `keys(m)` | `Map<K,V> -> List<K>` | Keys in insertion order. |
 | `values(m)` | `Map<K,V> -> List<V>` | Values in the same order. |
+| `pluck(m, ks)` | `Map<K,V> × List<K> -> List<V>` | The values under the keys you name, in the order you name them. **Error** on a key the map does not have, like `get` — a silently skipped entry would make a `sum` over the result quietly wrong. |
 | `size(m)` | `Map<K,V> \| Set<T> \| Graph<K> -> Int` | Entry count (a `Graph`'s node count) — `Count`, without leaving the lambda. |
 | `tolist(s)` | `Set<T> -> List<T>` | Elements in insertion order. Without it a `Set` is a dead end: `Map Each` has no Set case. |
 

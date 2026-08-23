@@ -1026,6 +1026,24 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	case "keys":
 		g.helper("dmMap", declMap)
 		return "(" + args[0] + ").keys", ir.List(types[0].Key), nil
+	case "pluck":
+		if types[0] == nil || types[0].Kind != ir.KMap {
+			return "", nil, fmt.Errorf("pluck needs a Map argument, got %s", types[0])
+		}
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmMap", declMap)
+		g.helper("dmPluck", `func dmPluck[K comparable, V any](m dmMap[K, V], ks []K) []V {
+	out := make([]V, len(ks))
+	for i, k := range ks {
+		v, ok := m.vals[k]
+		if !ok {
+			dmFail("pluck: no entry for %v", k)
+		}
+		out[i] = v
+	}
+	return out
+}`)
+		return "dmPluck(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
 	case "values":
 		g.helper("dmMap", declMap)
 		// The key and value types are not named by the (generic) helper, but

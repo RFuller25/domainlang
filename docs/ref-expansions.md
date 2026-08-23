@@ -970,6 +970,81 @@ cycle reaches every node has none, and each failure says which it is. A
 self-loop counts as an arc in. Where "not exactly one" is the expected answer
 rather than a fault, `roots(g)` in a lambda hands back however many there are.
 
+### Accumulate Up — `Graph<K> × (K -> Int) -> Map<K,Int>`
+
+```domain
+Domain Expansion: Accumulate Up
+    Using: (n) -> getor(own, n, 0)
+```
+
+What everything under a node comes to. `Using:` gives a node its **own** value,
+and the stage folds that together with the totals of everything the node's arcs
+reach — children first, so one pass finishes it and nothing is recomputed.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} {word}"
+Channeled Energy: Convert To Graph
+Domain Expansion: Accumulate Up
+    Using: (n) -> 1
+Reveal: stdout
+```
+```input
+a b
+a c
+b d
+```
+```output
+{a: 4, b: 2, c: 1, d: 1}
+```
+
+That is the size of each subtree, counting the node itself — the shape of "how
+big is this directory", "how many orbits is this", "what does this tower weigh".
+The `Using:` lambda is where the node's weight comes from, so a `Map<K,Int>` of
+weights read with `getor` is the usual spelling.
+
+This is the question the search vocabulary cannot answer. `Dijkstra` and
+`Shortest Path` weigh a *path*; folding a node's weight onto its in-arcs turns a
+node-weighted graph into one they read (see [`Map Weights`](ref-transforms.md)).
+But "what is under here" is not a path — every node under this one counts once
+per parent that reaches it — and no re-weighting expresses it.
+
+**`Combine:` replaces the fold**, which is `+` by default — here the widest
+name anywhere under each node, rather than the total:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Mode: Each
+    Using: "{word} {word}"
+Channeled Energy: Convert To Graph
+Domain Expansion: Accumulate Up
+    Using: (n) -> length(n)
+    Combine: (a, b) -> max(a, b)
+Reveal: stdout
+```
+```input
+a bb
+a ccc
+bb dddd
+```
+```output
+{a: 4, bb: 4, ccc: 3, dddd: 4}
+```
+
+Each node's children are folded in **adjacency order**, left to right, starting
+from its own value — so a `Combine:` that is not commutative still gives one
+answer, and both backends give the same one.
+
+A **cycle is a runtime error** naming the node it blocked: there is no
+"children first" to fold in, which is the same reason `Topological Sort`
+refuses one. On a graph that is not a tree, a node under two parents is folded
+into each of them — it is genuinely under both.
+
 ### Minimum Spanning Tree — `Graph<K> -> Graph<K>`
 
 ```domain

@@ -417,3 +417,127 @@ func (g *gen) emitShortestPath(n *ir.Node, in string) (string, error) {
 	g.wl("%s := dmGraphPath[%s](%s, %s, %s)", v, nodeGo, in, start, goal)
 	return v, nil
 }
+
+// emitAccumulateUp lowers the reverse-topological fold, mirroring
+// prims.graphAccumulateUp exactly: out-degree counts down, a ready node reads
+// its children in adjacency order, and a cycle names the node it blocked.
+//
+// The two lambdas are inlined rather than called, which is what every other
+// emitter here does; Combine: is absent in the common case and the fold is
+// then a plain `+`.
+func (g *gen) emitAccumulateUp(n *ir.Node, in string) (string, error) {
+	nodeGo, err := g.goType(n.In.Elem)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	lam, err := g.nodeLambda(n)
+	if err != nil {
+		return "", err
+	}
+	nd := g.fresh("nd")
+	ownBody, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: nd, typ: n.In.Elem}})
+	if err != nil {
+		return "", unsupported(n, "Using: %v", err)
+	}
+
+	// Combine: folds the running value with one child's total. Without it the
+	// fold is addition, which is what "how much is under here" means.
+	combineOf := func(acc, child string) (string, error) { return acc + " + " + child, nil }
+	if cl, ok := n.Meta["combine"].(*ast.Lambda); ok {
+		a, b := g.fresh("ca"), g.fresh("cb")
+		body, _, err := g.compileExpr(cl.Body, exprEnv{
+			cl.Params[0]: {expr: a, typ: ir.Int()},
+			cl.Params[1]: {expr: b, typ: ir.Int()},
+		})
+		if err != nil {
+			return "", unsupported(n, "Combine: %v", err)
+		}
+		combineOf = func(acc, child string) (string, error) {
+			return "func(" + a + ", " + b + " int64) int64 { return " + body + " }(" + acc + ", " + child + ")", nil
+		}
+	}
+
+	g.helper("dmFail", declFail, "fmt", "os")
+	g.helper("dmGraph", declGraph)
+	g.helper("dmMap", declMap)
+
+	out, parents, outst, queue := g.fresh("up"), g.fresh("par"), g.fresh("out"), g.fresh("q")
+	totals, i, e, cur, p, v := g.fresh("tot"), g.fresh("i"), g.fresh("e"), g.fresh("cur"),
+		g.fresh("p"), g.fresh("v")
+	done := g.fresh("done")
+
+	g.wl("%s := make([][]int, len(%s.nodes))", parents, in)
+	g.wl("%s := make([]int, len(%s.nodes))", outst, in)
+	g.wl("%s := []int{}", queue)
+	g.wl("for %s := range %s.nodes {", i, in)
+	g.in()
+	g.wl("%s[%s] = len(%s.adj[%s])", outst, i, in, i)
+	g.wl("if %s[%s] == 0 {", outst, i)
+	g.in()
+	g.wl("%s = append(%s, %s)", queue, queue, i)
+	g.out()
+	g.wl("}")
+	g.wl("for _, %s := range %s.adj[%s] {", e, in, i)
+	g.in()
+	g.wl("%s[%s.to] = append(%s[%s.to], %s)", parents, e, parents, e, i)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+
+	g.wl("%s := make([]int64, len(%s.nodes))", totals, in)
+	g.wl("%s := 0", done)
+	g.wl("for len(%s) > 0 {", queue)
+	g.in()
+	g.wl("%s := %s[0]", cur, queue)
+	g.wl("%s = %s[1:]", queue, queue)
+	g.wl("%s++", done)
+	g.wl("%s := %s.nodes[%s]", nd, in, cur)
+	g.wl("%s := %s", v, ownBody)
+	g.wl("_ = %s", nd)
+	g.wl("for _, %s := range %s.adj[%s] {", e, in, cur)
+	g.in()
+	folded, err := combineOf(v, totals+"["+e+".to]")
+	if err != nil {
+		return "", err
+	}
+	g.wl("%s = %s", v, folded)
+	g.out()
+	g.wl("}")
+	g.wl("%s[%s] = %s", totals, cur, v)
+	g.wl("for _, %s := range %s[%s] {", p, parents, cur)
+	g.in()
+	g.wl("%s[%s]--", outst, p)
+	g.wl("if %s[%s] == 0 {", outst, p)
+	g.in()
+	g.wl("%s = append(%s, %s)", queue, queue, p)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+
+	g.wl("if %s != len(%s.nodes) {", done, in)
+	g.in()
+	g.wl("for %s := range %s.nodes {", i, in)
+	g.in()
+	g.wl("if %s[%s] > 0 {", outst, i)
+	g.in()
+	g.wl(`dmFail("Accumulate Up: the graph has a cycle (%%v is still waiting on what is under it after %%d of %%d nodes were folded)", %s.nodes[%s], %s, len(%s.nodes))`,
+		in, i, done, in)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+
+	g.wl("%s := dmNewMap[%s, int64]()", out, nodeGo)
+	g.wl("for %s := range %s.nodes {", i, in)
+	g.in()
+	g.wl("%s.put(%s.nodes[%s], %s[%s])", out, in, i, totals, i)
+	g.out()
+	g.wl("}")
+	return out, nil
+}

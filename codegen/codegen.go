@@ -707,6 +707,8 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitGraphRoot(n, in)
 	case "Minimum Spanning Tree":
 		return g.emitMinimumSpanningTree(n, in)
+	case "Accumulate Up":
+		return g.emitAccumulateUp(n, in)
 	case "Strongly Connected Components":
 		return g.emitStronglyConnectedComponents(n, in)
 	case "Convert To Entries":
@@ -715,6 +717,14 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitConvertToMap(n, in)
 	case "Map Values":
 		return g.emitMapValues(n, in)
+	case "Map Elements":
+		return g.emitMapElements(n, in)
+	case "Map Keys":
+		return g.emitMapKeys(n, in)
+	case "Map Nodes":
+		return g.emitMapNodes(n, in)
+	case "Map Weights":
+		return g.emitMapWeights(n, in)
 	case "Filter Entries":
 		return g.emitFilterEntries(n, in)
 	case "Explore":
