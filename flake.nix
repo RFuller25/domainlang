@@ -21,6 +21,36 @@
           vendorHash = "sha256-BaaZD69s6Xmum7SRRUSK6YbiNWsg5w8ChtBxPirPINU=";
           subPackages = [ "cmd/domain" ];
 
+          # buildGoModule builds the dependencies in a *separate* derivation
+          # (`domain-<version>-go-modules`) whose only job is to run
+          # `go mod vendor`, and — surprisingly — it inherits `preBuild` from
+          # here (nixpkgs says as much in pkgs/build-support/go/module.nix:
+          # "The following inheritance behavior is not trivial to expect").
+          # Worse, it runs that hook as the *first* thing in its build phase,
+          # before `go mod vendor` has fetched anything.
+          #
+          # So the playground build below would run twice: once in the real
+          # build, where it belongs, and once in the vendor derivation, where
+          # there are no dependencies for it to compile against yet. That
+          # second run is pure waste on a good day, and on a bad one it is a
+          # build failure: if anything has left a `vendor/` directory in the
+          # source tree, Go sees it, switches to `-mod=vendor`, finds no
+          # `vendor/modules.txt` to go with it, and stops with
+          #
+          #     go: inconsistent vendoring in /build/source:
+          #       charm.land/bubbles/v2@v2.1.1: is explicitly required in
+          #       go.mod, but not marked as explicit in vendor/modules.txt
+          #
+          # — a message about vendoring, from the derivation whose entire
+          # purpose is to *create* the vendoring, listing every dependency in
+          # go.mod. `overrideModAttrs` is the sanctioned way to say "that hook
+          # is for the real build only". Clearing it does not affect
+          # vendorHash: the vendor derivation's output is the `vendor/` tree
+          # `go mod vendor` writes, which the playground build never touches.
+          overrideModAttrs = _finalAttrs: _prevAttrs: {
+            preBuild = "";
+          };
+
           # `domain <file> <args...>` (the compiler path) shells out to the
           # Go toolchain via `go build`, so the installed binary must always
           # be able to find `go` — even on systems where Go isn't otherwise
@@ -45,6 +75,9 @@
           # Run via `bash` rather than `./docs/wasm/build.sh`: the sandbox has
           # no /usr/bin/env, so the script's own #!/usr/bin/env bash shebang
           # cannot resolve there.
+          #
+          # `overrideModAttrs` above keeps this out of the vendor derivation,
+          # where the deps it needs do not exist yet.
           preBuild = ''
             bash docs/wasm/build.sh
           '';

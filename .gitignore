@@ -27,8 +27,15 @@
 *.coverprofile
 *.out
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Dependency directories. This repository never commits a vendor tree: the Nix
+# package vendors in its own derivation (`vendorHash` in flake.nix) and
+# buildGoModule refuses a source that already has one. A `vendor/` left behind
+# by a local `go mod vendor` — or by one that was interrupted, which leaves the
+# directory there and empty, where `git status` cannot even show it — is
+# therefore never wanted in a source tarball or a `nix build` copy of this
+# tree. It also stops repo_files_test.go's untracked-Go-file check from
+# drowning in vendored sources.
+/vendor/
 
 # Go workspace file
 go.work
