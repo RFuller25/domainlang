@@ -177,7 +177,7 @@ func TestDefinitionAtFollowsAnImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	prog := filepath.Join(dir, "main.domain")
-	src := "Innate Domain: helpers\nCursed Energy: input.txt\nChanneled Energy: Convert To Integers\nShikigami: Triple\nReveal: stdout\n"
+	src := "Inherited Technique: helpers\nCursed Energy: input.txt\nChanneled Energy: Convert To Integers\nShikigami: Triple\nReveal: stdout\n"
 
 	a := Analyze(prog, src)
 	loc, ok := a.DefinitionAt(4)

@@ -304,6 +304,14 @@
     "page": "ref-transforms.md"
   },
   {
+    "id": "Convert From JSON",
+    "keyword": "Channeled Energy",
+    "signature": "Text → T",
+    "summary": "Decodes a JSON document into the shape declared by Into: (Game Dev).",
+    "anchor": "convert-from-json",
+    "page": "ref-coercions.md"
+  },
+  {
     "id": "Convert To Adjacency",
     "keyword": "Channeled Energy",
     "signature": "Graph\u003cK\u003e → Map\u003cK, List\u003cK\u003e\u003e",
@@ -357,6 +365,14 @@
     "signature": "List\u003cText\u003e → List\u003cInt\u003e | List\u003cList\u003cText\u003e\u003e → List\u003cList\u003cInt\u003e\u003e",
     "summary": "Parses each field to an Int (form chosen by input type).",
     "anchor": "convert-to-integers",
+    "page": "ref-coercions.md"
+  },
+  {
+    "id": "Convert To JSON",
+    "keyword": "Channeled Energy",
+    "signature": "T → Text",
+    "summary": "Writes a value as JSON; the value decides the shape (Game Dev).",
+    "anchor": "convert-to-json",
     "page": "ref-coercions.md"
   },
   {
@@ -680,6 +696,14 @@
     "page": "ref-expansions.md"
   },
   {
+    "id": "Load",
+    "keyword": "Domain Expansion",
+    "signature": "W → T",
+    "summary": "Reads persisted state back in, synchronously; Default: covers a missing save and every replayed run unless its script says otherwise (Game Dev).",
+    "anchor": "load",
+    "page": "ref-expansions.md"
+  },
+  {
     "id": "Minimum Spanning Tree",
     "keyword": "Domain Expansion",
     "signature": "Graph\u003cK\u003e → Graph\u003cK\u003e",
@@ -696,11 +720,27 @@
     "page": "ref-expansions.md"
   },
   {
+    "id": "Request",
+    "keyword": "Domain Expansion",
+    "signature": "W → W",
+    "summary": "Fires an HTTP request and returns the world unchanged; the answer arrives at a Part Reply (Game Dev).",
+    "anchor": "request",
+    "page": "ref-expansions.md"
+  },
+  {
     "id": "Root",
     "keyword": "Domain Expansion",
     "signature": "Graph\u003cK\u003e → K",
     "summary": "The one node with no incoming arc; an error unless the graph has exactly one.",
     "anchor": "root",
+    "page": "ref-expansions.md"
+  },
+  {
+    "id": "Save",
+    "keyword": "Domain Expansion",
+    "signature": "W → W",
+    "summary": "Writes state that outlives the run; a no-op under a host that never touches disk, which every replayed run is (Game Dev).",
+    "anchor": "save",
     "page": "ref-expansions.md"
   },
   {
@@ -765,6 +805,22 @@
     "signature": "T → T (asserts)",
     "summary": "Asserts an invariant about the current value; stripped under --release.",
     "anchor": "simple-domain-channel-shikigami-binding-vow-reveal",
+    "page": "ref-structure.md"
+  },
+  {
+    "id": "Beep",
+    "keyword": "Simple Domain",
+    "signature": "T → T",
+    "summary": "Rings the terminal bell, optionally only when a Using: predicate holds; passes its value through (Game Dev).",
+    "anchor": "beep",
+    "page": "ref-structure.md"
+  },
+  {
+    "id": "Quit",
+    "keyword": "Simple Domain",
+    "signature": "T → T",
+    "summary": "Ends the program, optionally only when a Using: predicate holds; passes its value through (Game Dev).",
+    "anchor": "quit",
     "page": "ref-structure.md"
   },
   {

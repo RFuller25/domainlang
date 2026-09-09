@@ -71,7 +71,7 @@ go build -o domain ./cmd/domain
 ./domain --help
 
 # Or with Nix, no clone needed:
-nix run github:RFuller25/domain -- --help
+nix run github:RFuller25/domainlang -- --help
 ```
 
 The CLI picks its mode from the arguments:
@@ -125,14 +125,15 @@ and the tooling relies on them:
 
 | Keyword | Role |
 |---|---|
-| `Innate Domain:` | import a library of Shikigami (this keyword is required) |
+| `Innate Domain:` | declare the program's scope (this keyword is required) |
+| `Inherited Technique:` | import a library of Shikigami (this keyword is required) |
 | `Cursed Energy:` | where data comes from (a file name, or `stdin`) |
 | `Cursed Technique:` | 1:1 transforms — `Split`, `Map Each`, `Filter`, … |
 | `Channeled Energy:` | type coercions — `Convert To Integers`, `To Grid`, `To Set`, … |
 | `Maximum Technique:` | reductions — `Sum`, `Count`, `Fold`, `Group By`, … |
 | `Domain Expansion:` | **a named algorithm the optimizer may replace** |
 | `Reverse Cursed Technique:` | inversions — `Reverse` |
-| `Simple Domain:` | loops — `Repeat N`, `While`, `Iterate Until Fixed Point`, `For` |
+| `Simple Domain:` | loops — `Repeat N`, `While`, `Iterate Until Fixed Point`, `For`, `For Each` |
 | `Cursed Object:` / `Cursed Tool:` | declare a program-wide value / change it |
 | `Channel "name":` | a named side branch |
 | `Part "label":` | a labelled answer, for two-part puzzles |
@@ -230,7 +231,7 @@ Four things worth noticing:
 - `if … then … else …` is an expression with lazy arms, so
   `if length(xs) = 0 then -1 else first(xs)` is safe. `and` and `or`
   short-circuit.
-- There are 188 builtins available inside lambdas — lists, math, text, bits,
+- There are 208 builtins available inside lambdas — lists, math, text, bits,
   points, grids, sparse planes. The full table is in
   [expressions.md](expressions.md).
 

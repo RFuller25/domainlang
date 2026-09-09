@@ -27,6 +27,9 @@ import (
 	"time"
 
 	"domain/codegen"
+	// The Game Dev host registers itself; see game/host.go for why a
+	// blank import is what asks for it.
+	_ "domain/game"
 	"domain/interp"
 	"domain/ir"
 	"domain/prims"
@@ -195,7 +198,7 @@ func runInterpreterBounded(pipe *ir.Pipeline, ctx *ir.Context, limit time.Durati
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := interp.Run(pipe, ctx)
+		_, err := interp.RunScoped(pipe, ctx)
 		done <- err
 	}()
 	select {

@@ -159,6 +159,9 @@ func (r *resolver) loopNode(stmt *ast.Statement, cur *ir.Type, rewriteErr *error
 
 	op := stmt.Op
 	if hasWord(op, "For") {
+		if len(op.Words) >= 2 && op.Words[1] == "Each" {
+			return r.resolveForEachLoop(stmt, op, cur, rewriteErr)
+		}
 		return r.resolveForLoop(stmt, op, cur)
 	}
 
@@ -291,6 +294,100 @@ func (r *resolver) resolveForLoop(stmt *ast.Statement, op *ast.Operation, cur *i
 				var err error
 				label := fmt.Sprintf("For %s iter %d/%d", varName, i+1, len(xs))
 				v, err = runIteration(ctx, subNodes, v, label, cur)
+				popAmbientValue()
+				if err != nil {
+					return nil, err
+				}
+			}
+			return v, nil
+		},
+	}, nil
+}
+
+// resolveForEachLoop lowers `Simple Domain: For Each x In`. Unlike
+// `For x in <channel/range>`, whose source is fixed before the loop starts —
+// a Channel computed once for the whole run, or a literal count — this
+// source is a `Using:` lambda evaluated against the *current* pipeline value
+// every time the loop itself runs. `For Each creep In` (Using: (w) ->
+// w.creeps) reads however many creeps are in the world *this tick*, not a
+// count fixed when the program started: no cap, and no `k >= length(...)`
+// guard standing in for one.
+//
+// The body's lambdas gain two ambient trailing parameters, not one: the
+// element, then its index. The index is what lets a body write an updated
+// element back with `set(xs, i, ...)` — set's own twin for a List, already
+// how every other world update in this language is written — since this
+// loop does no splicing of its own. That is deliberate: a `Using:` lambda
+// may filter or reshape what it returns, and there is no single well-defined
+// way to write a transformed sub-list back into the field it came from.
+// Handing back the index and leaving the write to `set`/`with` needs no new
+// splicing rule at all.
+func (r *resolver) resolveForEachLoop(stmt *ast.Statement, op *ast.Operation, cur *ir.Type, rewriteErr *error) (*ir.Node, error) {
+	if cur == nil {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: "For Each needs an upstream value"}
+	}
+	if len(stmt.Block) == 0 {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: "For Each loop has an empty body", NeedsBlock: true}
+	}
+	if len(op.Words) != 4 || op.Words[2] == "" || op.Words[3] != "In" {
+		return nil, &ResolveError{Pos: stmt.Pos,
+			Msg: "For Each needs a variable and `In`, e.g. `For Each creep In`"}
+	}
+	varName := op.Words[2]
+
+	lam, ok := r.args(stmt, rewriteErr).Lambda("Using")
+	if !ok {
+		return nil, &ResolveError{Pos: stmt.Pos,
+			Msg: fmt.Sprintf("For Each %s In needs a Using: lambda producing the list, e.g. Using: (w) -> w.%ss", varName, varName)}
+	}
+	srcType, err := typecheck.LambdaType(lam, append([]*ir.Type{cur}, ambientTypes()...)...)
+	if err != nil {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: "For Each: " + err.Error()}
+	}
+	if srcType == nil || srcType.Kind != ir.KList {
+		return nil, &ResolveError{Pos: stmt.Pos,
+			Msg: fmt.Sprintf("For Each %s In needs a Using: lambda producing a List, got %s", varName, srcType)}
+	}
+	elemType := srcType.Elem
+
+	pushAmbient(varName, elemType)
+	pushAmbient(varName+" index", ir.Int())
+	subNodes, bodyOut, err := r.resolveSequence(stmt.Block, cur, scopeLoop)
+	popAmbient()
+	popAmbient()
+	if err != nil {
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: "in loop body: " + err.Error()}
+	}
+	if !bodyOut.Equal(cur) {
+		return nil, &ResolveError{Pos: stmt.Pos,
+			Msg: fmt.Sprintf("loop body must preserve the value type (got %s -> %s)", cur, bodyOut)}
+	}
+
+	meta := map[string]any{
+		"kind": "foreach", "nodes": subNodes, "varName": varName,
+		"lambda": lam, "elem": elemType,
+	}
+	display := "For Each " + varName + " In"
+	return &ir.Node{
+		Prim: "Simple Domain (For Each)", In: cur, Out: cur,
+		Display: display, Pos: stmt.Pos,
+		Meta: meta,
+		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
+			listV, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{cur}, ambientTypes()...), append([]ir.Value{v}, ambientArgs()...)...)
+			if err != nil {
+				return nil, runtimeErr("Simple Domain (For Each)", stmt.Pos, "Using: %v", err)
+			}
+			xs, err := ir.AsList(listV)
+			if err != nil {
+				return nil, runtimeErr("Simple Domain (For Each)", stmt.Pos, "%v", err)
+			}
+			v = ownLoopState(subNodes, v, cur, meta)
+			for i, x := range xs {
+				pushAmbientValue(x, elemType)
+				pushAmbientValue(int64(i), ir.Int())
+				label := fmt.Sprintf("%s iter %d/%d", display, i+1, len(xs))
+				v, err = runIteration(ctx, subNodes, v, label, cur)
+				popAmbientValue()
 				popAmbientValue()
 				if err != nil {
 					return nil, err

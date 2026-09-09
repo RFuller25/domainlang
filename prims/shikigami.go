@@ -45,8 +45,8 @@ func (r *resolver) resolveShikigamiCall(stmt *ast.Statement, cur *ir.Type) ([]*i
 	if err := checkParamNotUpdated(name, def, stmt.Pos); err != nil {
 		return nil, nil, err
 	}
-	body := substituteBody(def.Body, env)
-	binds := substituteBinds(def.Binds, env)
+	body := r.substituteBody(def.Body, env)
+	binds := r.substituteBinds(def.Binds, env)
 
 	// A declared signature is checked at the boundary, which is the whole point:
 	// the mismatch is reported here, against the call, instead of surfacing as
@@ -347,7 +347,7 @@ func checkLambdaParam(defName string, p ast.Param, lam *ast.Lambda, pos token.Po
 // substituteBinds substitutes a call's arguments into the `Consider` bindings
 // written at the top of a Shikigami body, so a binding may be written in terms
 // of the definition's parameters.
-func substituteBinds(binds []*ast.Binding, env map[string]paramVal) []*ast.Binding {
+func (r *resolver) substituteBinds(binds []*ast.Binding, env map[string]paramVal) []*ast.Binding {
 	if len(binds) == 0 {
 		return nil
 	}
@@ -361,25 +361,25 @@ func substituteBinds(binds []*ast.Binding, env map[string]paramVal) []*ast.Bindi
 		case b.Value != nil:
 			nb.Value = substExpr(b.Value, env, map[string]bool{})
 		case len(b.Body) > 0:
-			nb.Body = substituteBody(b.Body, env)
+			nb.Body = r.substituteBody(b.Body, env)
 		}
 		out[i] = &nb
 	}
 	return out
 }
 
-func substituteBody(body []*ast.Statement, env map[string]paramVal) []*ast.Statement {
+func (r *resolver) substituteBody(body []*ast.Statement, env map[string]paramVal) []*ast.Statement {
 	out := make([]*ast.Statement, len(body))
 	for i, s := range body {
-		out[i] = substituteStatement(s, env)
+		out[i] = r.substituteStatement(s, env)
 	}
 	return out
 }
 
-func substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Statement {
+func (r *resolver) substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Statement {
 	ns := *stmt
 	if stmt.Op != nil {
-		ns.Op = substituteOp(stmt.Keyword, stmt.Op, env)
+		ns.Op = r.substituteOp(stmt.Keyword, stmt.Op, env)
 	}
 	if len(stmt.Args) > 0 {
 		ns.Args = make([]*ast.Arg, len(stmt.Args))
@@ -388,10 +388,10 @@ func substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Stat
 		}
 	}
 	if len(stmt.Block) > 0 {
-		ns.Block = substituteBody(stmt.Block, env)
+		ns.Block = r.substituteBody(stmt.Block, env)
 	}
 	if len(stmt.Binds) > 0 {
-		ns.Binds = substituteBinds(stmt.Binds, env)
+		ns.Binds = r.substituteBinds(stmt.Binds, env)
 	}
 	// A `Cursed Object` / `Cursed Tool` declaration takes the same right-hand
 	// side a binding does, so a parameter written in one has to be substituted
@@ -399,7 +399,7 @@ func substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Stat
 	// cannot use the definition's own parameters, which is the one thing a
 	// body is written in terms of.
 	if len(stmt.Decls) > 0 {
-		ns.Decls = substituteBinds(stmt.Decls, env)
+		ns.Decls = r.substituteBinds(stmt.Decls, env)
 	}
 	return &ns
 }
@@ -414,21 +414,21 @@ func substituteStatement(stmt *ast.Statement, env map[string]paramVal) *ast.Stat
 // `Count Matching` line) would be silently stripped from the phrase by name
 // alone, re-dispatching the statement to an unrelated primitive (`Count`
 // instead of `Count Matching`) with no error anywhere in the pipeline.
-func substituteOp(keyword string, op *ast.Operation, env map[string]paramVal) *ast.Operation {
+func (r *resolver) substituteOp(keyword string, op *ast.Operation, env map[string]paramVal) *ast.Operation {
 	no := *op
 	no.Ints = slices.Clone(op.Ints)
 	no.Strings = slices.Clone(op.Strings)
 	no.Modifiers = slices.Clone(op.Modifiers)
 	no.Words = nil
 
-	wantPrim := findPrimitive(&ast.Statement{Keyword: keyword, Op: op})
+	wantPrim := r.findPrimitive(&ast.Statement{Keyword: keyword, Op: op})
 	for i, w := range op.Words {
 		// Only Int and Text have a place in an operation phrase (Ints and
 		// Strings). Float, Bool and lambda parameters are expression-layer
 		// values, so a word naming one is left alone rather than being dropped
 		// from the phrase with nowhere to go.
 		if pv, ok := env[w]; ok && phraseSubstitutable(pv.Type) &&
-			dispatchSurvivesRemoval(keyword, op, i, wantPrim) {
+			r.dispatchSurvivesRemoval(keyword, op, i, wantPrim) {
 			switch pv.Type {
 			case "Int":
 				no.Ints = append(no.Ints, pv.Int)
@@ -449,7 +449,7 @@ func phraseSubstitutable(kind string) bool { return kind == "Int" || kind == "Te
 // dispatchSurvivesRemoval reports whether dropping op.Words[idx] still
 // resolves to the same primitive as the original phrase (or no primitive at
 // all, if the phrase didn't resolve to begin with — nothing to protect).
-func dispatchSurvivesRemoval(keyword string, op *ast.Operation, idx int, want *Primitive) bool {
+func (r *resolver) dispatchSurvivesRemoval(keyword string, op *ast.Operation, idx int, want *Primitive) bool {
 	if want == nil {
 		return true
 	}
@@ -457,7 +457,7 @@ func dispatchSurvivesRemoval(keyword string, op *ast.Operation, idx int, want *P
 	trial.Words = make([]string, 0, len(op.Words)-1)
 	trial.Words = append(trial.Words, op.Words[:idx]...)
 	trial.Words = append(trial.Words, op.Words[idx+1:]...)
-	return findPrimitive(&ast.Statement{Keyword: keyword, Op: &trial}) == want
+	return r.findPrimitive(&ast.Statement{Keyword: keyword, Op: &trial}) == want
 }
 
 func substituteArg(a *ast.Arg, env map[string]paramVal) *ast.Arg {

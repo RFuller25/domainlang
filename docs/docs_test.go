@@ -102,7 +102,7 @@ func repoFile(t *testing.T, rel string) string {
 func TestEveryPrimitiveIsDocumented(t *testing.T) {
 	ref := referenceText(t)
 	var missing []string
-	for _, p := range prims.Registry {
+	for _, p := range prims.AllPrimitives() {
 		// "id" is the placeholder ID of the generated one-per-variant
 		// primitives (Any/All, Take While/Drop While, …); each real variant is
 		// named in its own Match phrase, and the reference documents those.
@@ -156,7 +156,7 @@ func TestEveryBuiltinIsDocumented(t *testing.T) {
 // The primitive count is quoted the same way and rots the same way — cli.md
 // carried "85 primitives" in a sample long after the registry held 88.
 func TestEveryPrimitiveCountIsCurrent(t *testing.T) {
-	checkCounts(t, `\b(\d+) primitives?\b`, len(prims.Registry), "primitives",
+	checkCounts(t, `\b(\d+) primitives?\b`, len(prims.AllPrimitives()), "primitives",
 		[]string{"language.md", "primitives.md", "getting-started.md", "cli.md", "README.md"},
 		[]string{"README.md"})
 }

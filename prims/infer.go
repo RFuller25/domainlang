@@ -62,13 +62,20 @@ var catchAllKeywords = map[string]bool{
 // could not name must not cost the statements after it their keywords, or the
 // linter would go on to misjudge a pipeline it can no longer read.
 func Infer(prog *ast.Program) error {
-	return InferWith(prog, nil)
+	return InferWith(prog, nil, nil)
 }
 
 // InferWith is Infer with extra callable names in scope — the Shikigami an
-// `Innate Domain` import brought in. An imported operation is called by its
-// bare name like any other, so inference has to know it exists.
-func InferWith(prog *ast.Program, extra []string) error {
+// `Inherited Technique` import brought in — and the vocabulary to infer
+// against. An imported operation is called by its bare name like any other,
+// so inference has to know it exists.
+//
+// A nil vocabulary means the shared one: a phrase is read exactly as it is in
+// a program that declares no `Innate Domain`.
+func InferWith(prog *ast.Program, extra []string, vocab []*Primitive) error {
+	if vocab == nil {
+		vocab = Core
+	}
 	names := map[string]bool{}
 	for _, n := range PreludeNames() {
 		names[strings.ToLower(n)] = true
@@ -83,16 +90,16 @@ func InferWith(prog *ast.Program, extra []string) error {
 		}
 	}
 	for _, def := range prog.Shikigamis {
-		keep(checkShikigamiName(def))
+		keep(checkShikigamiName(def, vocab))
 		names[strings.ToLower(def.Name)] = true
 	}
 	// A Shikigami body is always entered with an upstream value, so no
 	// statement inside one can be the program's source stage.
 	for _, def := range prog.Shikigamis {
-		keep(inferSequence(def.Body, names, false))
-		keep(inferBinds(def.Binds, names))
+		keep(inferSequence(def.Body, names, false, vocab))
+		keep(inferBinds(def.Binds, names, vocab))
 	}
-	keep(inferSequence(prog.Statements, names, true))
+	keep(inferSequence(prog.Statements, names, true, vocab))
 	return firstErr
 }
 
@@ -100,15 +107,15 @@ func InferWith(prog *ast.Program, extra []string) error {
 // the first failure. source is true only for the top-level sequence, where the
 // first statement is the one position in a program that may name an input to
 // read.
-func inferSequence(stmts []*ast.Statement, names map[string]bool, source bool) error {
+func inferSequence(stmts []*ast.Statement, names map[string]bool, source bool, vocab []*Primitive) error {
 	var firstErr error
 	for i, s := range stmts {
-		if err := inferStatement(s, names, source && i == 0); err != nil && firstErr == nil {
+		if err := inferStatement(s, names, source && i == 0, vocab); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		// Nested blocks (channel and loop bodies) always run on an upstream
 		// value, so they never contain the source stage.
-		if err := inferSequence(s.Block, names, false); err != nil && firstErr == nil {
+		if err := inferSequence(s.Block, names, false, vocab); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		// A `Consider x Of <operation>` source is an ordinary statement whose
@@ -117,10 +124,10 @@ func inferSequence(stmts []*ast.Statement, names map[string]bool, source bool) e
 		// `Cursed Tool` declaration takes the same right-hand side and so
 		// needs the same pass — they share parseOfSource, so anything writable
 		// after one preposition is writable after the other.
-		if err := inferBinds(s.Binds, names); err != nil && firstErr == nil {
+		if err := inferBinds(s.Binds, names, vocab); err != nil && firstErr == nil {
 			firstErr = err
 		}
-		if err := inferBinds(s.Decls, names); err != nil && firstErr == nil {
+		if err := inferBinds(s.Decls, names, vocab); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -130,17 +137,17 @@ func inferSequence(stmts []*ast.Statement, names map[string]bool, source bool) e
 // inferBinds infers the keywords of the statements behind an `Of` right-hand
 // side — a `Consider x Of …` binding or a `Cursed Object` / `Cursed Tool`
 // declaration, which are the same shape.
-func inferBinds(binds []*ast.Binding, names map[string]bool) error {
+func inferBinds(binds []*ast.Binding, names map[string]bool, vocab []*Primitive) error {
 	var firstErr error
 	for _, b := range binds {
-		if err := inferSequence(b.Body, names, false); err != nil && firstErr == nil {
+		if err := inferSequence(b.Body, names, false, vocab); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-func inferStatement(s *ast.Statement, names map[string]bool, source bool) error {
+func inferStatement(s *ast.Statement, names map[string]bool, source bool, vocab []*Primitive) error {
 	if s.Keyword != "" || s.Op == nil {
 		return nil // already keyworded, or a pure block opener with nothing to read
 	}
@@ -169,7 +176,7 @@ func inferStatement(s *ast.Statement, names map[string]bool, source bool) error 
 	case source && isSourcePhrase(op):
 		s.Keyword = "Cursed Energy"
 	default:
-		prim, err := inferPrimitive(op, s.Pos)
+		prim, err := inferPrimitive(op, s.Pos, vocab)
 		switch {
 		case err != nil:
 			return err
@@ -189,9 +196,9 @@ func inferStatement(s *ast.Statement, names map[string]bool, source bool) error 
 // inferPrimitive finds the primitive a prefix-free phrase names. It returns a
 // nil primitive and a nil error when nothing in the registry matches, and an
 // error only for a phrase that is ambiguous across keywords.
-func inferPrimitive(op *ast.Operation, pos token.Position) (*Primitive, error) {
+func inferPrimitive(op *ast.Operation, pos token.Position, vocab []*Primitive) (*Primitive, error) {
 	var hits []*Primitive
-	for _, p := range Registry {
+	for _, p := range vocab {
 		if !catchAllKeywords[p.Keyword] && p.Match(op) {
 			hits = append(hits, p)
 		}
@@ -280,12 +287,12 @@ func isSourcePhrase(op *ast.Operation) bool {
 // (`Top K Sum`), so a Shikigami called `Sum` — or `Repeat`, or `stdout` —
 // would shadow the built-in meaning of that line with no way to ask for the
 // other one.
-func checkShikigamiName(def *ast.ShikigamiDef) error {
+func checkShikigamiName(def *ast.ShikigamiDef, vocab []*Primitive) error {
 	name := strings.TrimSpace(def.Name)
 	if name == "" {
 		return &ResolveError{Pos: def.Pos, Msg: "Shikigami needs a name"}
 	}
-	if what, taken := reservedMeaning(name); taken {
+	if what, taken := reservedMeaning(name, vocab); taken {
 		return &ResolveError{Pos: def.Pos, Msg: fmt.Sprintf(
 			"Shikigami %q is named after %s; the themed keyword is optional, so a call to it would be indistinguishable from the built-in — pick another name",
 			def.Name, what)}
@@ -302,11 +309,11 @@ func checkShikigamiName(def *ast.ShikigamiDef) error {
 // name that would be ambiguous as a Shikigami is ambiguous as a global for the
 // same reason — both are read from an expression or a prefix-free line, and
 // neither has a slot to disambiguate it.
-func checkDeclaredName(name, role string, pos token.Position) error {
+func checkDeclaredName(name, role string, pos token.Position, vocab []*Primitive) error {
 	if strings.TrimSpace(name) == "" {
 		return &ResolveError{Pos: pos, Msg: role + " needs a name"}
 	}
-	if what, taken := reservedMeaning(name); taken {
+	if what, taken := reservedMeaning(name, vocab); taken {
 		return &ResolveError{Pos: pos, Msg: fmt.Sprintf(
 			"%q is already %s, so it cannot also be %s — pick another name", name, what, role)}
 	}
@@ -317,13 +324,16 @@ func checkDeclaredName(name, role string, pos token.Position) error {
 // means anything: a primitive (by id or by a phrase that spells it), a themed
 // keyword, a loop kind, a vow predicate, a Reveal sink, an input source, or an
 // expression builtin.
-func reservedMeaning(name string) (string, bool) {
+func reservedMeaning(name string, vocab []*Primitive) (string, bool) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", false
 	}
+	if vocab == nil {
+		vocab = Core
+	}
 	op := namePhrase(name)
-	for _, p := range Registry {
+	for _, p := range vocab {
 		// A primitive's own ID is reserved outright; beyond that, so is any
 		// phrase that spells it (`Quicksort` for Sort). Both are needed: an ID
 		// with a filler word ("Convert To Grid") is not load-bearing word for
@@ -384,7 +394,14 @@ func namesPrimitive(p *Primitive, words []string) bool {
 // ReservedNames lists, in sorted order, the names a Shikigami may not take:
 // every primitive ID, every themed keyword, and every expression-layer
 // builtin. Diagnostics use it to explain the rule.
-func ReservedNames() []string {
+func ReservedNames() []string { return ReservedNamesIn(nil) }
+
+// ReservedNamesIn is ReservedNames for one scope's vocabulary. A nil
+// vocabulary is the shared one.
+func ReservedNamesIn(vocab []*Primitive) []string {
+	if vocab == nil {
+		vocab = Core
+	}
 	seen := map[string]bool{}
 	var out []string
 	add := func(s string) {
@@ -393,7 +410,7 @@ func ReservedNames() []string {
 			out = append(out, s)
 		}
 	}
-	for _, p := range Registry {
+	for _, p := range vocab {
 		add(p.ID)
 	}
 	for _, k := range ast.Keywords {

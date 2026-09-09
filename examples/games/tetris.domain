@@ -1,0 +1,172 @@
+# Tetris — the game that asks whether the list vocabulary carries real logic.
+#
+# The well is a `List<Text>`, one string per row, "." empty and "#" filled.
+# That representation is what makes the two hard parts easy: a full row is a
+# row with no "." in it, and clearing one is `take` + `drop` with an empty row
+# put back on top.
+#
+# A tetromino is four cells and nothing else, so every operation on one is a
+# `Simple Domain: For k in range(4)` — the loop that binds each lap as an
+# ambient parameter while threading the world through. That is what lets the
+# same four-cell walk be written once, as a `Part Entity`, and called by name
+# from a key handler, from the timer and from the frame.
+
+Innate Domain: Game Dev
+
+Cursed Object: wellRows As 12
+Cursed Object: wellCols As 6
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {rows: fill(12, repeat(".", 6)), piece: list(point(0, 1), point(0, 2), point(0, 3), point(0, 4)), try: list(point(0, 0), point(0, 0), point(0, 0), point(0, 0)), step: point(1, 0), ok: 1 = 1, stamp: 1 = 0, score: 0, over: 1 = 0}
+
+# ---------------------------------------------------------------------------
+# The four-cell walks. Each takes the world and gives it back, so each is an
+# ordinary Shikigami once the scope has lowered it.
+# ---------------------------------------------------------------------------
+
+Part Entity "Slide":
+    # `try` becomes the piece moved by `step`.
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "try", w.piece)
+    Simple Domain: For k in range(4)
+        Cursed Technique: Apply
+            Using: (w, k) ->
+                consider moved as padd(item(w.piece, k), w.step)
+                in with(w, "try", set(w.try, k, moved))
+
+Part Entity "Spin":
+    # `try` becomes the piece turned a quarter turn about its second cell.
+    # Any cell would do as a pivot; the second one is the middle of every
+    # shape below, which keeps a rotation from wandering across the well.
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "try", w.piece)
+    Simple Domain: For k in range(4)
+        Cursed Technique: Apply
+            Using: (w, k) ->
+                consider pivot as item(w.piece, 1)
+                in consider p as item(w.piece, k)
+                in consider turned as padd(pivot, point(pcol(p) - pcol(pivot), 0 - (prow(p) - prow(pivot))))
+                in with(w, "try", set(w.try, k, turned))
+
+Part Entity "Fits":
+    # `ok` says whether `try` may be placed: inside the well, on empty cells.
+    # `and` short-circuits, so the bounds are checked before `charat` is asked
+    # for a row that is not there.
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "ok", 1 = 1)
+    Simple Domain: For k in range(4)
+        Cursed Technique: Apply
+            Using: (w, k) ->
+                consider p as item(w.try, k)
+                in with(w, "ok", w.ok
+                    and prow(p) >= 0 and prow(p) < wellRows
+                    and pcol(p) >= 0 and pcol(p) < wellCols
+                    and charat(item(w.rows, prow(p)), pcol(p)) = ".")
+
+Part Entity "Move":
+    # Accept `try` if it fits, and leave the piece where it was if it does not.
+    Shikigami: Fits
+    Cursed Technique: Apply
+        Using: (w) -> if w.ok then with(w, "piece", w.try) else w
+
+Part Entity "Stamp":
+    # Write the piece into the rows, when `stamp` says to. It is set on the
+    # tick a piece comes to rest — and by `Part Draw:` on the copy it draws,
+    # which is how a falling piece is visible without being part of the well.
+    Simple Domain: For k in range(4)
+        Cursed Technique: Apply
+            Using: (w, k) ->
+                if not(w.stamp)
+                    then w
+                    else consider p as item(w.piece, k)
+                        in consider row as item(w.rows, prow(p))
+                        in with(w, "rows", set(w.rows, prow(p), withchar(row, pcol(p), "#")))
+
+# ---------------------------------------------------------------------------
+# What the player does.
+# ---------------------------------------------------------------------------
+
+Part On "key left":
+    Cursed Technique: Apply
+        Using: (w) -> if w.over then w else with(w, "step", point(0, -1))
+    Shikigami: Slide
+    Shikigami: Move
+
+Part On "key right":
+    Cursed Technique: Apply
+        Using: (w) -> if w.over then w else with(w, "step", point(0, 1))
+    Shikigami: Slide
+    Shikigami: Move
+
+Part On "key down":
+    Cursed Technique: Apply
+        Using: (w) -> if w.over then w else with(w, "step", point(1, 0))
+    Shikigami: Slide
+    Shikigami: Move
+
+Part On "key up":
+    Shikigami: Spin
+    Cursed Technique: Apply
+        Using: (w) -> if w.over then with(w, "try", w.piece) else w
+    Shikigami: Move
+
+Part On "key q":
+    Simple Domain: Quit
+
+# ---------------------------------------------------------------------------
+# What time does: fall, or come to rest.
+# ---------------------------------------------------------------------------
+
+Part Every 400:
+    Cursed Technique: Apply
+        Using: (w) -> if w.over then w else with(w, "step", point(1, 0))
+    Shikigami: Slide
+    Shikigami: Fits
+    Cursed Technique: Apply
+        Using: (w) -> if w.over then w else if w.ok then with(w, "piece", w.try) else with(w, "stamp", 1 = 1)
+    Shikigami: Stamp
+
+    # A full row is one with no "." left in it. Walking downwards is enough
+    # for a single pass: everything above a cleared row has already been
+    # looked at, and what slides into its place is one of those.
+    Simple Domain: For i in range(12)
+        Cursed Technique: Apply
+            Using: (w, i) ->
+                if not(w.stamp) or indexof(item(w.rows, i), ".") >= 0
+                    then w
+                    else with(with(w, "rows", concat(concat(list(repeat(".", wellCols)), take(w.rows, i)), drop(w.rows, i + 1))),
+                        "score", w.score + 100)
+
+    # The next piece, and the question a new one asks: is there room?
+    Cursed Technique: Apply
+        Using: (w) ->
+            if not(w.stamp)
+                then w
+                else with(w, "piece", pick(list(
+                    list(point(0, 1), point(0, 2), point(0, 3), point(0, 4)),
+                    list(point(0, 2), point(0, 3), point(1, 2), point(1, 3)),
+                    list(point(0, 1), point(0, 2), point(0, 3), point(1, 2)),
+                    list(point(0, 1), point(1, 1), point(2, 1), point(2, 2)),
+                    list(point(0, 2), point(0, 3), point(1, 1), point(1, 2)))))
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "try", w.piece)
+    Shikigami: Fits
+    Cursed Technique: Apply
+        Using: (w) -> with(with(w, "over", w.over or (w.stamp and not(w.ok))), "stamp", 1 = 0)
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "stamp", 1 = 1)
+    Shikigami: Stamp
+    Cursed Technique: Apply
+        Using: (w) ->
+            stack(
+                beside(text("score "), style(text(totext(w.score)), "bold yellow")),
+                box(draw(w.rows)),
+                text(if w.over then "game over" else "arrows move and turn, q quits"))
+
+Part Ending:
+    Cursed Technique: Apply
+        Using: (w) -> "final score " + totext(w.score)
+    Reveal: stdout

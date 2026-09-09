@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,9 @@ import (
 	"strings"
 
 	"domain/codegen"
+	// The Game Dev host registers itself; see game/host.go for why a
+	// blank import is what asks for it.
+	_ "domain/game"
 	"domain/interp"
 	"domain/ir"
 	"domain/lexer"
@@ -41,6 +45,17 @@ type Options struct {
 	Release  bool // skip Binding Vows (debug-on / release-off)
 	Stats    bool // report per-stage counts and timings on stderr
 	Verbose  bool // with Stats: list nested (loop/channel/part) steps too
+	// Record, for a Game Dev program played on a real terminal, is where the
+	// session is written out as a replay script — one line per key, tick,
+	// reply and frame, in the order they happened, so a session played once
+	// becomes a golden test rather than something retyped by hand. It does
+	// nothing for a program that replays instead of playing: nothing fires
+	// the events a script exists to capture.
+	Record string
+	// Trace prints one line per top-level frame — a Part body's own run, for
+	// a Game Dev program — to stderr as it happens: what ran, and what it
+	// produced. See cmd/domain/gametrace.go.
+	Trace bool
 }
 
 // BuildOptions controls a single build.
@@ -208,8 +223,15 @@ Shared flags (run and build):
   --release      shed Binding Vows: run skips them, build compiles them out
 
 Run flags:
-  --stats        per-stage counts and timings on stderr (interpreter only)
-  --verbose      with --stats, also list nested loop/channel/part steps
+  --stats          per-stage counts and timings on stderr (interpreter only)
+  --verbose        with --stats, also list nested loop/channel/part steps
+  --record PATH    playing a Game Dev program, write the session as a replay
+                    script — one line per key, tick, reply and frame, in the
+                    order they happened. Does nothing for a program that
+                    replays instead of playing.
+  --trace          one line per Part body run, to stderr, as a Game Dev
+                    program replays: what ran and what it produced. Not
+                    combinable with --stats (one tracer per run).
 
 Build flags:
   -o <binary>    where to write the compiled binary (default: source name without .domain)
@@ -245,7 +267,8 @@ Examples:
 func parseRunArgs(args []string) (string, Options, error) {
 	opts := Options{Optimize: true}
 	var path string
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
 		case "--explain":
 			opts.Explain = true
@@ -257,6 +280,14 @@ func parseRunArgs(args []string) (string, Options, error) {
 			opts.Stats = true
 		case "--verbose":
 			opts.Verbose = true
+		case "--trace":
+			opts.Trace = true
+		case "--record":
+			i++
+			if i >= len(args) {
+				return "", opts, fmt.Errorf("--record requires a path")
+			}
+			opts.Record = args[i]
 		default:
 			if strings.HasPrefix(a, "-") {
 				return "", opts, fmt.Errorf("unknown flag %q", a)
@@ -401,6 +432,23 @@ func Execute(path string, opts Options, stdin io.Reader, stdout, stderr io.Write
 		BaseDir: filepath.Dir(path),
 		Release: opts.Release,
 	}
+	// --record writes one replay-script line per call — a Game Dev host's
+	// only use of ctx.Record. Buffered and flushed on every write rather than
+	// closed once at the end, so a session that panics or is killed still
+	// leaves however much it recorded on disk instead of an empty file.
+	if opts.Record != "" {
+		f, err := os.Create(opts.Record)
+		if err != nil {
+			return fmt.Errorf("--record: %w", err)
+		}
+		defer f.Close()
+		w := bufio.NewWriter(f)
+		defer w.Flush()
+		ctx.Record = func(line string) {
+			fmt.Fprintln(w, line)
+			w.Flush()
+		}
+	}
 	// --stats installs the aggregating tracer. Without it ctx.Trace stays nil
 	// and every evaluation site is one nil check away from what it always was.
 	var stats *interp.Stats
@@ -408,7 +456,17 @@ func Execute(path string, opts Options, stdin io.Reader, stdout, stderr io.Write
 		stats = interp.NewStats()
 		ctx.Trace = stats
 	}
-	_, runErr := interp.Run(pipe, ctx)
+	// --trace installs the other Tracer this run can carry — see
+	// cmd/domain/gametrace.go. There is only one ctx.Trace, so the two are
+	// mutually exclusive rather than one silently overwriting the other.
+	if opts.Trace {
+		if opts.Stats {
+			return fmt.Errorf("--trace and --stats cannot be combined: " +
+				"--stats measures every stage, --trace watches a game's Parts, and a run carries one tracer")
+		}
+		ctx.Trace = &gameTracer{w: stderr}
+	}
+	_, runErr := interp.RunScoped(pipe, ctx)
 	// Report even on failure: the stage that failed is usually the interesting
 	// one, and the table shows how far the program got.
 	if stats != nil {
@@ -442,10 +500,17 @@ func Build(path string, opts BuildOptions, stdin io.Reader, stdout, stderr io.Wr
 		return err
 	}
 
-	if opts.EmitGo == "-" {
-		fmt.Fprint(stdout, goSrc)
-	} else if opts.EmitGo != "" {
-		if err := os.WriteFile(opts.EmitGo, []byte(goSrc), 0o644); err != nil {
+	if opts.EmitGo != "" {
+		// What is written out says what it needs to build. `domain build`
+		// writes the module into a throwaway directory nobody sees, so the
+		// emitted source has to carry it or it is a file that will not build.
+		emitted, err := codegen.WithModuleHeader(goSrc)
+		if err != nil {
+			return err
+		}
+		if opts.EmitGo == "-" {
+			fmt.Fprint(stdout, emitted)
+		} else if err := os.WriteFile(opts.EmitGo, []byte(emitted), 0o644); err != nil {
 			return err
 		}
 	}

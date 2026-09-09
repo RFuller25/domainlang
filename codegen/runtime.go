@@ -870,6 +870,31 @@ const declCharAt = `func dmCharAt(s string, i int64) string {
 	return string(rs[i])
 }`
 
+// declWithChar is dmCharAt's write side: same ASCII fast path, same rune
+// fallback, plus the one check charat does not need — the replacement must
+// be exactly one character, since this replaces a single rune rather than
+// reading one.
+const declWithChar = `func dmWithChar(s string, i int64, ch string) string {
+	if dmASCII(s) && len(ch) == 1 && dmASCII(ch) {
+		if i < 0 || i >= int64(len(s)) {
+			dmFail("withchar: index %d out of range (length %d)", i, len(s))
+		}
+		out := []byte(s)
+		out[i] = ch[0]
+		return string(out)
+	}
+	rs := []rune(s)
+	if i < 0 || i >= int64(len(rs)) {
+		dmFail("withchar: index %d out of range (length %d)", i, len(rs))
+	}
+	crs := []rune(ch)
+	if len(crs) != 1 {
+		dmFail("withchar: replacement must be exactly one character, got %d", len(crs))
+	}
+	rs[i] = crs[0]
+	return string(rs)
+}`
+
 const declClampRange = `func dmClampRange(lo, hi, n int64) (int64, int64) {
 	if lo < 0 {
 		lo = 0
@@ -1780,7 +1805,13 @@ func (s *dmSet[T]) add(v T) {
 func (s *dmSet[T]) contains(v T) bool {
 	_, ok := s.has[v]
 	return ok
-}`
+}
+
+// items is the elements in insertion order, which is the order a Set renders,
+// iterates and is written as JSON in. It reads a field, but the field is
+// unexported to the generated program's own conventions rather than to Go, so
+// the accessor is what every other emitter is written against.
+func (s dmSet[T]) items() []T { return s.elems }`
 
 // ---------------------------------------------------------------------------
 // v0.6 expression-layer builtins.

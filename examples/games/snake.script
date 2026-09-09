@@ -1,0 +1,30 @@
+# A replay script: what happened, instead of who was at the keyboard.
+#
+# `tick` lets the next timer come due — here, one step of the snake. `frame`
+# draws. `seed` fixes the stream the food is placed from, so this file is the
+# whole of the run: the same script gives the same picture every time, which is
+# what makes a game testable.
+
+seed 7
+frame               # the opening board
+
+tick                # four steps to the right
+tick
+tick
+tick
+frame
+
+key up              # turn, and eat what is waiting at the top
+tick
+tick
+frame
+
+key left            # away again, growing tail and all
+tick 450
+frame
+
+key up              # into the wall: a game over is a state, not an exit
+tick 600
+frame
+
+key q               # and `q` is what leaves

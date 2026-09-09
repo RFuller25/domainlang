@@ -233,6 +233,135 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 	}
 
 	switch name {
+	case "pending":
+		tag, ok := args[0].(string)
+		if !ok {
+			return fail("pending() takes a tag as Text, got %s", ir.DescribeValue(args[0]))
+		}
+		if ctx := ir.CurrentContext(); ctx != nil && ctx.Pending != nil {
+			return ctx.Pending(tag), nil
+		}
+		return false, nil
+	case "tojson":
+		s, err := ir.ToJSON(args[0])
+		if err != nil {
+			return fail("tojson(): %v", err)
+		}
+		return s, nil
+
+	// --- a seeded stream, and the clock ------------------------------------
+	case "random":
+		n, err := ir.AsInt(args[0])
+		if err != nil {
+			return fail("random(): %v", err)
+		}
+		if n <= 0 {
+			return fail("random() needs a count above zero, got %d", n)
+		}
+		return randomStream().Int(n), nil
+	case "randomf":
+		return randomStream().Float(), nil
+	case "pick":
+		xs, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("pick(): %v", err)
+		}
+		if len(xs) == 0 {
+			return fail("pick() has nothing to choose from: the list is empty")
+		}
+		return xs[randomStream().Int(int64(len(xs)))], nil
+	case "frame":
+		return clockOf().Frames(), nil
+	case "elapsed":
+		return clockOf().Elapsed(), nil
+
+	// --- View: the render tree -------------------------------------------
+	case "text":
+		// Rendered the way Reveal would render it, so a cell, a score and a
+		// label all become panels without the caller writing totext().
+		return ir.TextView(ir.FormatValue(args[0])), nil
+	case "blank":
+		return ir.BlankView(), nil
+	case "style":
+		v, ok := args[0].(*ir.ViewValue)
+		if !ok {
+			return fail("style() takes a View, got %s", ir.DescribeValue(args[0]))
+		}
+		spec, ok := args[1].(string)
+		if !ok {
+			return fail("style() takes the style as Text, got %s", ir.DescribeValue(args[1]))
+		}
+		st, err := ir.ParseViewStyle(spec)
+		if err != nil {
+			return fail("style(): %v", err)
+		}
+		return ir.StyledView(v, st), nil
+	case "stack", "beside":
+		kids := make([]*ir.ViewValue, len(args))
+		for i, a := range args {
+			v, ok := a.(*ir.ViewValue)
+			if !ok {
+				return fail("%s() takes Views; argument %d is %s", name, i+1, ir.DescribeValue(a))
+			}
+			kids[i] = v
+		}
+		if name == "stack" {
+			return ir.StackView(kids...), nil
+		}
+		return ir.BesideView(kids...), nil
+	case "box":
+		v, ok := args[0].(*ir.ViewValue)
+		if !ok {
+			return fail("box() takes a View, got %s", ir.DescribeValue(args[0]))
+		}
+		return ir.BoxView(v), nil
+	case "margin", "fit":
+		v, ok := args[0].(*ir.ViewValue)
+		if !ok {
+			return fail("%s() takes a View, got %s", name, ir.DescribeValue(args[0]))
+		}
+		w, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("%s(): width %v", name, err)
+		}
+		h, err := ir.AsInt(args[2])
+		if err != nil {
+			return fail("%s(): height %v", name, err)
+		}
+		if name == "margin" {
+			return ir.MarginView(v, int(w), int(h)), nil
+		}
+		return ir.FitView(v, int(w), int(h)), nil
+	case "align":
+		v, ok := args[0].(*ir.ViewValue)
+		if !ok {
+			return fail("align() takes a View, got %s", ir.DescribeValue(args[0]))
+		}
+		w, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("align(): width %v", err)
+		}
+		h, err := ir.AsInt(args[2])
+		if err != nil {
+			return fail("align(): height %v", err)
+		}
+		how, ok := args[3].(string)
+		if !ok {
+			return fail("align() takes the alignment as Text, got %s", ir.DescribeValue(args[3]))
+		}
+		switch how {
+		case "left", "center", "right":
+		default:
+			return fail("align(): %q is not an alignment; use \"left\", \"center\" or \"right\"", how)
+		}
+		return ir.AlignView(v, int(w), int(h), how), nil
+	case "draw":
+		v, err := drawBoard(args[0])
+		if err != nil {
+			return fail("draw(): %v", err)
+		}
+		return v, nil
+
 	case "length":
 		// Runes, not bytes — the unit `Split Text by ""` already uses.
 		if s, ok := args[0].(string); ok {
@@ -1023,6 +1152,29 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("charat: index %d out of range (length %d)", i, len(rs))
 		}
 		return string(rs[i]), nil
+	case "withchar":
+		s, ok := args[0].(string)
+		if !ok {
+			return fail("withchar: expected Text, got %s", ir.DescribeValue(args[0]))
+		}
+		i, err := ir.AsInt(args[1])
+		if err != nil {
+			return fail("withchar: %v", err)
+		}
+		ch, ok := args[2].(string)
+		if !ok {
+			return fail("withchar: expected Text, got %s", ir.DescribeValue(args[2]))
+		}
+		rs := []rune(s)
+		if i < 0 || i >= int64(len(rs)) {
+			return fail("withchar: index %d out of range (length %d)", i, len(rs))
+		}
+		crs := []rune(ch)
+		if len(crs) != 1 {
+			return fail("withchar: replacement must be exactly one character, got %d", len(crs))
+		}
+		rs[i] = crs[0]
+		return string(rs), nil
 	case "slice":
 		// Half-open and clamped, like take/drop: slice never errors on a
 		// range that runs off either end.
@@ -1125,6 +1277,35 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		br, _ := ir.AsInt(b[0])
 		bc, _ := ir.AsInt(b[1])
 		return max(absInt(ar-br), absInt(ac-bc)), nil
+	case "nearby4", "nearby8":
+		ps, err := ir.AsList(args[0])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		cr, cc, err := asPoint(args[1], name)
+		if err != nil {
+			return fail("%v", err)
+		}
+		radius, err := ir.AsInt(args[2])
+		if err != nil {
+			return fail("%s: %v", name, err)
+		}
+		var out []ir.Value
+		for i, pv := range ps {
+			pr, pc, err := asPoint(pv, name)
+			if err != nil {
+				return fail("%v", err)
+			}
+			dr, dc := absInt(pr-cr), absInt(pc-cc)
+			d := dr + dc
+			if name == "nearby8" {
+				d = max(dr, dc)
+			}
+			if radius >= 0 && d <= radius {
+				out = append(out, int64(i))
+			}
+		}
+		return out, nil
 	case "dirs8":
 		out := make([]ir.Value, 0, len(dirs8Deltas))
 		for _, d := range dirs8Deltas {
@@ -2611,4 +2792,155 @@ func listHasFloat(xs []ir.Value) bool {
 		}
 	}
 	return false
+}
+
+// drawBoard renders a whole board as a View: each row is its cells written
+// side by side, exactly as they would print.
+//
+// It accepts the three shapes a board arrives in — a dense Grid, an unbounded
+// Sparse densified to its occupied extent, and a plain List of rows (of cells,
+// or of Text lines). Anything narrower would send half the boards a game draws
+// through a conversion first.
+func drawBoard(v ir.Value) (*ir.ViewValue, error) {
+	switch b := v.(type) {
+	case *ir.GridValue:
+		if styled, ok := styledGridView(b); ok {
+			return styled, nil
+		}
+		return gridView(b), nil
+	case *ir.SparseValue:
+		g := b.ToGrid()
+		if styled, ok := styledGridView(g); ok {
+			return styled, nil
+		}
+		return gridView(g), nil
+	case []ir.Value:
+		if len(b) > 0 {
+			if _, ok := b[0].(*ir.ViewValue); ok {
+				// A flat List<View>: each element is already a whole row,
+				// the View twin of a List<Text> of already-rendered lines.
+				rows := make([]*ir.ViewValue, len(b))
+				for i, row := range b {
+					rows[i], _ = row.(*ir.ViewValue)
+				}
+				return ir.StackView(rows...), nil
+			}
+		}
+		if styled, ok := styledListView(b); ok {
+			return styled, nil
+		}
+		lines := make([]string, len(b))
+		for i, row := range b {
+			cells, err := ir.AsList(row)
+			if err != nil {
+				// A list of Text is a list of lines, which is the other
+				// natural way to hand a picture over.
+				lines[i] = ir.FormatValue(row)
+				continue
+			}
+			var sb strings.Builder
+			for _, c := range cells {
+				sb.WriteString(ir.FormatValue(c))
+			}
+			lines[i] = sb.String()
+		}
+		return ir.TextView(strings.Join(lines, "\n")), nil
+	}
+	return nil, fmt.Errorf("expected a Grid, a Sparse or a List of rows, got %s", ir.DescribeValue(v))
+}
+
+func gridView(g *ir.GridValue) *ir.ViewValue {
+	lines := make([]string, g.Rows)
+	for r := range g.Rows {
+		var sb strings.Builder
+		for c := range g.Cols {
+			cell, _ := g.At(r, c)
+			sb.WriteString(ir.FormatValue(cell))
+		}
+		lines[r] = sb.String()
+	}
+	return ir.TextView(strings.Join(lines, "\n"))
+}
+
+// styledGridView is gridView's colour-preserving twin: a board of View cells
+// — built with `style`, in a `Map Cells` — laid out with `beside`/`stack`
+// rather than flattened through FormatValue, which would call
+// RenderViewPlain on each cell and throw the colour away. Grid<T> is
+// homogeneous by construction, so the first cell decides the whole board;
+// `ok` is false for every other element type, which is what sends it back to
+// gridView's plain path.
+func styledGridView(g *ir.GridValue) (*ir.ViewValue, bool) {
+	if g.Rows == 0 || g.Cols == 0 {
+		return nil, false
+	}
+	if _, ok := g.Cells[0].(*ir.ViewValue); !ok {
+		return nil, false
+	}
+	rows := make([]*ir.ViewValue, g.Rows)
+	for r := range g.Rows {
+		cells := make([]*ir.ViewValue, g.Cols)
+		for c := range g.Cols {
+			cell, _ := g.At(r, c)
+			cells[c], _ = cell.(*ir.ViewValue)
+		}
+		rows[r] = ir.BesideView(cells...)
+	}
+	return ir.StackView(rows...), true
+}
+
+// styledListView is styledGridView's twin for a `List<List<View>>` — rows of
+// cells rather than rows of already-rendered Text, the same distinction
+// drawBoard already draws between a List of rows and a List of lines.
+func styledListView(rows []ir.Value) (*ir.ViewValue, bool) {
+	if len(rows) == 0 {
+		return nil, false
+	}
+	firstRow, err := ir.AsList(rows[0])
+	if err != nil || len(firstRow) == 0 {
+		return nil, false
+	}
+	if _, ok := firstRow[0].(*ir.ViewValue); !ok {
+		return nil, false
+	}
+	out := make([]*ir.ViewValue, len(rows))
+	for i, row := range rows {
+		cells, err := ir.AsList(row)
+		if err != nil {
+			return nil, false
+		}
+		views := make([]*ir.ViewValue, len(cells))
+		for c, cell := range cells {
+			views[c], _ = cell.(*ir.ViewValue)
+		}
+		out[i] = ir.BesideView(views...)
+	}
+	return ir.StackView(out...), true
+}
+
+// randomStream is the run's random stream.
+//
+// A builtin has no Context — the expression layer is otherwise pure, and
+// threading one through every call would be a change to every builtin to
+// serve three. It reaches the run the same way tracing does
+// (ir.CurrentContext), which rests on the same standing assumption as the rest
+// of this package: one interpretation at a time, process-wide.
+//
+// Outside a run there is no seed to have been chosen, so this makes a stream
+// at the default. That is what constant folding would see, and it is why a
+// lambda containing `random` must not be folded at all — see
+// ast.HasNondeterminism.
+func randomStream() *ir.Rand {
+	if ctx := ir.CurrentContext(); ctx != nil {
+		return ctx.Random()
+	}
+	return ir.NewRand(ir.DefaultSeed)
+}
+
+// clockOf is the run's frame and elapsed-time counters, which a host maintains
+// and everything else reads as zero.
+func clockOf() ir.Clock {
+	if ctx := ir.CurrentContext(); ctx != nil {
+		return ctx.Clock
+	}
+	return ir.Clock{}
 }

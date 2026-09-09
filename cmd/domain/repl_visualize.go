@@ -73,7 +73,7 @@ func (r *repl) visualize() {
 		ctx.Trace = rec
 	}
 
-	_, runErr := interp.Run(pipe, ctx)
+	_, runErr := interp.RunScoped(pipe, ctx)
 
 	r.lastTrace = &traceView{
 		path: "repl",

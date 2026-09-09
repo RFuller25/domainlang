@@ -51,10 +51,17 @@ self-contained Go helpers (see [docs/compiler.md](../docs/compiler.md)).
 | `15_team_picks` | `3` | **`Subsets`** (the power set) filtered with `length`/`contains` |
 | `16_no_prefixes` | `15000` | **prefix inference** — example 01 with the themed keywords left out |
 | `17_two_parts` | `Part 1: 24000` / `Part 2: 45000` | **`Part` blocks** — two answers from one parse |
-| `18_innate_domain` | `28` | **`Innate Domain`** — a Shikigami library, inlined and still fused |
+| `18_inherited_technique` | `28` | **`Inherited Technique`** — a Shikigami library, inlined and still fused |
 | `19_row_pairs` | `9` | **a `Using:` written as a pipeline** — a whole sub-pipeline where a lambda would go |
 | `20_stage_locals` | `3` | **`Consider … As` / `… Of`** — stage-local values, including one a lambda could not reach |
 | `21_graph_routes` | `london->bristol->exeter` | `Convert To Graph` over an edge list; `Shortest Path` picking the cheap route over the short one |
+
+## Games
+
+[`games/`](games/README.md) holds programs in the
+[`Game Dev`](../docs/scopes.md) Innate Domain, which are shaped differently:
+`Part` blocks rather than a pipeline, and a replay script on stdin rather than
+an input file. They are listed and explained there.
 
 Things to try with any of them:
 

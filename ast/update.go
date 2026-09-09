@@ -140,3 +140,69 @@ func HasInPlace(e Expr) bool {
 	}
 	return false
 }
+
+// nondeterministic is every builtin whose value is not decided by its
+// arguments.
+//
+// There are five, and they are the only way an expression in this language can
+// give two answers to one question. Everything else is a function of what it
+// was handed, which is the assumption almost every optimizer pass rests on:
+// that a stage may be reordered, fused, folded or run once instead of twice
+// without changing what the program says.
+//
+// `random` and `randomf` and `pick` draw from the run's stream, so calling one
+// twice is two draws. `frame` and `elapsed` read the run's progress, so the
+// same call answers differently as the program goes on.
+var nondeterministic = map[string]bool{
+	"random": true, "randomf": true, "pick": true,
+	"frame": true, "elapsed": true,
+}
+
+// Nondeterministic reports whether a builtin's value depends on anything but
+// its arguments.
+func Nondeterministic(name string) bool { return nondeterministic[name] }
+
+// HasNondeterminism reports whether an expression contains such a call.
+//
+// It is to randomness what HasInPlace is to updates: the question a pass has
+// to ask before treating an expression as a function of its inputs. Getting it
+// wrong in one direction costs a stage its rewrites; getting it wrong in the
+// other folds a die roll into a constant at resolve time, and the program
+// plays the same game every time it is run.
+func HasNondeterminism(e Expr) bool {
+	switch x := e.(type) {
+	case *CallExpr:
+		if id, ok := x.Fn.(*Ident); ok && nondeterministic[id.Name] {
+			return true
+		}
+		for _, a := range x.Args {
+			if HasNondeterminism(a) {
+				return true
+			}
+		}
+	case *UnaryExpr:
+		return HasNondeterminism(x.X)
+	case *BinaryExpr:
+		return HasNondeterminism(x.Left) || HasNondeterminism(x.Right)
+	case *FieldAccess:
+		return HasNondeterminism(x.Target)
+	case *CondExpr:
+		return HasNondeterminism(x.Cond) || HasNondeterminism(x.Then) || HasNondeterminism(x.Else)
+	case *LetExpr:
+		return HasNondeterminism(x.Value) || HasNondeterminism(x.Body)
+	case *AssignExpr:
+		return HasNondeterminism(x.Value)
+	case *AlsoExpr:
+		if HasNondeterminism(x.Body) {
+			return true
+		}
+		for _, c := range x.Clauses {
+			if HasNondeterminism(c) {
+				return true
+			}
+		}
+	}
+	// A record literal is sugar for a `record(...)` call, so the CallExpr case
+	// above already covers `{here: random(3)}`.
+	return false
+}

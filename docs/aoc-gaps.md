@@ -87,8 +87,8 @@ problems above are exactly the ones that need a different one.
 
   It is narrower than it first looks, and the two edges matter enough to name
   here rather than only in `optimizer/linear.go`. **Loop bodies are not
-  covered**: `Repeat`, `While` and `For` take a sub-pipeline, not a lambda, so
-  there is no accumulator parameter for the pass to follow. **`set` on a List
+  covered**: `Repeat`, `While`, `For` and `For Each` take a sub-pipeline, not a
+  lambda, so there is no accumulator parameter for the pass to follow. **`set` on a List
   is not covered** either, and that one is a live gap — see
   [14](#14-set-on-a-list-accumulator-is-still-osize).
 - **Runtime one-reference check.** Give `MapValue`/`GridValue`/`SparseValue` a

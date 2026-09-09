@@ -32,7 +32,13 @@ done
 echo "building the playground (GOOS=js GOARCH=wasm)…"
 # -s -w drop the symbol table and DWARF: nothing here is debugged in the
 # browser, and they are a third of the payload.
-GOOS=js GOARCH=wasm go build -C "$repo" -ldflags="-s -w" -o "$here/domain.wasm" ./cmd/domain-wasm
+#
+# CGO_ENABLED=0: js/wasm has no C compiler, so cgo can never actually run
+# here — but Go still defaults CGO_ENABLED=1 on this cross-compile, which
+# taints stdlib package selection (e.g. os/user, pulled in transitively by
+# the REPL's terminal deps) with cgo-only build files that then fail to
+# link. Forcing it off selects the pure-Go fallback implementations.
+GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -C "$repo" -ldflags="-s -w" -o "$here/domain.wasm" ./cmd/domain-wasm
 cp "$shim" "$here/wasm_exec.js"
 
 size=$(( $(wc -c < "$here/domain.wasm") / 1024 / 1024 ))

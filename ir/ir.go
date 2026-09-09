@@ -35,6 +35,7 @@ const (
 	KGrid   // Grid<T>
 	KSparse // Sparse<T>: unbounded 2D plane with a default value (see SparseValue)
 	KGraph  // Graph<K>: directed, Int-weighted adjacency over keyable nodes (see GraphValue)
+	KView   // View: an opaque render tree — text, style and layout (see ViewValue)
 )
 
 // Field is one named member of a Record type.
@@ -89,6 +90,18 @@ func Grid(elem *Type) *Type {
 func Sparse(elem *Type) *Type {
 	return &Type{Kind: KSparse, Elem: elem}
 }
+
+// View builds the View type: an opaque tree of text, style and layout, built
+// by the render builtins and rendered by RenderViewPlain (and, in a terminal,
+// with styling). It has no element type — a View is not a collection of
+// anything — which is why this takes no parameter.
+//
+// It is deliberately opaque: not keyable, not orderable, not comparable, and
+// no arithmetic. The alternative was styled Text, and then `length` of a
+// styled string counts escape bytes, every layout builtin has to do
+// display-width arithmetic on a value that lies about its own size, and the
+// footgun is permanent. With a type of its own the question cannot be asked.
+func View() *Type { return &Type{Kind: KView} }
 
 // Graph builds a Graph<node> type: a directed, Int-weighted adjacency over
 // keyable nodes. Elem is the *node* type — a graph has no separate element,
@@ -166,6 +179,8 @@ func (t *Type) String() string {
 		return "Sparse<" + t.Elem.String() + ">"
 	case KGraph:
 		return "Graph<" + t.Elem.String() + ">"
+	case KView:
+		return "View"
 	default:
 		return "<unknown>"
 	}
@@ -255,12 +270,99 @@ type Context struct {
 	// Release does — the Emit node inside a Part body is reached through the
 	// Part's Eval closure, so there is no node to rewrite.
 	PartLabel string
+	// Clock is how far the run has got: frames drawn, and milliseconds
+	// elapsed. A host that has a clock maintains it; everything else leaves
+	// it at zero, which is what `frame()` and `elapsed()` then report.
+	Clock Clock
+	// Requests, when set, is how a fired request reaches the host that will
+	// send it. nil means nothing is listening — which is what a request under
+	// a host with no network looks like, and is indistinguishable from a
+	// server that never answers, so a program needs no special case for it.
+	Requests func(RequestCall)
+	// Pending answers `pending("tag")`: whether a request with that tag is
+	// still out. A host that sends requests keeps it; everything else leaves
+	// it nil, and nothing is ever pending.
+	Pending func(tag string) bool
+	// Rand is the run's random stream, or nil when nothing asked for one.
+	// It is seeded once per run — from a replay script, a flag, or the clock —
+	// so that a sequence is a pure function of a seed somebody could write
+	// down. See ir/rand.go.
+	Rand *Rand
+	// Record, when set, is how a played game writes out what happened as it
+	// happens — one replay-script line per call (frame, key, tick, and so on)
+	// — so a session played once can be replayed exactly and diffed like any
+	// other example. nil means nothing is listening, the same "an absent host
+	// feature is indistinguishable from one nobody asked for" rule Requests
+	// and Pending already follow.
+	Record func(line string)
+	// Load answers a `Domain Expansion: Load`: the raw JSON text a save file
+	// held under path, and whether there was one. nil, or a false ok, both
+	// mean "nothing was there" — a fresh game and a game with no save file
+	// look the same, which is what lets Load's `Default:` cover both without
+	// the primitive asking which one happened. A replayed run never reads a
+	// real file: it is either nil (no `load` line in the script — Default
+	// runs) or answers the one fixed value the script gave, so a save file
+	// on the machine running the test can never change what the test sees.
+	Load func(path string) (json string, ok bool)
+	// Save is how a played game writes state that outlives the run — a high
+	// score, a level unlocked. nil (a replayed run's constant state) means
+	// the write is silently skipped, on the same "absent host feature" terms
+	// as Requests: a replayed run must never touch a real file, or the same
+	// script would stop giving the same answer on a second run.
+	Save func(path, json string)
+	// Quit is set by a scope whose programs can end themselves — a game
+	// asking to stop. The host checks it after each body it runs and takes
+	// it as the program saying it is finished.
+	//
+	// It lives here for the same reason Release and PartLabel do: the stage
+	// that sets it is reached through a Part's Eval closure, so there is no
+	// node for a host to inspect on the way past.
+	Quit bool
+	// Beep is set by a scope whose programs can ring the terminal bell — a
+	// game marking a moment a frame cannot: a hit landing, a piece coming to
+	// rest. Unlike Quit it is not checked after every body, only when the next
+	// frame is drawn — a beep waits for a frame the way any other change to
+	// the world does — and is cleared there, whether or not that frame was
+	// the one asking for it.
+	Beep bool
 	// Trace, when set, observes every node evaluation — see trace.go. nil
 	// means untraced, which is one nil check per node.
 	Trace Tracer
 	// frames is the stack of enclosing sub-pipeline labels, maintained only
 	// while tracing.
 	frames []string
+}
+
+// Clock is a run's progress: frames drawn and milliseconds elapsed.
+//
+// Both are counts a host keeps rather than readings it takes. That is what
+// makes them replayable: a replayed run's clock advances because its script
+// said `tick`, not because the machine was slow, so `elapsed()` gives the same
+// answer every time the same script runs.
+type Clock struct {
+	frames    int64
+	elapsedMS int64
+}
+
+// Advance records that time passed.
+func (c *Clock) Advance(ms int64) { c.elapsedMS += ms }
+
+// Drew records that a frame was drawn.
+func (c *Clock) Drew() { c.frames++ }
+
+// Frames and Elapsed are what the builtins report.
+func (c Clock) Frames() int64  { return c.frames }
+func (c Clock) Elapsed() int64 { return c.elapsedMS }
+
+// Random is the run's stream, made on first use. A program that never asks
+// for a random value never has one, and one that does gets a stream seeded
+// from the context — so the seed is decided by whoever started the run rather
+// than by whichever expression happened to draw first.
+func (c *Context) Random() *Rand {
+	if c.Rand == nil {
+		c.Rand = NewRand(DefaultSeed)
+	}
+	return c.Rand
 }
 
 // LabelledOutput renders a value for Reveal under the given Part label. A
@@ -346,6 +448,12 @@ func (n *Node) Foreign() (string, bool) {
 // Pipeline is the linear chain of resolved nodes.
 type Pipeline struct {
 	Nodes []*Node
+	// Scope is the name of the `Innate Domain` the program declared, or the
+	// default one's name. It rides on the pipeline for the same reason
+	// Globals does: resolving and running are not paired, and a run has to be
+	// hosted by the scope of the program it is actually running rather than
+	// by whatever was resolved most recently in this process.
+	Scope string
 	// Globals is how many `Cursed Object` slots the program declares, which is
 	// the size of the array a run needs (eval.ResetGlobals).
 	//

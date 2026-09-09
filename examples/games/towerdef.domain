@@ -1,0 +1,223 @@
+# Tower defence — the game that asks whether the algorithm vocabulary is
+# reachable from inside one.
+#
+# It is, through one form worth knowing: **`Consider NAME Of` takes a pipeline
+# body**, not only a lambda. So a stage whose value is the world can run a
+# whole search over one of its fields and keep the world:
+#
+#     Cursed Technique: Apply
+#         Consider field Of
+#             Cursed Technique: Apply
+#                 Using: (w) -> w.board
+#             Channeled Energy: Convert To Grid
+#             Domain Expansion: BFS from 4 12
+#                 Using: (c) -> not(c = "T")
+#         Using: (w) -> with(w, "flow", field)
+#
+# That is the whole of the routing. `BFS` from the **exit** gives every cell
+# its distance to safety, and a creep walks downhill — a flow field, computed
+# by the same primitive a maze puzzle uses, with no path-finding written here
+# at all. It is recomputed whenever a tower is placed, which is also how the
+# rule "a tower may not seal the lane" is checked: if the entry's distance
+# comes back below zero, there is no way through and the tower is refused.
+#
+# The creeps are a `List<Record>`, advanced each tick by `Simple Domain: For
+# Each` — the loop this game motivated: a wave spawns creeps mid-game, so
+# the list `w.creeps` grows while the game runs, and `For Each cr In: Using:
+# (w) -> w.creeps` reads however many there are *this tick*, with no fixed
+# slot count and no `k >= length(...)` guard standing in for one.
+
+Innate Domain: Game Dev
+
+Cursed Object: boardRows As 5
+Cursed Object: boardCols As 13
+Cursed Object: exitCol As 12
+Cursed Object: towerCost As 10
+
+Part World:
+    Cursed Technique: Apply
+        Consider field Of
+            Cursed Technique: Apply
+                Using: (w) -> fill(5, repeat(".", 13))
+            Channeled Energy: Convert To Grid
+            Domain Expansion: BFS from 2 12
+                Using: (c) -> not(c = "T")
+        Using: (w) -> {board: fill(5, repeat(".", 13)), flow: field, creeps: emptylist({r: 0, c: 0, hp: 0}), cursor: point(2, 4), coin: 55, lives: 5, wave: 0, note: "arrows aim, enter builds a tower, q leaves", lines: emptylist("")}
+
+Part Entity "Flow":
+    # Every cell's distance to the exit, and the world with it in hand.
+    Cursed Technique: Apply
+        Consider field Of
+            Cursed Technique: Apply
+                Using: (w) -> w.board
+            Channeled Energy: Convert To Grid
+            Domain Expansion: BFS from 2 12
+                Using: (c) -> not(c = "T")
+        Using: (w) -> with(w, "flow", field)
+
+# ---------------------------------------------------------------------------
+# Building
+# ---------------------------------------------------------------------------
+
+Part On "key up":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "cursor", point(clamp(prow(w.cursor) - 1, 0, boardRows - 1), pcol(w.cursor)))
+
+Part On "key down":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "cursor", point(clamp(prow(w.cursor) + 1, 0, boardRows - 1), pcol(w.cursor)))
+
+Part On "key left":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "cursor", point(prow(w.cursor), clamp(pcol(w.cursor) - 1, 0, boardCols - 1)))
+
+Part On "key right":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "cursor", point(prow(w.cursor), clamp(pcol(w.cursor) + 1, 0, boardCols - 1)))
+
+Part On "key enter":
+    # Put the tower down, then ask the search whether the lane survived it.
+    Cursed Technique: Apply
+        Using: (w) ->
+            consider r as prow(w.cursor)
+            in consider c as pcol(w.cursor)
+            in consider row as item(w.board, r)
+            in if w.coin < towerCost
+                then with(w, "note", "Not enough coin — a tower is 10.")
+                else if not(charat(row, c) = ".")
+                then with(w, "note", "Something is there already.")
+                else with(with(with(w, "board", set(w.board, r, withchar(row, c, "T"))), "coin", w.coin - towerCost),
+                    "note", "A tower goes up.")
+    Shikigami: Flow
+    Cursed Technique: Apply
+        Using: (w) ->
+            if at(w.flow, 2, 0) >= 0
+                then w
+                else consider r as prow(w.cursor)
+                    in consider c as pcol(w.cursor)
+                    in consider row as item(w.board, r)
+                    in with(with(with(w, "board", set(w.board, r, withchar(row, c, "."))), "coin", w.coin + towerCost),
+                        "note", "That would seal the lane. The tower comes down again.")
+    Shikigami: Flow
+
+Part On "key q":
+    Simple Domain: Quit
+
+# ---------------------------------------------------------------------------
+# A wave every two seconds
+# ---------------------------------------------------------------------------
+
+Part Every 2000:
+    Cursed Technique: Apply
+        Using: (w) ->
+            if w.lives <= 0
+                then w
+                else with(with(with(w, "wave", w.wave + 1), "creeps",
+                        concat(w.creeps, list({r: 2, c: 0, hp: 2 + w.wave}))),
+                    "note", "Wave " + totext(w.wave + 1) + " comes up the lane.")
+
+# ---------------------------------------------------------------------------
+# A step every half second: shoot, walk, tally
+# ---------------------------------------------------------------------------
+
+Part Every 500:
+    # Every tower fires at every creep within two cells of it. The outer lap
+    # is `For Each`, over however many creeps are alive this tick; the inner
+    # one is `For`, over every cell of the board. `snapshot` (the element
+    # `For Each` hands the body) is deliberately unused below — two towers
+    # can both be in range of the same creep, so each `t` still re-reads the
+    # creep fresh via `k` (the index `For Each` hands alongside it), or the
+    # second tower's hit would overwrite the first's instead of stacking.
+    Simple Domain: For Each snapshot In
+        Using: (w) -> w.creeps
+        Simple Domain: For t in range(65)
+            Cursed Technique: Apply
+                Using: (w, snapshot, k, t) ->
+                    consider cr as item(w.creeps, k)
+                    in consider tr as t / boardCols
+                    in consider tc as mod(t, boardCols)
+                    in if not(charat(item(w.board, tr), tc) = "T")
+                        or chebyshev(point(cr.r, cr.c), point(tr, tc)) > 2
+                        or cr.hp <= 0
+                        then w
+                        else with(w, "creeps", set(w.creeps, k, with(cr, "hp", cr.hp - 1)))
+
+    # Everything still standing walks one cell downhill. `cr` and `k` are the
+    # element and index `For Each` hands the body — nothing else in this loop
+    # writes to another creep's slot, so the element ambient stays fresh for
+    # the whole lap and there is no need to re-read it as the shoot loop above
+    # does.
+    Simple Domain: For Each cr In
+        Using: (w) -> w.creeps
+        Cursed Technique: Apply
+            Using: (w, cr, k) ->
+                consider up as (if inbounds(w.flow, cr.r - 1, cr.c) and at(w.flow, cr.r - 1, cr.c) >= 0 then at(w.flow, cr.r - 1, cr.c) else 999)
+                in consider down as (if inbounds(w.flow, cr.r + 1, cr.c) and at(w.flow, cr.r + 1, cr.c) >= 0 then at(w.flow, cr.r + 1, cr.c) else 999)
+                in consider left as (if inbounds(w.flow, cr.r, cr.c - 1) and at(w.flow, cr.r, cr.c - 1) >= 0 then at(w.flow, cr.r, cr.c - 1) else 999)
+                in consider right as (if inbounds(w.flow, cr.r, cr.c + 1) and at(w.flow, cr.r, cr.c + 1) >= 0 then at(w.flow, cr.r, cr.c + 1) else 999)
+                in consider best as min(list(up, down, left, right))
+                in consider next as (if right = best then point(cr.r, cr.c + 1)
+                    else if up = best then point(cr.r - 1, cr.c)
+                    else if down = best then point(cr.r + 1, cr.c)
+                    else point(cr.r, cr.c - 1))
+                in if cr.hp <= 0 or best >= 999
+                    then w
+                    else with(w, "creeps", set(w.creeps, k, with(with(cr, "r", prow(next)), "c", pcol(next))))
+
+    # What is left of the lane. Three filters over one list, each naming what
+    # it wants — the shape `Consider … Of` was made for.
+    Cursed Technique: Apply
+        Consider standing Of
+            Cursed Technique: Apply
+                Using: (w) -> w.creeps
+            Cursed Technique: Filter
+                Using: (cr) -> cr.hp > 0 and cr.c < exitCol
+        Consider killed Of
+            Cursed Technique: Apply
+                Using: (w) -> w.creeps
+            Cursed Technique: Filter
+                Using: (cr) -> cr.hp <= 0
+        Consider leaked Of
+            Cursed Technique: Apply
+                Using: (w) -> w.creeps
+            Cursed Technique: Filter
+                Using: (cr) -> cr.hp > 0 and cr.c >= exitCol
+        Using: (w) ->
+            with(with(with(with(w, "creeps", standing),
+                    "coin", w.coin + length(killed) * 6),
+                "lives", w.lives - length(leaked)),
+                "note", if length(leaked) > 0
+                    then "One got through."
+                    else if length(killed) > 0
+                    then totext(length(killed)) + " down."
+                    else w.note)
+
+Part Draw:
+    # The board, with the creeps and the cursor painted onto a copy of it.
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "lines", w.board)
+    Simple Domain: For Each cr In
+        Using: (w) -> w.creeps
+        Cursed Technique: Apply
+            Using: (w, cr, k) ->
+                consider row as item(w.lines, cr.r)
+                in with(w, "lines", set(w.lines, cr.r, withchar(row, cr.c, "o")))
+    Cursed Technique: Apply
+        Using: (w) ->
+            consider r as prow(w.cursor)
+            in consider c as pcol(w.cursor)
+            in consider row as item(w.lines, r)
+            in with(w, "lines", set(w.lines, r, withchar(row, c, if charat(row, c) = "." then "+" else charat(row, c))))
+    Cursed Technique: Apply
+        Using: (w) ->
+            stack(
+                beside(text("coin "), style(text(totext(w.coin)), "bold yellow"),
+                    text("   lives "), style(text(totext(w.lives)), "bold red"),
+                    text("   wave "), text(totext(w.wave))),
+                box(draw(w.lines)),
+                text(if w.lives <= 0 then "the lane is lost" else w.note))
+
+Part Ending:
+    Cursed Technique: Apply
+        Using: (w) -> "held for " + totext(w.wave) + " wave(s) with " + totext(w.lives) + " lives left"
+    Reveal: stdout

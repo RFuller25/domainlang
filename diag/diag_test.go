@@ -405,7 +405,7 @@ Part "1":
 }
 
 func TestLintUnusedImport(t *testing.T) {
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: input.txt
 Cursed Technique: Split Text by "\n"
 Reveal: stdout
@@ -419,7 +419,7 @@ Reveal: stdout
 // Calling a Shikigami the file does not define itself counts as using an
 // import, so the warning must not fire.
 func TestLintImportUsedByBareCall(t *testing.T) {
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: input.txt
 Shikigami: Doubled
 Reveal: stdout
@@ -431,8 +431,8 @@ Reveal: stdout
 }
 
 func TestLintDuplicateImport(t *testing.T) {
-	src := `Innate Domain: shapes
-Innate Domain: shapes
+	src := `Inherited Technique: shapes
+Inherited Technique: shapes
 Cursed Energy: input.txt
 Shikigami: Doubled
 Reveal: stdout

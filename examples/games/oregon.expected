@@ -1,0 +1,56 @@
+┌──────────────────────────────────────────────┐
+│THE OREGON TRAIL                              │
+│day 1    mile 0 of 200                        │
+│food 120   coin 60   oxen 2   health 5        │
+│                                              │
+│The wagon is loaded. Oregon is 200 miles west.│
+│                                              │
+│> Push on west                                │
+│  Rest a day                                  │
+│  Stop at the fort                            │
+└──────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│THE OREGON TRAIL                              │
+│day 1    mile 0 of 200                        │
+│food 120   coin 60   oxen 2   health 5        │
+│                                              │
+│The wagon is loaded. Oregon is 200 miles west.│
+│                                              │
+│> Buy 20 food - 10 coin                       │
+│  Buy an ox - 25 coin                         │
+│  Back to the trail                           │
+└──────────────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│THE OREGON TRAIL                     │
+│day 8    mile 124 of 200             │
+│food 56   coin 47   oxen 3   health 4│
+│                                     │
+│You make 19 miles.                   │
+│                                     │
+│> Make camp                          │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│THE OREGON TRAIL                     │
+│day 8    mile 124 of 200             │
+│food 56   coin 47   oxen 3   health 4│
+│                                     │
+│You make camp for the night.         │
+│                                     │
+│> Push on west                       │
+│  Rest a day                         │
+│  Stop at the fort                   │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│THE OREGON TRAIL                     │
+│day 13    mile 213 of 200            │
+│food 21   coin 47   oxen 3   health 3│
+│                                     │
+│Oregon, on day 13.                   │
+│                                     │
+│> Leave                              │
+└─────────────────────────────────────┘
+Oregon, on day 13.

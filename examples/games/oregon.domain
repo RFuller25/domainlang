@@ -1,0 +1,138 @@
+# Oregon — a game with no grid at all.
+#
+# Snake and tetris are boards. This one is a **state machine**: the world holds
+# a `scene`, every other Part asks which scene it is in, and the picture is
+# text. It is here to check that the scope carries a game whose interesting
+# part is choices rather than cells — menus, resources, and a day that can go
+# wrong on its own.
+#
+# The menu is derived rather than typed twice. `Part Entity "Menu":` is the one
+# place that says what a scene offers, and every Part that changes the scene
+# calls it by name afterwards.
+
+Innate Domain: Game Dev
+
+Cursed Object: goal As 200
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {scene: "trail", shown: "", menu: emptylist(""), lines: emptylist(""), cursor: 0, day: 1, mile: 0, food: 120, money: 60, oxen: 2, health: 5, leaving: 1 = 0, note: "The wagon is loaded. Oregon is 200 miles west."}
+
+Part Start:
+    Shikigami: Menu
+
+Part Entity "Menu":
+    # scene -> what may be chosen. Written once, called after every change.
+    # The highlight goes back to the top when the scene does change, and stays
+    # where it was when it did not: `shown` is what the menu was last built
+    # for, which is the only way to tell those two apart from in here.
+    Cursed Technique: Apply
+        Using: (w) ->
+            consider m as (if w.scene = "trail"
+                    then list("Push on west", "Rest a day", "Stop at the fort")
+                    else if w.scene = "fort"
+                    then list("Buy 20 food - 10 coin", "Buy an ox - 25 coin", "Back to the trail")
+                    else if w.scene = "moving"
+                    then list("Make camp")
+                    else list("Leave"))
+            in with(with(with(w, "menu", m), "shown", w.scene),
+                "cursor", if w.scene = w.shown and w.cursor < length(m) then w.cursor else 0)
+
+Part On "key up":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "cursor", clamp(w.cursor - 1, 0, length(w.menu) - 1))
+
+Part On "key down":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "cursor", clamp(w.cursor + 1, 0, length(w.menu) - 1))
+
+Part On "key enter":
+    Cursed Technique: Apply
+        Using: (w) ->
+            if w.scene = "trail"
+                then (if w.cursor = 0
+                    then with(w, "scene", "moving")
+                    else if w.cursor = 1
+                    then with(with(with(with(w, "day", w.day + 1), "food", w.food - 4), "health", clamp(w.health + 1, 0, 5)), "note", "A day in camp. Everyone is steadier for it.")
+                    else with(w, "scene", "fort"))
+            else if w.scene = "fort"
+                then (if w.cursor = 0 and w.money >= 10
+                    then with(with(with(w, "money", w.money - 10), "food", w.food + 20), "note", "Twenty pounds of flour, and a shorter purse.")
+                    else if w.cursor = 1 and w.money >= 25
+                    then with(with(with(w, "money", w.money - 25), "oxen", w.oxen + 1), "note", "A fresh ox. The wagon will keep up now.")
+                    else if w.cursor = 2
+                    then with(w, "scene", "trail")
+                    else with(w, "note", "Not enough coin for that."))
+            else if w.scene = "moving"
+                then with(with(w, "scene", "trail"), "note", "You make camp for the night.")
+            else with(w, "leaving", 1 = 1)
+    Shikigami: Menu
+    # The last scene has one thing on its menu, and this is what it does.
+    Simple Domain: Quit
+        Using: (w) -> w.leaving
+
+Part On "key q":
+    Simple Domain: Quit
+
+# A day on the move: distance, hunger, and whatever the trail decides.
+Part Every 600:
+    Cursed Technique: Apply
+        Using: (w) ->
+            if not(w.scene = "moving")
+                then w
+                else consider far as 6 + w.oxen * 3 + random(7)
+                    in consider eaten as 4 + w.oxen
+                    in with(with(with(with(w, "day", w.day + 1), "mile", w.mile + far), "food", w.food - eaten), "note", "You make " + totext(far) + " miles.")
+
+    # The trail's own opinion. One day in three has something to say.
+    Cursed Technique: Apply
+        Using: (w) ->
+            if not(w.scene = "moving") or random(3) > 0
+                then w
+                else consider what as random(4)
+                    in if what = 0
+                        then with(with(w, "food", w.food - 15), "note", "A river crossing. Fifteen pounds of food went downstream.")
+                        else if what = 1
+                        then with(with(w, "health", clamp(w.health - 1, 0, 5)), "note", "Fever in the wagon. Somebody is not well.")
+                        else if what = 2
+                        then with(with(w, "food", w.food + 25), "note", "Good hunting. Twenty-five pounds of meat.")
+                        else with(with(w, "money", w.money + 12), "note", "A trader pays twelve coin for a spare wheel.")
+
+    # Hunger costs health, and health runs out.
+    Cursed Technique: Apply
+        Using: (w) ->
+            if w.food >= 0
+                then w
+                else with(with(with(w, "food", 0), "health", clamp(w.health - 1, 0, 5)), "note", "Nothing left to eat. " + w.note)
+
+    Cursed Technique: Apply
+        Using: (w) ->
+            if w.mile >= goal
+                then with(with(w, "scene", "arrived"), "note", "Oregon, on day " + totext(w.day) + ".")
+                else if w.health <= 0
+                then with(with(w, "scene", "lost"), "note", "The wagon stops for good on day " + totext(w.day) + ".")
+                else w
+    Shikigami: Menu
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "lines", emptylist(""))
+    Simple Domain: For k in range(3)
+        Cursed Technique: Apply
+            Using: (w, k) ->
+                if k >= length(w.menu)
+                    then w
+                    else with(w, "lines", concat(w.lines, list((if k = w.cursor then "> " else "  ") + item(w.menu, k))))
+    Cursed Technique: Apply
+        Using: (w) ->
+            box(stack(
+                style(text("THE OREGON TRAIL"), "bold"),
+                text("day " + totext(w.day) + "    mile " + totext(w.mile) + " of " + totext(goal)),
+                text("food " + totext(w.food) + "   coin " + totext(w.money) + "   oxen " + totext(w.oxen) + "   health " + totext(w.health)),
+                margin(style(text(w.note), "yellow"), 0, 1),
+                text(textjoin(w.lines, "\n"))))
+
+Part Ending:
+    Cursed Technique: Apply
+        Using: (w) -> w.note
+    Reveal: stdout

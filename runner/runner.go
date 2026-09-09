@@ -45,6 +45,10 @@ import (
 	"time"
 
 	"domain/codegen"
+	// The Game Dev host registers itself: a scope whose programs are not a
+	// linear chain of nodes needs a runner that is not interp.Run, and
+	// without this every game would be walked in source order instead.
+	_ "domain/game"
 	"domain/interp"
 	"domain/ir"
 	"domain/lexer"
@@ -729,7 +733,7 @@ func Interpret(program string, optimize bool, ctx *ir.Context) (*ir.Pipeline, ir
 	if ctx.BaseDir == "" {
 		ctx.BaseDir = filepath.Dir(program)
 	}
-	v, err := interp.Run(pipe, ctx)
+	v, err := interp.RunScoped(pipe, ctx)
 	return pipe, v, err
 }
 

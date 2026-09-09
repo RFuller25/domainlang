@@ -192,7 +192,7 @@ func (spec recordSpec) record() (*traceView, error) {
 		BaseDir: filepath.Dir(spec.path),
 		Trace:   rec,
 	}
-	_, runErr := interp.Run(pipe, ctx)
+	_, runErr := interp.RunScoped(pipe, ctx)
 
 	return &traceView{
 		path:     spec.path,
@@ -212,6 +212,11 @@ func Visualize(path string, opts visualizeOptions, stdin io.Reader, stdout, stde
 	// re-record picks up an edited program rather than the one loaded here.
 	pipe, _, err := loadForVisualize(path, opts.Optimize)
 	if err != nil {
+		fmt.Fprintf(stderr, "domain: %v\n", err)
+		return 1
+	}
+	if err := refuseUnlessOnePipeline(pipe.Scope, "visualize",
+		"step through a run and watch one value change shape"); err != nil {
 		fmt.Fprintf(stderr, "domain: %v\n", err)
 		return 1
 	}
@@ -346,7 +351,7 @@ func isTerminalReader(r io.Reader) bool {
 // The question is asked of the *resolved pipeline* rather than the source text,
 // because the source line is not reliably findable by reading: the keyword is
 // optional (`input.txt` on its own is a source), declarations like
-// `Innate Domain:` and `Shikigami` sit above it, and comments and blank lines
+// `Inherited Technique:` and `Shikigami` sit above it, and comments and blank lines
 // intervene. The Read Source node carries the target it will actually open.
 func namesReadableSource(path string, pipe *ir.Pipeline) bool {
 	if pipe == nil {

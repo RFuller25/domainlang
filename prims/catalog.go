@@ -42,6 +42,10 @@ var keywordPages = map[string]string{
 	// reference points at language.md for their full treatment.
 	"Binding Vow": "ref-structure.md",
 	"Reveal":      "ref-structure.md",
+	// `Simple Domain`'s loop kinds are language constructs documented in
+	// language.md, so the keyword had no reference page of its own until a
+	// scope registered a primitive under it.
+	"Simple Domain": "ref-structure.md",
 }
 
 // DocPage is the reference page whose DocAnchor heading documents this
@@ -54,10 +58,32 @@ func (d PrimDoc) DocPage() string {
 	return keywordPages[d.Keyword]
 }
 
-// Catalog documents every primitive in Registry, keyed by ID. A test
+// Catalog documents every primitive in Core, keyed by ID. A test
 // (catalog_test.go) pins it to exactly the registered set, so a new primitive
 // cannot ship without its documentation.
 var Catalog = map[string]PrimDoc{
+	// Simple Domain — control flow added by a scope
+	// Domain Expansion — a scope's own, and the one it may not swap
+	"Request": {"Request", "Domain Expansion", "W → W",
+		"Fires an HTTP request and returns the world unchanged; the answer arrives at a Part Reply (Game Dev).", "request"},
+
+	"Quit": {"Quit", "Simple Domain", "T → T",
+		"Ends the program, optionally only when a Using: predicate holds; passes its value through (Game Dev).", "quit"},
+
+	"Beep": {"Beep", "Simple Domain", "T → T",
+		"Rings the terminal bell, optionally only when a Using: predicate holds; passes its value through (Game Dev).", "beep"},
+
+	"Load": {"Load", "Domain Expansion", "W → T",
+		"Reads persisted state back in, synchronously; Default: covers a missing save and every replayed run unless its script says otherwise (Game Dev).", "load"},
+	"Save": {"Save", "Domain Expansion", "W → W",
+		"Writes state that outlives the run; a no-op under a host that never touches disk, which every replayed run is (Game Dev).", "save"},
+
+	// Channeled Energy — coercions added by a scope
+	"Convert From JSON": {"Convert From JSON", "Channeled Energy", "Text → T",
+		"Decodes a JSON document into the shape declared by Into: (Game Dev).", "convert-from-json"},
+	"Convert To JSON": {"Convert To JSON", "Channeled Energy", "T → Text",
+		"Writes a value as JSON; the value decides the shape (Game Dev).", "convert-to-json"},
+
 	// Cursed Energy — sources
 	"Read Source": {"Read Source", "Cursed Energy", "(nothing) → Text",
 		"Reads the named file (falling back to stdin when it is absent); must be the first stage.", "read-source"},
@@ -279,6 +305,20 @@ func Doc(id string) (PrimDoc, bool) {
 // full type checker — enough for an editor to document the operation on a line
 // even when the program does not yet type-check. It returns nil when no
 // primitive matches the statement's keyword and operation phrase.
+//
+// It searches the shared vocabulary. An editor that knows which Innate Domain
+// the buffer declares should call LookupIn, which also sees that scope's own
+// primitives.
 func Lookup(stmt *ast.Statement) *Primitive {
-	return findPrimitive(stmt)
+	return LookupIn(DefaultScope, stmt)
+}
+
+// LookupIn is Lookup against a particular scope.
+func LookupIn(sc *Scope, stmt *ast.Statement) *Primitive {
+	for _, p := range RegistryFor(sc) {
+		if p.Keyword == stmt.Keyword && p.Match(stmt.Op) {
+			return p
+		}
+	}
+	return nil
 }

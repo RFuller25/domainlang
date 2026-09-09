@@ -1,0 +1,52 @@
+┌────────────────────────┐
+│WORDLE   room oak-42    │
+│                        │
+│                        │
+│> CRANE                 │
+│five letters, then enter│
+└────────────────────────┘
+
+┌────────────────────────────┐
+│WORDLE   room oak-42        │
+│                            │
+│                            │
+│> CRANE  |                  │
+│asking the room about CRANE…│
+└────────────────────────────┘
+
+┌─────────────────────────┐
+│WORDLE   room oak-42     │
+│                         │
+│                         │
+│> CRANE  |               │
+│still waiting on the room│
+└─────────────────────────┘
+
+┌────────────────────┐
+│WORDLE   room oak-42│
+│                    │
+│CRANE   -Y--G       │
+│                    │
+│> _____             │
+│5 left              │
+└────────────────────┘
+
+┌──────────────────────────────────────────────┐
+│WORDLE   room oak-42                          │
+│                                              │
+│CRANE   -Y--G                                 │
+│                                              │
+│> SLATE                                       │
+│the room is not answering (connection refused)│
+└──────────────────────────────────────────────┘
+
+┌────────────────────┐
+│WORDLE   room oak-42│
+│                    │
+│CRANE   -Y--G       │
+│GREBE   GGGGG       │
+│                    │
+│> _____             │
+│got it              │
+└────────────────────┘
+2 guess(es), finished

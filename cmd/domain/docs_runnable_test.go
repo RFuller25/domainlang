@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"domain/codegen"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,7 @@ func stage(t *testing.T, ex docs.Example) (prog, dir string) {
 	if err := os.WriteFile(prog, []byte(ex.Block.Source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Imported libraries, so an `Innate Domain:` example has something to
+	// Imported libraries, so an `Inherited Technique:` example has something to
 	// resolve against.
 	for name, src := range ex.Libs {
 		path := filepath.Join(dir, name)
@@ -131,6 +132,15 @@ func TestDocExamplesCompile(t *testing.T) {
 	}
 	for _, ex := range runnableExamples(t) {
 		t.Run(ex.Name, func(t *testing.T) {
+			// An example whose Innate Domain has no compiler backend yet is
+			// run-only, and says so with a positioned error rather than
+			// diverging (codegen/scopes.go). Skipping it here is not the
+			// claim being weakened: TestDocExamplesRun above still executes
+			// it, and the scope's own refusal is what this would otherwise be
+			// asserting twice.
+			if scope := exampleScope(ex.Block.Source); scope != "" && !codegen.Compilable(scope) {
+				t.Skipf("the %s Innate Domain has no compiler backend yet; the interpreted run above covers this example", scope)
+			}
 			prog, dir := stage(t, ex)
 			// A compiled binary resolves a `Cursed Energy:` path against the
 			// working directory rather than the program's own directory — a
@@ -149,4 +159,18 @@ func TestDocExamplesCompile(t *testing.T) {
 			}
 		})
 	}
+}
+
+// exampleScope reads the `Innate Domain:` an example declares, if any. It is a
+// line scan rather than a parse because this runs for every example and the
+// answer is on one line by construction — the declaration is hoisted, so it
+// needs no context to be read.
+func exampleScope(src string) string {
+	for _, line := range strings.Split(src, "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "Innate Domain:"); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
 }

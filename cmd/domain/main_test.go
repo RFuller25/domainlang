@@ -678,3 +678,122 @@ func TestParseRunArgsStats(t *testing.T) {
 		t.Errorf("opts = %+v, want Stats and Verbose set", opts)
 	}
 }
+
+func TestParseRunArgsRecord(t *testing.T) {
+	path, opts, err := parseRunArgs([]string{"snake.domain", "--record", "snake.script"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "snake.domain" || opts.Record != "snake.script" {
+		t.Errorf("path=%q opts.Record=%q, want %q and %q", path, opts.Record, "snake.domain", "snake.script")
+	}
+	if _, _, err := parseRunArgs([]string{"snake.domain", "--record"}); err == nil {
+		t.Error("--record with no path following should be an error")
+	}
+}
+
+// TestExecuteRecordCreatesFile confirms --record's plumbing end to end for
+// the one path this test binary can drive without a real terminal: a
+// replayed run. A replayed game never calls ctx.Record — the whole point of
+// --record is capturing a *played* session, and game/play_test.go covers
+// that recording is correct in detail — so this only proves Execute opens
+// the file, wires it in without disturbing the run, and leaves it behind
+// (empty, since nothing wrote to it) rather than silently dropping the flag.
+func TestExecuteRecordCreatesFile(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "counter.domain")
+	src := "Innate Domain: Game Dev\n\n" +
+		"Part World:\n    Cursed Technique: Apply\n        Using: (w) -> {n: 0}\n\n" +
+		"Part Every 100:\n    Cursed Technique: Apply\n        Using: (w) -> with(w, \"n\", w.n + 1)\n\n" +
+		"Part Draw:\n    Cursed Technique: Apply\n        Using: (w) -> text(totext(w.n))\n"
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := filepath.Join(dir, "out.script")
+	var out, errBuf bytes.Buffer
+	err := Execute(prog, Options{Optimize: true, Record: rec}, strings.NewReader("tick\nframe\n"), &out, &errBuf)
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, errBuf.String())
+	}
+	if _, err := os.Stat(rec); err != nil {
+		t.Errorf("--record should have created %s: %v", rec, err)
+	}
+	if !strings.Contains(out.String(), "1") {
+		t.Errorf("the replayed run itself should be unaffected by --record; got %q", out.String())
+	}
+}
+
+func TestParseRunArgsTrace(t *testing.T) {
+	_, opts, err := parseRunArgs([]string{"p.domain", "--trace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.Trace {
+		t.Errorf("opts.Trace = false, want true")
+	}
+}
+
+// TestTraceWritesOnePartLinePerFrame checks the granularity gametrace.go
+// promises: one line per top-level frame (a Part body's own run), naming it
+// and what it produced — not the nested frames inside one (a loop iteration,
+// a Consider body) and not the individual node steps --stats reports.
+func TestTraceWritesOnePartLinePerFrame(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "counter.domain")
+	src := `Innate Domain: Game Dev
+
+Part World:
+    Simple Domain: Repeat 2
+        Cursed Technique: Apply
+            Using: (w) -> w
+    Cursed Technique: Apply
+        Using: (w) -> {n: 0}
+
+Part On "key a":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "n", w.n + 1)
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text(totext(w.n))
+`
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errBuf bytes.Buffer
+	err := Execute(prog, Options{Optimize: true, Trace: true}, strings.NewReader("key a\nframe\n"), &out, &errBuf)
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, errBuf.String())
+	}
+	trace := errBuf.String()
+	lines := strings.Split(strings.TrimRight(trace, "\n"), "\n")
+	want := []string{
+		`Part World -> {n: 0}`,
+		`Part On "key a" -> {n: 1}`,
+		`Part Draw -> 1`,
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d trace lines, want %d\n got: %q\nwant: %q", len(lines), len(want), lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d: got %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestTraceAndStatsConflict(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "p.domain")
+	if err := os.WriteFile(prog, []byte("Cursed Energy: stdin\nReveal: stdout\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errBuf bytes.Buffer
+	err := Execute(prog, Options{Optimize: true, Trace: true, Stats: true}, strings.NewReader("hi"), &out, &errBuf)
+	if err == nil {
+		t.Fatal("expected --trace + --stats to be refused")
+	}
+	if !strings.Contains(err.Error(), "cannot be combined") {
+		t.Errorf("error = %v, want it to say the two flags cannot be combined", err)
+	}
+}

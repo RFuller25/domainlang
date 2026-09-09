@@ -1106,13 +1106,13 @@ func newVisCtx(t *testing.T, prog string, rec *interp.Recorder, out *strings.Bui
 
 // Regression: the source stage is found from the resolved pipeline, not by
 // reading the file. Scanning the text for the first statement broke as soon as
-// a declaration sat above the source — an `Innate Domain:` line, a Shikigami
+// a declaration sat above the source — an `Inherited Technique:` line, a Shikigami
 // definition — and never handled the keyword-less spelling at all.
 func TestVisualizeFindsSourceBelowDeclarations(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{
 			"import above the source",
-			"Innate Domain: lib\nCursed Energy: in.txt\n" +
+			"Inherited Technique: lib\nCursed Energy: in.txt\n" +
 				"Cursed Technique: Split Text by \",\"\nMaximum Technique: Count\nReveal: stdout\n",
 		},
 		{
@@ -1134,7 +1134,7 @@ func TestVisualizeFindsSourceBelowDeclarations(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir, prog := writeVisProgram(t, c.src, "a,b,c")
-			if strings.Contains(c.src, "Innate Domain") {
+			if strings.Contains(c.src, "Inherited Technique") {
 				lib := filepath.Join(dir, "lib.domain")
 				if err := os.WriteFile(lib, []byte("Shikigami \"Unused\"\n    Maximum Technique: Sum\n"), 0o644); err != nil {
 					t.Fatal(err)

@@ -1,0 +1,106 @@
+# Wordle, against a room on a server — the game that has to talk to something
+# it does not control.
+#
+# A round trip is a hundred milliseconds on a good day and a frame is sixteen,
+# so a `Request` **fires and returns the world unchanged**. The answer arrives
+# later at `Part Reply "guess":`, which is an event like a keystroke. That is
+# the whole of the asynchrony, and it is why nothing here blocks.
+#
+# There is no server in this directory and there does not need to be. A
+# replayed run never touches the network: the script says what came back, so
+# the two halves of an exchange are two lines of a file. `reply guess {…}` is a
+# room that answered and `fail guess …` is one that did not, and a request the
+# script never answers is a room that went away mid-game — which is a state
+# worth testing and has no other way to be tested at all.
+
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {room: "oak-42", typed: "", guesses: emptylist(""), marks: emptylist(""), lines: emptylist(""), note: "five letters, then enter", spin: 0, over: 1 = 0}
+
+# Typing. A printable keystroke arrives as `text`, which is a different
+# question from `key` — one asks what was pressed, the other what it wrote.
+Part On "text":
+    Cursed Technique: Apply
+        Using: (w) ->
+            if w.over or length(w.typed) >= 5 or not(isalpha(key))
+                then w
+                else with(w, "typed", w.typed + lower(key))
+
+Part On "key backspace":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "typed", slice(w.typed, 0, length(w.typed) - 1))
+
+# Enter sends the guess to the room. `pending` is how the one thing a bounded
+# tag costs — a superseded reply is dropped — is made visible, so a game that
+# must not lose one asks before it fires.
+Part On "key enter":
+    Cursed Technique: Apply
+        Using: (w) ->
+            if w.over or not(length(w.typed) = 5)
+                then with(w, "note", "five letters, then enter")
+                else if pending("guess")
+                then with(w, "note", "still waiting on the room")
+                else with(w, "note", "asking the room about " + upper(w.typed) + "…")
+    Domain Expansion: Request
+        Url: (w) -> "https://wordle.example/room/" + w.room + "/guess"
+        Method: "POST"
+        Body: (w) -> tojson({room: w.room, word: w.typed})
+        As: "guess"
+        Into: {marks: Text, right: Bool, left: Int}
+
+Part On "key q":
+    Simple Domain: Quit
+
+# The answer, whenever it comes. Every way the exchange can fail lands in the
+# same record — the room is down, the status was not 2xx, the body did not fit
+# the declared shape — so there is one thing to branch on.
+Part Reply "guess":
+    Cursed Technique: Apply
+        Using: (w) ->
+            if not(reply.ok)
+                then with(w, "note", "the room is not answering (" + reply.error + ")")
+                else with(with(with(with(with(w,
+                        "guesses", concat(w.guesses, list(w.typed))),
+                        "marks", concat(w.marks, list(reply.value.marks))),
+                        "typed", ""),
+                        "over", reply.value.right or reply.value.left <= 0),
+                    "note", if reply.value.right
+                        then "got it"
+                        else if reply.value.left <= 0
+                        then "out of guesses"
+                        else totext(reply.value.left) + " left")
+
+# A spinner, so a frame drawn while a request is out looks like it is waiting
+# rather than like it is stuck.
+Part Every 250:
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "spin", mod(w.spin + 1, 4))
+
+Part Draw:
+    # One line per guess: the word, then what the room said about it.
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "lines", emptylist(""))
+    Simple Domain: For k in range(6)
+        Cursed Technique: Apply
+            Using: (w, k) ->
+                if k >= length(w.guesses)
+                    then w
+                    else with(w, "lines", concat(w.lines,
+                        list(upper(item(w.guesses, k)) + "   " + item(w.marks, k))))
+    Cursed Technique: Apply
+        Using: (w) ->
+            box(stack(
+                beside(style(text("WORDLE"), "bold"), text("   room "), style(text(w.room), "cyan")),
+                margin(text(textjoin(w.lines, "\n")), 0, 1),
+                beside(
+                    text("> "),
+                    style(text(upper(w.typed) + repeat("_", 5 - length(w.typed))), "bold yellow"),
+                    text(if pending("guess") then "  " + charat("|/-\\", w.spin) else "")),
+                text(w.note)))
+
+Part Ending:
+    Cursed Technique: Apply
+        Using: (w) -> totext(length(w.guesses)) + " guess(es), " + (if w.over then "finished" else "unfinished")
+    Reveal: stdout

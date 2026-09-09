@@ -31,6 +31,7 @@ import (
 	"go/format"
 	"maps"
 	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -77,6 +78,11 @@ type gen struct {
 	varn     int
 	parsen   int
 	release  bool // strip Binding Vows (Options.Release)
+	// game is set while compiling a `Game Dev` program. Only two lowerings
+	// consult it, and both are asking the same question: whether there is a
+	// run to ask about. `pending()` outside a game has nothing in flight by
+	// definition, and the interpreter answers false for the same reason.
+	game bool
 	// tuning is what the caller measured about the input (Options.Tuning). It
 	// is only ever read where the generator was already guessing; see tuning.go.
 	tuning Tuning
@@ -180,6 +186,9 @@ func EmitAnnotated(p *ir.Pipeline, opts Options) (string, map[*ir.Node]Span, err
 }
 
 func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Span, error) {
+	if err := checkScope(p); err != nil {
+		return "", nil, err
+	}
 	g := &gen{
 		release:  opts.Release,
 		tuning:   opts.Tuning,
@@ -193,12 +202,21 @@ func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Spa
 		chans:    map[string]chanVar{},
 	}
 
-	cur, err := g.emitSequence(p.Nodes, "")
-	if err != nil {
-		return "", nil, err
-	}
-	if len(p.Nodes) > 0 && p.Nodes[len(p.Nodes)-1].Prim != "Emit" && cur != "" {
-		g.wl("_ = %s", cur)
+	// A game is not a chain of nodes, so it is not emitted by walking one:
+	// its Parts become functions and a runtime drives them. See gamegen.go.
+	if p.Scope == gameScope {
+		g.game = true
+		if err := g.emitGame(p); err != nil {
+			return "", nil, err
+		}
+	} else {
+		cur, err := g.emitSequence(p.Nodes, "")
+		if err != nil {
+			return "", nil, err
+		}
+		if len(p.Nodes) > 0 && p.Nodes[len(p.Nodes)-1].Prim != "Emit" && cur != "" {
+			g.wl("_ = %s", cur)
+		}
 	}
 	g.helper("dmAllocReport", declAllocReport, "fmt", "os", "runtime")
 	g.helper("dmCPUProfile", declCPUProfile, "os", "runtime/pprof")
@@ -226,7 +244,7 @@ func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Spa
 	if len(g.imports) > 0 {
 		out.WriteString("\nimport (\n")
 		for _, p := range slices.Sorted(maps.Keys(g.imports)) {
-			fmt.Fprintf(&out, "\t%q\n", p)
+			fmt.Fprintf(&out, "\t%s%q\n", importAlias[p], p)
 		}
 		out.WriteString(")\n")
 	}
@@ -249,7 +267,7 @@ func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Spa
 	out.Write(g.main.Bytes())
 	out.WriteString("}\n")
 
-	src, err := format.Source(out.Bytes())
+	src, err := format.Source([]byte(dropUnusedRangeVars(out.String())))
 	if err != nil {
 		return "", nil, fmt.Errorf("internal: generated Go does not parse: %v\n--- generated source ---\n%s", err, out.String())
 	}
@@ -258,6 +276,13 @@ func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Spa
 	}
 	text, spans := g.readMarks(string(src))
 	return text, spans, nil
+}
+
+// importAlias names the imports whose package name is not the last element of
+// their path. Go resolves those without help, but a reader of the generated
+// source should not have to know that `charm.land/bubbletea/v2` is `tea`.
+var importAlias = map[string]string{
+	"charm.land/bubbletea/v2": "tea ",
 }
 
 // Marker comments, and how a node's emitted lines are found again.
@@ -739,7 +764,7 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 	case "Stream":
 		return g.emitStream(n, in)
 	case "Simple Domain (Repeat)", "Simple Domain (While)", "Simple Domain (Fixed Point)",
-		"Simple Domain (For)":
+		"Simple Domain (For)", "Simple Domain (For Each)":
 		return g.emitLoop(n, in)
 	case "Channel":
 		return g.emitChannel(n, in)
@@ -749,6 +774,20 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitGlobals(n, in)
 	case "Part":
 		return g.emitPart(n, in)
+	case "Quit":
+		return g.emitQuit(n, in)
+	case "Beep":
+		return g.emitBeep(n, in)
+	case "Load":
+		return g.emitLoad(n, in)
+	case "Save":
+		return g.emitSave(n, in)
+	case "Request":
+		return g.emitRequest(n, in)
+	case "Convert To JSON":
+		return g.emitToJSON(n, in)
+	case "Convert From JSON":
+		return g.emitFromJSON(n, in)
 	case "Combine":
 		return g.emitCombine(n, in)
 	case "Binding Vow":
@@ -2053,4 +2092,35 @@ func (g *gen) emitPart(n *ir.Node, in string) (string, error) {
 		g.wl("_ = %s", cur)
 	}
 	return in, nil // a Part is a passthrough for the main pipeline
+}
+
+// unusedRangeVar matches a loop that binds an element the body may not read.
+var unusedRangeVar = regexp.MustCompile(`for _, ([a-z]+[0-9]+) := range `)
+
+// dropUnusedRangeVars rewrites `for _, x := range xs` to `for range xs` when
+// nothing reads x.
+//
+// Go refuses a declared-and-unused variable, and a `Using:` lambda is perfectly
+// entitled to ignore its parameter — `(n) -> random(6)` rolls a die per
+// element, `(n) -> k also k := k + 1` numbers them. Both compiled to a loop
+// binding an element that the emitted body never mentioned, and `go build`
+// rejected the program: a correct Domain program that would run and would not
+// compile.
+//
+// Doing it here rather than at each of the dozen loop-emitting sites is what
+// keeps it from being forgotten at the thirteenth. It is safe because the
+// names are this package's own — `e6`, `x12`, generated unique and never
+// spliced from user text — so an occurrence count of one means the declaration
+// and nothing else. The word boundary matters: without it `e6` would be found
+// inside `e60`.
+func dropUnusedRangeVars(src string) string {
+	for _, m := range unusedRangeVar.FindAllStringSubmatch(src, -1) {
+		name := m[1]
+		uses := regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`).FindAllStringIndex(src, -1)
+		if len(uses) != 1 {
+			continue
+		}
+		src = strings.Replace(src, "for _, "+name+" := range ", "for range ", 1)
+	}
+	return src
 }

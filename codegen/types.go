@@ -73,6 +73,9 @@ func (g *gen) goType(t *ir.Type) (string, error) {
 		}
 		g.helper("dmGraph", declGraph)
 		return "dmGraph[" + node + "]", nil
+	case ir.KView:
+		g.helper("dmView", declView, "strings", "unicode/utf8")
+		return "dmView", nil
 	default:
 		return "", fmt.Errorf("type %s has no compiled representation yet", t)
 	}
@@ -104,6 +107,8 @@ func canonicalKey(t *ir.Type) string {
 		return "Sparse<" + canonicalKey(t.Elem) + ">"
 	case ir.KGraph:
 		return "Graph<" + canonicalKey(t.Elem) + ">"
+	case ir.KView:
+		return "View"
 	case ir.KMap:
 		return "Map<" + canonicalKey(t.Key) + ", " + canonicalKey(t.Elem) + ">"
 	case ir.KTuple:
@@ -432,6 +437,14 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	sb.WriteByte('}')
 	return sb.String()
 }`, name, goT, nodeFmt, toFmt)
+	case ir.KView:
+		// A View prints as the picture it describes, with no styling —
+		// mirroring ir.FormatValue, and for the same reason: what goes to a
+		// pipe is what a golden frame diffs, and escapes would make that
+		// depend on the terminal.
+		fmt.Fprintf(&sb, `func %s(v %s) string {
+	return dmViewPlain(v)
+}`, name, goT)
 	default:
 		return "", fmt.Errorf("no renderer for type %s yet", t)
 	}

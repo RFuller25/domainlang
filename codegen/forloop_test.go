@@ -187,3 +187,127 @@ Reveal: stdout
 		}
 	}
 }
+
+// TestCompiledForEachLoopsMatchInterpreter is TestCompiledForLoopsMatchInterpreter's
+// twin for `Simple Domain: For Each x In` — the source is a Using: lambda
+// evaluated against the current value each time the loop runs, rather than a
+// Channel fixed before it, and the body's lambdas gain two ambients (the
+// element, then its index) instead of one.
+func TestCompiledForEachLoopsMatchInterpreter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles binaries; skipped in -short mode")
+	}
+	requireGo(t)
+	progs := []struct {
+		name  string
+		src   string
+		input string
+	}{
+		{
+			name: "for each over a record field, writing back with set() and the index",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (xs) -> {items: xs}
+Simple Domain: For Each x In
+    Using: (v) -> v.items
+    Cursed Technique: Apply
+        Using: (v, x, i) -> with(v, "items", set(v.items, i, x * 10 + i))
+Cursed Technique: Apply
+    Using: (v) -> v.items
+Cursed Technique: Map Each
+    Using: (n) -> totext(n)
+Maximum Technique: Join with ","
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			// Nested For Each: the outer loop's (element, index) land before
+			// the inner loop's, same outermost-first order For x in y uses.
+			name: "nested for each binds outermost first, element then index",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (xs) -> {rows: list(xs, xs), total: 0}
+Simple Domain: For Each row In
+    Using: (v) -> v.rows
+    Simple Domain: For Each cell In
+        Using: (v, row, ri) -> row
+        Cursed Technique: Apply
+            Using: (v, row, ri, cell, ci) -> with(v, "total", v.total + cell + ri * 100 + ci)
+Cursed Technique: Apply
+    Using: (v) -> totext(v.total)
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+		{
+			// A body that reads only the element, never the index — checks
+			// codegen doesn't leave an unused Go variable behind either way.
+			name: "for each ignoring the index ambient entirely",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (xs) -> {items: xs, total: 0}
+Simple Domain: For Each x In
+    Using: (v) -> v.items
+    Cursed Technique: Apply
+        Using: (v, x, i) -> with(v, "total", v.total + x)
+Cursed Technique: Apply
+    Using: (v) -> totext(v.total)
+Reveal: stdout
+`,
+			input: "4\n5\n6",
+		},
+		{
+			// The source list shrinks lap to lap (the body filters nothing —
+			// it's captured once, up front — but a second For Each over the
+			// same field after a write proves the source is re-read fresh).
+			name: "a second for each re-reads the field's new length",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Apply
+    Using: (xs) -> {items: xs, seen: 0}
+Simple Domain: For Each x In
+    Using: (v) -> v.items
+    Cursed Technique: Apply
+        Using: (v, x, i) -> with(v, "seen", v.seen + 1)
+Cursed Technique: Apply
+    Using: (v) -> with(v, "items", concat(v.items, list(99)))
+Simple Domain: For Each x In
+    Using: (v) -> v.items
+    Cursed Technique: Apply
+        Using: (v, x, i) -> with(v, "seen", v.seen + 1)
+Cursed Technique: Apply
+    Using: (v) -> totext(v.seen)
+Reveal: stdout
+`,
+			input: "1\n2\n3",
+		},
+	}
+	for _, p := range progs {
+		for _, optimize := range []bool{true, false} {
+			mode := "naive"
+			if optimize {
+				mode = "optimized"
+			}
+			p := p
+			t.Run(p.name+"/"+mode, func(t *testing.T) {
+				// Deliberately not t.Parallel() — see the comment on
+				// TestCompiledForLoopsMatchInterpreter above; the same
+				// package-level ambient stack backs both loop kinds.
+				pipe := compilePipeline(t, p.src, optimize)
+				want := runInterpreter(t, pipe, []byte(p.input))
+				got := buildAndRun(t, pipe, []byte(p.input), codegen.Options{})
+				if got != want {
+					t.Errorf("stdout mismatch\ninterpreter: %q\nbinary:      %q", want, got)
+				}
+			})
+		}
+	}
+}

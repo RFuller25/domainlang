@@ -1,6 +1,6 @@
 # Domain for VS Code
 
-Language support for [Domain](https://github.com/RFuller25/domain) — the
+Language support for [Domain](https://github.com/RFuller25/domainlang) — the
 JJK-themed pipeline language for Advent of Code where you name an algorithm and
 the compiler is free to substitute a faster one.
 

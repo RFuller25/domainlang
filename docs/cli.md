@@ -144,6 +144,8 @@ Shared by `run` and `build`:
 |---|---|
 | `--stats` | per-stage counts and timings on stderr, after the program's output |
 | `--verbose` | with `--stats`, also list the nested steps inside loop, Channel and Part bodies |
+| `--record <path>` | playing a `Game Dev` program, write the session as a replay script — see below |
+| `--trace` | one line per Part body run, to stderr, as a `Game Dev` program replays — see below. Not combinable with `--stats` |
 
 ```
 $ domain run day1.domain --stats
@@ -166,6 +168,75 @@ Two honest limits. `--stats` measures the **tree-walking interpreter**, which
 is why the header says so — do not benchmark the language with it. And it is
 `run` only: instrumenting a compiled binary would need generated
 instrumentation and its own oracle tests, so `build` does not accept it.
+
+### `--record`, a played session becomes a golden test
+
+A [`Game Dev`](game-dev.md) program's own replay scripts
+(`examples/games/*.script`) are what makes a game testable at all, and
+writing one by hand — guessing which key comes next, retyping a request's
+JSON — is the one part of building a game this toolbelt did not help with.
+`--record` fixes that by writing the script a *played* session would need,
+as it is played:
+
+```sh
+domain run snake.domain --record snake.script
+```
+
+Every key, tick, resize, and request reply is written the instant it
+happens, followed by a `frame` — so the file that comes out is the same
+picture-by-picture record a hand-written script is, just at a finer grain (a
+`frame` after every single input, rather than only the ones worth a test
+assertion). Trim it by hand afterward the same way any other captured trace
+gets trimmed: delete the `frame` lines you don't care about, and the events
+between two you kept collapse into what actually mattered.
+
+The seed a live session draws from the clock is written first — a
+`Simple Domain: Beep` moment ([ref-structure.md](ref-structure.md#beep--t---t-game-dev))
+is a bare `\a` byte ahead of the frame it landed on, invisible in a listing
+but there in the bytes — so `domain run snake.domain < snake.script` replays
+*exactly* the session that was recorded, `random`/`pick` draws included, and
+diffs like any other golden file.
+
+It only does anything while playing: a replayed run (piped stdin, a test, the
+browser playground) never fires the events a script exists to capture, so
+`--record` on one leaves an empty file rather than an error — there is
+nothing wrong, there is just nothing to write down.
+
+### `--trace`, watching a game one Part at a time
+
+`expansion: visualize`'s stepper walks a linear pipeline of nodes, which a
+`Game Dev` program does not have — its "steps" are `Part` bodies, dispatched
+by a host loop across an event-driven run rather than a fixed chain. `--trace`
+is the answer sized to that: not a second stepper, one line per `Part` body
+run, to stderr, as a replayed game goes:
+
+```sh
+$ domain run snake.domain --trace < snake.script >/dev/null
+Part World -> {plane: {[0, 0]: ., [7, 11]: .}, body: [[4, 5], [4, 4], [4, 3]], dir: [0, 1], food: [2, 9], score: 0, over: false}
+Part Start -> {plane: {[0, 0]: ., [2, 9]: *, [4, 3]: o, [4, 4]: o, [4, 5]: o, [7, 11]: .}, …}
+Part Draw -> score 0
+┌────────────┐
+│............│
+…
+Part Every 150 -> {plane: {…}, body: [[4, 6], [4, 5], [4, 4]], …, score: 0, over: false}
+Part Draw -> score 0
+…
+```
+
+Each line names the `Part` exactly as it was written — `Part On "key q"`,
+`Part Every 150`, the same labels a script's `key`/`tick`/`reply` lines
+trigger — and what its body produced: the world for every role but `Draw`,
+whose picture is what a played session would have painted. A `Part` that
+fails prints `(failed)` rather than a value, so a broken body is visible on
+the line that broke rather than only in the error that follows.
+
+**Only a `Part`'s own run is a line**, not everything inside one. A `Part`'s
+body may itself hold a loop, a `Consider … Of` search, a `Shikigami` inlined
+at its call site — each opens and closes its own frame the same way a `Part`
+does, and none of those show up here. That is the deliberate difference from
+`--stats`, which reports every node at every depth: `--trace` answers "what
+did the game do," not "what did the interpreter do," and the two flags are
+not combined for the same reason `--stats` doesn't try to draw a picture.
 
 `build` only:
 
@@ -817,15 +888,16 @@ domain expansion: coverage examples/ --min 40   # a CI gate
 ```
 
 ```
-examples/ — 22 program(s)
+examples/ — 28 program(s)
 
-  primitives   35 /  97  (36%)
-  builtins     15 / 188  (8%)
-  keywords      7 /   8  (88%)
+  primitives   37 / 104  (36%)
+  builtins     53 / 208  (25%)
+  keywords      8 /   9  (89%)
 
-  Channeled Energy — 7 not exercised
+  Channeled Energy — 10 not exercised
+    Convert From JSON      Text → T                      ref-coercions.md#convert-from-json
+    Convert To Adjacency   Graph<K> → Map<K, List<K>>    ref-coercions.md#convert-to-adjacency
     Convert To Edges       Graph<K> → List<(K, K, Int)>  ref-coercions.md#convert-to-edges
-    Convert To Entries     Map<K,V> → List<(K, V)>       ref-coercions.md#convert-to-entries
     …
 ```
 
@@ -880,7 +952,7 @@ challenges/ — 13 program(s), compile / optimized, best of 3
   slowest         05_window_max (3.06ms) · 04_collatz (3.02ms)
   most rewritten  02_two_sum (1) · 05_window_max (1)
 
-  vocabulary      23 / 97 primitives · 18 / 188 builtins
+  vocabulary      23 / 104 primitives · 18 / 208 builtins
 ```
 
 `bench` is for one program studied properly; `stats` runs one configuration
@@ -1234,8 +1306,8 @@ directory; a compiled binary resolves them against the *working directory*
 
 ## Libraries
 
-`Innate Domain: <library>` imports a file of Shikigami definitions (see
-[language.md](language.md#innate-domain--importing-a-library)). The target is
+`Inherited Technique: <library>` imports a file of Shikigami definitions (see
+[language.md](language.md#inherited-technique--importing-a-library)). The target is
 written without its `.domain` extension and is looked for in this order, first
 hit winning:
 
@@ -1266,6 +1338,16 @@ a self-contained static binary (~1.5 MB). The Go toolchain must be on
 `PATH`; the Nix package wraps the binary so this is always true (see the
 [repository README](../README.md#install-with-nix)). Cross-compiling works
 the usual Go way: set `GOOS`/`GOARCH` before `domain build`.
+
+A [`Game Dev`](scopes.md) program is the one exception. It paints a terminal,
+so the throwaway module requires Bubble Tea and the binary is around 7.5 MB.
+The versions are pinned — generated from this repository's own `go.mod`, and
+written out with the repository's `go.sum`, so the build verifies the same
+hashes and resolves nothing. `--emit-go` puts those requirements in the file
+as a header comment, since the module itself lives in a directory you never
+see. Nothing about an ordinary build changes: a program with no scope line
+still gets the bare `go.mod` and the flags above, which is
+[asserted, not assumed](compiler.md).
 
 ## Examples
 

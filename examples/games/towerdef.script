@@ -1,0 +1,31 @@
+# Tower defence, driven from a script. Arrows move the build cursor, enter
+# puts a tower down; `tick` is what lets the lane move.
+
+seed 5
+frame                # the empty lane, cursor at the middle
+
+key right            # aim two cells right and build
+key right
+key enter
+frame
+
+tick 2500            # the first wave comes up the lane
+frame
+tick 2500            # and walks into the tower
+frame
+
+key up               # three more, and the lane is one cell wide
+key up
+key enter
+key down
+key enter
+key down
+key down
+key enter
+frame
+
+key down             # the fourth would close it, and is refused: the search
+key enter            # comes back with no way through, so the tower comes down
+frame
+
+key q

@@ -161,7 +161,7 @@ var coveredSections = map[string][]string{
 	// not a pipeline primitive.
 	"language.md": {
 		"Local bindings", "Measured arguments", "Channels", "Part",
-		"Shikigami", "Parameters", "Declared signatures", "Innate Domain",
+		"Shikigami", "Parameters", "Declared signatures", "Inherited Technique",
 		"The prelude", "Simple Domain", "Cursed Object", "Binding Vows", "Reveal",
 	},
 	// The expression layer: its own constructs, then one entry per builtin
@@ -178,6 +178,14 @@ var coveredSections = map[string][]string{
 	"ref-builtins-text.md":        {"Text"},
 	"ref-builtins-bits.md":        {"Bit operations", "Logic", "Number theory"},
 	"ref-builtins-records.md":     {"Records", "Points and grid geometry", "Sparse grids"},
+	// The Game Dev scope's Part roles. By name rather than by heading for the
+	// same reason as the two pages above: the page's level-2 sections are the
+	// features, and "Shape" is a pair of whole-program rules that a runnable
+	// example would restate rather than teach.
+	"ref-game-parts.md": {
+		"The world, and the roles that change it", "What may happen",
+		"What a role puts in scope", "Requests and replies", "Entities", "Globals",
+	},
 }
 
 func TestEveryConstructAndBuiltinGroupHasTwoRunnableExamples(t *testing.T) {

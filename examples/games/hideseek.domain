@@ -1,0 +1,146 @@
+# Hide and seek — several players in one room, and a network in between.
+#
+# The rule this game is here to demonstrate is the one in game/net.go: **one
+# request is in flight per tag, and firing again supersedes the one that was
+# out.** A position poll is exactly the tag that wants it. HTTP replies can
+# arrive out of order, and a client polling at 2 Hz against a server that
+# sometimes takes half a second will, under any unbounded scheme, receive an
+# answer from three polls ago *after* a newer one and merge it — which shows up
+# as other players teleporting backwards, reads as a game bug rather than a
+# networking one, and costs a day to find.
+#
+# So the timer fires without asking whether one is already out. What that costs
+# is a dropped reply, and what a dropped reply looks like is `age`: the number
+# of syncs since the last answer. A slow room degrades into a **stale frame**,
+# drawn dim and labelled, rather than into a stall.
+
+Innate Domain: Game Dev
+
+Cursed Object: myName As "fox"
+Cursed Object: room As "https://hide.example/room/pine"
+Cursed Object: boardCols As 15
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {board: list(
+                "...............",
+                "..####....###..",
+                "..#..........#.",
+                "..#...####...#.",
+                "......#..#.....",
+                ".####.#..#.....",
+                "..............."),
+            lines: emptylist(""),
+            me: point(6, 1), step: point(0, 0), others: emptylist({name: "", r: 0, c: 0, it: 1 = 0}),
+            age: 0, caught: 1 = 0, note: "arrows move, q leaves"}
+
+# ---------------------------------------------------------------------------
+# Moving. A wall is a wall whatever the room thinks.
+# ---------------------------------------------------------------------------
+
+Part Entity "Step":
+    # `step` is where the player wants to go; this is where they end up.
+    Cursed Technique: Apply
+        Using: (w) ->
+            consider p as padd(w.me, w.step)
+            in if prow(p) < 0 or prow(p) > 6 or pcol(p) < 0 or pcol(p) >= boardCols
+                or charat(item(w.board, prow(p)), pcol(p)) = "#"
+                then w
+                else with(w, "me", p)
+
+Part On "key up":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "step", point(-1, 0))
+    Shikigami: Step
+
+Part On "key down":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "step", point(1, 0))
+    Shikigami: Step
+
+Part On "key left":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "step", point(0, -1))
+    Shikigami: Step
+
+Part On "key right":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "step", point(0, 1))
+    Shikigami: Step
+
+Part On "key q":
+    Simple Domain: Quit
+
+# ---------------------------------------------------------------------------
+# The sync
+# ---------------------------------------------------------------------------
+
+Part Every 400:
+    # No `pending` guard, and that is the point: a newer position is worth more
+    # than an older answer, so the new request supersedes the old one.
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "age", w.age + 1)
+    Domain Expansion: Request
+        Url: (w) -> room + "/sync"
+        Method: "POST"
+        Body: (w) -> tojson({name: myName, r: prow(w.me), c: pcol(w.me)})
+        As: "world"
+        Into: {players: List < {name: Text, r: Int, c: Int, it: Bool} >, closing: Bool}
+        Timeout: 900
+
+Part Reply "world":
+    Cursed Technique: Apply
+        # Three views of one answer, each naming what it wants: everybody else,
+        # and where the seekers are standing.
+        Consider seen Of
+            Cursed Technique: Apply
+                Using: (w) -> reply.value.players
+            Cursed Technique: Filter
+                Using: (p) -> not(p.name = myName)
+        Consider hunters Of
+            Cursed Technique: Apply
+                Using: (w) -> reply.value.players
+            Cursed Technique: Filter
+                Using: (p) -> p.it and not(p.name = myName)
+            Cursed Technique: Map Each
+                Using: (p) -> point(p.r, p.c)
+        Using: (w) ->
+            if not(reply.ok)
+                then with(w, "note", "the room is quiet (" + reply.error + ")")
+                else with(with(with(with(w, "others", seen), "age", 0),
+                        "caught", w.caught or contains(hunters, w.me)),
+                    "note", if contains(hunters, w.me)
+                        then "caught"
+                        else totext(length(seen)) + " other(s) in the room")
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "lines", w.board)
+    Simple Domain: For k in range(6)
+        Cursed Technique: Apply
+            Using: (w, k) ->
+                if k >= length(w.others)
+                    then w
+                    else consider p as item(w.others, k)
+                        in consider row as item(w.lines, p.r)
+                        in with(w, "lines", set(w.lines, p.r, withchar(row, p.c, if p.it then "!" else "o")))
+    Cursed Technique: Apply
+        Using: (w) ->
+            consider row as item(w.lines, prow(w.me))
+            in with(w, "lines", set(w.lines, prow(w.me), withchar(row, pcol(w.me), "@")))
+    Cursed Technique: Apply
+        Using: (w) ->
+            # A frame the room has not confirmed is drawn dim and says how old
+            # it is. The game keeps running on it — a stale picture is a much
+            # better answer than a stopped one.
+            stack(
+                beside(style(text("HIDE AND SEEK"), "bold"), text("   you are "), style(text("@"), "bold cyan")),
+                (if w.age > 1
+                    then style(box(draw(w.lines)), "dim")
+                    else box(draw(w.lines))),
+                text(if w.age > 1 then "stale — " + totext(w.age) + " syncs since the room answered" else w.note))
+
+Part Ending:
+    Cursed Technique: Apply
+        Using: (w) -> if w.caught then "caught" else "still hidden"
+    Reveal: stdout

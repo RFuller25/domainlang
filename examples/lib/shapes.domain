@@ -1,4 +1,4 @@
-# A Shikigami library, imported with `Innate Domain: lib/shapes`.
+# A Shikigami library, imported with `Inherited Technique: lib/shapes`.
 #
 # A library holds Shikigami definitions and nothing else — no pipeline
 # statements, because a library is not a program. It lives in a subdirectory so

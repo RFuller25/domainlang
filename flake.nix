@@ -90,7 +90,7 @@
 
           meta = {
             description = "Describe what, let the compiler choose how — AoC pipeline language with algorithm-substituting optimizer and Go codegen";
-            homepage = "https://github.com/RFuller25/domain";
+            homepage = "https://github.com/RFuller25/domainlang";
             license = pkgs.lib.licenses.mit;
             mainProgram = "domain";
           };

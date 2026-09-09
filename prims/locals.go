@@ -350,6 +350,13 @@ func foldLiteral(e ast.Expr) (ast.Expr, bool) {
 	if ast.HasUpdate(e) {
 		return nil, false
 	}
+	// Nor may a fold evaluate something whose answer is not decided by its
+	// arguments. Folding `random(3)` would draw once, here, while the program
+	// was still being lowered — and then every run of that program would play
+	// the same game, with the die roll baked in as a literal.
+	if ast.HasNondeterminism(e) {
+		return nil, false
+	}
 	// EvalConst rather than EvalExpr: a fold runs in the resolver, which runs in
 	// an editor on every keystroke, so it is budgeted (eval/fold.go). Over the
 	// budget the expression does not fold and is computed once at run time
@@ -432,7 +439,7 @@ func (r *resolver) rewriteExpr(e ast.Expr, shadowed map[string]bool) (ast.Expr, 
 			// spelling shadows it, which is why this is reached only after
 			// both of those have been asked.
 			if g, slot, ok := r.lookupGlobal(x.Name); ok {
-				if seal, sealed := r.sealedFrom(); sealed {
+				if seal, sealed := r.sealedFrom(false); sealed {
 					return nil, &ResolveError{Pos: x.Pos, Msg: fmt.Sprintf(
 						"%q is a global and cannot be read inside %s — %s",
 						x.Name, seal.what, seal.why)}
@@ -578,7 +585,7 @@ func (r *resolver) rewriteExpr(e ast.Expr, shadowed map[string]bool) (ast.Expr, 
 		var target *ast.GlobalRef
 		if !shadowed[x.Name] && r.lookupLocal(x.Name) == nil {
 			if g, slot, ok := r.lookupGlobal(x.Name); ok {
-				if seal, sealed := r.sealedFrom(); sealed {
+				if seal, sealed := r.sealedFrom(true); sealed {
 					return nil, &ResolveError{Pos: x.Pos, Msg: fmt.Sprintf(
 						"%q is a global and cannot be written inside %s — %s",
 						x.Name, seal.what, seal.why)}

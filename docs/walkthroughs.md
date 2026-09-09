@@ -13,7 +13,7 @@ way to see what a program is really doing.
 |---|---|
 | [Reading a pipeline](#reading-a-pipeline) | the shape of every Domain program, one stage at a time |
 | [Values a stage can name](#values-a-stage-can-name) | `Consider … As` / `Consider … Of` |
-| [Loops](#loops) | all four `Simple Domain` drivers, one program each |
+| [Loops](#loops) | all five `Simple Domain` drivers, one program each |
 | [Two sections](#two-sections) | `Channel` + `Combine` |
 | [Two answers](#two-answers) | `Part` blocks |
 | [When a lambda cannot do the job](#when-a-lambda-cannot-do-the-job) | a `Using:` written as a pipeline |
@@ -166,11 +166,11 @@ once per element.
 
 ## Loops
 
-`Simple Domain` has four drivers. They differ in one question — *what decides
+`Simple Domain` has five drivers. They differ in one question — *what decides
 when to stop?* — and nothing else: each takes an indented body that must give
 back the same type it was handed, so the value can go round again.
 
-All four programs below read the same five numbers, `3 1 4 1 5`.
+All five programs below read the same five numbers, `3 1 4 1 5`.
 
 ### `Repeat n` — a count decides
 
@@ -292,12 +292,57 @@ positionally: every `Using:` lambda inside a `For` body takes one extra trailing
 parameter per enclosing loop. That is why the inner lambda is `(x, s)` rather
 than `(x)` — `x` is Map Each's element, `s` is the loop's.
 
+### `For Each x In` — the *current* value decides
+
+`For x in c` fixes its list once, before the first lap — `c` is a channel,
+computed once from the input the loop started with. `For Each` instead takes
+a `Using:` lambda and re-evaluates it against the *current* value every time
+the loop itself runs, so a body that grows or shrinks the list changes how
+many laps the next run of the loop takes:
+
+```domain run
+Cursed Energy: nums.input
+Shikigami: Lines
+Channeled Energy: Convert List to Integers
+Simple Domain: Repeat 2
+    Cursed Technique: Apply
+        Using: (xs) -> concat(xs, list(length(xs)))
+    Simple Domain: For Each x In
+        Using: (xs) -> xs
+        Cursed Technique: Apply
+            Using: (xs, x, i) -> set(xs, i, x + 1)
+Reveal: stdout
+```
+```input
+3
+1
+4
+1
+5
+```
+```output
+[5, 3, 6, 3, 7, 7, 7]
+```
+
+Each `Repeat` lap first appends the list's own length — 5, then 6 — and the
+`For Each` inside it reads that new, longer list, not the five elements the
+program started with: the sixth and seventh entries get `+ 1`ed too, the same
+lap they were born. That is the shape a Game Dev world needs when its entity
+list grows over time — a wave of creeps spawned mid-game is `For Each`'s
+list next tick, with no cap sized for however many creeps existed when the
+loop was written.
+
+`For Each` also binds two names, not one: the element and its position,
+`(v, x, i)`. There is no automatic write-back — a body that means to change
+an element does so explicitly, with `set(xs, i, v)`.
+
 | Driver | Stops when | Body sees |
 |---|---|---|
 | `Repeat n` | the count runs out | the value |
 | `While` | the predicate is false | the value |
 | `Iterate Until Fixed Point` | a lap changes nothing | the value |
 | `For x in c` | the channel is exhausted | the value, plus `x` |
+| `For Each x In` | the *current* list is exhausted | the value, plus `x` and its index |
 
 ---
 
@@ -486,7 +531,7 @@ Two calls there, and one of them is not in the file: `Ints` comes from the
 the arguments substituted, which is why a Shikigami costs nothing and why the
 optimizer sees through one — a rewrite that would fire on the primitives
 written out fires just the same through the name. The same is true across an
-`Innate Domain:` import.
+`Inherited Technique:` import.
 
 A Shikigami may declare its pipeline type (`: List<Int> -> Int`), and then the
 mismatch is reported against the *call* rather than surfacing from somewhere
@@ -604,6 +649,72 @@ against its starting point, bind it on the loop.
 
 ---
 
+## A program that is not a pipeline
+
+Everything above threads one value from a source to a `Reveal`. A
+[`Game Dev`](game-dev.md) program does not: it has no top-level pipeline,
+because there is no single value flowing through one. It has a **world**, the
+**events** that change it, and a **frame** drawn from it, and the `Part` roles
+say which is which.
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {row: repeat(".", 7), at: 0}
+
+Part On "key right":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "at", mod(w.at + 1, 7))
+
+Part Every 200:
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "row", slice(w.row, 0, w.at) + "#" + slice(w.row, w.at + 1, 7))
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> box(text(w.row))
+```
+```input
+frame
+tick
+key right
+key right
+tick
+frame
+```
+```output
+┌───────┐
+│.......│
+└───────┘
+
+┌───────┐
+│#.#....│
+└───────┘
+```
+
+The `input` block is a **replay script**: `key right` is a keystroke, `tick`
+lets the next timer come due, `frame` draws. A game with a terminal on both
+ends plays instead — the keyboard moves it and the frames are painted — and
+that is the only difference between the two. Which is why a game is testable
+at all: a frame diff is to a game what a stdout diff is to an answer, and the
+whole of this page's discipline applies unchanged.
+
+Everything else about the language is still there. A Part's body is an
+ordinary pipeline, so the stages inside one are the stages above; the world is
+a Record read and rewritten by name; and a `Shikigami` — or a
+`Part Entity "…":`, which becomes one — is still how a piece of it is named
+once and called from three places.
+
+The six games in [`examples/games/`](../examples/games/README.md) are the long
+form: a board painted two cells at a time, a well of `Text` rows where
+clearing a line is `take` + `drop`, a state machine with no grid at all,
+creeps routed by the same `BFS` a maze puzzle uses, and two that talk to a
+server that is not there.
+
+---
+
 ## Writing one of these, start to finish
 
 Every program above is shown finished. This is the loop that produces one, in
@@ -650,5 +761,8 @@ one resolver, one diagnostics engine, one recorder. See
 - [expressions.md](expressions.md) — everything legal inside a `Using:`.
 - [../examples/](../examples/README.md) — twenty-one runnable programs, each
   showing one piece of the language, all golden-tested in both backends.
+- [../examples/games/](../examples/games/README.md) — six whole games, each
+  with its replay script and its exact frames.
+- [game-dev.md](game-dev.md) — writing one, a step at a time.
 - [development.md](development.md) — the editor the section above uses, in
   full: every key, what it analyzes, and what it deliberately does not do.
