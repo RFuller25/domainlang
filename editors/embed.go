@@ -4,7 +4,7 @@
 // present, exactly as package docs does for the documentation site.
 //
 // The grammars in here are *generated* from the language itself: the
-// primitives from prims.Registry, the builtins from typecheck.Builtins, and
+// primitives from prims.AllPrimitives(), the builtins from typecheck.Builtins, and
 // the themed keywords from ast.Keywords. `go test ./editors -update` rewrites
 // them and every other run fails if they are stale (gen_test.go), because a
 // hand-maintained copy of a 144-entry list is a copy that silently falls

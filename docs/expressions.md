@@ -739,6 +739,8 @@ The table is split by what a builtin operates on:
 | [ref-builtins-text.md](ref-builtins-text.md) | Text |
 | [ref-builtins-bits.md](ref-builtins-bits.md) | Bit operations, logic and number theory |
 | [ref-builtins-records.md](ref-builtins-records.md) | Records, points and grid geometry, sparse grids |
+| [ref-builtins-view.md](ref-builtins-view.md) | The View type: building, combining and styling a picture |
+| [ref-builtins-chance.md](ref-builtins-chance.md) | The seeded stream and the clock: the five builtins that are not functions of their arguments |
 
 Each page carries two worked examples for its group, executed against their
 printed output in both backends.

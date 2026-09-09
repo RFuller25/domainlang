@@ -88,7 +88,7 @@ func primitiveSpellings() []string {
 		foreign[l] = true
 	}
 	out := slices.Clone(phraseAliases)
-	for _, p := range prims.Registry {
+	for _, p := range prims.AllPrimitives() {
 		for _, s := range p.Spellings() {
 			if !foreign[s] && !slices.Contains(out, s) {
 				out = append(out, s)
@@ -340,7 +340,8 @@ func TestEveryPhraseWordInTheRepositoryIsHighlighted(t *testing.T) {
 	add("by", "from", "to", "with", "into", "of", "as")
 	add("One", "Each", "Try", "Scan", "Filter", "Count", "First", "Map")
 	add("Ascending", "Descending")
-	add("Int", "Text", "Float", "Bool", "List", "Tuple", "Record", "Map", "Set", "Grid", "Sparse")
+	add("Int", "Text", "Float", "Bool", "List", "Tuple", "Record", "Map", "Set",
+		"Grid", "Sparse", "Graph", "View")
 	add("stdin", "stdout")
 
 	missing := map[string][]string{}
@@ -432,8 +433,9 @@ func phraseWords(prog *ast.Program) []string {
 
 // localName reports whether a word belongs to something the program defines
 // itself — a Shikigami of its own, one of its parameters (a parameter
-// substitutes into a phrase, so `Select Top n` is a phrase word), or one it
-// imports — rather than to the language's vocabulary.
+// substitutes into a phrase, so `Select Top n` is a phrase word), a `Part`
+// role that defines a name, a loop's own variable, or one it imports — rather
+// than to the language's vocabulary.
 func localName(prog *ast.Program, word string) bool {
 	for _, d := range prog.Shikigamis {
 		for _, w := range strings.Fields(d.Name) {
@@ -447,9 +449,56 @@ func localName(prog *ast.Program, word string) bool {
 			}
 		}
 	}
+	scope := ""
+	if prog.Scope != nil {
+		scope = prog.Scope.Name
+	}
+	for _, name := range definedNames(scope, prog.Statements) {
+		if strings.EqualFold(name, word) {
+			return true
+		}
+	}
 	// An imported library's Shikigami are named in a file this test does not
 	// read; a program that imports one may call it by a name from there.
 	return len(prog.Imports) > 0
+}
+
+// definedNames is every name a program's *statements* introduce, as opposed to
+// its Shikigami declarations.
+//
+// Two kinds, and both arrived with the `Game Dev` scope's first real program:
+//
+//   - A `Part` role marked as a definition (`Part Entity "Stamp":`) becomes a
+//     Shikigami, but only once the resolver has lowered it — so it is not in
+//     prog.Shikigamis here, and `Shikigami: Stamp` looks like vocabulary.
+//   - A `Simple Domain: For k in …` — or `For Each k In`, whose variable sits
+//     one word later in the phrase — names its own loop variable, which
+//     appears in the phrase for the same reason a Shikigami parameter does.
+//
+// Read off the statement rather than off the resolved program because this
+// test deliberately runs on source that may not resolve.
+func definedNames(scope string, stmts []*ast.Statement) []string {
+	var out []string
+	for _, s := range stmts {
+		if s == nil {
+			continue
+		}
+		if s.Keyword == "Part" && s.PartName != "" && prims.IsDefinitionRole(scope, s.PartRole) {
+			out = append(out, s.PartName)
+		}
+		if s.Op != nil && len(s.Op.Words) >= 2 && s.Op.Words[0] == "For" {
+			if s.Op.Words[1] == "Each" && len(s.Op.Words) >= 3 {
+				out = append(out, s.Op.Words[2])
+			} else {
+				out = append(out, s.Op.Words[1])
+			}
+		}
+		out = append(out, definedNames(scope, s.Block)...)
+		for _, b := range s.Binds {
+			out = append(out, definedNames(scope, b.Body)...)
+		}
+	}
+	return out
 }
 
 // Every foreign language has a block rule in both grammars.

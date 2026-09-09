@@ -55,7 +55,7 @@ func (r *repl) stats() {
 		ctx.Trace = prof
 	}
 
-	if _, err := interp.Run(pipe, ctx); err != nil {
+	if _, err := interp.RunScoped(pipe, ctx); err != nil {
 		// A failed run still profiled everything up to the failure, which is
 		// often exactly the run worth looking at.
 		fmt.Fprintf(r.out, "runtime error: %v (profile covers the run up to it)\n", err)

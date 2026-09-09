@@ -564,3 +564,134 @@ Reveal: stdout
 ```
 
 ---
+
+### Convert To JSON — `T -> Text` *(Game Dev)*
+
+Writes a value as JSON. The value decides the shape, so there is nothing to
+declare: a Record is an object, a List is an array, a Map is an object with
+its keys rendered and sorted.
+
+```domain ignore
+Domain Expansion: Request
+    Url: (w) -> w.server + "/move"
+    Method: "POST"
+    Body: (w) -> tojson({from: w.at, to: w.target})
+    As: "move"
+    Into: {ok: Bool}
+```
+
+The expression-layer [`tojson`](ref-builtins-view.md) does the same for a value
+in hand rather than the whole current value:
+
+```domain run
+Innate Domain: Game Dev
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {row: 2, col: 3, hp: 10}
+Part Every 100:
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "hp", w.hp - 1)
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text(tojson(w))
+```
+```input
+tick
+frame
+```
+```output
+{"row":2,"col":3,"hp":9}
+```
+
+As a stage it writes the whole current value:
+
+```domain run
+Innate Domain: Game Dev
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {tags: list("a", "b")}
+Part Every 100:
+    Cursed Technique: Apply
+        Using: (w) -> w
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> w.tags
+    Channeled Energy: Convert To JSON
+    Cursed Technique: Apply
+        Using: (s) -> text(s)
+```
+```input
+frame
+```
+```output
+["a","b"]
+```
+
+A `View` has no JSON form and is refused by name: it describes a picture rather
+than a value.
+
+### Convert From JSON — `Text -> T` *(Game Dev)*
+
+Decodes a document into the shape declared by `Into:`.
+
+Reading is not symmetrical with writing, and this is where that shows. A value
+can always be written out; reading one in needs the program to say what it
+expects, because there is no dynamic value in this language to decode onto and
+then look at. So the type is written, and what comes back is that type or an
+error saying why not:
+
+```domain run
+Innate Domain: Game Dev
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> "{\"name\": \"ana\", \"score\": 7}"
+    Channeled Energy: Convert From JSON
+        Into: {name: Text, score: Int}
+    Cursed Technique: Apply
+        Using: (r) -> {who: r.name, pts: r.score}
+Part Every 100:
+    Cursed Technique: Apply
+        Using: (w) -> w
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text(w.who + " " + totext(w.pts))
+```
+```input
+frame
+```
+```output
+ana 7
+```
+
+**Strict in one direction only.** A field the type declares and the document
+lacks is an error naming the field — a silently-zero score is worse than a
+refusal. A field the *document* has and the type does not is ignored: a server
+may send more than a client asked for, and a client that broke when it did
+would break on every deployment. Here the document carries two fields the
+program never asked about, and decoding is untroubled by them:
+
+```domain run
+Innate Domain: Game Dev
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> "{\"score\": 3, \"extra\": [1,2], \"nested\": {\"a\": 1}}"
+    Channeled Energy: Convert From JSON
+        Into: {score: Int}
+    Cursed Technique: Apply
+        Using: (r) -> {pts: r.score}
+Part Every 100:
+    Cursed Technique: Apply
+        Using: (w) -> w
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text("kept " + totext(w.pts))
+```
+```input
+frame
+```
+```output
+kept 3
+```
+
+Numbers keep their precision: a whole number decoded into an `Int` does not
+pass through a float on the way, so a large one does not lose its low bits.

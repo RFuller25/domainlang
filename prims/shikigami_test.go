@@ -336,12 +336,12 @@ func TestShikigamiFloatParamAcceptsInt(t *testing.T) {
 }
 
 func TestShikigamiBoolParam(t *testing.T) {
-	src := "Shikigami \"Pick\" (high: Bool) : List<Int> -> List<Int>\n" +
+	src := "Shikigami \"Sift\" (high: Bool) : List<Int> -> List<Int>\n" +
 		"    Cursed Technique: Filter\n" +
 		"        Using: (x) -> if high then x > 2 else x <= 2\n" +
 		"Cursed Energy: stdin\n" +
 		"Shikigami: Ints\n" +
-		"Shikigami: Pick\n    high: true\n"
+		"Shikigami: Sift\n    high: true\n"
 	v, _ := runPipeline(t, src, "1\n2\n3\n4")
 	if got := ir.FormatValue(v); got != "[3, 4]" {
 		t.Fatalf("high: true gave %s, want [3, 4]", got)

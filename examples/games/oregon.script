@@ -1,0 +1,28 @@
+# Oregon, driven from a script. Every line is a keystroke or a stretch of time;
+# `seed` fixes what the trail decides, so the same journey happens every run.
+
+seed 3
+frame                # the wagon, loaded, at mile 0
+
+key down             # down the menu to the fort, and in
+key down
+key enter
+frame
+
+key down             # an ox: it pays for itself in miles
+key enter
+key down
+key enter            # back to the trail
+
+key enter            # push on west
+tick 4200            # seven days of it
+frame
+
+key enter            # make camp for the night
+frame
+
+key enter            # and on again, until Oregon
+tick 30000
+frame
+
+key enter            # leave

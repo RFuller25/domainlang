@@ -985,6 +985,10 @@ const DOCS = [
   { id: "playground",      kind: "playground",         title: "Playground",          desc: "Run Domain in the browser", group: "Introduction" },
   { id: "examples",        kind: "gallery",            title: "Examples",            desc: "21 annotated programs", group: "Programs", galleryGroup: "examples" },
   { id: "challenges",      kind: "gallery",            title: "Challenges",          desc: "13 classic problems", group: "Programs", galleryGroup: "challenges" },
+  { id: "games",           kind: "gallery",            title: "Games",               desc: "6 whole games", group: "Programs", galleryGroup: "games" },
+  { id: "scopes",          file: "scopes.md",          title: "Innate Domain",       desc: "What kind of program this is", group: "Reference" },
+  { id: "game-dev",        file: "game-dev.md",        title: "Game Dev",            desc: "Writing a game, step by step", group: "Reference" },
+  { id: "ref-game-parts",  file: "ref-game-parts.md",  title: "· Part roles",        desc: "The Game Dev scope's blocks", group: "Reference" },
   { id: "language",        file: "language.md",        title: "Language reference",  desc: "Source structure & keywords", group: "Reference" },
   { id: "primitives",      file: "primitives.md",      title: "Primitives",          desc: "The reference, by keyword class", group: "Reference" },
   { id: "ref-sources",     file: "ref-sources.md",     title: "· Sources",           desc: "Cursed Energy", group: "Reference" },
@@ -1002,6 +1006,8 @@ const DOCS = [
   { id: "ref-builtins-text",        file: "ref-builtins-text.md",        title: "· Text builtins",    desc: "Text", group: "Reference" },
   { id: "ref-builtins-bits",        file: "ref-builtins-bits.md",        title: "· Bit builtins",     desc: "Bits, logic, number theory", group: "Reference" },
   { id: "ref-builtins-records",     file: "ref-builtins-records.md",     title: "· Record builtins",  desc: "Records, points, sparse", group: "Reference" },
+  { id: "ref-builtins-view",        file: "ref-builtins-view.md",        title: "· View builtins",    desc: "Drawing a frame", group: "Reference" },
+  { id: "ref-builtins-chance",      file: "ref-builtins-chance.md",      title: "· Chance & clock",   desc: "random, pick, frame, elapsed", group: "Reference" },
   { id: "aoc-toolbox",     file: "aoc-toolbox.md",     title: "AoC toolbox",         desc: "Classic helpers, mapped", group: "Reference" },
   { id: "data-model",      file: "data-model.md",      title: "Data model",          desc: "Value & type model", group: "Reference" },
   { id: "match-pattern",   file: "match-pattern.md",   title: "Match Pattern",       desc: "Typed-hole templates", group: "Reference" },
@@ -1010,12 +1016,13 @@ const DOCS = [
   { id: "tooling",         file: "tooling.md",         title: "REPL & LSP",          desc: "Editor tooling", group: "Tooling" },
   { id: "optimizer",       file: "optimizer.md",       title: "Optimizer",           desc: "The 32-pass catalog", group: "Internals" },
   { id: "compiler",        file: "compiler.md",        title: "Compiler backend",    desc: "Emitting native Go", group: "Internals" },
+  { id: "mahoraga",        file: "mahoraga.md",        title: "Mahoraga",            desc: "Adapting a program to one input", group: "Internals" },
 ];
 const DOC_BY_ID = Object.fromEntries(DOCS.map(d => [d.id, d]));
 
 // Where "Edit this page" points. Every page is a file in docs/, so one base is
 // enough — a wrong sentence is then two clicks from a pull request.
-const REPO_EDIT_BASE = "https://github.com/RFuller25/domain/edit/main/docs/";
+const REPO_EDIT_BASE = "https://github.com/RFuller25/domainlang/edit/main/docs/";
 
 // ============================================================
 //  JJK technique banners — one per doc, all different
@@ -1026,6 +1033,9 @@ const DOC_ANIM = {
   "playground":      { fx: "simple",    color: "#4ade80", kanji: "簡易領域",   name: "Simple Domain",             tag: "a small domain of your own — run anything, right here." },
   "examples":        { fx: "curtain",   color: "#f59e0b", kanji: "帳",         name: "Curtain",                   tag: "twenty-one programs, drawn back one at a time." },
   "challenges":      { fx: "blade",     color: "#ef4444", kanji: "呪具",       name: "Cursed Tool",               tag: "thirteen classics — pick one up and swing." },
+  "games":           { fx: "curtain",   color: "#22c55e", kanji: "領域",       name: "Domain",                    tag: "six worlds, each with its own rules." },
+  "scopes":          { fx: "bind",      color: "#eab308", kanji: "生得領域",   name: "Innate Domain",             tag: "the kind of program this is, decided in one line." },
+  "game-dev":        { fx: "simple",    color: "#22c55e", kanji: "簡易領域",   name: "Simple Domain",             tag: "a world, the events that change it, and a frame." },
   "primitive-index": { fx: "bind",      color: "#8b5cf6", kanji: "天与呪縛",   name: "Heavenly Restriction",      tag: "the whole vocabulary, bound to one page." },
   "language":        { fx: "speech",    color: "#facc15", kanji: "呪言",       name: "Cursed Speech",             tag: "every keyword is a command reality obeys." },
   "primitives":      { fx: "shadows",   color: "#818cf8", kanji: "十種影法術", name: "Ten Shadows Technique",     tag: "summon the piece built for the job." },
@@ -1038,6 +1048,7 @@ const DOC_ANIM = {
   "tooling":         { fx: "cross",     color: "#94a3b8", kanji: "神犬",       name: "Divine Dogs",               tag: "two familiars, always covering your blind spot." },
   "optimizer":       { fx: "skewers",   color: "#f43f5e", kanji: "伏魔御厨子", name: "Malevolent Shrine",         tag: "thirty passes. nowhere left to hide." },
   "compiler":        { fx: "expand",    color: "#c084fc", kanji: "領域展開",   name: "Domain Expansion",          tag: "guaranteed hit — your program, manifested." },
+  "mahoraga":        { fx: "bind",      color: "#e11d48", kanji: "八握剣異戒神将魔虚羅", name: "Mahoraga",         tag: "eight turns of the wheel — adapts to this input, and only this one." },
 };
 
 function fxMarkup(fx) {

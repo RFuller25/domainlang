@@ -157,6 +157,23 @@ system grids use, and exactly what `Find Cells` and these builtins produce.
 | `around4(p)` / `around8(p)` | `(Int, Int) -> List<(Int, Int)>` | Neighbours of a **point**, with no grid and no bounds check. `neighbors4`/`neighbors8` require a dense `Grid`, so these are what a `Sparse<T>` automaton needs. |
 | `neighbors4(g, r, c)` | `Grid<T> × Int × Int -> List<(Int, Int)>` | In-bounds orthogonal neighbor coordinates of `(r, c)`. |
 | `neighbors8(g, r, c)` | `Grid<T> × Int × Int -> List<(Int, Int)>` | In-bounds neighbors including diagonals. |
+| `nearby4(ps, center, radius)` / `nearby8(ps, center, radius)` | `List<(Int, Int)> × (Int, Int) × Int -> List<Int>` | The **indices** into `ps` of every point within `radius` of `center` — `manhattan`/`chebyshev`, asked of a whole list at once, in one call instead of a loop that checks each entity by hand. Ascending index order; a negative radius or an empty list gives the empty list. Indices rather than points, because they are the join key back into whatever parallel list of entities `ps` was built from — `set(entities, i, …)` writes the hit back. |
+
+`nearby8` is the shape a tower-defence-style range check wants: which of a
+list of entities sit within a radius of a point, without walking every one by
+hand and comparing `chebyshev` to a limit.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> nearby8(list(point(0, 0), point(1, 1), point(5, 5), point(2, 0)), point(0, 0), 2)
+Reveal: stdout
+```
+```input
+```
+```output
+[0, 1, 3]
+```
 
 ### Sparse grids
 

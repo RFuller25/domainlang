@@ -1262,3 +1262,310 @@ The documentation playground cannot run foreign blocks at all: it is compiled
 to WebAssembly, where there are no subprocesses.
 
 ---
+
+### Request — `W -> W` *(Game Dev)*
+
+Asks a server something, without waiting for the answer.
+
+A game cannot block on a round trip: a hundred milliseconds is six frames, and
+a frozen picture every time the program asks a question is not a game. So a
+Request **fires and returns the world unchanged**, and the answer arrives later
+at a [`Part Reply`](scopes.md#game-dev) — an event like any other.
+
+A replayed run answers from its script rather than from a server, so the whole
+exchange is testable with nothing running:
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {marks: "", note: ""}
+
+Part On "key enter":
+    Domain Expansion: Request
+        Url: (w) -> "https://example.test/guess"
+        As: "guess"
+        Into: {marks: List<Text>}
+
+Part Reply "guess":
+    Cursed Technique: Apply
+        Using: (w) -> if reply.ok
+            then with(w, "marks", textjoin(reply.value.marks, ""))
+            else with(w, "note", reply.error)
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text(if pending("guess") then "asking…" else w.marks + w.note)
+```
+```input
+key enter
+frame
+reply guess {"marks": ["G","Y"]}
+frame
+```
+```output
+asking…
+
+GY
+```
+
+The first frame is drawn while the question is still out — the world carried
+on, which is the whole point.
+
+| Argument | Meaning |
+|---|---|
+| `Url:` | a lambda over the world producing the address. Required. |
+| `As:` | the tag a `Part Reply` answers to. Required. |
+| `Into:` | the shape the answer is decoded into. Required. |
+| `Method:` | `GET` (default), `POST`, `PUT`, `PATCH` or `DELETE`. |
+| `Body:` | a lambda over the world producing the request body as Text. |
+| `Timeout:` | milliseconds; 5000 by default. |
+
+**The tag is checked both ways at resolve time.** A Request nothing answers,
+and a `Part Reply` nothing fires, are each refused by name — otherwise both
+show up as a game that silently does nothing, which is the hardest kind of bug
+to find in a program whose output is a picture.
+
+**The reply always has the same shape**: `{ok: Bool, error: Text, value: T}`.
+Every failure lands in it — a server that is not there, a status that is not
+2xx, a timeout, a body that does not decode — so a game has one thing to branch
+on, and "the server is down" becomes a state it can draw rather than a crash
+mid-frame. When `ok` is false, `value` is the zero of what was asked for.
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {marks: "", note: ""}
+
+Part On "key enter":
+    Domain Expansion: Request
+        Url: (w) -> "https://example.test/guess"
+        As: "guess"
+        Into: {marks: List<Text>}
+
+Part Reply "guess":
+    Cursed Technique: Apply
+        Using: (w) -> if reply.ok
+            then with(w, "marks", textjoin(reply.value.marks, ""))
+            else with(w, "note", "offline: " + reply.error)
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text(w.marks + w.note)
+```
+```input
+key enter
+fail guess the server is not there
+frame
+```
+```output
+offline: the server is not there
+```
+
+**One request is in flight per tag**, and firing again supersedes the one that
+was out. That is a correctness rule before it is a policy: HTTP replies can
+arrive out of order, and a client polling positions against a slow server will
+otherwise merge an answer from three requests ago *after* a newer one — which
+looks like other players teleporting backwards and reads as a game bug rather
+than a networking one. Superseding rather than dropping the new one is right
+because a body is normally derived from the current world: it sends where the
+player *is*, not where they *were*.
+
+The one thing that costs — a dropped reply — is visible.
+[`pending("tag")`](ref-builtins-chance.md) says whether one is out, so a program
+that must not lose one guards first:
+
+```domain ignore
+Part On "key enter":
+    Cursed Technique: Apply
+        Using: (w) -> if pending("guess") then w else submit(w)
+```
+
+**A replayed run never touches the network.** The script says what came back —
+`reply guess {…}` or `fail guess connection refused` — which is what makes a
+multiplayer game testable with nothing running, and why a request the script
+never answers simply never arrives. That is itself a state worth testing: it is
+what a server going away mid-game looks like.
+
+### Load — `W -> T` *(Game Dev)*
+
+Reads persisted state back in — a high score, a level unlocked — from a file
+rather than a server.
+
+Unlike Request, a local file answers in the same tick it was asked, so there
+is no round trip and no `Part Reply` to write: `Load` produces the loaded
+value directly, in place. That is also why it fits inside a
+[`Consider … Of`](expressions.md#stage-bindings--consider--as--consider--of)
+body — the shape a search already uses to run a whole sub-pipeline over the
+world and keep it — since a `Domain Expansion` that changes the *type* in
+flight cannot sit in the middle of a body whose value stays the world:
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Consider save Of
+            Domain Expansion: Load
+                Path: (w) -> "save.json"
+                Into: {highScore: Int}
+                Default: (w) -> {highScore: 0}
+        Using: (w) -> {score: 0, highScore: save.highScore}
+
+Part On "key":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "score", w.score + 1)
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text("best " + totext(w.highScore))
+```
+```input
+frame
+```
+```output
+best 0
+```
+
+| Argument | Meaning |
+|---|---|
+| `Path:` | a lambda over the world producing the file's path. Required. |
+| `Into:` | the shape a save is decoded into. Required. |
+| `Default:` | a lambda over the world producing the `Into:` shape a fresh game starts with. Required. |
+
+**`Default:` covers every way of getting nothing**, on purpose: no file at
+that path, a file that isn't valid JSON, one whose shape doesn't fit `Into:`.
+A save that doesn't parse is exactly what a missing one looks like — the game
+starts over rather than crashing on a corrupt file — so there is only the one
+fallback to write, not a `{ok, error, value}` to branch on the way `Request`
+needs.
+
+**A replayed run never opens a real file.** A `load <json>` [script
+line](scopes.md#game-dev) stands in for one, on the same terms `reply`
+stands in for a server — read by the next `Load` the script reaches:
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {highScore: -1}
+
+Part On "key r":
+    Cursed Technique: Apply
+        Consider save Of
+            Domain Expansion: Load
+                Path: (w) -> "save.json"
+                Into: {highScore: Int}
+                Default: (w) -> {highScore: 0}
+        Using: (w) -> with(w, "highScore", save.highScore)
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text("best " + totext(w.highScore))
+```
+```input
+load {"highScore": 42}
+key r
+frame
+```
+```output
+best 42
+```
+
+**A line only reaches a `Load` fired after it.** `Part World:` and
+`Part Start:` run before the script is read at all — the same limitation
+`seed` already has, for the same reason — so a `load` line can change what a
+handler or a timer reads, but never what the world opens with. Load one from
+`Part Start:` instead when a test needs to cover the loaded-at-startup case;
+its `Default:` is what every such run gets.
+
+### Save — `W -> W` *(Game Dev)*
+
+Writes state that outlives the run.
+
+A passthrough, on `Beep`'s and `Quit`'s shape: the value it was given is the
+value it hands back. There is no `Part Reply` for it, because nothing needs
+to come back — a fire-and-forget write is simpler than a question in exactly
+the way `Save` is simpler than `Request`.
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {highScore: 0}
+
+Part On "key a":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "highScore", w.highScore + 1)
+    Domain Expansion: Save
+        Path: (w) -> "save.json"
+        Value: (w) -> {highScore: w.highScore}
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text("best " + totext(w.highScore))
+```
+```input
+frame
+key a
+frame
+```
+```output
+best 0
+
+best 1
+```
+
+| Argument | Meaning |
+|---|---|
+| `Path:` | a lambda over the world producing the file's path. Required. |
+| `Value:` | a lambda over the world producing what to write — any encodable shape, the same rule `tojson` follows. Required. |
+
+**A replayed run never writes a real file.** The two frames above look
+identical to a version of this program with no `Save` in it at all — that is
+the point: writing a save file must never change what a golden test sees, or
+the same script would stop giving the same answer on a machine that happened
+to have one lying around. A played session is where `Save` does anything,
+which is also where [`--record`](cli.md#--record-a-played-session-becomes-a-golden-test)
+watches it happen.
+
+A failed write — a read-only disk, a path that doesn't exist — has nowhere
+to report to, unlike a failed `Request`: there is no `Part Reply` to carry
+`{ok: false, …}` back to the program. It is noted on stderr and otherwise
+swallowed, so a game that cannot save keeps playing rather than crashing over
+it.
+
+`Value:` may produce anything JSON can hold — the same rule `tojson` follows,
+right down to refusing a `View` — not only a Record built to mirror `Load`'s
+`Into:`:
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {lives: 3}
+
+Part On "key x":
+    Cursed Technique: Apply
+        Using: (w) -> with(w, "lives", w.lives - 1)
+    Domain Expansion: Save
+        Path: (w) -> "lives.json"
+        Value: (w) -> w.lives
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text("lives " + totext(w.lives))
+```
+```input
+key x
+frame
+```
+```output
+lives 2
+```

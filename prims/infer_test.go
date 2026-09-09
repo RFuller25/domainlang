@@ -162,7 +162,7 @@ func TestInferKeepsGoingAfterAFailure(t *testing.T) {
 // primitive: matchers overlapping across keywords would make prefix-free lines
 // ambiguous, and this test fails the day that happens.
 func TestNoCrossKeywordAmbiguity(t *testing.T) {
-	for _, p := range Registry {
+	for _, p := range Core {
 		if catchAllKeywords[p.Keyword] {
 			continue // matched by shape, not by the registry scan
 		}
@@ -175,7 +175,7 @@ func TestNoCrossKeywordAmbiguity(t *testing.T) {
 			}
 			prog := parseSrc(t, src)
 			op := prog.Statements[0].Op
-			prim, err := inferPrimitive(op, op.Pos)
+			prim, err := inferPrimitive(op, op.Pos, Core)
 			if err != nil {
 				t.Errorf("%s (%q): %v", p.ID, phrase, err)
 				continue
@@ -200,9 +200,9 @@ func TestAmbiguousPhraseIsAnError(t *testing.T) {
 		Match: func(op *ast.Operation) bool { return hasWord(op, "Sum") },
 		Build: func(*ast.Operation, ArgSet, *ir.Type, token.Position) (*ir.Node, error) { return nil, nil },
 	}
-	saved := Registry
-	Registry = append(append([]*Primitive{}, Registry...), clash)
-	defer func() { Registry = saved }()
+	saved := Core
+	Core = append(append([]*Primitive{}, Core...), clash)
+	defer func() { Core = saved }()
 
 	_, err := inferLine(t, "Sum", false)
 	if err == nil {
@@ -269,7 +269,7 @@ func TestPreludeNamesAreLegal(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, def := range defs {
-		if err := checkShikigamiName(def); err != nil {
+		if err := checkShikigamiName(def, Core); err != nil {
 			t.Errorf("prelude: %v", err)
 		}
 	}
@@ -281,7 +281,7 @@ func TestReservedNamesCoversTheVocabulary(t *testing.T) {
 	for _, n := range ReservedNames() {
 		got[n] = true
 	}
-	for _, p := range Registry {
+	for _, p := range Core {
 		if !got[p.ID] {
 			t.Errorf("reserved names omit the primitive %q", p.ID)
 		}
@@ -306,7 +306,7 @@ func TestKeywordListCoversTheRegistry(t *testing.T) {
 	for _, k := range ast.Keywords {
 		known[k] = true
 	}
-	for _, p := range Registry {
+	for _, p := range Core {
 		if !known[p.Keyword] {
 			t.Errorf("ast.Keywords is missing %q (registered by %q)", p.Keyword, p.ID)
 		}

@@ -93,6 +93,12 @@ func impure(e ast.Expr) bool {
 	case *ast.FieldAccess:
 		return impure(x.Target)
 	case *ast.CallExpr:
+		// A call whose answer is not decided by its arguments — a draw from
+		// the run's stream, a reading of its clock. Its *arguments* may be
+		// perfectly pure and the call still is not.
+		if id, ok := x.Fn.(*ast.Ident); ok && ast.Nondeterministic(id.Name) {
+			return true
+		}
 		for _, a := range x.Args {
 			if impure(a) {
 				return true

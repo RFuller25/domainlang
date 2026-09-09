@@ -674,3 +674,139 @@ Cursed Technique: Apply
 		t.Fatalf("got %v, want 0.0", f)
 	}
 }
+
+// TestForEachOverAFieldOfTheCurrentValue is the basic shape: unlike
+// `For x in <channel/range>`, whose source is fixed before the loop starts,
+// `For Each x In` reads its Using: lambda against whatever the *current*
+// value is when the loop itself runs — a field of a Record flowing through
+// the pipeline, here, rather than a Game Dev world, but the same mechanism.
+// The index ambient is what lets the body write an update back with set().
+func TestForEachOverAFieldOfTheCurrentValue(t *testing.T) {
+	src := `Cursed Energy: nums.txt
+Shikigami: Ints
+Cursed Technique: Apply
+    Using: (xs) -> {items: xs}
+Simple Domain: For Each x In
+    Using: (v) -> v.items
+    Cursed Technique: Apply
+        Using: (v, x, i) -> with(v, "items", set(v.items, i, x * 10))
+Cursed Technique: Apply
+    Using: (v) -> v.items
+`
+	v, _ := runPipeline(t, src, "1\n2\n3")
+	xs, ok := v.([]ir.Value)
+	if !ok || len(xs) != 3 {
+		t.Fatalf("got %v, want a 3-element list", v)
+	}
+	want := []int64{10, 20, 30}
+	for i, w := range want {
+		if xs[i].(int64) != w {
+			t.Fatalf("element %d: got %v want %d", i, xs[i], w)
+		}
+	}
+}
+
+// TestForEachReadsTheCurrentLengthNotAFixedOne is the whole point of the
+// feature: the same loop, run over lists of different lengths, iterates each
+// one fully — nothing about the loop caps or fixes how many elements it
+// sees, unlike a Channel (computed once) or range(N) (a literal count).
+func TestForEachReadsTheCurrentLengthNotAFixedOne(t *testing.T) {
+	src := `Cursed Energy: nums.txt
+Shikigami: Ints
+Cursed Technique: Apply
+    Using: (xs) -> {items: xs, seen: 0}
+Simple Domain: For Each x In
+    Using: (v) -> v.items
+    Cursed Technique: Apply
+        Using: (v, x, i) -> with(v, "seen", v.seen + 1)
+Cursed Technique: Apply
+    Using: (v) -> v.seen
+`
+	for _, c := range []struct {
+		stdin string
+		want  int64
+	}{
+		{"1\n2\n3", 3},
+		{"1\n2\n3\n4\n5\n6\n7", 7},
+		{"1", 1},
+	} {
+		v, _ := runPipeline(t, src, c.stdin)
+		if v.(int64) != c.want {
+			t.Fatalf("stdin %q: got %v, want %d", c.stdin, v, c.want)
+		}
+	}
+}
+
+// TestForEachNestedAmbientsOrder checks that a nested For Each's own two
+// ambients (element, then index) land after the outer loop's two, the same
+// outermost-first order `For x in y` already guarantees for its one.
+func TestForEachNestedAmbientsOrder(t *testing.T) {
+	src := `Cursed Energy: nums.txt
+Shikigami: Ints
+Cursed Technique: Apply
+    Using: (xs) -> {rows: list(xs, xs), total: 0}
+Simple Domain: For Each row In
+    Using: (v) -> v.rows
+    Simple Domain: For Each cell In
+        Using: (v, row, ri) -> row
+        Cursed Technique: Apply
+            Using: (v, row, ri, cell, ci) -> with(v, "total", v.total + cell + ri * 100 + ci)
+Cursed Technique: Apply
+    Using: (v) -> v.total
+`
+	// rows = [[1,2,3],[1,2,3]]; for each (ri, row) x (ci, cell):
+	// sum(cell) over both rows = 2*(1+2+3) = 12
+	// sum(ri*100) over 2 rows x 3 cells each = (0+0+0)+(100+100+100) = 300
+	// sum(ci) over both rows = (0+1+2)+(0+1+2) = 6
+	v, _ := runPipeline(t, src, "1\n2\n3")
+	if want := int64(12 + 300 + 6); v.(int64) != want {
+		t.Fatalf("got %v, want %d", v, want)
+	}
+}
+
+func TestForEachResolveErrors(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{
+			"missing Using:",
+			"Cursed Energy: stdin\nShikigami: Ints\nCursed Technique: Apply\n    Using: (xs) -> {items: xs}\n" +
+				"Simple Domain: For Each x In\n    Cursed Technique: Apply\n        Using: (v, x, i) -> v\n",
+			"needs a Using: lambda producing the list",
+		},
+		{
+			"Using: does not produce a List",
+			"Cursed Energy: stdin\nShikigami: Ints\nMaximum Technique: Sum\n" +
+				"Simple Domain: For Each x In\n    Using: (v) -> v\n    Cursed Technique: Apply\n        Using: (v, x, i) -> v\n",
+			"needs a Using: lambda producing a List",
+		},
+		{
+			"body changes type",
+			"Cursed Energy: stdin\nShikigami: Ints\nCursed Technique: Apply\n    Using: (xs) -> {items: xs}\n" +
+				"Simple Domain: For Each x In\n    Using: (v) -> v.items\n    Cursed Technique: Apply\n        Using: (v, x, i) -> x\n",
+			"must preserve the value type",
+		},
+		{
+			"empty body",
+			"Cursed Energy: stdin\nShikigami: Ints\nCursed Technique: Apply\n    Using: (xs) -> {items: xs}\n" +
+				"Simple Domain: For Each x In\n    Using: (v) -> v.items\n",
+			"empty body",
+		},
+	}
+	for _, c := range cases {
+		_, err := resolveSrc(t, c.src)
+		if err == nil {
+			t.Fatalf("%s: expected resolve error", c.name)
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: error %q does not contain %q", c.name, err.Error(), c.want)
+		}
+	}
+}
+
+func TestForEachWrongAmbientArityErrors(t *testing.T) {
+	src := "Cursed Energy: stdin\nShikigami: Ints\nCursed Technique: Apply\n    Using: (xs) -> {items: xs}\n" +
+		"Simple Domain: For Each x In\n    Using: (v) -> v.items\n    Cursed Technique: Apply\n        Using: (v, x) -> v\n"
+	_, err := resolveSrc(t, src)
+	if err == nil || !strings.Contains(err.Error(), "must take 3 parameter(s)") {
+		t.Fatalf("expected an ambient-arity error, got %v", err)
+	}
+}

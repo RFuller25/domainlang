@@ -91,6 +91,7 @@ var StructuralPrims = map[string]bool{
 	"Simple Domain (Repeat)":      true,
 	"Simple Domain (While)":       true,
 	"Simple Domain (For)":         true,
+	"Simple Domain (For Each)":    true,
 	"Simple Domain (Fixed Point)": true,
 }
 
@@ -114,11 +115,19 @@ var builtinSet = func() map[string]bool {
 	return m
 }()
 
-// AllPrims is every primitive ID the registry knows, for the "out of how
+// AllPrims is every primitive ID the language knows, for the "out of how
 // many" half of a coverage report.
+//
+// Every scope's, not only Core's. A coverage report is a claim about the
+// vocabulary a folder exercises, and a scope's own primitives are part of the
+// vocabulary — so a folder of games that never fires a `Request` should be
+// told so, and one that does should get the credit. Counting Core alone made
+// them invisible in both directions: not in the denominator, and not counted
+// when used.
 func AllPrims() []string {
-	out := make([]string, 0, len(Registry))
-	for _, p := range Registry {
+	all := AllPrimitives()
+	out := make([]string, 0, len(all))
+	for _, p := range all {
 		out = append(out, p.ID)
 	}
 	return out

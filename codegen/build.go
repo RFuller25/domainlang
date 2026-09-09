@@ -55,21 +55,53 @@ func BuildBinaryWith(goSrc, outPath string, cfg BuildConfig) error {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(goSrc), 0o644); err != nil {
 		return err
 	}
-	gomod := "module domainprog\n\ngo 1.22\n"
+	// What the program imports decides what it is built with. A program that
+	// names no module gets the bare go.mod and the flags this backend has
+	// always used; one that does gets the repository's own requirements and
+	// hashes. See codegen/deps.go.
+	gomod, gosum, err := moduleFiles(goSrc)
+	if err != nil {
+		return err
+	}
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o644); err != nil {
 		return err
 	}
+	if gosum != "" {
+		if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte(gosum), 0o644); err != nil {
+			return err
+		}
+	}
 
-	args := []string{"build", "-trimpath", "-ldflags", "-s -w"}
-	args = append(args, cfg.Flags...)
-	args = append(args, "-o", absOut, ".")
-
-	cmd := exec.Command(goTool, args...)
+	cmd := exec.Command(goTool, buildArgs(absOut, cfg)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-	cmd.Env = append(cmd.Env, cfg.Env...)
+	cmd.Env = append(os.Environ(), buildEnv(gosum != "", cfg)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("go build failed: %w\n%s", err, out)
 	}
 	return nil
+}
+
+// buildArgs and buildEnv are the toolchain invocation, split out so that the
+// promise they carry can be tested rather than merely intended: a program that
+// names no module is built with the same arguments and the same environment
+// this backend has always used. See TestStdlibBuildInputsAreUnchanged.
+
+func buildArgs(absOut string, cfg BuildConfig) []string {
+	args := []string{"build", "-trimpath", "-ldflags", "-s -w"}
+	args = append(args, cfg.Flags...)
+	return append(args, "-o", absOut, ".")
+}
+
+func buildEnv(modules bool, cfg BuildConfig) []string {
+	env := []string{"CGO_ENABLED=0"}
+	if modules {
+		// -mod=mod lets the toolchain settle the generated go.mod — mark an
+		// indirect requirement direct, drop one the program does not reach.
+		// Everything it needs is already in the module cache and in the
+		// go.sum written beside it, so nothing is fetched. A stdlib-only
+		// build never sets this, which is what keeps its command line the one
+		// bench/ measured.
+		env = append(env, "GOFLAGS=-mod=mod")
+	}
+	return append(env, cfg.Env...)
 }

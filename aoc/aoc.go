@@ -181,7 +181,7 @@ func cacheDir() (string, error) {
 // running it. The first half is knowable here; the second is not, so
 // `AOC_CONTACT` supplies it and its absence is stated rather than faked.
 func (c *Client) userAgent() string {
-	ua := "domain-expansion-development (+https://github.com/RFuller25/domain)"
+	ua := "domain-expansion-development (+https://github.com/RFuller25/domainlang)"
 	if contact := strings.TrimSpace(c.Contact); contact != "" {
 		return ua + " by " + contact
 	}

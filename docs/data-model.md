@@ -211,6 +211,38 @@ the infinite plane), `12_origami.domain` (fold-and-plot), and
 `13_minesweeper.domain` (neighbor counts) — see
 [../challenges/README.md](../challenges/README.md).
 
+## Views
+
+`View` is the one type that is not a value in the ordinary sense: it is a
+description of a picture, built by the [render builtins](ref-builtins-view.md)
+and drawn by `Reveal`.
+
+It is deliberately **opaque**. A View is not keyable, not orderable, and has no
+equality — `view = view` is refused, and so is a comparison of any composite
+containing one. That last part matters more than it looks: `Iterate Until Fixed
+Point` and structural `=` both rest on equality meaning something, and a world
+record caching a rendered panel would otherwise reach them and produce an
+answer nobody could explain.
+
+The alternative was styled `Text`, and it does not survive contact with
+`length`: with escape codes inside a string, `length` counts them, and every
+layout decision is made against a value that lies about its own size. With a
+type of its own the question cannot be asked.
+
+| Property | View |
+|---|---|
+| Written as | `View` |
+| Keyable | no |
+| Ordered | no |
+| Equality | **refused**, including inside a composite |
+| Renders as | the picture, unstyled, trailing spaces trimmed |
+| Width unit | runes, matching `length` on `Text` |
+
+Layout is computed once, in one place, and styling only decides how a run of
+text is drawn. So a picture has the same geometry whether it is printed to a
+pipe or painted on a terminal — which is what lets a rendered frame be
+compared at all.
+
 ## Type inference interaction
 
 A primitive's output type can depend on its `Using:` lambda, which the

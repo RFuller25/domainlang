@@ -13,7 +13,7 @@
       packages = forAllSystems (system: pkgs: rec {
         domain = pkgs.buildGoModule {
           pname = "domain";
-          version = "0.3.0";
+          version = "0.4.0";
           src = self;
 
           # Vendor hash covers charm.land/bubbletea/v2, charm.land/bubbles/v2,
@@ -90,7 +90,7 @@
 
           meta = {
             description = "Describe what, let the compiler choose how — AoC pipeline language with algorithm-substituting optimizer and Go codegen";
-            homepage = "https://github.com/RFuller25/domain";
+            homepage = "https://github.com/RFuller25/domainlang";
             license = pkgs.lib.licenses.mit;
             mainProgram = "domain";
           };
@@ -99,7 +99,7 @@
         #   programs.neovim.plugins = [ domain.packages.${system}.domain-nvim ];
         domain-nvim = pkgs.vimUtils.buildVimPlugin {
           pname = "domain-nvim";
-          version = "0.3.0";
+          version = "0.4.0";
           src = ./editors/nvim;
         };
 

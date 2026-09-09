@@ -72,7 +72,8 @@ mistyped pipeline fails with a positioned error, never mid-run.
 
 | Keyword | Semantic role |
 |---|---|
-| `Innate Domain:` | import a Shikigami library (keyword required) |
+| `Innate Domain:` | declare the program's scope (keyword required) — see [scopes.md](scopes.md) |
+| `Inherited Technique:` | import a Shikigami library (keyword required) |
 | `Cursed Energy:` | input / data source |
 | `Cursed Technique:` | 1:1 transforms |
 | `Channeled Energy:` | type coercions |
@@ -148,9 +149,9 @@ error[name]: cannot infer a keyword for "Splt Each by": no operation matches thi
 Two places need their keyword written. A forgotten colon after one you *did*
 write — `Reveal stdout` — stays a syntax error (with an auto-fix) rather than
 being re-read as a phrase, because it names no operation and the mistake is
-worth pointing at. And `Innate Domain:` is always spelled out: a bare library
+worth pointing at. And `Inherited Technique:` is always spelled out: a bare library
 name would be indistinguishable from a source target or an unknown operation
-(see [Innate Domain](#innate-domain--importing-a-library)).
+(see [Inherited Technique](#inherited-technique--importing-a-library)).
 
 ## Statements and arguments
 
@@ -319,7 +320,7 @@ and the reasons are rules rather than exceptions:
    `Mode:` picks the result's shape. Types are settled before the program
    runs.
 2. **It is consumed before there is a current value.** `Cursed Energy:`'s
-   source and `Innate Domain:`'s target are read at resolve time; there is
+   source and `Inherited Technique:`'s target are read at resolve time; there is
    nothing yet to measure against.
 3. **It names a program element, not a value.** `From:` names channels;
    `Channel`, `Part` and `Shikigami` name declarations. A name is resolved
@@ -824,14 +825,14 @@ fewest-moves, counting configurations — reach for
 [`Domain Expansion: Explore`](primitives.md), which searches a state space
 iteratively and terminates on its visited set.
 
-### Innate Domain — importing a library
+### Inherited Technique — importing a library
 
-`Innate Domain: <library>` loads a file of Shikigami definitions before the
+`Inherited Technique: <library>` loads a file of Shikigami definitions before the
 program, so its operations are callable by name exactly like the prelude's:
 
 ```domain ignore
-Innate Domain: aoc
-Innate Domain: grids/hex
+Inherited Technique: aoc
+Inherited Technique: grids/hex
 
 Cursed Energy: input.txt
 Shikigami: Lines
@@ -839,7 +840,7 @@ Shikigami: All Ints          # defined in aoc.domain
 ```
 
 The target is written **without** the `.domain` extension, the way a
-`Cursed Energy:` path is written bare. `Innate Domain` is one of the few
+`Cursed Energy:` path is written bare. `Inherited Technique` is one of the few
 keywords that is *not* optional — a bare `aoc` line is a source or an unknown
 operation, never an import.
 
@@ -864,7 +865,7 @@ each root in turn.
 A library beside the program, and the program calling into it:
 
 ```domain run
-Innate Domain: aoc
+Inherited Technique: aoc
 
 Cursed Energy: stdin
 Shikigami: Total Lengths
@@ -892,7 +893,7 @@ Cursed Energy: stdin
 Shikigami: Doubled
 Reveal: stdout
 
-Innate Domain: helpers
+Inherited Technique: helpers
 ```
 ```lib helpers.domain
 Shikigami "Doubled"
@@ -921,7 +922,7 @@ A library shadows what it itself imported, so the file you name directly wins
 over its transitive dependencies. The import graph is deduped by real file
 path, so a diamond loads once and a cycle is an error naming the chain. The
 [reserved-name rule](#naming-a-shikigami-may-not-be-named-after-a-built-in)
-applies to imported definitions too, reported at the `Innate Domain` line that
+applies to imported definitions too, reported at the `Inherited Technique` line that
 pulled the library in and naming the library and the position inside it.
 
 **Libraries cost nothing at runtime.** A Shikigami is inlined at its call
@@ -1062,6 +1063,47 @@ parameter that happens to share the ambient name shadows it.
 
 `For` compiles like every other loop kind — the earlier interpreter-only
 restriction is gone, so there is no advertised gap between the backends.
+
+**For Each** iterates a list that can change size from one run of the loop
+to the next — a `Using:` lambda computes it from the *current* value each
+time the loop itself runs, rather than fixing it once before the loop
+starts the way `For`'s channel or `range(N)` does. That makes it the shape
+for a Game Dev world whose entity list grows and shrinks lap to lap: a wave
+of creeps spawning over time needs a loop that re-reads `w.creeps`'s length
+every tick, not one sized for whatever count the world started with.
+
+```domain ignore
+Simple Domain: For Each creep In
+    Using: (w) -> w.creeps
+    <body>
+```
+
+The body's lambdas gain two ambient trailing parameters — the element and
+its index in the list, in that order — so `Using: (v, creep, i) -> ...`.
+There is no automatic splice-back: a body that means to update the list
+does so explicitly, typically with `set(xs, i, v)`.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Simple Domain: For Each n In
+    Using: (xs) -> xs
+    Cursed Technique: Apply
+        Using: (xs, n, i) -> set(xs, i, n * 2)
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[2, 4, 6]
+```
+
+Like `For`, a Shikigami and a `Using:` body both refuse a `For Each` for the
+same scope reason, and `For Each` compiles as well as it interprets — the
+compiled and interpreted backends re-evaluate the `Using:` lambda every lap
+alike, so a growing list is exactly as fresh in either one.
 
 `Repeat N` runs the body a fixed number of times, and the body must give back
 the type it was given:
@@ -1222,7 +1264,7 @@ Three boundaries, each protecting a guarantee the language already makes.
 - **`Channel` bodies are sealed both ways.** A channel is computed once, before
   whatever consumes it; a body that read or wrote a global would make the order
   it ran in observable, which is the hazard channels exist to avoid.
-- **A Shikigami from the prelude or an `Innate Domain` import is sealed.** Its
+- **A Shikigami from the prelude or an `Inherited Technique` import is sealed.** Its
   author never saw this program's names. A Shikigami defined in your own file
   is not: it is inlined at its call sites and reads and writes globals like any
   other stage.

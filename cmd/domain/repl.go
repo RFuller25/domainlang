@@ -286,6 +286,15 @@ func resolveStatements(stmts []string, baseDir string) (*ir.Pipeline, string, er
 	if err != nil {
 		return nil, src, err
 	}
+	// Refused here rather than after resolving, because resolving would fail
+	// first with a cardinality error about a missing Part — true, and no help
+	// at all to somebody who has just typed one line into a REPL.
+	if prog.Scope != nil {
+		if err := refuseUnlessOnePipeline(prog.Scope.Name, "the REPL",
+			"extend one pipeline a line at a time"); err != nil {
+			return nil, src, err
+		}
+	}
 	// Imports resolve against the REPL's base directory, the same root
 	// Cursed Energy file targets use.
 	opts := prims.ResolveOptions{BaseDir: baseDir, Search: prims.SearchPath()}
@@ -320,7 +329,7 @@ func (r *repl) evalAndShow(pipe *ir.Pipeline, rollback bool) {
 	if r.progress != nil {
 		r.progress.SetTotal(len(pipe.Nodes))
 	}
-	v, err := interp.Run(pipe, r.context())
+	v, err := interp.RunScoped(pipe, r.context())
 	if err != nil {
 		if errors.Is(err, ir.ErrInterrupted) {
 			fmt.Fprintln(r.out, "interrupted"+droppedSuffix(rollback))
@@ -387,6 +396,14 @@ func (r *repl) formatResult(v ir.Value, typ *ir.Type) string {
 // same carets, "did you mean" suggestions and repairs `domain check` prints —
 // falling back to the raw error when the analyzer has nothing to add.
 func (r *repl) reportError(src string, err error) {
+	// A refusal is about the tool, not the program: re-running the
+	// diagnostics would replace it with a complaint about the program, which
+	// is not what the reader needs to hear.
+	var refusal *scopeRefusal
+	if errors.As(err, &refusal) {
+		fmt.Fprintf(r.out, "error: %v\n", err)
+		return
+	}
 	if out := r.renderDiagnostics(src); out != "" {
 		fmt.Fprint(r.out, out)
 		return

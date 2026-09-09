@@ -7,6 +7,8 @@ package diag
 import (
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -134,8 +136,8 @@ func Analyze(path, src string) (r *Report) {
 
 // frontEnd runs lex → parse → resolve on src and returns the enriched
 // diagnostics of the first failing stage (empty when clean), plus whatever
-// later artifacts were reached. path gives `Innate Domain` imports their file
-// context; it may be empty, and then a program with imports reports that.
+// later artifacts were reached. path gives `Inherited Technique` imports their
+// file context; it may be empty, and then a program with imports reports that.
 func frontEnd(path, src string) ([]Diagnostic, *ast.Program, *ir.Pipeline) {
 	toks, err := lexer.Lex(src)
 	if err != nil {
@@ -147,7 +149,7 @@ func frontEnd(path, src string) ([]Diagnostic, *ast.Program, *ir.Pipeline) {
 	}
 	pipe, err := prims.ResolveWith(prog, prims.FileOptions(path))
 	if err != nil {
-		return resolveDiags(err, prog, src), prog, nil
+		return resolveDiags(err, prog, path, src), prog, nil
 	}
 	return nil, prog, pipe
 }
@@ -461,6 +463,7 @@ func enrichMissingColon(d *Diagnostic, src string, keyword string) {
 
 var (
 	reUnknownKeyword = regexp.MustCompile(`^unknown keyword "([^"]+)"`)
+	reUnknownScope   = regexp.MustCompile(`^unknown Innate Domain "([^"]+)"`)
 	// The raw phrase may itself contain quotes (`Split by "\n"`), so the
 	// first group is greedy and the anchor is the literal ` under "` that
 	// unknownOpMessage always emits after it.
@@ -473,7 +476,7 @@ var (
 	reExpectsGot     = regexp.MustCompile(`^(.+?) expects (.+?), got (.+)$`)
 )
 
-func resolveDiags(err error, prog *ast.Program, src string) []Diagnostic {
+func resolveDiags(err error, prog *ast.Program, path, src string) []Diagnostic {
 	re, ok := err.(*prims.ResolveError)
 	if !ok {
 		return []Diagnostic{{Severity: Error, Code: "resolve", Msg: err.Error()}}
@@ -493,6 +496,10 @@ func resolveDiags(err error, prog *ast.Program, src string) []Diagnostic {
 		d.Code = "name"
 		m := reUnknownOp.FindStringSubmatch(msg)
 		enrichUnknownOp(&d, prog, src, m[1], m[2], m[3])
+
+	case reUnknownScope.MatchString(msg):
+		d.Code = "name"
+		enrichUnknownScope(&d, path, reUnknownScope.FindStringSubmatch(msg)[1])
 
 	case reCannotInfer.MatchString(msg):
 		d.Code = "name"
@@ -592,6 +599,53 @@ func enrichUnknownKeyword(d *Diagnostic, src string, got string) {
 	d.EndCol = kwEnd + 1
 	d.Fix = &Fix{Start: lineStart + rel, End: lineStart + kwEnd,
 		Replacement: s, Confident: confident}
+}
+
+// enrichUnknownScope explains an `Innate Domain:` naming something this build
+// does not have.
+//
+// The case worth spending words on is the one every program written before
+// scopes existed will hit: `Innate Domain: aoc` used to import a library and
+// now declares a kind of program. If the target really is a library — it
+// resolves on the search path — say so and offer the keyword that means what
+// the line used to mean. Being told "unknown Innate Domain" and nothing else
+// would be true and useless.
+func enrichUnknownScope(d *Diagnostic, path, name string) {
+	d.Msg = fmt.Sprintf("unknown Innate Domain %q", name)
+	if libraryExists(path, name) {
+		d.Help = fmt.Sprintf("%q is a library, not an Innate Domain — did you mean `Inherited Technique: %s`?", name, name)
+		d.Notes = append(d.Notes,
+			"`Innate Domain:` now declares what kind of program a file is; `Inherited Technique:` imports a library of Shikigami.")
+		rel, kwEnd, ok := keywordSpan(d)
+		if !ok {
+			return
+		}
+		lineStart := d.Pos.Offset - rel
+		d.EndCol = kwEnd + 1
+		d.Fix = &Fix{Start: lineStart + rel, End: lineStart + kwEnd,
+			Replacement: "Inherited Technique", Confident: true}
+		return
+	}
+	d.Help = "the Innate Domains this build has are: " + strings.Join(prims.ScopeNames(), ", ")
+	d.Notes = append(d.Notes,
+		"To import a library of Shikigami, use `Inherited Technique:` instead.")
+}
+
+// libraryExists reports whether an import target resolves to a file on the
+// search path — the evidence that a line meant to import rather than to
+// declare a scope.
+func libraryExists(path, target string) bool {
+	opts := prims.FileOptions(path)
+	dirs := append([]string{opts.BaseDir}, opts.Search...)
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, target+".domain")); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // keywordSpan locates the keyword text on the diagnostic's line: from the

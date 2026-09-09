@@ -452,7 +452,7 @@ func withLibrary(t *testing.T) (devModel, string, string) {
 		t.Fatal(err)
 	}
 	prog := filepath.Join(dir, "main.domain")
-	src := "Innate Domain: helpers\nCursed Energy: in.txt\nChanneled Energy: Convert To Integers\nShikigami: Triple\nReveal: stdout"
+	src := "Inherited Technique: helpers\nCursed Energy: in.txt\nChanneled Energy: Convert To Integers\nShikigami: Triple\nReveal: stdout"
 	if err := os.WriteFile(prog, []byte(src+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

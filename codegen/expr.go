@@ -435,6 +435,56 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	}
 
 	switch name {
+	case "tojson":
+		fn, err := g.jsonFunc(types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		return fn + "(" + args[0] + ")", ir.Text(), nil
+	case "pending":
+		// Inside a game this is a lookup in the box that bounds requests to
+		// one in flight per tag. Outside one there is no run to ask about and
+		// nothing can be pending, which is the same answer the interpreter
+		// gives when a context has no host to ask (eval/eval.go).
+		if !g.game {
+			return "false", ir.Bool(), nil
+		}
+		return "dmPending(" + args[0] + ")", ir.Bool(), nil
+
+	// -- the run's stream and clock (see codegen/randgen.go) -------------------
+	case "random":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmRand", declRand)
+		return "dmRandInt(" + args[0] + ")", ir.Int(), nil
+	case "randomf":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmRand", declRand)
+		return "dmRandFloat()", ir.Float(), nil
+	case "pick":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmRand", declRand)
+		elem, err := listElem(0)
+		if err != nil {
+			// A Set reads as its elements everywhere else in the language.
+			if types[0] != nil && types[0].Kind == ir.KSet {
+				elem = types[0].Elem
+			} else {
+				return "", nil, err
+			}
+		}
+		fn := g.pickHelper(types[0], elem)
+		return fn + "(" + args[0] + ")", elem, nil
+	case "frame":
+		g.helper("dmRand", declRand)
+		return "dmFrames", ir.Int(), nil
+	case "elapsed":
+		g.helper("dmRand", declRand)
+		return "dmElapsedMS", ir.Int(), nil
+
+	// -- View: the render tree (see codegen/viewgen.go) ------------------------
+	case "text", "blank", "style", "stack", "beside", "box", "margin", "align", "fit", "draw":
+		return g.compileViewCall(name, args, types)
+
 	case "length":
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.imp("unicode/utf8")
@@ -885,6 +935,11 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmASCII", declASCII, "unicode/utf8")
 		g.helper("dmCharAt", declCharAt)
 		return "dmCharAt(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+	case "withchar":
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmASCII", declASCII, "unicode/utf8")
+		g.helper("dmWithChar", declWithChar)
+		return "dmWithChar(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text(), nil
 	case "slice":
 		g.helper("dmClampRange", declClampRange)
 		if types[0] != nil && types[0].Kind == ir.KText {
@@ -980,6 +1035,42 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	return dc
 }`, pt))
 		return "dmChebyshev(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+	case "nearby4", "nearby8":
+		if _, err := listElem(0); err != nil {
+			return "", nil, err
+		}
+		pt, err := g.pointGo()
+		if err != nil {
+			return "", nil, err
+		}
+		g.helper("dmAbs", declAbs)
+		if name == "nearby4" {
+			g.helper("dmNearby4", fmt.Sprintf(`func dmNearby4(ps []%[1]s, center %[1]s, radius int64) []int64 {
+	var out []int64
+	for i, p := range ps {
+		if d := dmAbs(p.f0-center.f0) + dmAbs(p.f1-center.f1); radius >= 0 && d <= radius {
+			out = append(out, int64(i))
+		}
+	}
+	return out
+}`, pt))
+			return "dmNearby4(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.List(ir.Int()), nil
+		}
+		g.helper("dmNearby8", fmt.Sprintf(`func dmNearby8(ps []%[1]s, center %[1]s, radius int64) []int64 {
+	var out []int64
+	for i, p := range ps {
+		dr, dc := dmAbs(p.f0-center.f0), dmAbs(p.f1-center.f1)
+		d := dr
+		if dc > d {
+			d = dc
+		}
+		if radius >= 0 && d <= radius {
+			out = append(out, int64(i))
+		}
+	}
+	return out
+}`, pt))
+		return "dmNearby8(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.List(ir.Int()), nil
 	case "dirs8":
 		pt, err := g.pointGo()
 		if err != nil {
@@ -2135,4 +2226,247 @@ func (g *gen) asFloat(arg string, t *ir.Type) string {
 // numericType reports whether t is Int or Float.
 func numericType(t *ir.Type) bool {
 	return t != nil && (t.Kind == ir.KInt || t.Kind == ir.KFloat)
+}
+
+// compileViewCall emits the render builtins. They are gathered here rather
+// than spread through compileCall's switch because every one of them needs the
+// same runtime declaration and produces the same type, so the shared parts
+// would otherwise be repeated ten times.
+func (g *gen) compileViewCall(name string, args []string, types []*ir.Type) (string, *ir.Type, error) {
+	g.helper("dmView", declView, "strings", "unicode/utf8")
+	view := ir.View()
+	switch name {
+	case "text":
+		// `text` renders its argument the way Reveal would, so it goes
+		// through the same formatter the sink uses for that type.
+		rendered, err := g.scalarFmt(args[0], types[0])
+		if err != nil {
+			return "", nil, err
+		}
+		return "dmViewText(" + rendered + ")", view, nil
+	case "blank":
+		return "dmViewBlank()", view, nil
+	case "style":
+		return "dmViewStyled(" + args[0] + ", " + args[1] + ")", view, nil
+	case "stack":
+		return "dmViewStack(" + strings.Join(args, ", ") + ")", view, nil
+	case "beside":
+		return "dmViewBeside(" + strings.Join(args, ", ") + ")", view, nil
+	case "box":
+		return "dmViewBox(" + args[0] + ")", view, nil
+	case "margin":
+		return "dmViewMargin(" + args[0] + ", " + args[1] + ", " + args[2] + ")", view, nil
+	case "align":
+		return "dmViewAlign(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")", view, nil
+	case "fit":
+		return "dmViewFit(" + args[0] + ", " + args[1] + ", " + args[2] + ")", view, nil
+	case "draw":
+		return g.compileDraw(args[0], types[0])
+	}
+	return "", nil, fmt.Errorf("%s is not a View builtin", name)
+}
+
+// compileDraw emits a whole board as a View. It mirrors eval.drawBoard: each
+// cell rendered as it would print, rows written side by side — unless the
+// cells are themselves Views (built with `style`, in a `Map Cells`), in which
+// case each row is `dmViewBeside` of its cells and the board is `dmViewStack`
+// of its rows, preserving colour instead of flattening it away through
+// FormatValue's plain rendering.
+func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
+	if t == nil {
+		return "", nil, fmt.Errorf("draw() takes a Grid, a Sparse or a List of rows")
+	}
+	view := ir.View()
+	switch t.Kind {
+	case ir.KGrid:
+		if t.Elem != nil && t.Elem.Kind == ir.KView {
+			fn := g.drawHelper("GridStyled", t, func(goT string) string {
+				return `func %s(b ` + goT + `) dmView {
+	rows := make([]dmView, b.rows)
+	for r := 0; r < b.rows; r++ {
+		cells := make([]dmView, b.cols)
+		for c := 0; c < b.cols; c++ {
+			cells[c] = b.cells[r*b.cols+c]
+		}
+		rows[r] = dmViewBeside(cells...)
+	}
+	return dmViewStack(rows...)
+}`
+			})
+			return fn + "(" + arg + ")", view, nil
+		}
+		// dmGrid keeps its cells in one flat slice, row-major, and has no
+		// accessor: the emitted code indexes it the way every other grid
+		// traversal in this package does.
+		cell, err := g.scalarFmt("b.cells[r*b.cols+c]", t.Elem)
+		if err != nil {
+			return "", nil, err
+		}
+		fn := g.drawHelper("Grid", t, func(goT string) string {
+			return `func %s(b ` + goT + `) dmView {
+	lines := make([]string, b.rows)
+	for r := 0; r < b.rows; r++ {
+		var sb strings.Builder
+		for c := 0; c < b.cols; c++ {
+			sb.WriteString(` + cell + `)
+		}
+		lines[r] = sb.String()
+	}
+	return dmViewText(strings.Join(lines, "\n"))
+}`
+		})
+		return fn + "(" + arg + ")", view, nil
+	case ir.KSparse:
+		if t.Elem != nil && t.Elem.Kind == ir.KView {
+			fn := g.drawHelper("SparseStyled", t, func(goT string) string {
+				return `func %s(b ` + goT + `) dmView {
+	if len(b.cells) == 0 {
+		return dmViewBlank()
+	}
+	var rows []dmView
+	for r := b.minR; r <= b.maxR; r++ {
+		var cells []dmView
+		for c := b.minC; c <= b.maxC; c++ {
+			cells = append(cells, b.at(r, c))
+		}
+		rows = append(rows, dmViewBeside(cells...))
+	}
+	return dmViewStack(rows...)
+}`
+			})
+			return fn + "(" + arg + ")", view, nil
+		}
+		// A sparse plane is drawn over its occupied extent, which is what
+		// densifying it already means.
+		cell, err := g.scalarFmt("b.at(r, c)", t.Elem)
+		if err != nil {
+			return "", nil, err
+		}
+		fn := g.drawHelper("Sparse", t, func(goT string) string {
+			return `func %s(b ` + goT + `) dmView {
+	if len(b.cells) == 0 {
+		return dmViewBlank()
+	}
+	var lines []string
+	for r := b.minR; r <= b.maxR; r++ {
+		var sb strings.Builder
+		for c := b.minC; c <= b.maxC; c++ {
+			sb.WriteString(` + cell + `)
+		}
+		lines = append(lines, sb.String())
+	}
+	return dmViewText(strings.Join(lines, "\n"))
+}`
+		})
+		return fn + "(" + arg + ")", view, nil
+	case ir.KList:
+		nested := t.Elem != nil && t.Elem.Kind == ir.KList
+		if t.Elem != nil && t.Elem.Kind == ir.KView {
+			// A flat List<View>: each element is already a whole row, the
+			// View twin of a List<Text> of already-rendered lines.
+			fn := g.drawHelper("ListStyled", t, func(goT string) string {
+				return `func %s(b ` + goT + `) dmView {
+	return dmViewStack(b...)
+}`
+			})
+			return fn + "(" + arg + ")", view, nil
+		}
+		if nested && t.Elem.Elem != nil && t.Elem.Elem.Kind == ir.KView {
+			fn := g.drawHelper("NestedListStyled", t, func(goT string) string {
+				return `func %s(b ` + goT + `) dmView {
+	rows := make([]dmView, len(b))
+	for i, row := range b {
+		rows[i] = dmViewBeside(row...)
+	}
+	return dmViewStack(rows...)
+}`
+			})
+			return fn + "(" + arg + ")", view, nil
+		}
+		// A list of rows, or a list of already-rendered lines.
+		var cell string
+		var err error
+		if nested {
+			cell, err = g.scalarFmt("x", t.Elem.Elem)
+		} else {
+			cell, err = g.scalarFmt("row", t.Elem)
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		fn := g.drawHelper("List", t, func(goT string) string {
+			if nested {
+				return `func %s(b ` + goT + `) dmView {
+	lines := make([]string, len(b))
+	for i, row := range b {
+		var sb strings.Builder
+		for _, x := range row {
+			sb.WriteString(` + cell + `)
+		}
+		lines[i] = sb.String()
+	}
+	return dmViewText(strings.Join(lines, "\n"))
+}`
+			}
+			return `func %s(b ` + goT + `) dmView {
+	lines := make([]string, len(b))
+	for i, row := range b {
+		_ = i
+		lines[i] = ` + cell + `
+	}
+	return dmViewText(strings.Join(lines, "\n"))
+}`
+		})
+		return fn + "(" + arg + ")", view, nil
+	}
+	return "", nil, fmt.Errorf("draw() takes a Grid, a Sparse or a List of rows, got %s", t)
+}
+
+// drawHelper interns one draw function per board type. body is given the Go
+// type of the board and returns the function source with a single %s where its
+// own name goes, which is how every other interned helper in this package is
+// shaped.
+func (g *gen) drawHelper(kind string, t *ir.Type, body func(goT string) string) string {
+	key := "draw:" + kind + ":" + canonicalKey(t)
+	if name, ok := g.listFns[key]; ok {
+		return name
+	}
+	name := fmt.Sprintf("dmDraw%d", len(g.listFns)+1)
+	g.listFns[key] = name
+	goT, err := g.goType(t)
+	if err != nil {
+		// goType already succeeded for this type when the argument compiled;
+		// a failure here would mean the type changed underfoot.
+		goT = "any"
+	}
+	g.imp("strings")
+	g.decls = append(g.decls, fmt.Sprintf(body(goT), name))
+	return name
+}
+
+// pickHelper interns the one-element draw for a container type. It is a
+// helper rather than an inline expression because the argument is evaluated
+// once — `pick(expensive())` must not compute its list twice — and because a
+// Set has to be read as its elements first.
+func (g *gen) pickHelper(container, elem *ir.Type) string {
+	key := "pick:" + canonicalKey(container)
+	if name, ok := g.listFns[key]; ok {
+		return name
+	}
+	name := fmt.Sprintf("dmPick%d", len(g.listFns)+1)
+	g.listFns[key] = name
+	goC, _ := g.goType(container)
+	goE, _ := g.goType(elem)
+	body := "xs"
+	if container != nil && container.Kind == ir.KSet {
+		body = "xs.items()"
+	}
+	g.decls = append(g.decls, fmt.Sprintf(`func %s(xs %s) %s {
+	items := %s
+	if len(items) == 0 {
+		dmFail("pick() has nothing to choose from: the list is empty")
+	}
+	return items[dmRandInt(int64(len(items)))]
+}`, name, goC, goE, body))
+	return name
 }

@@ -161,7 +161,7 @@ func Examples(page, src string) ([]Example, string) {
 				ex.Input = nxt.Source
 			case "lib":
 				// ```lib aoc.domain — an imported library, written beside the
-				// program so an `Innate Domain:` example is a real program
+				// program so an `Inherited Technique:` example is a real program
 				// rather than a fragment that could never be run.
 				fields := strings.Fields(nxt.Info)
 				if len(fields) < 2 {

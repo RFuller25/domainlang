@@ -129,7 +129,7 @@ different text edits the wrong characters.
 and hints separately: `domain expansion: lint` is the checker plus the linter,
 and so is this.
 
-**Following a definition** across an `Innate Domain:` import opens the library
+**Following a definition** across an `Inherited Technique:` import opens the library
 file; `ctrl+[` comes back to where you were. Unsaved work is asked about rather
 than discarded.
 

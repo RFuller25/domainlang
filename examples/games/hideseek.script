@@ -1,0 +1,24 @@
+# Hide and seek, with the room played by this file. Every `reply world` line
+# is one answer from the server; the gaps between them are what a slow room
+# looks like from inside the game.
+
+frame                # alone, before the first sync lands
+
+key right            # move, then let the timer poll
+key right
+tick
+reply world {"players": [{"name":"fox","r":6,"c":3,"it":false},{"name":"hare","r":4,"c":9,"it":false},{"name":"owl","r":2,"c":5,"it":true}], "closing": false}
+frame                # two others in the room, and `!` is the one who is it
+
+tick                 # two polls with no answer: the picture goes stale rather
+tick                 # than the game going still
+frame
+
+reply world {"players": [{"name":"fox","r":6,"c":3,"it":false},{"name":"owl","r":5,"c":3,"it":true}], "closing": false}
+frame                # the room catches up, and the seeker is one cell away
+
+tick
+reply world {"players": [{"name":"fox","r":6,"c":3,"it":false},{"name":"owl","r":6,"c":3,"it":true}], "closing": false}
+frame                # standing on the same cell
+
+key q

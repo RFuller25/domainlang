@@ -6,9 +6,14 @@ import "testing"
 // of registered primitives: a new primitive cannot ship without a doc entry,
 // and a stale entry cannot outlive its primitive. This is what lets the LSP
 // trust Catalog for hover and completion.
+//
+// The set is every primitive in the *language*, not the one a given program
+// sees: a primitive an `Innate Domain` adds is as documentable as any other,
+// and the tools that render the catalog describe the language rather than one
+// file's view of it.
 func TestCatalogCoversRegistry(t *testing.T) {
 	inRegistry := map[string]bool{}
-	for _, p := range Registry {
+	for _, p := range AllPrimitives() {
 		inRegistry[p.ID] = true
 		d, ok := Catalog[p.ID]
 		if !ok {
@@ -27,7 +32,7 @@ func TestCatalogCoversRegistry(t *testing.T) {
 	}
 	for id := range Catalog {
 		if !inRegistry[id] {
-			t.Errorf("Catalog documents %q, which is not in Registry", id)
+			t.Errorf("Catalog documents %q, which is no longer a primitive", id)
 		}
 	}
 }

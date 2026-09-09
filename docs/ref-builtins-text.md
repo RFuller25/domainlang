@@ -48,6 +48,7 @@ noon
 | `length(s)` | `Text -> Int` | Number of **runes**. |
 | `slice(s, lo, hi)` | `Text × Int × Int -> Text` | Half-open substring, clamped like the list form. |
 | `charat(s, i)` | `Text × Int -> Text` | The rune at `i`, as a 1-character Text. **Error** out of range, like `item`. |
+| `withchar(s, i, ch)` | `Text × Int × Text -> Text` | Copy of `s` with the rune at `i` replaced by `ch` (functional update) — `charat`'s write side, and `set`'s twin for a `List`. **Error** if `i` is out of range, or if `ch` is not exactly one character. |
 | `chars(s)` | `Text -> List<Text>` | The runes — the expression layer's `Split Text by ""`. |
 | `indexof(s, sub)` | `Text × Text -> Int` | Rune position of the first occurrence, or `-1`. |
 | `startswith(s, p)` / `endswith(s, p)` | `Text × Text -> Bool` | Prefix / suffix test. |
@@ -70,3 +71,19 @@ noon
 **Positions count runes, not bytes**, everywhere — `length`, `charat`, `slice`
 and `indexof` agree with each other and with `Split Text by ""`, so an index
 means the same thing in both layers on non-ASCII input.
+
+`withchar` is what paints one cell of a `Text` row without slicing it apart by
+hand — the same idea as `set` for a `List`, over a rune instead of an element:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (row) -> withchar(row, 2, "#")
+Reveal: stdout
+```
+```input
+.....
+```
+```output
+..#..
+```

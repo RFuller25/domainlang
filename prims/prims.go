@@ -88,6 +88,38 @@ type ArgSet struct {
 	rewriteErr *error
 }
 
+// requestSpec finds the pre-scanned spec for a request tag, so the primitive
+// that resolves the statement fills in the object the reply Part was already
+// typed against rather than making a second one.
+func (a ArgSet) requestSpec(tag string) (*ir.RequestSpec, bool) {
+	if a.res == nil {
+		return nil, false
+	}
+	spec, ok := a.res.requests[tag]
+	return spec, ok
+}
+
+// DeclaredType returns an argument written as a type, lowered.
+//
+// It is how a primitive learns what a program expects back from something the
+// program cannot see into — a JSON document, a server's answer. Encoding needs
+// no such declaration; decoding has nothing else to go on.
+func (a ArgSet) DeclaredType(name string, pos token.Position) (*ir.Type, bool, error) {
+	v, ok := a.get(name)
+	if !ok {
+		return nil, false, nil
+	}
+	ta, isType := v.(ast.TypeArg)
+	if !isType {
+		return nil, true, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s: takes a type, e.g. `%s: {score: Int}`", name, name)}
+	}
+	t, err := lowerTypeExpr(ta.Type, pos)
+	if err != nil {
+		return nil, true, err
+	}
+	return t, true, nil
+}
+
 // hasBlock reports whether an indented pipeline body is available to stand in
 // for a Using: lambda.
 func (a ArgSet) hasBlock() bool { return len(a.block) > 0 && a.res != nil }
@@ -288,6 +320,13 @@ var argNames = []string{
 	// `From:`/`To:` — `From:` already means "these channels" everywhere else,
 	// and a node is not a channel.
 	"Start", "Goal",
+	// A request names where it goes, what it carries, what comes back and
+	// what to call the answer. `Into:` is a *type* rather than a value, which
+	// is the only one of these the parser has to know about by name
+	// (ast.TypeValuedArg).
+	"Url", "Method", "Body", "As", "Into", "Timeout",
+	// Load and Save read and write a file by name.
+	"Path",
 }
 
 // ArgNames returns the named arguments the vocabulary understands, sorted.
@@ -295,9 +334,15 @@ func ArgNames() []string {
 	return slices.Sorted(slices.Values(argNames))
 }
 
-// Registry is the ordered list of primitives. Order matters: more specific
-// matchers (e.g. "Split Each") must precede more general ones (e.g. "Split").
-var Registry = []*Primitive{
+// Core is the ordered list of primitives every scope has. Order matters: more
+// specific matchers (e.g. "Split Each") must precede more general ones (e.g.
+// "Split").
+//
+// It is the whole vocabulary, not a subset: an `Innate Domain` adds
+// primitives and never takes any away (see prims/scope.go). What a program
+// resolves against is RegistryFor(scope), which for the default scope is
+// exactly this slice.
+var Core = []*Primitive{
 	readSource,
 	// Cursed Technique (transforms) — specific matchers before general.
 	splitFieldsPrim, // before Split/Split Each: "Split Fields" names no separator
@@ -426,14 +471,45 @@ type ResolveError struct {
 }
 
 func (e *ResolveError) Error() string {
+	// A whole-program refusal — a Part the program is missing, a shape rule it
+	// does not meet — has no line of its own, and "0:0:" in front of it is
+	// worse than nothing: it points at a place the user can go and look, and
+	// there is nothing there.
+	if e.Pos.Line == 0 && e.Pos.Col == 0 {
+		return e.Msg
+	}
 	return fmt.Sprintf("%s: %s", e.Pos, e.Msg)
 }
 
 // resolver carries the channel type environment and the Shikigami registry
 // while lowering a program.
 type resolver struct {
-	channels map[string]*ir.Type
-	parts    map[string]bool // Part labels already defined, to catch duplicates
+	// scope is the program's `Innate Domain`, never nil: a program that
+	// declares none resolves against DefaultScope.
+	scope *Scope
+	// prims is RegistryFor(scope), computed once because every statement
+	// searches it.
+	prims []*Primitive
+	// world is the type the scope's world-defining Part produced, or nil in
+	// a scope with no such role. Part roles state their contracts against it.
+	world *ir.Type
+	// roleCounts is how many Parts of each role the program has declared so
+	// far, for the cardinality a role states. Keyed by role name, so the
+	// unroled Part counts under "".
+	roleCounts map[string]int
+	// roleLabels is the labels written for each role, in source order.
+	roleLabels map[string][]string
+	// requests is every request the program fires, by tag, collected before
+	// any Part resolves — a `Part Reply` is typed against the Request that
+	// fires its tag, and Parts are not resolved in the order they were
+	// written, so waiting to meet it is not an option.
+	requests map[string]*ir.RequestSpec
+	// partGlobals is the global-access policy of the Part currently being
+	// resolved, or GlobalsIsolated at the top level, where a `Cursed Tool`
+	// has always been free to write. See sealedFrom.
+	partGlobals GlobalPolicy
+	channels    map[string]*ir.Type
+	parts       map[string]bool // Part labels already defined, to catch duplicates
 	// locals is the stack of `Consider x As/Of …` bindings in scope, innermost
 	// last (prims/locals.go). It is a stack rather than a map because bindings
 	// shadow: an inner block may rebind a name the outer one is still using
@@ -521,7 +597,32 @@ func ResolveWith(prog *ast.Program, opts ResolveOptions) (pipe *ir.Pipeline, err
 	// process — where a leaked binding would resolve a name the new program
 	// never bound.
 	typecheck.ResetBindings()
+
+	// The program's Innate Domain decides the vocabulary every statement below
+	// resolves against, so it is settled before anything else happens. An
+	// override in the options wins, for the tools that resolve a fragment with
+	// no declaration in it — the REPL, a language-server completion request.
+	scope := DefaultScope
+	switch {
+	case opts.Scope != "":
+		sc, ok := ScopeNamed(opts.Scope)
+		if !ok {
+			return nil, fmt.Errorf("%s", unknownScopeMessage(opts.Scope))
+		}
+		scope = sc
+	case prog.Scope != nil:
+		sc, ok := ScopeNamed(prog.Scope.Name)
+		if !ok {
+			return nil, &ResolveError{Pos: prog.Scope.Pos, Msg: unknownScopeMessage(prog.Scope.Name)}
+		}
+		scope = sc
+	}
 	r := &resolver{
+		scope:      scope,
+		prims:      RegistryFor(scope),
+		roleCounts: map[string]int{},
+		roleLabels: map[string][]string{},
+		requests:   map[string]*ir.RequestSpec{},
 		channels:   map[string]*ir.Type{},
 		parts:      map[string]bool{},
 		shikigamis: map[string]*ast.ShikigamiDef{},
@@ -557,7 +658,34 @@ func ResolveWith(prog *ast.Program, opts ResolveOptions) (pipe *ir.Pipeline, err
 		}
 	}
 
-	if err := InferWith(prog, callableNames(r.shikigamis)); err != nil {
+	// A role that *defines* rather than runs — `Part Entity "Creep":` — lowers
+	// to a Shikigami before anything else looks at the program, so its name is
+	// callable from every other Part and from inference. The Parts themselves
+	// are then not statements at all, which is why skip records them.
+	entities, skip, err := entityDefs(r.scope, prog.Statements)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range entities {
+		if err := checkShikigamiName(d, r.prims); err != nil {
+			return nil, err
+		}
+		if _, taken := r.shikigamis[d.Name]; taken {
+			return nil, &ResolveError{Pos: d.Pos, Msg: fmt.Sprintf(
+				"%q is already defined; a Part that defines something may not shadow a Shikigami", d.Name)}
+		}
+		r.shikigamis[d.Name] = d
+		r.origins[d.Name] = DefSite{Origin: "local"}
+	}
+
+	if err := InferWith(prog, callableNames(r.shikigamis), r.prims); err != nil {
+		return nil, err
+	}
+
+	// Every request the program fires, before any Part is resolved: a
+	// `Part Reply` is typed against the Request that answers its tag, and the
+	// two may be written in either order.
+	if err := r.collectRequests(prog.Statements); err != nil {
 		return nil, err
 	}
 
@@ -597,12 +725,140 @@ func ResolveWith(prog *ast.Program, opts ResolveOptions) (pipe *ir.Pipeline, err
 	r.laterGlobals = scan.declared
 	r.mutatedGlobals = scan.mutated
 
-	nodes, _, err := r.resolveSequence(prog.Statements, nil, scopeTop)
+	// The world is resolved before everything else, wherever it was written:
+	// every other role states its contract against the world's type, so there
+	// is nothing to check them against until it exists. The hoist is the same
+	// one Shikigami definitions and imports already get.
+	stmts := withoutStatements(prog.Statements, skip)
+	var nodes []*ir.Node
+
+	// In a scope with no top-level pipeline, the top level is declarations and
+	// Parts — and neither has an order. Global declarations are resolved
+	// first, so that a Part may read one wherever the two were written
+	// relative to each other. In a scope *with* a pipeline this does not
+	// happen: there, order is the program.
+	if !r.scope.TopLevelPipeline {
+		declNodes, rest, derr := r.resolveDeclarations(stmts)
+		if derr != nil {
+			return &ir.Pipeline{Scope: r.scope.Name, Globals: len(r.globals)}, r.explainForwardGlobal(derr)
+		}
+		nodes, stmts = declNodes, rest
+	}
+
+	// The world is resolved before everything else, wherever it was written:
+	// every other role states its contract against the world's type, so there
+	// is nothing to check them against until it exists.
+	if worldRole, ok := r.scope.worldRole(); ok {
+		worldStmt, rest, found := hoistWorld(r.scope, stmts)
+		if !found && worldRole.Min > 0 {
+			// Saying so here rather than letting the cardinality check catch
+			// it later is the whole difference between "this program has no
+			// Part World" and a pile of "has no input value" from every role
+			// whose contract was written against a world that never arrived.
+			return &ir.Pipeline{Nodes: nodes, Scope: r.scope.Name, Globals: len(r.globals)},
+				&ResolveError{Msg: fmt.Sprintf("%s needs %s, and this program has none",
+					r.scope.Name, atLeast(max(worldRole.Min, 1), worldRole.Name))}
+		}
+		if found {
+			worldNodes, _, werr := r.resolveStatement(worldStmt, nil, scopeTop)
+			if werr != nil {
+				return &ir.Pipeline{Nodes: nodes, Scope: r.scope.Name, Globals: len(r.globals)}, r.explainForwardGlobal(werr)
+			}
+			nodes, stmts = append(nodes, worldNodes...), rest
+		}
+	}
+
+	rest, _, err := r.resolveSequence(stmts, nil, scopeTop)
+	nodes = append(nodes, rest...)
 	if err != nil {
 		// The partial pipeline rides along with the error; see resolveSequence.
-		return &ir.Pipeline{Nodes: nodes, Globals: len(r.globals)}, r.explainForwardGlobal(err)
+		return &ir.Pipeline{Nodes: nodes, Scope: r.scope.Name, Globals: len(r.globals)}, r.explainForwardGlobal(err)
 	}
-	return &ir.Pipeline{Nodes: nodes, Globals: len(r.globals)}, nil
+	// A role the program has too few of can only be counted once the whole
+	// program has been read: what is missing has no line to be reported at.
+	if err := r.checkPartCardinality(); err != nil {
+		return &ir.Pipeline{Nodes: nodes, Scope: r.scope.Name, Globals: len(r.globals)}, err
+	}
+	if r.scope.Shape != nil {
+		if err := r.scope.Shape(r.facts()); err != nil {
+			return &ir.Pipeline{Nodes: nodes, Scope: r.scope.Name, Globals: len(r.globals)},
+				&ResolveError{Msg: err.Error()}
+		}
+	}
+	return &ir.Pipeline{Nodes: nodes, Scope: r.scope.Name, Globals: len(r.globals)}, nil
+}
+
+// resolveDeclarations lowers the global declarations at the top of a
+// Parts-only program, and returns everything else in order.
+//
+// A `Cursed Tool` write is refused there: the top level of such a program has
+// no moment at which it happens — the host runs Parts, not a pipeline — so a
+// write outside one would be a statement that never executes. Values are set
+// where there is a time for them to be set.
+func (r *resolver) resolveDeclarations(stmts []*ast.Statement) ([]*ir.Node, []*ast.Statement, error) {
+	var nodes []*ir.Node
+	rest := make([]*ast.Statement, 0, len(stmts))
+	for _, stmt := range stmts {
+		if stmt == nil || stmt.Keyword != "Cursed Object" {
+			if stmt != nil && stmt.Keyword == "Cursed Tool" {
+				return nil, nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(
+					"a %s program has no top level to run a `Cursed Tool` on: the Parts are what run, and a write out here would never happen. "+
+						"Set it in `Part World:` or `Part Start:` instead", r.scope.Name)}
+			}
+			rest = append(rest, stmt)
+			continue
+		}
+		declNodes, _, err := r.resolveStatement(stmt, nil, scopeTop)
+		if err != nil {
+			return nil, nil, err
+		}
+		nodes = append(nodes, declNodes...)
+	}
+	return nodes, rest, nil
+}
+
+// facts is what a scope's hooks may ask about the program as a whole.
+func (r *resolver) facts() ProgramFacts {
+	return ProgramFacts{
+		World:      r.world,
+		PartCounts: r.roleCounts,
+		PartLabels: r.roleLabels,
+		Requests:   r.requests,
+	}
+}
+
+// withoutStatements drops the statements a definition role already consumed.
+func withoutStatements(stmts []*ast.Statement, skip map[*ast.Statement]bool) []*ast.Statement {
+	if len(skip) == 0 {
+		return stmts
+	}
+	out := make([]*ast.Statement, 0, len(stmts))
+	for _, s := range stmts {
+		if !skip[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// hoistWorld pulls the Part that defines the world out of a statement list, so
+// it can be resolved before the roles whose contracts are stated against it.
+// A scope with no such role, or a program with no such Part, is unchanged —
+// the missing-Part case is left to the cardinality check, which words it
+// better than a silent nil world would.
+func hoistWorld(sc *Scope, stmts []*ast.Statement) (*ast.Statement, []*ast.Statement, bool) {
+	role, ok := sc.worldRole()
+	if !ok {
+		return nil, stmts, false
+	}
+	for i, s := range stmts {
+		if s != nil && s.Keyword == "Part" && s.PartRole == role.Name {
+			rest := make([]*ast.Statement, 0, len(stmts)-1)
+			rest = append(rest, stmts[:i]...)
+			return s, append(rest, stmts[i+1:]...), true
+		}
+	}
+	return nil, stmts, false
 }
 
 // callableNames is the set of Shikigami names a bare phrase may resolve to.
@@ -692,6 +948,11 @@ func (r *resolver) resolveStatement(stmt *ast.Statement, cur *ir.Type, sc scope)
 // statement kinds themselves.
 func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc scope) ([]*ir.Node, *ir.Type, error) {
 	var nodes []*ir.Node
+	if sc == scopeTop && !r.scope.TopLevelPipeline {
+		if err := r.refuseTopLevelPipeline(stmt); err != nil {
+			return nodes, nil, err
+		}
+	}
 	switch {
 	case stmt.Keyword == "Shikigami":
 		subNodes, outType, err := r.resolveShikigamiCall(stmt, cur)
@@ -701,6 +962,19 @@ func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc sc
 		nodes = append(nodes, subNodes...) // inline the body
 		cur = outType
 	case stmt.Keyword == "Simple Domain":
+		// A scope may add control-flow vocabulary of its own — a game's
+		// `Quit`, which is a way out of a loop nobody wrote. Its primitives
+		// are asked first, because the loop kinds are a closed set and
+		// anything else under this keyword would otherwise be "needs a loop
+		// kind" whatever it actually was. The default scope adds none, so
+		// this is one nil check in an ordinary program.
+		if prim := r.scopePrimitive(stmt); prim != nil {
+			node, err := r.buildPrimitive(prim, stmt, cur)
+			if err != nil {
+				return nodes, nil, err
+			}
+			return append(nodes, node), node.Out, nil
+		}
 		node, err := r.resolveLoop(stmt, cur)
 		if err != nil {
 			return nodes, nil, err
@@ -788,10 +1062,20 @@ func (r *resolver) resolveOne(stmt *ast.Statement, cur *ir.Type) (*ir.Node, erro
 		return nil, &ResolveError{Pos: stmt.Pos,
 			Msg: fmt.Sprintf("keyword %q has no operation", stmt.Keyword)}
 	}
-	prim := findPrimitive(stmt)
+	prim := r.findPrimitive(stmt)
 	if prim == nil {
-		return nil, &ResolveError{Pos: stmt.Pos, Msg: unknownOpMessage(stmt)}
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: r.unknownOpMessage(stmt)}
 	}
+	return r.buildPrimitive(prim, stmt, cur)
+}
+
+// buildPrimitive runs one primitive's Build with the statement's arguments,
+// and applies the checks every primitive gets whether it asked or not.
+//
+// It is separate from resolveOne because the structurally-dispatched keywords
+// reach a primitive without going through the registry lookup, and they must
+// still get these.
+func (r *resolver) buildPrimitive(prim *Primitive, stmt *ast.Statement, cur *ir.Type) (*ir.Node, error) {
 	// An indented body rides along in the ArgSet, where requireLambda picks it
 	// up as the Using: lambda (prims/block.go). Whether it was picked up is the
 	// primitive's answer to "do I take a lambda at all?", so no list of which
@@ -823,6 +1107,38 @@ func (r *resolver) resolveOne(stmt *ast.Statement, cur *ir.Type) (*ir.Node, erro
 	return node, nil
 }
 
+// refuseTopLevelPipeline enforces a scope whose programs are declarations and
+// Parts only.
+//
+// The rule and its wording are a library file's: "a library is a bag of
+// Shikigami, not a program" (prims/imports.go). Here the bag holds Parts, and
+// the reason is the same — there is no single value flowing through the top
+// level for a stage to transform, so a stage there has nothing to act on.
+func (r *resolver) refuseTopLevelPipeline(stmt *ast.Statement) error {
+	switch stmt.Keyword {
+	case "Part", "Cursed Object", "Cursed Tool":
+		// Cursed Tool is accepted here and refused with a better message by
+		// resolveDeclarations, which can say where to write it instead.
+		return nil
+	}
+	return &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(
+		"a %s program is made of Parts and declarations, not a pipeline: there is no value at the top level for %s to act on. "+
+			"Move this into a Part — the ones it takes are: %s",
+		r.scope.Name, statementNoun(stmt), strings.Join(r.scope.roleNames(), ", "))}
+}
+
+// statementNoun names the offending statement the way its line reads, so the
+// refusal points at something the user can see.
+func statementNoun(stmt *ast.Statement) string {
+	if stmt.Op != nil && strings.TrimSpace(stmt.Op.Raw) != "" {
+		return fmt.Sprintf("%q", strings.TrimSpace(stmt.Op.Raw))
+	}
+	if stmt.Keyword != "" {
+		return fmt.Sprintf("this %s", stmt.Keyword)
+	}
+	return "this statement"
+}
+
 // hasFrom reports whether a statement names channels via a From: argument.
 func hasFrom(stmt *ast.Statement) bool {
 	for _, a := range stmt.Args {
@@ -833,8 +1149,12 @@ func hasFrom(stmt *ast.Statement) bool {
 	return false
 }
 
-func findPrimitive(stmt *ast.Statement) *Primitive {
-	for _, p := range Registry {
+// scopePrimitive finds a primitive the *scope* adds, ignoring Core. It is for
+// the keywords whose statements are dispatched structurally before the
+// registry is consulted, where a scope's addition would otherwise be
+// unreachable.
+func (r *resolver) scopePrimitive(stmt *ast.Statement) *Primitive {
+	for _, p := range r.scope.Prims {
 		if p.Keyword == stmt.Keyword && p.Match(stmt.Op) {
 			return p
 		}
@@ -842,9 +1162,25 @@ func findPrimitive(stmt *ast.Statement) *Primitive {
 	return nil
 }
 
-func unknownOpMessage(stmt *ast.Statement) string {
+func (r *resolver) findPrimitive(stmt *ast.Statement) *Primitive {
+	for _, p := range r.prims {
+		if p.Keyword == stmt.Keyword && p.Match(stmt.Op) {
+			return p
+		}
+	}
+	return nil
+}
+
+func (r *resolver) unknownOpMessage(stmt *ast.Statement) string {
+	// An operation that exists, but in another Innate Domain, is a different
+	// mistake from one that does not exist — and being told which is the
+	// difference between a minute and an hour.
+	if other, p, ok := primInScopeOtherThan(r.scope, stmt); ok {
+		return fmt.Sprintf("%q is a %s operation; this program's Innate Domain is %s",
+			p.ID, other.Name, r.scope.Name)
+	}
 	var known []string
-	for _, p := range Registry {
+	for _, p := range r.prims {
 		if p.Keyword == stmt.Keyword {
 			known = append(known, p.ID)
 		}

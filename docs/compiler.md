@@ -2,18 +2,46 @@
 
 `domain build` (or any subcommand-less invocation with extra arguments)
 hands the **post-optimizer** IR — the same pipeline the interpreter runs —
-to the `codegen` package, which emits one fully typed, self-contained Go
-`main.go` (standard library only) and shells out to
-`go build -trimpath -ldflags "-s -w"` (CGO disabled). The result is a
-static binary around 1.5 MB that needs nothing at runtime.
+to the `codegen` package, which emits one fully typed Go `main.go` and shells
+out to `go build -trimpath -ldflags "-s -w"` (CGO disabled).
 
-The one exception is a [foreign block](ref-expansions.md#foreign-block--t---text-or-a-declared-in---out). Its
-source is embedded as a string constant and run as a subprocess exactly as the
+**How self-contained the result is depends on the program's
+[Innate Domain](scopes.md).** An `Advent of Code` program — which is every
+program written without a scope line — compiles to what it always did: a
+static binary around 1.5 MB, standard library only, needing nothing at
+runtime and nothing at build time but the Go toolchain. That is not a
+default the game backend inherited by accident; it is asserted byte for byte
+(`codegen.moduleFiles`, `TestStdlibBuildInputsAreUnchanged`), because every
+number in [`bench/`](../bench/README.md) and every claim on this page is a
+claim about those build inputs.
+
+A `Game Dev` program is the exception, and the only one so far. It paints a
+terminal, and the terminal half of this repository is Bubble Tea, so its
+binary is around 7.5 MB and its **build** needs the modules — not the network:
+`domain build` writes a `go.mod` and the repository's own `go.sum` beside the
+generated source, and the versions come from a file generated from this
+repository's go.mod (`codegen/deps_data.go`, drift-tested). An emitted
+program can therefore never ask for a version the compiler that emitted it
+was not built against. At *run* time the binary is still self-contained.
+
+`--emit-go` says so in the file: a game's generated source carries the module
+requirements as a header comment, since `domain build` writes the module into
+a throwaway directory the caller never sees.
+
+A [foreign block](ref-expansions.md#foreign-block--t---text-or-a-declared-in---out) is the other
+qualification, and it is about run time rather than build time. Its source is
+embedded as a string constant and run as a subprocess exactly as the
 interpreter runs it, so a binary containing one needs that language's runtime
 — `python3`, the Go toolchain, `rask`, `crust`, `weave` — on the machine it
 runs on.
-Everything else about the binary is unchanged, including the parity oracle:
-the compiled program's stdout matches the interpreter's byte for byte.
+
+Everything else about a binary is unchanged whatever its scope, including the
+parity oracle: the compiled program's stdout matches the interpreter's byte
+for byte, in both optimizer modes. For a game that means its **frames**: a
+replayed game writes a deterministic sequence of them to stdout, and
+`codegen/game_test.go` diffs those against the interpreter's for six anchor
+programs chosen to reach the render tree, the clock, the seeded stream, the
+event table, both JSON directions and the asynchronous exchange.
 
 Because algorithm selection already happened in the optimizer, a compiled
 program contains the quickselect and the hash-set scan, not the requested
@@ -82,7 +110,7 @@ quicksort or pair loop — the thesis survives compilation intact.
   inside a Go loop; Fixed Point convergence uses generated structural
   equality functions (`dmEqN`), the same machinery that backs composite `=`
   in lambdas.
-- **Imports vanish.** `Innate Domain` libraries are loaded and their
+- **Imports vanish.** `Inherited Technique` libraries are loaded and their
   Shikigami inlined before codegen runs, so an imported operation gets every
   optimizer rewrite a local one would and the emitted program contains no
   trace of the library. Libraries are needed at **build** time only; the

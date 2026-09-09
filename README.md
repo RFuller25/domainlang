@@ -19,7 +19,7 @@ expression), named dataflow `Channel`s, loops, measured arguments,
 user-defined `Shikigami` + a prelude, and a **32-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
 `domain build` compiles that same IR into a standalone, aggressively typed Go
-binary — every primitive and all 188 expression builtins have a codegen case,
+binary — every primitive and all 208 expression builtins have a codegen case,
 each pinned by an interpreter-vs-binary oracle test.
 
 **New here? Start with [docs/getting-started.md](docs/getting-started.md)** —
@@ -46,14 +46,19 @@ go run ./cmd/domain build testdata/day1.domain -o day1
 
 # Inspect the generated Go instead:
 go run ./cmd/domain build testdata/day1.domain --emit-go -
+
+# Or play something. Arrows move; q leaves.
+go run ./cmd/domain run examples/games/snake.domain
 ```
 
 Twenty-one ready-to-run programs with inputs and expected outputs live in
 [`examples/`](examples/README.md) — each one shows off a different piece of
-the language — and thirteen classic programming challenges (FizzBuzz, Two
-Sum, Kadane, Conway's Game of Life, Minesweeper, …) live in
-[`challenges/`](challenges/README.md). Tests keep every one of them green
-in both backends.
+the language — thirteen classic programming challenges (FizzBuzz, Two Sum,
+Kadane, Conway's Game of Life, Minesweeper, …) live in
+[`challenges/`](challenges/README.md), and six whole games (snake, tetris,
+an Oregon Trail, a tower defence, and two that talk to a server) live in
+[`examples/games/`](examples/games/README.md). Tests keep every one of them
+green in both backends — the games by diffing their frames.
 
 The CLI picks its mode from the arguments: a bare program file interprets it,
 any extra argument compiles it, and `domain --help` lists everything:
@@ -77,7 +82,14 @@ domain expansion: visualize day1.domain --expressions   # …down to what each U
 domain expansion: development day1.domain        # write it in a terminal editor that knows the language
 domain expansion: documentation                  # serve the docs as a local website (port 4444)
 domain expansion: vscode                         # install the VS Code extension carried in the binary
+domain expansion: mahoraga day1.domain input.txt expected.txt   # adapt a binary to this input, with a recipe
 ```
+
+The rest of the family — `lint`, `optimize`, `bench`, `coverage`, `stats`,
+`battle` — round out linting, optimizer reports, cross-backend benchmarking,
+builtin/primitive coverage over a folder, per-program stats, and racing a
+Domain program against a hand-written one in another language; see
+[docs/cli.md](docs/cli.md) for the full list.
 
 The documentation site includes a browser playground compiled to WebAssembly.
 `go build ./cmd/domain` alone won't have it — build with `make build` instead
@@ -118,9 +130,9 @@ and never rewrites an operation phrase's interior; see
 The repo is a flake. `nix run` it directly, or add it to a system:
 
 ```sh
-nix run github:RFuller25/domain -- day1.domain < input.txt   # interpret
-nix run github:RFuller25/domain -- day1.domain -o day1       # compile
-nix profile install github:RFuller25/domain                  # put `domain` on PATH
+nix run github:RFuller25/domainlang -- day1.domain < input.txt   # interpret
+nix run github:RFuller25/domainlang -- day1.domain -o day1       # compile
+nix profile install github:RFuller25/domainlang                  # put `domain` on PATH
 nix develop                                                   # hacking shell (go, gopls)
 ```
 
@@ -128,7 +140,7 @@ In a NixOS / Home Manager flake, take the package from the input:
 
 ```nix
 {
-  inputs.domain.url = "github:RFuller25/domain";
+  inputs.domain.url = "github:RFuller25/domainlang";
 
   # e.g. in a NixOS module:
   environment.systemPackages = [ inputs.domain.packages.${pkgs.system}.default ];
@@ -145,7 +157,7 @@ a Go toolchain, even on machines without Go installed.
 Syntax highlighting for VS Code (TextMate grammar) and Neovim/Vim (runtime
 plugin, also exported by the flake as `packages.<system>.domain-nvim`) lives
 in [`editors/`](editors/README.md). Both grammars are **generated from the
-language itself** — the primitives from the registry, all 178 expression
+language itself** — the primitives from the registry, all 208 expression
 builtins, the keywords — and a test fails if they fall behind it.
 
 The binary carries the VS Code extension and installs it for you:
@@ -212,16 +224,17 @@ Every keyword below is optional except where the row says otherwise — see
 
 | Keyword | Semantic role | Examples |
 |---|---|---|
-| `Innate Domain:` | import a Shikigami library | `Innate Domain: aoc` |
+| `Innate Domain:` | declare the program's scope | `Innate Domain: Game Dev` |
+| `Inherited Technique:` | import a Shikigami library | `Inherited Technique: aoc` |
 | `Cursed Energy:` | input / data source | Read Source |
 | `Cursed Technique:` | 1:1 transforms | Split, Map Each, Filter, Match Pattern, Take Item, Transpose, Map Cells, Apply, Unique, Scan, Pairs, Chunk, Take/Drop While, Partition, Iterate, Unfold |
 | `Channeled Energy:` | type coercion | Convert To Integers, Convert To Grid |
 | `Maximum Technique:` | reductions / aggregation | Sum, Max, Min, Count, Fold, Reduce, Any/All, Find, Sum By, Group By, Select Top K, Intersect/Union, Combine, Zip |
 | `Domain Expansion:` | a named algorithm the optimizer may swap — or a foreign block, the one it may not | Quicksort, All Pairs, Combinations, Sliding Reduce, Python |
 | `Reverse Cursed Technique:` | inversions | Reverse |
-| `Simple Domain:` | control flow | Repeat N, Iterate Until Fixed Point, While |
+| `Simple Domain:` | control flow | Repeat N, Iterate Until Fixed Point, While, For x in y, For Each x In |
 | `Channel "name":` | named sub-pipeline (dataflow branch) | + `From:` consumers |
-| `Part "label":` | labelled output block (two answers, one parse) | + `Reveal:` inside |
+| `Part "label":` | labelled output block (two answers, one parse) — or, in another [scope](docs/scopes.md), a [role](docs/ref-game-parts.md): `Part World:`, `Part On "key up":`, `Part Draw:` | + `Reveal:` inside |
 | `Shikigami "name" (p: T) : In -> Out` | user-defined operation (inlined) | the prelude is written this way |
 | `Consider x As …` / `Consider x Of …` (required) | a local variable for one stage's expressions — `As` a constant or a function, `Of` the current value put through an operation | `Consider total Of Sum` |
 | `Cursed Object:` / `Cursed Tool:` | declare a global / change one — a name whose scope is the rest of the program, not one stage | `Cursed Object: total As 0` |
@@ -230,10 +243,22 @@ Every keyword below is optional except where the row says otherwise — see
 
 ## What it can do
 
+- **Two kinds of program.** `Innate Domain:` says which — the puzzle solver
+  every program above is, or a
+  [terminal game](docs/game-dev.md): a world, the events that change it, and
+  a frame drawn from it, with the arrow keys moving it and Bubble Tea painting
+  it. A scope decides the vocabulary in reach, the `Part` roles a program is
+  built out of, whether a top-level pipeline is even legal, and how the result
+  is run — and only ever *adds*, so nothing an `Innate Domain` does can make an
+  operation stop resolving in a program that resolves today. There are
+  [six whole games](examples/games/README.md) in the repository, each tested
+  by diffing its frames.
 - **Parsing** via `Match Pattern` typed-hole templates (`"{a:int}-{b:int}"`):
   named holes → Records, positional → tuples/lists.
 - **Data model**: Int, Float, Text, Bool, List, Tuple, Record, Map, Set,
-  Grid, and Sparse (the unbounded default-valued plane).
+  Grid, Sparse (the unbounded default-valued plane), Graph, and View — the
+  opaque render tree a program builds when it is describing a picture rather
+  than computing an answer (see [docs/ref-builtins-view.md](docs/ref-builtins-view.md)).
 - **Higher-order operations** driven by `Using:` lambdas — `Map Each`, `Filter`,
   `Fold`, `Group By`, `Count Matching`, `All Pairs`/`Combinations` — and, where
   a lambda cannot reach, **a `Using:` written as an indented pipeline**: it
@@ -297,7 +322,8 @@ Every keyword below is optional except where the row says otherwise — see
   says what crosses the wire. It is the one Domain Expansion the optimizer
   never touches: it names an implementation, not a result. See
   [docs/ref-expansions.md](docs/ref-expansions.md#foreign-block--t---text-or-a-declared-in---out).
-- **`Innate Domain`** — import a library of Shikigami (`Innate Domain: aoc`),
+- **`Inherited Technique`** — import a library of Shikigami
+  (`Inherited Technique: aoc`),
   searched beside the program, then `$DOMAIN_PATH`, then `~/.config/domain/lib`.
   Libraries are free: a Shikigami is inlined, so an imported operation gets
   every optimizer rewrite a local one would, and the binary needs the library
@@ -319,6 +345,16 @@ Every keyword below is optional except where the row says otherwise — see
   The full map from the canonical Go helper library lives in
   [`docs/aoc-toolbox.md`](docs/aoc-toolbox.md).
 - **A 32-pass optimizer** that fires even through Shikigami abstraction (below).
+- **`mahoraga`** — where the optimizer asks what is true of every program,
+  `domain expansion: mahoraga <file> <input> <expected>` asks what is true of
+  *this* program on *this* input: it measures the input, searches a catalogue
+  of codegen tunings gated on those measurements, and writes a specialized
+  binary plus a recipe (`<stem>.mahoraga.json`) recording every adaptation —
+  `--replay` rebuilds the binary from the recipe alone, `--verify` checks
+  whether it is still safe to reuse on a new input. See
+  [docs/mahoraga.md](docs/mahoraga.md) for the design (why it can't just
+  print the answer, the tiers, what a real benchmark suite found) and
+  [docs/cli.md](docs/cli.md#domain-expansion-mahoraga) for every flag.
 
 Worked anchor programs live in [`testdata/`](testdata): AoC 2022 Days 1/4/5/8
 and AoC 2020 Day 1 (parts 1 & 2).
@@ -386,6 +422,7 @@ typecheck/  static expression typer (lambda output-type inference)
 eval/       dynamic expression evaluator (lambda bodies, runtime field access)
 prims/      primitive vocabulary + resolver/typechecker + Shikigami + prelude
 optimizer/  32 rewrite passes: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
+mahoraga/   input-adaptive codegen tunings: measure, search a catalogue, verify/replay
 interp/     tree-walking evaluator
 codegen/    Go compiler backend: optimized IR → typed Go source → `go build`
 cmd/domain/ CLI (bare file → interpret, extra args → compile; run/build, --help)
@@ -413,11 +450,17 @@ Go is aggressively concrete:
 - `All Pairs`/`Combinations k` unroll into `k` nested loops at compile time.
 
 The interpreter is the correctness oracle: `codegen`'s tests compile every
-anchor program in both modes and require byte-identical stdout. On a
-1M-line AoC 2022 Day 4 input the compiled binary is ~7× faster than the
-interpreter; binaries are self-contained (~1.5 MB, stdlib only) — unless the
-program contains a [foreign block](docs/ref-expansions.md#foreign-block--t---text-or-a-declared-in---out), which
-embeds another language's source but not the runtime that runs it.
+anchor program in both modes and require byte-identical stdout — and for a
+[`Game Dev`](docs/scopes.md) program, whose output is a picture, byte-identical
+*frames*. On a 1M-line AoC 2022 Day 4 input the compiled binary is ~7× faster
+than the interpreter; an ordinary binary is self-contained (~1.5 MB, stdlib
+only). Two things qualify that, and both are scoped rather than general: a
+[foreign block](docs/ref-expansions.md#foreign-block--t---text-or-a-declared-in---out) embeds another
+language's source but not the runtime that runs it, and a `Game Dev` binary
+paints a terminal, so it is ~7.5 MB and its *build* needs Bubble Tea — at
+pinned versions generated from this repository's own `go.mod`, so it never
+resolves anything. A program with no scope line compiles exactly as it always
+did, which is asserted rather than assumed.
 
 The benchmark that matters is against Go rather than against the
 interpreter: [`bench/`](bench/README.md) pairs each Domain program in it
@@ -436,12 +479,14 @@ equality functions; tuple-shaped `Match Pattern` emits positional structs.
 A future primitive that ships without a codegen case fails `domain build`
 with a positioned error and keeps working under `domain run`. Nothing is in
 that state today: the whole surface — parsing/range/set primitives, the
-grid searches, the sparse grid type, and all 188 expression builtins
+grid searches, the sparse grid type, and all 208 expression builtins
 including the point group — compiles, with oracle tests pinning
 interpreter/binary parity (see [`docs/compiler.md`](docs/compiler.md)).
 A foreign block compiles too, with its source embedded as a constant and the
 same subprocess run at run time; what it costs is the sentence above about
-self-contained binaries.
+self-contained binaries. So does a whole game: its Parts become top-level
+functions and the loop that drives them is a runtime transliterated from the
+interpreter's host.
 
 ## Design decisions
 

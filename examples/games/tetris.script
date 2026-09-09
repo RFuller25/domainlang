@@ -1,0 +1,16 @@
+# Tetris, driven from a script. `seed` fixes which pieces come, so this file
+# is the whole of the run — including which two shapes happen to fill a row.
+
+seed 10
+frame                # the first piece, an I, over the middle
+
+key left             # push it to the wall
+tick 5000            # and let it fall the height of the well
+frame
+
+key right            # the next one, an O, goes to the other side
+key right
+tick 5000
+frame                # six cells across: the row goes, and the score moves
+
+key q

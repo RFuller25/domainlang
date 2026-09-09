@@ -193,7 +193,7 @@ func TestMakeLinkRouting(t *testing.T) {
 		// Anything else outside docs/ goes to GitHub absolutely: served with
 		// docs/ as the root, a relative "../" cannot climb out and silently
 		// lands back inside the site.
-		{"../README.md", `href="https://github.com/RFuller25/domain/blob/main/README.md"`},
+		{"../README.md", `href="https://github.com/RFuller25/domainlang/blob/main/README.md"`},
 		{"../README.md#install-with-nix", `blob/main/README.md#install-with-nix`},
 		{"../editors/README.md", `blob/main/editors/README.md`},
 		// A .md page that is not in the manifest stays a plain relative link.

@@ -261,9 +261,9 @@ var LinearAccPrims = map[string]bool{
 // `Iterate` and `Iterate Until Fixed Point` are excluded here for exactly the
 // reasons they are excluded there — the first keeps every intermediate in its
 // output, the second compares the previous value against the new one — and
-// `For` is excluded because its body sees an ambient parameter as well as the
-// threaded value, which is a second reader this analysis has not been taught
-// about.
+// `For` and `For Each` are excluded because their bodies see an ambient
+// parameter as well as the threaded value, which is a second reader this
+// analysis has not been taught about.
 var LinearLoopPrims = map[string]bool{
 	"Simple Domain (While)":  true,
 	"Simple Domain (Repeat)": true,

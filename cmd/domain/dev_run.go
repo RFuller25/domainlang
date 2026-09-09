@@ -127,7 +127,7 @@ func (m devModel) runProgram() (tea.Model, tea.Cmd) {
 		defer prims.WatchForeignRuns(rec.ForeignRan)()
 
 		ctx := &ir.Context{Stdout: outBuf, BaseDir: dir, Trace: interrupt}
-		_, runErr := interp.Run(pipe, ctx)
+		_, runErr := interp.RunScoped(pipe, ctx)
 		out := outBuf.String()
 		return devRunDoneMsg{result: devRunResult{
 			gen:         gen,

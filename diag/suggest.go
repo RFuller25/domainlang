@@ -21,7 +21,7 @@ var structuralKeywords = []string{"Channel", "Shikigami", "Simple Domain"}
 func knownKeywords() []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, p := range prims.Registry {
+	for _, p := range prims.AllPrimitives() {
 		if !seen[p.Keyword] {
 			seen[p.Keyword] = true
 			out = append(out, p.Keyword)
@@ -48,7 +48,7 @@ func knownKeywords() []string {
 // where the useful half of the suggestion was.
 func opsUnder(keyword string) []string {
 	var out []string
-	for _, p := range prims.Registry {
+	for _, p := range prims.AllPrimitives() {
 		if p.Keyword == keyword && len(p.Phrases) == 0 {
 			out = append(out, p.ID)
 		}
@@ -141,7 +141,7 @@ func suggestOperation(keyword string, op *ast.Operation) *opSuggestion {
 	// primitive is named by its spellings, which is its ID unless it says
 	// otherwise — `Cursed Technique: Python` is exactly this mistake, and the
 	// keyword is the only thing wrong with it.
-	for _, p := range prims.Registry {
+	for _, p := range prims.AllPrimitives() {
 		if p.Keyword == keyword {
 			continue
 		}
@@ -179,7 +179,7 @@ func suggestBareOperation(op *ast.Operation) *opSuggestion {
 		return nil
 	}
 	var ids []string
-	for _, p := range prims.Registry {
+	for _, p := range prims.AllPrimitives() {
 		if len(p.Phrases) == 0 { // see opsUnder
 			ids = append(ids, p.ID)
 		}
@@ -188,7 +188,7 @@ func suggestBareOperation(op *ast.Operation) *opSuggestion {
 	if s == nil {
 		return nil
 	}
-	for _, p := range prims.Registry {
+	for _, p := range prims.AllPrimitives() {
 		if p.ID == s.Op {
 			s.Keyword = p.Keyword
 			break

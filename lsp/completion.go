@@ -110,7 +110,7 @@ func (s *Server) completion(params json.RawMessage) any {
 		return nil
 	}
 	prefix := linePrefix(doc.text, p.Position.Line, p.Position.Character)
-	items := CompletionItems(prefix)
+	items := CompletionItemsIn(documentScope(doc.text), prefix)
 	return map[string]any{"isIncomplete": false, "items": items}
 }
 
@@ -172,8 +172,56 @@ func utf16OffsetToBytes(s string, units int) int {
 // cmd/domain/repl_complete.go): given the text before the cursor on a
 // line, decide what to offer.
 func CompletionItems(prefix string) []map[string]any {
+	return CompletionItemsIn("", prefix)
+}
+
+// documentScope is the `Innate Domain:` a file declares, or "".
+//
+// A line scan rather than a parse: this runs on every keystroke that opens a
+// completion, the declaration is one line by construction, and a file being
+// typed into does not parse most of the time — which is exactly when the
+// completions matter most.
+func documentScope(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "Innate Domain:"); ok {
+			return strings.TrimSpace(rest)
+		}
+		// The declaration is hoisted, so it may sit anywhere — but a file that
+		// has none should not be scanned to its end on every keystroke, and a
+		// file that has one virtually always opens with it.
+		if strings.Contains(line, ":") {
+			return ""
+		}
+	}
+	return ""
+}
+
+// CompletionItemsIn is CompletionItems for a file that declared a scope.
+//
+// Two things depend on it, and both are about what a program *may say* rather
+// than about what it says now: the `Part` roles, which are the scope's
+// (prims.PartForms), and the scope names themselves. Everything else is
+// offered as before — a scope only ever adds to the vocabulary, so nothing an
+// `Innate Domain` does can make a completion stop being valid.
+func CompletionItemsIn(scope, prefix string) []map[string]any {
 	indented := len(prefix) > 0 && (prefix[0] == ' ' || prefix[0] == '\t')
 	trimmed := strings.TrimSpace(prefix)
+
+	// `Innate Domain: ` → the scopes this build has.
+	if !indented {
+		if key, ok := splitKeyword(trimmed); ok && strings.EqualFold(key, "Innate Domain") {
+			return scopeItems()
+		}
+		// `Part ` → the roles this scope permits. There is no colon yet, so
+		// this is checked before splitKeyword ever sees the line.
+		if partPrefix(trimmed) {
+			return partItems(scope)
+		}
+	}
 
 	// Indented continuation line → named arguments (and, after Mode:, its values).
 	if indented {
@@ -200,6 +248,51 @@ func CompletionItems(prefix string) []map[string]any {
 	// there — the themed keyword, or the bare operation phrase that infers it —
 	// so offer the keywords first and then every primitive.
 	return append(keywordItems(), bareOperationItems()...)
+}
+
+// partPrefix reports whether the line is a `Part` waiting for its role. A
+// line that already has its colon is a finished head and is left alone.
+func partPrefix(trimmed string) bool {
+	if strings.Contains(trimmed, ":") {
+		return false
+	}
+	return strings.EqualFold(trimmed, "Part") || len(trimmed) > 5 && strings.EqualFold(trimmed[:5], "Part ")
+}
+
+// partItems offers the Part forms a scope permits, which is the one piece of
+// vocabulary that genuinely differs between scopes: a `Part Draw:` is a
+// resolve error outside a game, and a `Part "1":` is one inside it.
+func partItems(scope string) []map[string]any {
+	forms := prims.PartForms(scope)
+	out := make([]map[string]any, 0, len(forms))
+	for i, f := range forms {
+		out = append(out, map[string]any{
+			"label":         f.Form,
+			"kind":          kindKeyword,
+			"detail":        "Part role",
+			"documentation": md(f.Doc),
+			"insertText":    f.Form,
+			"sortText":      sortKey(i),
+		})
+	}
+	return out
+}
+
+// scopeItems offers the scopes this build has.
+func scopeItems() []map[string]any {
+	scopes := prims.ScopeSummaries()
+	out := make([]map[string]any, 0, len(scopes))
+	for i, sc := range scopes {
+		out = append(out, map[string]any{
+			"label":         sc.Form,
+			"kind":          kindValue,
+			"detail":        "Innate Domain",
+			"documentation": md(sc.Doc),
+			"insertText":    sc.Form,
+			"sortText":      sortKey(i),
+		})
+	}
+	return out
 }
 
 // splitKeyword returns the text of a trimmed line before its first ':'. ok is
@@ -257,9 +350,9 @@ func argItems() []map[string]any {
 // sorted after the keywords so that a user who wants the themed spelling still
 // meets it first. The detail line names the keyword each one infers.
 func bareOperationItems() []map[string]any {
-	out := make([]map[string]any, 0, len(prims.Registry))
+	out := make([]map[string]any, 0, len(prims.AllPrimitives()))
 	i := 0
-	for _, prim := range prims.Registry {
+	for _, prim := range prims.AllPrimitives() {
 		doc, _ := prims.Doc(prim.ID)
 		// A primitive is offered under each of its writable spellings, which is
 		// its ID unless it says otherwise: completing a foreign block has to
@@ -285,7 +378,7 @@ func bareOperationItems() []map[string]any {
 func primitiveItems(keyword string) []map[string]any {
 	var out []map[string]any
 	i := 0
-	for _, prim := range prims.Registry {
+	for _, prim := range prims.AllPrimitives() {
 		if prim.Keyword != keyword {
 			continue
 		}

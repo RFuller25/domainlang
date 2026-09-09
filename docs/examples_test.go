@@ -36,7 +36,7 @@ import (
 // ```domain block is; see the commentary there for the three info states.
 
 // isProgram reports whether a block is a whole program rather than a fragment:
-// whether its first meaningful line is a source stage. `Innate Domain` and
+// whether its first meaningful line is a source stage. `Inherited Technique` and
 // `Shikigami` definitions may precede it, since both are declarations.
 func isProgram(src string) bool {
 	for _, line := range strings.Split(src, "\n") {
@@ -45,7 +45,7 @@ func isProgram(src string) bool {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(t, "Innate Domain:"), strings.HasPrefix(t, "Shikigami \""):
+		case strings.HasPrefix(t, "Inherited Technique:"), strings.HasPrefix(t, "Shikigami \""):
 			continue
 		case strings.HasPrefix(t, "Cursed Energy:"):
 			return true
@@ -104,7 +104,7 @@ func TestDocProgramsResolve(t *testing.T) {
 		// blocks are covered by the runnable harness in cmd/domain, which
 		// stages the library beside the program and then runs it, so they are
 		// checked more thoroughly there rather than not at all.
-		if strings.Contains(b.Source, "Innate Domain:") {
+		if strings.Contains(b.Source, "Inherited Technique:") {
 			continue
 		}
 		toks, err := lexer.Lex(b.Source)

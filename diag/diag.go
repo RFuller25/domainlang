@@ -87,7 +87,15 @@ func Render(d *Diagnostic, path string, color bool) string {
 	}
 	b.WriteString(paint(color, sevColor(d.Severity), head+": "+d.Msg))
 	b.WriteByte('\n')
-	fmt.Fprintf(&b, "  --> %s:%d:%d\n", path, d.Pos.Line, d.Pos.Col)
+	// A diagnostic about the whole program — a Part it is missing, a shape
+	// rule it does not meet — has no line of its own. Pointing at 0:0 sends
+	// the reader somewhere to look and there is nothing there, so the file
+	// alone is what gets named.
+	if d.Pos.Line == 0 && d.Pos.Col == 0 {
+		fmt.Fprintf(&b, "  --> %s\n", path)
+	} else {
+		fmt.Fprintf(&b, "  --> %s:%d:%d\n", path, d.Pos.Line, d.Pos.Col)
+	}
 
 	if d.LineText != "" {
 		lineNo := fmt.Sprintf("%4d", d.Pos.Line)

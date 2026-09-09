@@ -42,6 +42,12 @@ type globalDecl struct {
 type globalSeal struct {
 	what string // the construct, named as the user would name it
 	why  string // why it is sealed, and what to write instead
+	// writesOnly marks a seal that closes one direction. A Channel and an
+	// imported Shikigami are sealed both ways — their whole point is that
+	// they cannot depend on, or disturb, names they never saw. A Part whose
+	// role freezes the globals is different: reading one is exactly what it
+	// is for, and only the write has to stop.
+	writesOnly bool
 }
 
 // sealedFrom reports the seal in force, if any.
@@ -62,7 +68,7 @@ type globalSeal struct {
 // turns on names its author never wrote is not a library. Definitions in the
 // program's own file are unaffected; they are inlined at their call sites and
 // read and write globals like any other stage.
-func (r *resolver) sealedFrom() (globalSeal, bool) {
+func (r *resolver) sealedFrom(writing bool) (globalSeal, bool) {
 	if r.inChannel {
 		return globalSeal{
 			what: "a Channel",
@@ -70,6 +76,15 @@ func (r *resolver) sealedFrom() (globalSeal, bool) {
 				"read or wrote would depend on an order nothing downstream can see. " +
 				"Declare the global outside the Channel and set it from the Channel's " +
 				"value once a From: consumer has taken it",
+		}, true
+	}
+	if writing && r.partGlobals == GlobalsReadOnly {
+		return globalSeal{
+			writesOnly: true,
+			what:       "this kind of Part",
+			why: "its Innate Domain freezes the globals once the program has started, so that " +
+				"what a Part produces depends only on the value it was given. Keep a value that " +
+				"changes in that value instead, or set this one where the globals are still open",
 		}, true
 	}
 	if r.foreignDepth > 0 {
@@ -240,7 +255,8 @@ func (r *resolver) resolveGlobals(stmt *ast.Statement, cur *ir.Type) (*ir.Node, 
 	names := make([]string, 0, len(stmt.Decls))
 	var sub [][]*ir.Node
 
-	if seal, sealed := r.sealedFrom(); sealed {
+	// Both `Cursed Object` and `Cursed Tool` write, so both ask as writers.
+	if seal, sealed := r.sealedFrom(true); sealed {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(
 			"%s is not allowed inside %s — %s", stmt.Keyword, seal.what, seal.why)}
 	}
@@ -342,7 +358,7 @@ func (r *resolver) bindGlobal(d *ast.Binding, rt *runtimeBind, declaring bool) (
 			"%q is already a global, declared at %s; use `Cursed Tool: %s As …` to change it",
 			d.Name, prev.pos, d.Name)}
 	}
-	if err := checkDeclaredName(d.Name, "a global", d.Pos); err != nil {
+	if err := checkDeclaredName(d.Name, "a global", d.Pos, r.prims); err != nil {
 		return 0, err
 	}
 	if _, ok := r.channels[d.Name]; ok {

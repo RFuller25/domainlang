@@ -191,9 +191,10 @@ var Builtins = []string{
 	"prow", "put", "repeats", "reverse", "rotl", "rotr", "round", "row",
 	"rows", "set", "shl", "shr", "sign", "solve2x2", "sparse", "sqrt", "sum",
 	"take", "textjoin", "tofloat", "toint", "totext", "trim", "tuple",
-	"upper", "lower", "slice", "charat", "chars", "indexof", "startswith",
+	"upper", "lower", "slice", "charat", "withchar", "chars", "indexof", "startswith",
 	"endswith", "replace",
 	"psub", "pscale", "chebyshev", "dirs8", "around4", "around8",
+	"nearby4", "nearby8",
 	"haskey", "getor", "keys", "values", "size", "tolist",
 	// v0.6: the collections stop being read-only. Sparse was the only kind
 	// with a constructor and a functional update, which is why a sparse
@@ -244,6 +245,17 @@ var Builtins = []string{
 	// four whole-graph questions an edge list makes worth asking.
 	"roots", "leaves", "indegree", "delnode", "reachable",
 	"hascycle", "undirected", "mergegraphs", "weightsum",
+	// View: the render tree. A program that is describing a picture rather
+	// than computing an answer builds one of these, and it is opaque — no
+	// arithmetic, no ordering, no equality — so that `length` of something
+	// styled cannot be asked.
+	"text", "blank", "style", "stack", "beside", "box", "margin", "align",
+	"fit", "draw",
+	// A seeded stream, and the clock a program that runs forever needs.
+	"random", "randomf", "pick", "frame", "elapsed",
+	// Out is a function of the value; in needs a declared type, so decoding
+	// is a primitive (`Convert From JSON`) rather than a builtin.
+	"tojson", "pending",
 }
 
 // PointType is the expression-layer representation of a 2D point: an
@@ -260,13 +272,19 @@ var builtinArity = map[string]int{
 	// math / number theory
 	"abs": 1, "sign": 1, "gcd": 2, "lcm": 2, "modpow": 3, "modinv": 2,
 	"solve2x2": 6,
-	"mod":      2, "divmod": 2, "pow": 2, "isqrt": 1, "clamp": 3,
+	// View
+	"text": 1, "blank": 0, "style": 2, "stack": -1, "beside": -1,
+	"box": 1, "margin": 3, "align": 4, "fit": 3, "draw": 1,
+	// randomness and time
+	"random": 1, "randomf": 0, "pick": 1, "frame": 0, "elapsed": 0,
+	"tojson": 1, "pending": 1,
+	"mod": 2, "divmod": 2, "pow": 2, "isqrt": 1, "clamp": 3,
 	"factorial": 1, "choose": 2,
 	// heterogeneous tuple construction
 	"tuple": -1, // variadic, >= 2
 	// text
 	"toint": 1, "occurrences": 2, "repeats": 1, "totext": 1,
-	"slice": 3, "charat": 2, "chars": 1, "indexof": 2,
+	"slice": 3, "charat": 2, "withchar": 3, "chars": 1, "indexof": 2,
 	"startswith": 2, "endswith": 2, "replace": 3, "trim": 1,
 	"upper": 1, "lower": 1, "textjoin": 2,
 	// floats (H)
@@ -275,6 +293,7 @@ var builtinArity = map[string]int{
 	"point": 2, "prow": 1, "pcol": 1, "padd": 2, "manhattan": 2,
 	"rotl": 1, "rotr": 1, "dirs4": 0, "dirs8": 0,
 	"psub": 2, "pscale": 2, "chebyshev": 2, "around4": 1, "around8": 1,
+	"nearby4": 3, "nearby8": 3,
 	// map / set escape hatches
 	"haskey": 2, "getor": 3, "keys": 1, "values": 1, "size": 1, "tolist": 1,
 	"inbounds": 3, "neighbors4": 3, "neighbors8": 3,
@@ -330,6 +349,10 @@ var builtinArity = map[string]int{
 // the message can say so.
 var variadicArity = map[string][2]int{
 	"list": {1, -1}, "tuple": {2, -1}, "min": {1, 2}, "max": {1, 2},
+	// stack and beside take any number of panels, including none — an empty
+	// row is a legitimate thing to draw, and special-casing it at every call
+	// site would be worse than allowing it here.
+	"stack": {0, -1}, "beside": {0, -1},
 	"insert": {2, 3}, "record": {2, -1},
 	// addedge weighs the arc 1 when no weight is given.
 	"addedge": {3, 4},
@@ -400,8 +423,121 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return nil
 	}
+	needView := func(i int) error {
+		if args[i] == nil || args[i].Kind != ir.KView {
+			return fmt.Errorf("%s: %s argument %d must be a View — build one with text(), and combine with stack/beside/box — got %s",
+				x.Pos, name, i+1, args[i])
+		}
+		return nil
+	}
 
 	switch name {
+	case "text":
+		// Anything renderable becomes a panel: a number, a truth, a grid cell.
+		// Refusing all but Text would make every call site write totext().
+		if args[0] != nil && args[0].Kind == ir.KView {
+			return nil, fmt.Errorf("%s: text() takes something to render, but its argument is already a View", x.Pos)
+		}
+		return ir.View(), nil
+	case "blank":
+		return ir.View(), nil
+	case "style":
+		if err := needView(0); err != nil {
+			return nil, err
+		}
+		if args[1] == nil || args[1].Kind != ir.KText {
+			return nil, fmt.Errorf("%s: style()'s second argument is the style, as Text (e.g. \"bold red\"), got %s", x.Pos, args[1])
+		}
+		return ir.View(), nil
+	case "stack", "beside":
+		for i := range args {
+			if err := needView(i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.View(), nil
+	case "box":
+		if err := needView(0); err != nil {
+			return nil, err
+		}
+		return ir.View(), nil
+	case "margin":
+		if err := needView(0); err != nil {
+			return nil, err
+		}
+		for i := 1; i <= 2; i++ {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.View(), nil
+	case "align":
+		if err := needView(0); err != nil {
+			return nil, err
+		}
+		for i := 1; i <= 2; i++ {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		if args[3] == nil || args[3].Kind != ir.KText {
+			return nil, fmt.Errorf("%s: align()'s fourth argument is \"left\", \"center\" or \"right\", got %s", x.Pos, args[3])
+		}
+		return ir.View(), nil
+	case "fit":
+		if err := needView(0); err != nil {
+			return nil, err
+		}
+		for i := 1; i <= 2; i++ {
+			if err := needInt(i); err != nil {
+				return nil, err
+			}
+		}
+		return ir.View(), nil
+	case "draw":
+		// draw(board): a whole board in one call, each cell rendered as it
+		// would print and laid out row by row.
+		//
+		// It takes no per-cell function, because the expression layer has no
+		// higher-order builtins at all — and it does not need one: the
+		// pipeline layer already has `Map Cells`, so a board of glyphs is
+		// built there and drawn here. That keeps the two layers doing what
+		// each is for instead of growing a second, weaker map.
+		if args[0] == nil {
+			return nil, fmt.Errorf("%s: draw() takes a Grid, a Sparse or a List of rows", x.Pos)
+		}
+		switch args[0].Kind {
+		case ir.KGrid, ir.KSparse, ir.KList:
+			return ir.View(), nil
+		}
+		return nil, fmt.Errorf("%s: draw() takes a Grid, a Sparse or a List of rows, got %s", x.Pos, args[0])
+	case "pending":
+		if args[0] == nil || args[0].Kind != ir.KText {
+			return nil, fmt.Errorf("%s: pending() takes a request's tag as Text, got %s", x.Pos, args[0])
+		}
+		return ir.Bool(), nil
+	case "tojson":
+		if args[0] != nil && containsView(args[0]) {
+			return nil, fmt.Errorf("%s: a View has no JSON form — it describes a picture rather than a value", x.Pos)
+		}
+		return ir.Text(), nil
+	case "random":
+		if err := needInt(0); err != nil {
+			return nil, err
+		}
+		return ir.Int(), nil
+	case "randomf":
+		return ir.Float(), nil
+	case "pick":
+		// One element of a list, drawn from the stream. A Set reads as its
+		// elements everywhere else in the language, so it does here too.
+		if args[0] == nil || (args[0].Kind != ir.KList && args[0].Kind != ir.KSet) {
+			return nil, fmt.Errorf("%s: pick() takes a List or a Set, got %s", x.Pos, args[0])
+		}
+		return args[0].Elem, nil
+	case "frame", "elapsed":
+		return ir.Int(), nil
+
 	case "length":
 		// Text counts runes, matching `Split Text by ""` and charat/slice, so
 		// the two layers agree about what position 3 means.
@@ -798,6 +934,17 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		return ir.Text(), nil
+	case "withchar":
+		if !args[0].Equal(ir.Text()) {
+			return nil, fmt.Errorf("%s: withchar needs Text, got %s", x.Pos, args[0])
+		}
+		if err := needInt(1); err != nil {
+			return nil, err
+		}
+		if !args[2].Equal(ir.Text()) {
+			return nil, fmt.Errorf("%s: withchar replacement must be Text, got %s", x.Pos, args[2])
+		}
+		return ir.Text(), nil
 	case "slice":
 		// Also slices a List, so the two collection kinds stay symmetric.
 		if args[0] != nil && args[0].Kind == ir.KList {
@@ -872,6 +1019,25 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			}
 		}
 		return ir.Int(), nil
+	case "nearby4", "nearby8":
+		// Manhattan's and chebyshev's own metrics, over a whole List<Point> at
+		// once: the indices within radius, in input order. `4`/`8` names the
+		// metric the way dirs4/8, around4/8 and neighbors4/8 already do,
+		// rather than a mode argument only one of the two ever varies.
+		elem, err := needList(0)
+		if err != nil {
+			return nil, err
+		}
+		if !elem.Equal(PointType()) {
+			return nil, fmt.Errorf("%s: %s needs a List of points, got List<%s>", x.Pos, name, elem)
+		}
+		if err := needPoint(x, name, args, 1); err != nil {
+			return nil, err
+		}
+		if err := needInt(2); err != nil {
+			return nil, err
+		}
+		return ir.List(ir.Int()), nil
 	case "haskey":
 		if args[0] == nil || args[0].Kind != ir.KMap {
 			return nil, fmt.Errorf("%s: haskey needs a Map argument, got %s", x.Pos, args[0])
@@ -1716,6 +1882,15 @@ func binaryType(x *ast.BinaryExpr, env Env) (*ir.Type, error) {
 		if numeric(lt) && numeric(rt) {
 			return ir.Bool(), nil // mixed Int/Float compares through promotion
 		}
+		// A View is a description of a picture, not a value with an identity:
+		// two trees that draw the same thing are not the same tree, and the
+		// question is almost always a mistake. It matters more than it looks:
+		// `Iterate Until Fixed Point` and the generated structural equality
+		// both rest on `=` meaning something.
+		if containsView(lt) || containsView(rt) {
+			return nil, fmt.Errorf("%s: a View cannot be compared — it describes a picture rather than a value. "+
+				"Compare what the picture was drawn from instead", x.Pos)
+		}
 		if !lt.Equal(rt) {
 			return nil, fmt.Errorf("%s: cannot compare %s = %s (different types)", x.Pos, lt, rt)
 		}
@@ -1787,4 +1962,38 @@ func LambdaType(l *ast.Lambda, paramTypes ...*ir.Type) (*ir.Type, error) {
 		env[p] = paramTypes[i]
 	}
 	return ExprType(l.Body, env)
+}
+
+// containsView reports whether a type is a View or has one anywhere inside it.
+//
+// It looks through composites because the mistake it guards is not usually
+// `view = view`: it is a world Record that happens to cache a rendered panel,
+// reaching `Iterate Until Fixed Point` or a composite `=` that compares whole
+// states. Refusing at the outer type only would let that through and produce
+// an answer nobody could explain.
+func containsView(t *ir.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case ir.KView:
+		return true
+	case ir.KList, ir.KSet, ir.KGrid, ir.KSparse, ir.KGraph:
+		return containsView(t.Elem)
+	case ir.KMap:
+		return containsView(t.Key) || containsView(t.Elem)
+	case ir.KTuple:
+		for _, e := range t.Elems {
+			if containsView(e) {
+				return true
+			}
+		}
+	case ir.KRecord:
+		for _, f := range t.Fields {
+			if containsView(f.Type) {
+				return true
+			}
+		}
+	}
+	return false
 }

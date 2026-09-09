@@ -14,7 +14,7 @@ import (
 	"domain/token"
 )
 
-// `Innate Domain: <library>` — Shikigami libraries.
+// `Inherited Technique: <library>` — Shikigami libraries.
 //
 // A library is a file of Shikigami definitions and nothing else: no pipeline
 // statements, because a library is not a program. Its definitions are loaded
@@ -41,11 +41,17 @@ type DefSite struct {
 	Path   string // absolute file path, when Origin == "import"
 }
 
-// ResolveOptions carries the file context an `Innate Domain` import needs.
-// The zero value has no context, which is what plain Resolve passes: a program
-// with imports then fails with a positioned error rather than silently ignoring
-// them.
+// ResolveOptions carries the file context an `Inherited Technique` import
+// needs. The zero value has no context, which is what plain Resolve passes: a
+// program with imports then fails with a positioned error rather than silently
+// ignoring them.
 type ResolveOptions struct {
+	// Scope overrides the program's own `Innate Domain:` declaration. It is
+	// for the tools that resolve a fragment rather than a file — the REPL, a
+	// language-server request against a few lines — where the declaration may
+	// not be in the text being resolved. Empty means "read it from the
+	// program", which is what every caller with a whole file passes.
+	Scope string
 	// BaseDir is the importing file's directory, searched first.
 	BaseDir string
 	// Search is the fallback search path, in order — normally $DOMAIN_PATH
@@ -99,8 +105,8 @@ type importLoader struct {
 }
 
 // loadedDef is one imported definition plus where it came from. impPos is the
-// position of the `Innate Domain` statement in the *user's* file that pulled it
-// in, so an error about the definition can be reported at a position the user's
+// position of the `Inherited Technique` statement in the *user's* file that
+// pulled it in, so an error about the definition can be reported at a position the user's
 // source actually has — the same discipline wrapShikigamiErr follows.
 type loadedDef struct {
 	def     *ast.ShikigamiDef
@@ -246,7 +252,7 @@ func (r *resolver) loadImports(prog *ast.Program, opts ResolveOptions) error {
 		// offending position lives in the library, which the user's source
 		// cannot render — so report it at the import that pulled it in and name
 		// the library and the inner position in the message.
-		if err := checkShikigamiName(ld.def); err != nil {
+		if err := checkShikigamiName(ld.def, r.prims); err != nil {
 			var re *ResolveError
 			if errors.As(err, &re) {
 				return &ResolveError{Pos: ld.impPos, Msg: fmt.Sprintf(

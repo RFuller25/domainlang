@@ -302,10 +302,19 @@ func lintBindings(prog *ast.Program, add func(Diagnostic)) {
 // resolver what happened rather than keeping a second table of accepted names.
 // Shikigami definition bodies are skipped: their statements are resolved as
 // substituted copies, and the originals are marked wholesale at substitution.
+// A Part whose role *defines* something is skipped for exactly the same
+// reason — it is a Shikigami definition written in another shape.
 func lintUnusedArgs(prog *ast.Program, add func(Diagnostic)) {
+	scope := ""
+	if prog.Scope != nil {
+		scope = prog.Scope.Name
+	}
 	var walk func(stmts []*ast.Statement)
 	walk = func(stmts []*ast.Statement) {
 		for _, s := range stmts {
+			if s.Keyword == "Part" && prims.IsDefinitionRole(scope, s.PartRole) {
+				continue
+			}
 			for _, a := range s.Args {
 				if a.Used {
 					continue
@@ -368,6 +377,9 @@ func lintPhraseExpressions(stmts []*ast.Statement, add func(Diagnostic)) {
 			if !isBuiltinCall(s.Op.Raw, w) {
 				continue
 			}
+			if loopRange(s.Op, w) {
+				continue
+			}
 			add(Diagnostic{
 				Severity: Warning, Code: "style", Pos: s.Pos,
 				Msg: fmt.Sprintf("%q looks like an expression, but an operation phrase holds literals only", s.Op.Raw),
@@ -380,6 +392,18 @@ func lintPhraseExpressions(stmts []*ast.Statement, add func(Diagnostic)) {
 			break // one warning per line, however many calls it contains
 		}
 	}
+}
+
+// loopRange is the one exemption, and it is not a heuristic: `Simple Domain:
+// For k in range(4)` is the loop's own source syntax (docs/language.md), and
+// the primitive *reads* that call rather than discarding it. Warning about it
+// would say the opposite of what happens, on a line written exactly as the
+// language documents it.
+//
+// Narrow on both sides: only the word `range`, and only in a `For` phrase.
+// `Window range(xs)` is still the mistake this rule is for.
+func loopRange(op *ast.Operation, w string) bool {
+	return w == "range" && len(op.Words) > 0 && op.Words[0] == "For"
 }
 
 // isBuiltinCall reports whether w names an expression builtin and appears in
@@ -491,7 +515,7 @@ func lintImports(prog *ast.Program, add func(Diagnostic)) {
 		add(Diagnostic{
 			Severity: Warning, Code: "style", Pos: imp.Pos,
 			Msg:  fmt.Sprintf("library %q is imported but nothing from it is summoned", imp.Target),
-			Help: "call one of its Shikigami, or delete the `Innate Domain` line",
+			Help: "call one of its Shikigami, or delete the `Inherited Technique` line",
 		})
 	}
 }
@@ -561,8 +585,13 @@ func lintReveal(prog *ast.Program, add func(Diagnostic)) {
 
 	// A Part whose body never reveals computes nothing observable — the one
 	// hazard of Parts printing only what they explicitly Reveal.
+	//
+	// This is a rule about the *unroled* Part, whose whole purpose is to
+	// label some output. A Part with a role produces a value its scope does
+	// something else with — a `Part Draw:` returns the frame and must not
+	// print — so telling one to add a Reveal would be advice to break it.
 	for _, s := range prog.Statements {
-		if s.Keyword != "Part" || revealsSomewhere(s.Block) {
+		if s.Keyword != "Part" || s.PartRole != "" || revealsSomewhere(s.Block) {
 			continue
 		}
 		add(Diagnostic{

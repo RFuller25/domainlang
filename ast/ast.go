@@ -22,6 +22,7 @@ import (
 // registry actually uses, so the two cannot drift.
 var Keywords = []string{
 	"Innate Domain",
+	"Inherited Technique",
 	"Cursed Energy",
 	"Cursed Technique",
 	"Channeled Energy",
@@ -72,10 +73,26 @@ type Program struct {
 	Statements []*Statement
 	Shikigamis []*ShikigamiDef
 	Imports    []*Import
+	// Scope is the `Innate Domain:` this program declares, or nil for the
+	// default. Like Shikigami definitions and imports it is hoisted out of
+	// the statement list, and a program may declare at most one.
+	Scope *ScopeDecl
 }
 
-// Import is an `Innate Domain: <target>` statement: a Shikigami library to
-// load before this program. Like Shikigami definitions, imports are hoisted out
+// ScopeDecl is an `Innate Domain: <name>` statement: the kind of program this
+// file is. It names a scope registered in the binary — the vocabulary in
+// scope, the Part roles available, the shape the program may take, and the
+// hosts that run and compile it.
+//
+// It is not a file path. A library of Shikigami is imported with
+// `Inherited Technique:`, which is what Import below carries.
+type ScopeDecl struct {
+	Name string
+	Pos  token.Position
+}
+
+// Import is an `Inherited Technique: <target>` statement: a Shikigami library
+// to load before this program. Like Shikigami definitions, imports are hoisted out
 // of the statement list — they are declarations, not pipeline steps, so where
 // they appear in the file does not matter.
 //
@@ -85,6 +102,17 @@ type Import struct {
 	Target string
 	Pos    token.Position
 }
+
+// typeValuedArgs are the argument names whose value is a written type.
+//
+// Argument shape has always followed the name in this language — `Using:`
+// takes a lambda, `From:` takes a list of channel names, `Seed:` takes an
+// expression — so a name that takes a type is the same convention rather than
+// a new one. The set is closed and small.
+var typeValuedArgs = map[string]bool{"Into": true}
+
+// TypeValuedArg reports whether an argument of this name is written as a type.
+func TypeValuedArg(name string) bool { return typeValuedArgs[name] }
 
 // Param is a typed Shikigami parameter, e.g. `k: Int` or
 // `p: (Int) -> Bool`.
@@ -169,12 +197,23 @@ type Statement struct {
 	Keyword         string // e.g. "Cursed Energy", "Domain Expansion"; "" until inferred
 	KeywordInferred bool   // the source wrote no keyword; Keyword was recovered from Op
 
-	ChannelName string       // for `Channel "name":` statements; "" otherwise
-	PartName    string       // for `Part "1":` statements; "" otherwise
-	Op          *Operation   // the inline operation phrase (nil for a pure block opener)
-	Args        []*Arg       // named arguments from an indented block (Mode:, Using:)
-	Binds       []*Binding   // `Consider x As/Of …` lines from an indented block
-	Block       []*Statement // an indented sub-pipeline (mutually exclusive with Args)
+	ChannelName string // for `Channel "name":` statements; "" otherwise
+	PartName    string // for `Part "1":` statements; "" otherwise
+	// PartRole is the optional role word on a Part — the `World` in
+	// `Part World:`. Empty for the unroled `Part "1":`, which is the only
+	// shape the `Advent of Code` scope permits. What roles exist, and what
+	// each one's body must be, belongs to the scope rather than to the
+	// parser: this records only what was written.
+	PartRole string
+	// PartArg is the Part's argument, when it has one: the label of
+	// `Part "1":` or `Part Entity "Creep":`, or the number of
+	// `Part Every 120:`. PartName carries the label too, unchanged, so
+	// nothing that already reads it has to learn about this.
+	PartArg *PartArg
+	Op      *Operation   // the inline operation phrase (nil for a pure block opener)
+	Args    []*Arg       // named arguments from an indented block (Mode:, Using:)
+	Binds   []*Binding   // `Consider x As/Of …` lines from an indented block
+	Block   []*Statement // an indented sub-pipeline (mutually exclusive with Args)
 	// Decls are the global declarations on a `Cursed Object:` (declare) or
 	// `Cursed Tool:` (assign) statement, written either on the keyword's own
 	// line or as a run of lines in its indented block.
@@ -193,6 +232,17 @@ type Statement struct {
 	// language, so there is nothing there for either of them to hold.
 	Foreign *ForeignBlock
 	Pos     token.Position
+}
+
+// PartArg is the argument written after a Part's role: a quoted label or a
+// number. Exactly one of the two forms is set and IsInt says which — a label
+// of "120" and the number 120 are different arguments, and a role that wants
+// one must not silently accept the other.
+type PartArg struct {
+	Text  string
+	Int   int64
+	IsInt bool
+	Pos   token.Position
 }
 
 // Operation is a parsed operation phrase: the text after a keyword's colon.
@@ -280,6 +330,15 @@ type IdentArg struct{ Value string }
 type IdentListArg struct{ Values []string } // e.g. From: moves, stacks
 type LambdaArg struct{ Lambda *Lambda }
 
+// TypeArg is an argument written as a *type* rather than a value —
+// `Into: {score: Int}`.
+//
+// It exists because decoding is not symmetrical with encoding. A value can
+// always be written out; reading one in needs the program to say what it
+// expects, because there is no dynamic value in this language to decode onto
+// and then inspect. The type is the contract.
+type TypeArg struct{ Type *TypeExpr }
+
 // CaseArg is `Case: <tag> "<template>"` — one alternative of a Match Pattern
 // that accepts several line shapes. The tag names which one matched; the
 // argument may repeat, and order is priority order.
@@ -294,6 +353,7 @@ func (FloatArg) argValue()     {}
 func (IdentArg) argValue()     {}
 func (IdentListArg) argValue() {}
 func (LambdaArg) argValue()    {}
+func (TypeArg) argValue()      {}
 func (CaseArg) argValue()      {}
 
 // Lambda is `(params) -> body`, the only construct that crosses into the

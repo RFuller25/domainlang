@@ -1,0 +1,45 @@
+# Wordle against a room that does not exist. The script is the server: a
+# `reply` line is a room that answered, a `fail` line is one that did not, and
+# a request with neither is one that went away.
+
+text c               # five letters
+text r
+text a
+text n
+text e
+frame
+
+key enter            # off it goes
+frame                # the spinner turns while the room thinks
+
+key enter            # a second guess while one is out is refused, not queued
+frame
+
+reply guess {"marks": "-Y--G", "right": false, "left": 5}
+frame
+
+text s               # again, and this time the room is down
+text l
+text a
+text t
+text e
+key enter
+fail guess connection refused
+frame
+
+key backspace        # clear the word the room never saw
+key backspace
+key backspace
+key backspace
+key backspace
+
+text g               # and once more, with the answer
+text r
+text e
+text b
+text e
+key enter
+reply guess {"marks": "GGGGG", "right": true, "left": 4}
+frame
+
+key q

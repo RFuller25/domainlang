@@ -111,8 +111,14 @@ Reveal: stdout
 // an assertion that they are populated and mutually consistent rather than a
 // pinned number that churns on every new primitive.
 func TestCatalogAccessors(t *testing.T) {
-	if len(AllPrims()) != len(Registry) {
-		t.Errorf("AllPrims: got %d want %d", len(AllPrims()), len(Registry))
+	if len(AllPrims()) != len(AllPrimitives()) {
+		t.Errorf("AllPrims: got %d want %d", len(AllPrims()), len(AllPrimitives()))
+	}
+	// And it is strictly more than Core, or a scope's primitives would be
+	// missing from every coverage report that counts them.
+	if len(AllPrims()) <= len(Core) {
+		t.Errorf("AllPrims counts %d, Core has %d — a scope's primitives are not in the denominator",
+			len(AllPrims()), len(Core))
 	}
 	if len(AllBuiltins()) == 0 {
 		t.Error("AllBuiltins is empty")

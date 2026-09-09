@@ -38,7 +38,7 @@ type galleryProgram struct {
 	Input       string `json:"input"`       // its .input file
 	Expected    string `json:"expected"`    // its .expected file
 	// Libs are the Shikigami libraries the program imports, keyed by the
-	// target as written (`Innate Domain: lib/shapes` → "lib/shapes"). The
+	// target as written (`Inherited Technique: lib/shapes` → "lib/shapes"). The
 	// playground has no filesystem to find them on, so they travel with the
 	// program and are handed to the resolver as a virtual one.
 	Libs map[string]string `json:"libs,omitempty"`
@@ -61,13 +61,21 @@ type primitiveEntry struct {
 func buildGallery(t *testing.T) []galleryProgram {
 	t.Helper()
 	var out []galleryProgram
-	for _, group := range []string{"examples", "challenges"} {
-		paths, err := filepath.Glob(filepath.Join("..", group, "*.domain"))
+	// The three groups the site shows. Games live one directory down and are
+	// fed a **replay script** rather than an input file — a Game Dev program
+	// reads what happened from stdin — so the group carries where its
+	// programs are and what their input is called.
+	for _, group := range []struct{ name, dir, inputExt string }{
+		{"examples", "examples", ".input"},
+		{"challenges", "challenges", ".input"},
+		{"games", filepath.Join("examples", "games"), ".script"},
+	} {
+		paths, err := filepath.Glob(filepath.Join("..", group.dir, "*.domain"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(paths) == 0 {
-			t.Fatalf("no programs found in %s/", group)
+			t.Fatalf("no programs found in %s/", group.dir)
 		}
 		sort.Strings(paths)
 		for _, p := range paths {
@@ -79,13 +87,13 @@ func buildGallery(t *testing.T) []galleryProgram {
 			}
 			out = append(out, galleryProgram{
 				ID:          id,
-				Group:       group,
+				Group:       group.name,
 				Title:       title,
 				Description: desc,
 				Source:      source,
-				Input:       readOrFail(t, strings.TrimSuffix(p, ".domain")+".input"),
+				Input:       readOrFail(t, strings.TrimSuffix(p, ".domain")+group.inputExt),
 				Expected:    readOrFail(t, strings.TrimSuffix(p, ".domain")+".expected"),
-				Libs:        collectLibs(t, filepath.Join("..", group), source, map[string]string{}),
+				Libs:        collectLibs(t, filepath.Join("..", group.dir), source, map[string]string{}),
 			})
 		}
 	}
@@ -130,8 +138,8 @@ func leadingComment(src string) (title, description string) {
 	return title, strings.TrimSpace(strings.Join(body, "\n"))
 }
 
-// importTarget matches an `Innate Domain: lib/shapes` statement.
-var importTarget = regexp.MustCompile(`(?m)^\s*Innate Domain:\s*(\S+)\s*$`)
+// importTarget matches an `Inherited Technique: lib/shapes` statement.
+var importTarget = regexp.MustCompile(`(?m)^\s*Inherited Technique:\s*(\S+)\s*$`)
 
 // collectLibs gathers, transitively, every library a program imports, so the
 // playground can resolve them without a filesystem. Returns nil when there are

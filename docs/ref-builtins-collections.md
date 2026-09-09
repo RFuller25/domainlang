@@ -269,8 +269,9 @@ silent when it applies:
   [aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize).
 - **`with` on a `Record`.** Also always a copy, but O(fields) — small enough
   that it has never been what made anything slow.
-- **Loop bodies.** `Repeat`, `While` and `For` take a sub-pipeline rather than
-  a lambda, so there is no accumulator parameter to follow and no site to mark.
+- **Loop bodies.** `Repeat`, `While`, `For` and `For Each` take a sub-pipeline
+  rather than a lambda, so there is no accumulator parameter to follow and no
+  site to mark.
   A simulation written as `Repeat N` over a `Map` state copies every lap; the
   same work written as a `Fold` does not.
 

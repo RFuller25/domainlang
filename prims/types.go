@@ -20,6 +20,8 @@ var scalarTypes = map[string]func() *ir.Type{
 	"Float": ir.Float,
 	"Text":  ir.Text,
 	"Bool":  ir.Bool,
+	// View takes no parameter: a View is not a collection of anything.
+	"View": ir.View,
 }
 
 // genericArity is the number of type arguments each generic name takes.

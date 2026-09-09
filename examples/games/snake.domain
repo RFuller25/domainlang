@@ -1,0 +1,95 @@
+# Snake — the first game, and the smallest one that is a game.
+#
+# The board lives in the world as a `Sparse` plane, and the snake moves by
+# painting two cells: the new head, and the tail it left behind. That is the
+# whole trick, and it is why the board never has to be rebuilt from the body:
+# a frame is `draw(w.plane)`, one call.
+#
+# A `Sparse` reports the bounding box of the cells that have been set, so the
+# two corners set below are what fix the board's size. Everything inside them
+# reads the default "." until something is painted there.
+#
+# Eating rings the terminal bell — `Simple Domain: Beep`, guarded so a step
+# that both eats and dies (the head lands on the food square exactly where the
+# wall or the tail was going to end the game anyway) does not sound one for a
+# game that is already over.
+
+Innate Domain: Game Dev
+
+Cursed Object: lastRow As 7
+Cursed Object: lastCol As 11
+
+Part World:
+    Cursed Technique: Apply
+        Using: (w) -> {plane: put(put(sparse("."), 0, 0, "."), lastRow, lastCol, "."), body: list(point(4, 5), point(4, 4), point(4, 3)), dir: point(0, 1), food: point(2, 9), score: 0, over: 1 = 0}
+
+# The snake and its first meal, painted once before the first frame.
+Part Start:
+    Cursed Technique: Apply
+        Using: (w) ->
+            consider painted as put(put(put(w.plane, 4, 5, "o"), 4, 4, "o"), 4, 3, "o")
+            in with(w, "plane", put(painted, prow(w.food), pcol(w.food), "*"))
+
+# Four keys, one direction each. A snake cannot turn back on itself, so a
+# reversal is ignored rather than fatal — the arrow key that would kill you is
+# the one people press by accident.
+Part On "key up":
+    Cursed Technique: Apply
+        Using: (w) -> if prow(w.dir) = 1 then w else with(w, "dir", point(-1, 0))
+
+Part On "key down":
+    Cursed Technique: Apply
+        Using: (w) -> if prow(w.dir) = -1 then w else with(w, "dir", point(1, 0))
+
+Part On "key left":
+    Cursed Technique: Apply
+        Using: (w) -> if pcol(w.dir) = 1 then w else with(w, "dir", point(0, -1))
+
+Part On "key right":
+    Cursed Technique: Apply
+        Using: (w) -> if pcol(w.dir) = -1 then w else with(w, "dir", point(0, 1))
+
+Part On "key q":
+    Simple Domain: Quit
+
+# One step, in three stages. A Part's body is an ordinary pipeline, so the
+# stages in between may be any shape they like — only the last one has to be
+# the world again.
+#
+# Death freezes rather than quits. `Simple Domain: Quit` ends the program where
+# it happens, so quitting on the fatal step would mean the player never sees
+# the board that killed them: the last frame drawn would be the one before it.
+# A game over is a state the world is in, and `q` is what leaves.
+Part Every 150:
+    Cursed Technique: Apply
+        Using: (w) -> {w: w, head: padd(first(w.body), w.dir)}
+    Cursed Technique: Apply
+        Using: (s) -> {w: s.w, head: s.head, eat: s.head = s.w.food, dead: prow(s.head) < 0 or prow(s.head) > lastRow or pcol(s.head) < 0 or pcol(s.head) > lastCol or contains(s.w.body, s.head)}
+    Simple Domain: Beep
+        Using: (s) -> s.eat and not(s.w.over)
+    Cursed Technique: Apply
+        Using: (s) ->
+            if s.w.over
+                then s.w
+                else if s.dead
+                then with(s.w, "over", 1 = 1)
+                else consider grown as concat(list(s.head), s.w.body)
+                    in consider body as (if s.eat then grown else take(grown, length(s.w.body)))
+                    in consider tail as last(s.w.body)
+                    in consider food as (if s.eat then point(random(lastRow + 1), random(lastCol + 1)) else s.w.food)
+                    in consider laid as put(s.w.plane, prow(s.head), pcol(s.head), "o")
+                    in consider swept as (if s.eat then put(laid, prow(food), pcol(food), "*") else put(laid, prow(tail), pcol(tail), "."))
+                    in {plane: swept, body: body, dir: s.w.dir, food: food, score: s.w.score + (if s.eat then 1 else 0), over: 1 = 0}
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) ->
+            stack(
+                beside(text("score "), style(text(totext(w.score)), "bold yellow")),
+                box(draw(w.plane)),
+                text(if w.over then "game over" else "arrows move, q quits"))
+
+Part Ending:
+    Cursed Technique: Apply
+        Using: (w) -> "final score " + totext(w.score)
+    Reveal: stdout

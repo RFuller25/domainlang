@@ -83,7 +83,7 @@ Shikigami "Scaled Sum" (by: Int)
 
 func TestImportFromSiblingDirectory(t *testing.T) {
 	dir := lib(t, t.TempDir(), "shapes", shapesLib)
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -103,7 +103,7 @@ Reveal: stdout
 // means keyword inference has to know the imported names exist.
 func TestImportedShikigamiCallableWithoutKeyword(t *testing.T) {
 	dir := lib(t, t.TempDir(), "shapes", shapesLib)
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 stdin
 Split Text by ","
 Convert List to Integers
@@ -121,7 +121,7 @@ stdout
 
 func TestImportedShikigamiTakesParameters(t *testing.T) {
 	dir := lib(t, t.TempDir(), "shapes", shapesLib)
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -145,7 +145,7 @@ func TestImportIsHoisted(t *testing.T) {
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
 Shikigami: Doubled
-Innate Domain: shapes
+Inherited Technique: shapes
 Reveal: stdout
 `
 	got, err := runIn(t, dir, src, "4")
@@ -160,7 +160,7 @@ Reveal: stdout
 func TestImportFromSearchPath(t *testing.T) {
 	progDir := t.TempDir()
 	libDir := lib(t, t.TempDir(), "shapes", shapesLib)
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -190,7 +190,7 @@ func TestImportPrefersSiblingOverSearchPath(t *testing.T) {
     Cursed Technique: Map Each
         Using: (x) -> x * 100
 `)
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -212,7 +212,7 @@ func TestImportSubdirectoryTarget(t *testing.T) {
     Cursed Technique: Map Each
         Using: (x) -> x * 2
 `)
-	src := `Innate Domain: grids/hex
+	src := `Inherited Technique: grids/hex
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -230,12 +230,12 @@ func TestTransitiveImport(t *testing.T) {
     Cursed Technique: Map Each
         Using: (x) -> x * 2
 `)
-	lib(t, dir, "mid", `Innate Domain: base
+	lib(t, dir, "mid", `Inherited Technique: base
 Shikigami "Quadrupled"
     Shikigami: Doubled
     Shikigami: Doubled
 `)
-	src := `Innate Domain: mid
+	src := `Inherited Technique: mid
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -259,14 +259,14 @@ func TestDiamondImportLoadsOnce(t *testing.T) {
     Cursed Technique: Map Each
         Using: (x) -> x * 2
 `)
-	lib(t, dir, "left", "Innate Domain: base\n"+`Shikigami "Left"
+	lib(t, dir, "left", "Inherited Technique: base\n"+`Shikigami "Left"
     Shikigami: Doubled
 `)
-	lib(t, dir, "right", "Innate Domain: base\n"+`Shikigami "Right"
+	lib(t, dir, "right", "Inherited Technique: base\n"+`Shikigami "Right"
     Shikigami: Doubled
 `)
-	src := `Innate Domain: left
-Innate Domain: right
+	src := `Inherited Technique: left
+Inherited Technique: right
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -285,13 +285,13 @@ Reveal: stdout
 
 func TestImportCycleReportsTheChain(t *testing.T) {
 	dir := t.TempDir()
-	lib(t, dir, "a", "Innate Domain: b\n"+`Shikigami "A"
+	lib(t, dir, "a", "Inherited Technique: b\n"+`Shikigami "A"
     Maximum Technique: Sum
 `)
-	lib(t, dir, "b", "Innate Domain: a\n"+`Shikigami "B"
+	lib(t, dir, "b", "Inherited Technique: a\n"+`Shikigami "B"
     Maximum Technique: Sum
 `)
-	err := resolveIn(t, dir, "Innate Domain: a\nCursed Energy: stdin\nReveal: stdout\n")
+	err := resolveIn(t, dir, "Inherited Technique: a\nCursed Energy: stdin\nReveal: stdout\n")
 	if err == nil {
 		t.Fatal("expected a cycle error")
 	}
@@ -308,10 +308,10 @@ func TestImportCycleReportsTheChain(t *testing.T) {
 // A library that imports itself is the degenerate cycle.
 func TestSelfImportIsACycle(t *testing.T) {
 	dir := t.TempDir()
-	lib(t, dir, "solo", "Innate Domain: solo\n"+`Shikigami "S"
+	lib(t, dir, "solo", "Inherited Technique: solo\n"+`Shikigami "S"
     Maximum Technique: Sum
 `)
-	err := resolveIn(t, dir, "Innate Domain: solo\nCursed Energy: stdin\nReveal: stdout\n")
+	err := resolveIn(t, dir, "Inherited Technique: solo\nCursed Energy: stdin\nReveal: stdout\n")
 	if err == nil || !strings.Contains(err.Error(), "import cycle") {
 		t.Fatalf("error = %v, want an import cycle", err)
 	}
@@ -323,7 +323,7 @@ func TestLibraryMayNotContainStatements(t *testing.T) {
 Cursed Energy: stdin
 Reveal: stdout
 `)
-	err := resolveIn(t, dir, "Innate Domain: bad\nCursed Energy: stdin\nReveal: stdout\n")
+	err := resolveIn(t, dir, "Inherited Technique: bad\nCursed Energy: stdin\nReveal: stdout\n")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -338,7 +338,7 @@ func TestShadowingPrecedence(t *testing.T) {
     Cursed Technique: Split Text by ";"
 `)
 	// The import shadows the prelude's Lines (which splits on "\n").
-	src := `Innate Domain: over
+	src := `Inherited Technique: over
 Cursed Energy: stdin
 Shikigami: Lines
 Reveal: stdout
@@ -352,7 +352,7 @@ Reveal: stdout
 	}
 
 	// A local definition shadows the import in turn.
-	local := `Innate Domain: over
+	local := `Inherited Technique: over
 Shikigami "Lines"
     Cursed Technique: Split Text by "|"
 Cursed Energy: stdin
@@ -374,7 +374,7 @@ func TestImportedReservedNameIsRejected(t *testing.T) {
 	dir := lib(t, t.TempDir(), "bad", `Shikigami "Sum"
     Maximum Technique: Count
 `)
-	err := resolveIn(t, dir, "Innate Domain: bad\nCursed Energy: stdin\nReveal: stdout\n")
+	err := resolveIn(t, dir, "Inherited Technique: bad\nCursed Energy: stdin\nReveal: stdout\n")
 	if err == nil {
 		t.Fatal("expected a reserved-name error")
 	}
@@ -395,7 +395,7 @@ func TestErrorInsideImportedBodyNamesTheLibrary(t *testing.T) {
     Maximum Technique: Sum
 `)
 	// Sum needs List<Int>; the pipeline hands it Text.
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: stdin
 Shikigami: Broken
 Reveal: stdout
@@ -412,7 +412,7 @@ Reveal: stdout
 // Plain Resolve has no file context, so it must say so rather than silently
 // ignoring an import.
 func TestResolveWithoutFileContextRejectsImports(t *testing.T) {
-	src := "Innate Domain: shapes\nCursed Energy: stdin\nReveal: stdout\n"
+	src := "Inherited Technique: shapes\nCursed Energy: stdin\nReveal: stdout\n"
 	toks, err := lexer.Lex(src)
 	if err != nil {
 		t.Fatal(err)
@@ -430,8 +430,8 @@ func TestResolveWithoutFileContextRejectsImports(t *testing.T) {
 
 func TestImportParseErrors(t *testing.T) {
 	cases := []struct{ name, src, want string }{
-		{"no target", "Innate Domain:\nCursed Energy: stdin\n", "needs a library name"},
-		{"with a block", "Innate Domain: x\n    Using: (a) -> a\n", "takes no arguments"},
+		{"no target", "Inherited Technique:\nCursed Energy: stdin\n", "needs a library name"},
+		{"with a block", "Inherited Technique: x\n    Using: (a) -> a\n", "takes no arguments"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -457,7 +457,7 @@ func TestImportsUseTheInjectedReader(t *testing.T) {
         Using: (x) -> x * 2
 `,
 	}
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -494,7 +494,7 @@ Reveal: stdout
 // Sites is how the language server learns which file answered an import.
 func TestSitesReportsDefinitionOrigins(t *testing.T) {
 	dir := lib(t, t.TempDir(), "shapes", shapesLib)
-	src := `Innate Domain: shapes
+	src := `Inherited Technique: shapes
 Shikigami "Mine"
     Maximum Technique: Sum
 Cursed Energy: stdin
@@ -527,7 +527,7 @@ func TestOptimizerFiresThroughImportedShikigami(t *testing.T) {
     Domain Expansion: Quicksort, Descending
     Maximum Technique: Select Top 2, Sum
 `)
-	src := `Innate Domain: aoc
+	src := `Inherited Technique: aoc
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers
@@ -586,7 +586,7 @@ func TestInlinedForeignNodesAreMarked(t *testing.T) {
     Cursed Technique: Map Each
         Using: (x) -> x / 2
 `)
-	src := `Innate Domain: aoc
+	src := `Inherited Technique: aoc
 Cursed Energy: stdin
 Cursed Technique: Split Text by ","
 Channeled Energy: Convert List to Integers

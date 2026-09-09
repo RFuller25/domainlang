@@ -29,6 +29,9 @@ import (
 	"strings"
 	"syscall/js"
 
+	// The Game Dev host registers itself; see game/host.go for why a
+	// blank import is what asks for it.
+	_ "domain/game"
 	"domain/interp"
 	"domain/ir"
 	"domain/lexer"
@@ -95,7 +98,7 @@ func (r runResult) toJS() js.Value {
 }
 
 // virtualLibs turns the libraries that travelled with a program into resolve
-// options. `Innate Domain: lib/shapes` needs a filesystem to find its library
+// options. `Inherited Technique: lib/shapes` needs a filesystem to find its library
 // on, and there is none here, so the gallery ships each program's imports
 // alongside it and they are served from memory. BaseDir is "/" purely to give
 // the resolver a directory to join against — without one it has no candidate
@@ -164,7 +167,7 @@ func run(source, input string, libs map[string]string, optimize, explain bool) (
 		Stdout: &stdout,
 		Stderr: &stderr,
 	}
-	if _, err := interp.Run(pipe, ctx); err != nil {
+	if _, err := interp.RunScoped(pipe, ctx); err != nil {
 		return runResult{output: stdout.String(), explain: messages, err: err.Error()}
 	}
 	out := stdout.String()

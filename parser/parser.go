@@ -181,17 +181,26 @@ func (p *parser) parseProgram() (*ast.Program, error) {
 		default:
 			var stmt *ast.Statement
 			if stmt, err = p.parseStatement(); err == nil {
-				// `Innate Domain: lib` is a declaration, not a pipeline step:
-				// hoist it out of the statement list like a Shikigami
-				// definition, so its position in the file does not matter.
-				if stmt.Keyword == "Innate Domain" {
+				// `Innate Domain:` and `Inherited Technique:` are
+				// declarations, not pipeline steps: hoist them out of the
+				// statement list like a Shikigami definition, so their
+				// position in the file does not matter.
+				switch stmt.Keyword {
+				case "Innate Domain":
+					sc, serr := scopeOf(stmt, prog.Scope)
+					if serr != nil {
+						err = serr
+					} else {
+						prog.Scope = sc
+					}
+				case "Inherited Technique":
 					imp, ierr := importOf(stmt)
 					if ierr != nil {
 						err = ierr
 					} else {
 						prog.Imports = append(prog.Imports, imp)
 					}
-				} else {
+				default:
 					prog.Statements = append(prog.Statements, stmt)
 				}
 			}
@@ -221,18 +230,42 @@ func (p *parser) parseProgram() (*ast.Program, error) {
 	}
 }
 
-// importOf converts a parsed `Innate Domain:` statement into an Import. The
-// target is the phrase's raw source text, so a path with separators
+// importOf converts a parsed `Inherited Technique:` statement into an Import.
+// The target is the phrase's raw source text, so a path with separators
 // (`grids/hex`) survives exactly as written.
 func importOf(stmt *ast.Statement) (*ast.Import, error) {
 	if stmt.Op == nil || strings.TrimSpace(stmt.Op.Raw) == "" {
 		return nil, &Error{Pos: stmt.Pos,
-			Msg: "Innate Domain needs a library name, e.g. Innate Domain: aoc"}
+			Msg: "Inherited Technique needs a library name, e.g. Inherited Technique: aoc"}
+	}
+	if len(stmt.Block) > 0 || len(stmt.Args) > 0 {
+		return nil, &Error{Pos: stmt.Pos, Msg: "Inherited Technique takes no arguments or block"}
+	}
+	return &ast.Import{Target: strings.TrimSpace(stmt.Op.Raw), Pos: stmt.Pos}, nil
+}
+
+// scopeOf converts a parsed `Innate Domain:` statement into the program's
+// scope declaration. The name is the phrase's raw source text, so a
+// multi-word scope (`Game Dev`) survives as written; which names exist is a
+// resolve-time question, not a syntactic one.
+//
+// prev is the scope already declared, if any: a program has exactly one kind,
+// so a second declaration is an error that names where the first one was
+// rather than silently letting the last line win.
+func scopeOf(stmt *ast.Statement, prev *ast.ScopeDecl) (*ast.ScopeDecl, error) {
+	if stmt.Op == nil || strings.TrimSpace(stmt.Op.Raw) == "" {
+		return nil, &Error{Pos: stmt.Pos,
+			Msg: "Innate Domain needs a name, e.g. Innate Domain: Game Dev"}
 	}
 	if len(stmt.Block) > 0 || len(stmt.Args) > 0 {
 		return nil, &Error{Pos: stmt.Pos, Msg: "Innate Domain takes no arguments or block"}
 	}
-	return &ast.Import{Target: strings.TrimSpace(stmt.Op.Raw), Pos: stmt.Pos}, nil
+	if prev != nil {
+		return nil, &Error{Pos: stmt.Pos, Msg: fmt.Sprintf(
+			"a program has one Innate Domain, and %q is already declared at %s",
+			prev.Name, prev.Pos)}
+	}
+	return &ast.ScopeDecl{Name: strings.TrimSpace(stmt.Op.Raw), Pos: stmt.Pos}, nil
 }
 
 // synchronize skips ahead to the start of the next top-level line after a
@@ -397,6 +430,13 @@ func (p *parser) parseStatement() (*ast.Statement, error) {
 			return p.parsePart(startPos)
 		}
 	}
+	// A Part may also carry a role word instead of, or before, its label:
+	// `Part World:`, `Part Every 120:`, `Part Entity "Creep":`. That is
+	// `IDENT IDENT …`, which no other statement form can be — `Part` is a
+	// themed keyword, so a statement opening with it is always a Part.
+	if p.cur().Kind == token.IDENT && p.cur().Literal == "Part" && p.peek().Kind == token.IDENT {
+		return p.parsePart(startPos)
+	}
 
 	// A foreign block opener (`Domain Expansion: Python`) is read before the
 	// phrase parser sees it: what follows the language name is a declared
@@ -491,28 +531,81 @@ func (p *parser) parseChannel(startPos token.Position) (*ast.Statement, error) {
 	return stmt, nil
 }
 
-// parsePart parses `Part "label":` followed by an indented sub-pipeline. A Part
-// branches from the current value like a Channel, but its body's Reveal output
-// is labelled instead of being stored under a name — the two-answers-per-input
-// shape. Whether a Part is in a legal position is a resolve-time question, so
-// the parser accepts one anywhere a statement can appear.
+// parsePart parses a Part and its indented sub-pipeline:
+//
+//	Part "1":                 the unroled labelled block
+//	Part World:               a role, no argument
+//	Part Entity "Creep":      a role with a label
+//	Part Every 120:           a role with a number
+//
+// An unroled Part branches from the current value like a Channel, but its
+// body's Reveal output is labelled instead of being stored under a name — the
+// two-answers-per-input shape.
+//
+// The parser does not know what roles exist. Which roles a program may write,
+// what each one's body must produce, and how many of each are allowed are
+// properties of the program's `Innate Domain` and are settled during
+// resolution — so an unknown role is not a syntax error, and neither is a Part
+// in a scope that has no roles at all. Whether a Part is in a legal *position*
+// is a resolve-time question too, so the parser accepts one anywhere a
+// statement can appear.
 func (p *parser) parsePart(startPos token.Position) (*ast.Statement, error) {
-	p.advance()            // "Part"
-	nameTok := p.advance() // STRING
+	p.advance() // "Part"
+	stmt := &ast.Statement{Keyword: "Part", Pos: startPos}
+
+	if p.cur().Kind == token.IDENT {
+		stmt.PartRole = p.advance().Literal
+	}
+	switch p.cur().Kind {
+	case token.STRING:
+		t := p.advance()
+		// PartName carries the label as it always has, so every existing
+		// reader of it — the linter's duplicate check, the resolver's Part
+		// table, the language server's inlay hints — is unaffected by roles.
+		stmt.PartName = t.Literal
+		stmt.PartArg = &ast.PartArg{Text: t.Literal, Pos: t.Pos}
+	case token.INT:
+		t := p.advance()
+		n, err := parseInt(t)
+		if err != nil {
+			return nil, err
+		}
+		stmt.PartArg = &ast.PartArg{Int: n, IsInt: true, Pos: t.Pos}
+	}
+	// One of the two is always set: parseStatement only routes here when
+	// `Part` is followed by a STRING (the label) or an IDENT (the role), so
+	// a bare `Part:` stays an ordinary keyword statement and fails at
+	// resolution with "keyword \"Part\" has no operation", exactly as it
+	// did before roles existed.
 	if _, err := p.expect(token.COLON); err != nil {
 		return nil, err
 	}
-	stmt := &ast.Statement{Keyword: "Part", PartName: nameTok.Literal, Pos: startPos}
 	if _, err := p.expect(token.NEWLINE); err != nil {
 		return nil, err
 	}
 	if p.cur().Kind != token.INDENT {
-		return nil, p.errBlockf("Part %q must be followed by an indented sub-pipeline", nameTok.Literal)
+		return nil, p.errBlockf("%s must be followed by an indented sub-pipeline", partDescription(stmt))
 	}
 	if err := p.parseBlock(stmt); err != nil {
 		return nil, err
 	}
 	return stmt, nil
+}
+
+// partDescription names a Part the way its source line reads, for an error
+// message. `Part "1"` for the unroled form, `Part Draw` for a bare role,
+// `Part Every 120` for one with an argument.
+func partDescription(stmt *ast.Statement) string {
+	switch {
+	case stmt.PartRole == "":
+		return fmt.Sprintf("Part %q", stmt.PartName)
+	case stmt.PartArg == nil:
+		return "Part " + stmt.PartRole
+	case stmt.PartArg.IsInt:
+		return fmt.Sprintf("Part %s %d", stmt.PartRole, stmt.PartArg.Int)
+	default:
+		return fmt.Sprintf("Part %s %q", stmt.PartRole, stmt.PartArg.Text)
+	}
 }
 
 // startsPhrase reports whether a token can open a keyword-less statement: an
@@ -721,7 +814,7 @@ func (p *parser) parseArg() (*ast.Arg, error) {
 	arg := &ast.Arg{Name: nameTok.Literal, Pos: nameTok.Pos}
 
 	p.joinArgContinuation()
-	val, err := p.parseArgValue()
+	val, err := p.parseArgValue(arg.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -811,7 +904,17 @@ func (p *parser) joinArgContinuation() {
 	p.toks = kept
 }
 
-func (p *parser) parseArgValue() (ast.ArgValue, error) {
+func (p *parser) parseArgValue(name string) (ast.ArgValue, error) {
+	// A few argument names take a written type rather than a value. Shape has
+	// always followed the name here — `Using:` a lambda, `From:` a list of
+	// channel names — so this is that convention, not a new one.
+	if ast.TypeValuedArg(name) {
+		te, err := p.parseTypeExpr(false)
+		if err != nil {
+			return nil, err
+		}
+		return ast.TypeArg{Type: te}, nil
+	}
 	switch p.cur().Kind {
 	case token.STRING:
 		return ast.StringArg{Value: p.advance().Literal}, nil

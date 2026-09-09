@@ -129,6 +129,12 @@ func FormatValue(v Value) string {
 		return strconv.FormatInt(x, 10)
 	case float64:
 		return FormatFloat(x)
+	case *ViewValue:
+		// A View renders as the picture it describes, with no styling: what
+		// `Reveal` writes to a pipe is what the replay harness diffs, and a
+		// frame that carried escapes would be a different string on every
+		// terminal.
+		return RenderViewPlain(x)
 	case bool:
 		return strconv.FormatBool(x)
 	}
@@ -755,6 +761,8 @@ func DescribeValue(v Value) string {
 		return "Sparse"
 	case *GraphValue:
 		return "Graph"
+	case *ViewValue:
+		return "View"
 	case nil:
 		return "<none>"
 	default:

@@ -231,12 +231,62 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 			g.wl("for _, %s := range %s {", x, cv.v)
 		}
 		g.in()
+		if !isRange {
+			// The C-style range form's own condition and increment already
+			// read x; the channel form's range-declared x has no such use,
+			// and a body that never reaches for it would otherwise fail to
+			// compile over "declared and not used" — a lambda may ignore the
+			// element it was handed.
+			g.wl("_ = %s", x)
+		}
 		// Push before emitting the body so the body's lambdas can see it, and
 		// pop after — nested For loops stack outermost-first, exactly like the
 		// interpreter's ambient stack.
 		g.ambient = append(g.ambient, ambientVar{v: x, typ: elemT})
 		err := emitBody()
 		g.ambient = g.ambient[:len(g.ambient)-1]
+		g.ambientNames = nil
+		if err != nil {
+			return "", err
+		}
+		g.out()
+		g.wl("}")
+		return v, nil
+
+	case "foreach":
+		// `For Each x In` (Using: (w) -> list) reads the source fresh from the
+		// *current* value every time the loop itself runs — unlike "for",
+		// whose source is fixed before the loop starts — so, unlike "for",
+		// there is no channel/range split: it is always a lambda, evaluated
+		// here, once, against v. Go's own range gives the element and its
+		// index together, which is exactly the two ambients the interpreter
+		// pushes for this kind (prims/control.go's resolveForEachLoop).
+		elemT, _ := n.Meta["elem"].(*ir.Type)
+		if elemT == nil {
+			return "", unsupported(n, "For Each loop is missing its element type")
+		}
+		lam, err := g.nodeLambda(n)
+		if err != nil {
+			return "", err
+		}
+		listExpr, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: v, typ: n.In}})
+		if err != nil {
+			return "", unsupported(n, "Using: %v", err)
+		}
+		x, idx, idx64 := g.fresh("x"), g.fresh("i"), g.fresh("i64")
+		g.wl("for %s, %s := range %s {", idx, x, listExpr)
+		g.in()
+		// range's own index is Go's int; every Int in emitted Go is int64.
+		g.wl("%s := int64(%s)", idx64, idx)
+		// A body may ignore either ambient — the element, the index, or
+		// both — and each is its own declared Go variable rather than
+		// something the range clause's own condition reads, unlike the
+		// C-style range(N) form of plain "for" above.
+		g.wl("_ = %s", x)
+		g.wl("_ = %s", idx64)
+		g.ambient = append(g.ambient, ambientVar{v: x, typ: elemT}, ambientVar{v: idx64, typ: ir.Int()})
+		err = emitBody()
+		g.ambient = g.ambient[:len(g.ambient)-2]
 		g.ambientNames = nil
 		if err != nil {
 			return "", err

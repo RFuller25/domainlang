@@ -366,6 +366,38 @@ rewrites; being wrong the other way is a wrong answer.
 that cost it — the failure mode here is a program that silently got slower, and
 the usual fix is to stop writing the global.
 
+## Stages that draw from the stream
+
+`random`, `randomf` and `pick` read from the run's
+[seeded stream](ref-builtins-chance.md), and `frame` and `elapsed` read its
+clock. All five answer differently on two identical inputs, which is the one
+thing every pass in this catalog assumes cannot happen.
+
+So a lambda that names any of them is **effectful**, by the same seam a
+writing lambda is: `ast.HasNondeterminism` feeds `optimizer/globals.go`'s
+`impure`, and from there every aggressive pass sees it. The rewrites it costs
+are the ones that would change how many times the lambda runs, or in what
+order:
+
+- A `Map Each` fused into the `Max` above it evaluates each element's lambda
+  once instead of once per pass, which is the same answer for a pure lambda
+  and a different number of draws for this one.
+- A dead-code elision that drops a stage nothing reads would drop its draws
+  with it, and every draw after it would come from a different place in the
+  stream.
+- Any reordering moves which draw lands where.
+
+`--explain` says so plainly. `Map Each Using: (n) -> n * 2` followed by `Max`
+reports the fusion; the same pair with `(n) -> n * random(1000)` reports no
+optimizations applied, and the program prints the same number with and without
+`--no-optimize` — which is the property that matters, since a
+[replayed game](scopes.md) is only reproducible if the stream is.
+
+This is why the cost is worth paying rather than papering over. A game's
+frames are its test output, and a rewrite that quietly changed how many times
+a die was rolled would change every frame after it — a diff nobody could read
+against a program nobody had changed.
+
 ## Local bindings and node lists
 
 A `Consider … Of` binding (see
