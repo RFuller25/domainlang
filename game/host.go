@@ -160,7 +160,7 @@ func gameOf(p *ir.Pipeline) (*game, error) {
 		// pipeline was built some other way.
 		return nil, fmt.Errorf("internal error: a game needs a Part World and a Part Draw")
 	}
-	collectSpecs(p.Nodes, g.specs)
+	ir.CollectRequestSpecs(p.Nodes, g.specs)
 	// Timers fire in a fixed order when several fall due at once — earliest
 	// period first, then by the order they were written — so that a replayed
 	// tick is one answer rather than whichever order a map happened to give.
@@ -242,29 +242,4 @@ func bindingsFor(p *gamePart, ev gameEvent) ([]interp.Binding, error) {
 		out = append(out, interp.Binding{Name: b.Name, Type: b.Type, Value: v})
 	}
 	return out, nil
-}
-
-// collectSpecs walks a pipeline for the requests it can fire.
-//
-// A Request may sit anywhere a statement may — inside a Start, an input
-// handler, a timer, a Shikigami inlined into any of them — so this recurses
-// through every node list rather than looking only at the top level. Missing
-// one would mean a reply arriving with no shape to decode into.
-func collectSpecs(nodes []*ir.Node, out map[string]*ir.RequestSpec) {
-	for _, n := range nodes {
-		if n == nil || n.Meta == nil {
-			continue
-		}
-		if spec, ok := n.Meta["request"].(*ir.RequestSpec); ok && spec != nil {
-			out[spec.Tag] = spec
-		}
-		if sub, ok := n.Meta["nodes"].([]*ir.Node); ok {
-			collectSpecs(sub, out)
-		}
-		if subs, ok := n.Meta[ir.MetaBindNodes].([][]*ir.Node); ok {
-			for _, s := range subs {
-				collectSpecs(s, out)
-			}
-		}
-	}
 }

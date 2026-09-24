@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"slices"
 	"sync/atomic"
 
 	"domain/ast"
@@ -97,9 +98,9 @@ func (b binding) bindValue() ir.Value {
 // was one. A stage binding outlives the application that writes to it, which
 // is the whole point: the next element sees the new value.
 func assign(name string, v ir.Value) bool {
-	for i := len(bindings) - 1; i >= 0; i-- {
-		if bindings[i].name == name {
-			bindings[i].cell.V = v
+	for _, binding := range slices.Backward(bindings) {
+		if binding.name == name {
+			binding.cell.V = v
 			return true
 		}
 	}
@@ -114,9 +115,6 @@ func PopBindings(n int) {
 // ResetBindings drops every binding, so a run that ended part-way through a
 // scope cannot leak it into the next one.
 func ResetBindings() { bindings = nil }
-
-// BindingDepth is how many bindings are currently in scope.
-func BindingDepth() int { return len(bindings) }
 
 // BindingEnv is the in-scope bindings as an environment and a matching type
 // environment, for evaluating an expression that is not a lambda body — a

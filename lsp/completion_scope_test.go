@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -22,12 +23,7 @@ func labels(items []map[string]any) []string {
 }
 
 func has(items []map[string]any, want string) bool {
-	for _, l := range labels(items) {
-		if l == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(labels(items), want)
 }
 
 func TestPartRolesFollowTheScope(t *testing.T) {

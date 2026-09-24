@@ -43,7 +43,7 @@ Reveal: stdout
 // splitHeavyInput builds ~n groups of 1-4 numbers each.
 func splitHeavyInput(n int) []byte {
 	var sb strings.Builder
-	for i := 0; i < n; i++ {
+	for i := range n {
 		for j := 0; j <= i%4; j++ {
 			fmt.Fprintf(&sb, "%d\n", (i*7919+j*13)%10000)
 		}
@@ -55,7 +55,7 @@ func splitHeavyInput(n int) []byte {
 // matchHeavyInput builds n range-pair lines.
 func matchHeavyInput(n int) []byte {
 	var sb strings.Builder
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a, b := i%50, i%50+i%13
 		c, d := i%60, i%60+i%7
 		fmt.Fprintf(&sb, "%d-%d,%d-%d\n", a, b, c, d)

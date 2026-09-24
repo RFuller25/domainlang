@@ -1,8 +1,14 @@
 package codegen
 
 import (
-	"domain/ir"
+	"fmt"
 	"math"
+	"strconv"
+	"unicode/utf8"
+
+	"domain/ast"
+	"domain/ir"
+	"domain/token"
 )
 
 // Lowerings for the graph-search Domain Expansions (B.f5): BFS, Dijkstra,
@@ -38,12 +44,20 @@ func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) (string
 	}
 	mask, rows, cols, rc := g.fresh("mask"), g.fresh("rows"), g.fresh("cols"), g.fresh("rc")
 	r, line, bi, ch, cell := g.fresh("r"), g.fresh("line"), g.fresh("bi"), g.fresh("ch"), g.fresh("cell")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cell, typ: cellT}})
-	if err != nil {
-		return "", unsupported(searchNode, "lambda: %v", err)
+	// The usual predicate compares the cell with one character, `(c) -> c =
+	// "#"`. That is the rune compare itself, with no cell to cut out of the
+	// line first. It agrees on invalid UTF-8 too: range yields U+FFFD for a
+	// bad byte, which is also the cell the general path would have made.
+	body, byRune := runeTest(lam, ch)
+	if !byRune {
+		var err error
+		body, _, err = g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cell, typ: cellT}})
+		if err != nil {
+			return "", unsupported(searchNode, "lambda: %v", err)
+		}
+		g.imp("unicode/utf8")
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.imp("unicode/utf8")
 	g.wl("%s := len(%s)", rows, lines)
 	g.wl("%s := 0", cols)
 	g.helper("dmCellHint", declCellHint)
@@ -51,18 +65,23 @@ func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) (string
 	g.wl("for %s, %s := range %s {", r, line, lines)
 	g.in()
 	g.wl("%s := 0", rc)
-	g.wl("for %s, %s := range %s {", bi, ch, line)
-	g.in()
-	g.wl("var %s string", cell)
-	g.wl("if rl := utf8.RuneLen(%s); rl > 0 {", ch)
-	g.in()
-	g.wl("%s = %s[%s:%s+rl]", cell, line, bi, bi)
-	g.out()
-	g.wl("} else {")
-	g.in()
-	g.wl("%s = string(%s)", cell, ch)
-	g.out()
-	g.wl("}")
+	if byRune {
+		g.wl("for _, %s := range %s {", ch, line)
+		g.in()
+	} else {
+		g.wl("for %s, %s := range %s {", bi, ch, line)
+		g.in()
+		g.wl("var %s string", cell)
+		g.wl("if rl := utf8.RuneLen(%s); rl > 0 {", ch)
+		g.in()
+		g.wl("%s = %s[%s:%s+rl]", cell, line, bi, bi)
+		g.out()
+		g.wl("} else {")
+		g.in()
+		g.wl("%s = string(%s)", cell, ch)
+		g.out()
+		g.wl("}")
+	}
 	g.wl("%s = append(%s, %s)", mask, mask, body)
 	g.wl("%s++", rc)
 	g.out()
@@ -196,29 +215,56 @@ const declDistGrid = `func dmDistGrid(rows, cols int) dmGrid[int64] {
 	return out
 }`
 
+// declBFS labels each cell reachable from the start with its distance. The
+// neighbours are visited by flat index, unrolled, in dmDirs' order — walking
+// the direction table and rebuilding each neighbour's coordinates cost a third
+// of the search against a hand-written loop.
 const declBFS = `func dmBFS(rows, cols int, mask []bool, sr, sc int64, diag bool) dmGrid[int64] {
 	dmCheckStart(rows, cols, sr, sc)
 	if !mask[sr*int64(cols)+sc] {
 		dmFail("start (%d, %d) is not walkable", sr, sc)
 	}
 	out := dmDistGrid(rows, cols)
-	out.cells[sr*int64(cols)+sc] = 0
-	queue := make([][2]int64, 1, len(mask)+1)
-	queue[0] = [2]int64{sr, sc}
+	w, h := int64(cols), int64(rows)
+	start := sr*w + sc
+	out.cells[start] = 0
+	queue := make([]int32, 1, len(mask)+1)
+	queue[0] = int32(start)
 	for head := 0; head < len(queue); head++ {
-		cur := queue[head]
-		d := out.cells[cur[0]*int64(cols)+cur[1]]
-		for _, dl := range dmSearchDirs(diag) {
-			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
-			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= int64(cols) {
-				continue
+		p := int64(queue[head])
+		r, c, d := p/w, p%w, out.cells[p]+1
+		visit := func(i int64) {
+			if mask[i] && out.cells[i] == -1 {
+				out.cells[i] = d
+				queue = append(queue, int32(i))
 			}
-			i := nr*int64(cols) + nc
-			if !mask[i] || out.cells[i] != -1 {
-				continue
+		}
+		up, down, left, right := r > 0, r+1 < h, c > 0, c+1 < w
+		if up {
+			visit(p - w)
+		}
+		if down {
+			visit(p + w)
+		}
+		if left {
+			visit(p - 1)
+		}
+		if right {
+			visit(p + 1)
+		}
+		if diag {
+			if up && left {
+				visit(p - w - 1)
 			}
-			out.cells[i] = d + 1
-			queue = append(queue, [2]int64{nr, nc})
+			if up && right {
+				visit(p - w + 1)
+			}
+			if down && left {
+				visit(p + w - 1)
+			}
+			if down && right {
+				visit(p + w + 1)
+			}
 		}
 	}
 	return out
@@ -250,13 +296,15 @@ const declFloodFill = `func dmFloodFill(rows, cols int, mask []bool, sr, sc int6
 		dmFail("start (%d, %d) is not in the region (its predicate is false there)", sr, sc)
 	}
 	out := dmGrid[int64]{rows: rows, cols: cols, cells: make([]int64, rows*cols)}
-	out.cells[sr*int64(cols)+sc] = 1
-	stack := [][2]int64{{sr, sc}}
+	start := sr*int64(cols) + sc
+	out.cells[start] = 1
+	stack := []int32{int32(start)}
 	for len(stack) > 0 {
-		cur := stack[len(stack)-1]
+		p := int64(stack[len(stack)-1])
 		stack = stack[:len(stack)-1]
+		r, c := p/int64(cols), p%int64(cols)
 		for _, dl := range dmSearchDirs(diag) {
-			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
+			nr, nc := r+dl[0], c+dl[1]
 			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= int64(cols) {
 				continue
 			}
@@ -265,7 +313,7 @@ const declFloodFill = `func dmFloodFill(rows, cols int, mask []bool, sr, sc int6
 				continue
 			}
 			out.cells[i] = 1
-			stack = append(stack, [2]int64{nr, nc})
+			stack = append(stack, int32(i))
 		}
 	}
 	return out
@@ -408,13 +456,13 @@ const declBFSTarget = `func dmBFSTarget(rows, cols int, mask []bool, sr, sc, tr,
 		dist[i] = -1
 	}
 	dist[sr*w+sc] = 0
-	queue := make([][2]int64, 1, len(mask)+1)
-	queue[0] = [2]int64{sr, sc}
+	queue := make([]int32, 1, len(mask)+1)
+	queue[0] = int32(sr*w + sc)
 	for head := 0; head < len(queue); head++ {
-		cur := queue[head]
-		d := dist[cur[0]*w+cur[1]]
+		p := int64(queue[head])
+		r, c, d := p/w, p%w, dist[p]
 		for _, dl := range dmSearchDirs(diag) {
-			nr, nc := cur[0]+dl[0], cur[1]+dl[1]
+			nr, nc := r+dl[0], c+dl[1]
 			if nr < 0 || nr >= int64(rows) || nc < 0 || nc >= w {
 				continue
 			}
@@ -426,7 +474,7 @@ const declBFSTarget = `func dmBFSTarget(rows, cols int, mask []bool, sr, sc, tr,
 			if i == target {
 				return d + 1
 			}
-			queue = append(queue, [2]int64{nr, nc})
+			queue = append(queue, int32(i))
 		}
 	}
 	return -1
@@ -551,67 +599,65 @@ func (g *gen) emitSearchTarget(n *ir.Node, in string) (string, error) {
 	return "", unsupported(n, "unknown search kind %q", kind)
 }
 
+// declComponents counts the connected regions of true cells by flood fill.
+// The mask is the caller's own freshly built slice, so a visited cell is
+// simply cleared in it: no visited array, and — unlike the union-find this
+// replaced — nothing allocated or touched for the cells that are not part of
+// any region.
 const declComponents = `func dmComponents(rows, cols int, mask []bool, diag bool) int64 {
-	// int32 indices: a grid big enough to overflow them (2^31 cells) could not
-	// be read into memory in the first place, and the halved arrays are the
-	// difference between fitting the working set in cache and not.
-	parent := make([]int32, rows*cols)
-	size := make([]int32, rows*cols)
-	for i := range parent {
-		parent[i] = int32(i)
-		size[i] = 1
-	}
-	find := func(x int32) int32 {
-		for parent[x] != x {
-			parent[x] = parent[parent[x]]
-			x = parent[x]
-		}
-		return x
-	}
-	union := func(a, b int32) {
-		ra, rb := find(a), find(b)
-		if ra == rb {
-			return
-		}
-		if size[ra] < size[rb] {
-			ra, rb = rb, ra
-		}
-		parent[rb] = ra
-		size[ra] += size[rb]
-	}
-	for r := 0; r < rows; r++ {
-		for c := 0; c < cols; c++ {
-			i := r*cols + c
-			if !mask[i] {
-				continue
-			}
-			if c+1 < cols && mask[i+1] {
-				union(int32(i), int32(i+1))
-			}
-			if r+1 < rows && mask[i+cols] {
-				union(int32(i), int32(i+cols))
-			}
-			// Under Mode: 8 the two downward diagonals complete the
-			// neighbourhood; the upward ones are covered by the cell above
-			// having already unioned toward this one.
-			if diag && r+1 < rows {
-				if c+1 < cols && mask[i+cols+1] {
-					union(int32(i), int32(i+cols+1))
-				}
-				if c > 0 && mask[i+cols-1] {
-					union(int32(i), int32(i+cols-1))
-				}
-			}
-		}
+	dirs := [][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}}
+	if !diag {
+		dirs = dirs[:4]
 	}
 	var n int64
-	for i, m := range mask {
-		if m && find(int32(i)) == int32(i) {
-			n++
+	var stack []int32
+	for start, open := range mask {
+		if !open {
+			continue
+		}
+		n++
+		mask[start] = false
+		stack = append(stack[:0], int32(start))
+		for len(stack) > 0 {
+			p := int(stack[len(stack)-1])
+			stack = stack[:len(stack)-1]
+			r, c := p/cols, p%cols
+			for _, d := range dirs {
+				nr, nc := r+d[0], c+d[1]
+				if nr < 0 || nr >= rows || nc < 0 || nc >= cols {
+					continue
+				}
+				if q := nr*cols + nc; mask[q] {
+					mask[q] = false
+					stack = append(stack, int32(q))
+				}
+			}
 		}
 	}
 	return n
 }`
+
+// runeTest recognises a cell predicate that compares its parameter with a
+// one-character literal, `(c) -> c = "#"` either way round, and renders it
+// as a compare of the rune ch.
+func runeTest(lam *ast.Lambda, ch string) (string, bool) {
+	be, ok := lam.Body.(*ast.BinaryExpr)
+	if !ok || be.Op != token.EQ || len(lam.Params) != 1 {
+		return "", false
+	}
+	lit, ok := be.Right.(*ast.StringLit)
+	other := be.Left
+	if !ok {
+		lit, ok = be.Left.(*ast.StringLit)
+		other = be.Right
+	}
+	id, isIdent := other.(*ast.Ident)
+	if !ok || !isIdent || id.Name != lam.Params[0] || utf8.RuneCountInString(lit.Value) != 1 {
+		return "", false
+	}
+	r, _ := utf8.DecodeRuneInString(lit.Value)
+	return fmt.Sprintf("%s == %s", ch, strconv.QuoteRune(r)), true
+}
 
 func (g *gen) emitConnectedComponents(n *ir.Node, in string) (string, error) {
 	mask, err := g.emitCellMask(n, in)

@@ -7,6 +7,11 @@ canonical toolbox onto Domain, item by item, so you can find the equivalent
 without guessing. Detailed semantics live in
 [primitives.md](primitives.md) and [expressions.md](expressions.md).
 
+The editor fetches the puzzles these are for: `alt+c` in
+[`domain expansion: development`](development.md#advent-of-code) pulls a day's
+text, your input and the worked example onto the screen beside the program, and
+`alt+x` checks what the last run answered.
+
 Legend: **prim** = pipeline primitive, **expr** = expression-layer builtin,
 **prelude** = Shikigami loaded before every program, **runtime** = a Go
 type in `ir/` that powers primitives (not directly user-visible). The whole

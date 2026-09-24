@@ -7,10 +7,8 @@ import (
 	"strings"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // Control flow (M8): Simple Domain loops, plus the Apply transform and the
@@ -49,7 +47,7 @@ var apply = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		outT, err := typecheck.LambdaType(lam, append([]*ir.Type{in}, ambientTypes()...)...)
+		outT, err := lambdaType(lam, in)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Apply: " + err.Error()}
 		}
@@ -61,7 +59,7 @@ var apply = &Primitive{
 			Meta:    map[string]any{"lambda": lam},
 			Pos:     pos,
 			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-				r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in}, ambientTypes()...), append([]ir.Value{v}, ambientArgs()...)...)
+				r, err := evalLambda(lam, []*ir.Type{in}, v)
 				if err != nil {
 					return nil, runtimeErr("Apply", pos, "%v", err)
 				}
@@ -191,7 +189,7 @@ func (r *resolver) loopNode(stmt *ast.Statement, cur *ir.Type, rewriteErr *error
 		if !ok {
 			return nil, &ResolveError{Pos: stmt.Pos, Msg: "While needs a Using: predicate"}
 		}
-		bt, err := typecheck.LambdaType(lam, append([]*ir.Type{cur}, ambientTypes()...)...)
+		bt, err := lambdaType(lam, cur)
 		if err != nil {
 			return nil, &ResolveError{Pos: stmt.Pos, Msg: "While: " + err.Error()}
 		}
@@ -292,7 +290,7 @@ func (r *resolver) resolveForLoop(stmt *ast.Statement, op *ast.Operation, cur *i
 			for i, x := range xs {
 				pushAmbientValue(x, elemType)
 				var err error
-				label := fmt.Sprintf("For %s iter %d/%d", varName, i+1, len(xs))
+				label := func() string { return fmt.Sprintf("For %s iter %d/%d", varName, i+1, len(xs)) }
 				v, err = runIteration(ctx, subNodes, v, label, cur)
 				popAmbientValue()
 				if err != nil {
@@ -340,7 +338,7 @@ func (r *resolver) resolveForEachLoop(stmt *ast.Statement, op *ast.Operation, cu
 		return nil, &ResolveError{Pos: stmt.Pos,
 			Msg: fmt.Sprintf("For Each %s In needs a Using: lambda producing the list, e.g. Using: (w) -> w.%ss", varName, varName)}
 	}
-	srcType, err := typecheck.LambdaType(lam, append([]*ir.Type{cur}, ambientTypes()...)...)
+	srcType, err := lambdaType(lam, cur)
 	if err != nil {
 		return nil, &ResolveError{Pos: stmt.Pos, Msg: "For Each: " + err.Error()}
 	}
@@ -373,7 +371,7 @@ func (r *resolver) resolveForEachLoop(stmt *ast.Statement, op *ast.Operation, cu
 		Display: display, Pos: stmt.Pos,
 		Meta: meta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
-			listV, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{cur}, ambientTypes()...), append([]ir.Value{v}, ambientArgs()...)...)
+			listV, err := evalLambda(lam, []*ir.Type{cur}, v)
 			if err != nil {
 				return nil, runtimeErr("Simple Domain (For Each)", stmt.Pos, "Using: %v", err)
 			}
@@ -385,7 +383,7 @@ func (r *resolver) resolveForEachLoop(stmt *ast.Statement, op *ast.Operation, cu
 			for i, x := range xs {
 				pushAmbientValue(x, elemType)
 				pushAmbientValue(int64(i), ir.Int())
-				label := fmt.Sprintf("%s iter %d/%d", display, i+1, len(xs))
+				label := func() string { return fmt.Sprintf("%s iter %d/%d", display, i+1, len(xs)) }
 				v, err = runIteration(ctx, subNodes, v, label, cur)
 				popAmbientValue()
 				popAmbientValue()
@@ -447,12 +445,19 @@ func runBody(ctx *ir.Context, nodes []*ir.Node, v ir.Value) (ir.Value, error) {
 // runIteration runs one loop iteration inside a labelled trace frame, so a
 // visualizer can step into `Repeat 4 iter 2/4` and --stats can attribute nested
 // work to its loop. Without a tracer the frame calls are no-ops.
-func runIteration(ctx *ir.Context, nodes []*ir.Node, v ir.Value, label string, t *ir.Type) (ir.Value, error) {
+//
+// The label is built only when something is tracing: a loop runs its body on
+// every lap, and formatting a frame name nothing reads was a tenth of the
+// interpreter's time on the loop benchmarks.
+func runIteration(ctx *ir.Context, nodes []*ir.Node, v ir.Value, label func() string, t *ir.Type) (ir.Value, error) {
+	if !ctx.Tracing() {
+		return runBody(ctx, nodes, v)
+	}
 	// The lap's own result closes its frame, so a stepper can show what one
 	// iteration made of what it was given without opening it. A lap that failed
 	// reports nil, which is what marks the frame unfinished.
 	var out ir.Value
-	ctx.PushFrame(label, t)
+	ctx.PushFrame(label(), t)
 	defer func() { ctx.PopFrame(out) }()
 
 	out, err := runBody(ctx, nodes, v)
@@ -593,8 +598,8 @@ func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position
 			if err != nil {
 				return nil, err
 			}
-			for i := int64(0); i < n; i++ {
-				label := fmt.Sprintf("Repeat %d iter %d/%d", n, i+1, n)
+			for i := range n {
+				label := func() string { return fmt.Sprintf("Repeat %d iter %d/%d", n, i+1, n) }
 				if v, err = runIteration(ctx, body, v, label, t); err != nil {
 					return nil, err
 				}
@@ -615,7 +620,7 @@ func whileNode(body []*ir.Node, lam *ast.Lambda, t *ir.Type, pos token.Position)
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
 			v = ownLoopState(body, v, t, meta)
 			for iters := 0; ; iters++ {
-				r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{t}, ambientTypes()...), append([]ir.Value{v}, ambientArgs()...)...)
+				r, err := evalLambda(lam, []*ir.Type{t}, v)
 				if err != nil {
 					return nil, runtimeErr("Simple Domain (While)", pos, "predicate: %v", err)
 				}
@@ -630,7 +635,8 @@ func whileNode(body []*ir.Node, lam *ast.Lambda, t *ir.Type, pos token.Position)
 					return nil, runtimeErr("Simple Domain (While)", pos,
 						"loop exceeded %d iterations (non-terminating?)", maxLoopIterations)
 				}
-				if v, err = runIteration(ctx, body, v, fmt.Sprintf("While iter %d", iters+1), t); err != nil {
+				label := func() string { return fmt.Sprintf("While iter %d", iters+1) }
+				if v, err = runIteration(ctx, body, v, label, t); err != nil {
 					return nil, err
 				}
 			}
@@ -645,7 +651,8 @@ func fixedPointNode(body []*ir.Node, t *ir.Type, pos token.Position) *ir.Node {
 		Meta: map[string]any{"kind": "fixedpoint", "nodes": body},
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
 			for iters := 0; ; iters++ {
-				nv, err := runIteration(ctx, body, v, fmt.Sprintf("Fixed Point iter %d", iters+1), t)
+				label := func() string { return fmt.Sprintf("Fixed Point iter %d", iters+1) }
+				nv, err := runIteration(ctx, body, v, label, t)
 				if err != nil {
 					return nil, err
 				}

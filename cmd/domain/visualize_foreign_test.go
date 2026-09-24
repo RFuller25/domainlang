@@ -200,7 +200,7 @@ func TestVisualizeForeignFailureKeepsTheTableAligned(t *testing.T) {
 	}
 	// Every line of the traceback is indented under the `error:` label; none
 	// starts at column zero, where it would read as a new table row.
-	for _, line := range strings.Split(got, "\n") {
+	for line := range strings.SplitSeq(got, "\n") {
 		if strings.Contains(line, "Traceback") || strings.Contains(line, "ValueError:") ||
 			strings.Contains(line, "File \"") {
 			if !strings.HasPrefix(line, " ") {

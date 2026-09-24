@@ -59,7 +59,7 @@ const depsSum = ` + "`" + strings.TrimRight(gosum, "\n") + "\n`\n")
 // has to understand are a `go` line and a require block.
 func readGoMod(text string) (version string, requires []string, err error) {
 	inBlock := false
-	for _, raw := range strings.Split(text, "\n") {
+	for raw := range strings.SplitSeq(text, "\n") {
 		line := strings.TrimSpace(raw)
 		if i := strings.Index(line, "//"); i >= 0 {
 			line = strings.TrimSpace(line[:i])

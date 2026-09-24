@@ -302,3 +302,30 @@ Reveal: stdout
 		}
 	}
 }
+
+// TestCompiledNumberTheoryIsExact checks compiled number-theory builtins
+// against known answers rather than against the interpreter: both backends
+// once answered isqrt(2) = 2, a negative modpow above a ~3e9 modulus and a
+// negative choose(62, 31), and a parity test is blind to a bug the two share.
+func TestCompiledNumberTheoryIsExact(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles binaries; skipped in -short mode")
+	}
+	requireGo(t)
+	src := `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Using: (x) -> totext(isqrt(x))
+Maximum Technique: Join with ","
+Cursed Technique: Apply
+    Using: (s) -> textjoin(list(s, totext(modpow(3, 200, 119315717514047)), totext(choose(62, 31)), totext(modinv(3, 119315717514047))), " ")
+Reveal: stdout
+`
+	pipe := compilePipeline(t, src, true)
+	got := buildAndRun(t, pipe, []byte("0\n1\n2\n3\n4\n8\n9\n15\n16\n9223372036854775807"), codegen.Options{})
+	want := "0,1,1,1,2,2,3,3,4,3037000499 34386098449076 465428353255261088 39771905838016\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

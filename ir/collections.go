@@ -11,6 +11,8 @@ package ir
 // RecordValue — named fields, declaration order preserved for rendering.
 // ---------------------------------------------------------------------------
 
+import "maps"
+
 type RecordValue struct {
 	Fields []string // field names in declared order
 	Vals   map[string]Value
@@ -35,9 +37,7 @@ func (r *RecordValue) With(name string, v Value) *RecordValue {
 		Vals:   make(map[string]Value, len(r.Vals)),
 	}
 	copy(out.Fields, r.Fields)
-	for k, val := range r.Vals {
-		out.Vals[k] = val
-	}
+	maps.Copy(out.Vals, r.Vals)
 	out.Vals[name] = v
 	return out
 }
@@ -83,6 +83,18 @@ func (m *MapValue) Put(k, v Value) {
 	m.vals[ck] = v
 }
 
+// PutNew stores v under k only if k is absent, and reports whether it did —
+// a first-visit record in one key computation instead of a Get and a Put.
+func (m *MapValue) PutNew(k, v Value) bool {
+	ck := KeyOf(k)
+	if _, ok := m.vals[ck]; ok {
+		return false
+	}
+	m.keys = append(m.keys, k)
+	m.vals[ck] = v
+	return true
+}
+
 func (m *MapValue) Get(k Value) (Value, bool) {
 	v, ok := m.vals[KeyOf(k)]
 	return v, ok
@@ -108,9 +120,7 @@ func (m *MapValue) Clone() *MapValue {
 		vals: make(map[any]Value, len(m.vals)),
 	}
 	copy(out.keys, m.keys)
-	for k, v := range m.vals {
-		out.vals[k] = v
-	}
+	maps.Copy(out.vals, m.vals)
 	return out
 }
 

@@ -162,11 +162,6 @@ type Hole struct {
 	Space bool
 }
 
-// capturing reports whether a hole owns a capture group in the regex. A `{?f}`
-// flag reads its value from its group's own capture, and a `{~}` gap has no
-// value at all.
-func (h Hole) capturing() bool { return !h.Flag && !h.Space }
-
 // Segment is a literal run, a hole, or an optional group (exactly one is set).
 type Segment struct {
 	Literal string
@@ -382,12 +377,12 @@ func (t HoleType) chars() string {
 // parseRepetition strips a trailing `+ sep="…"` off a hole's type, returning
 // whether the hole repeats, its separator, and the bare type left over.
 func parseRepetition(typeStr, inner string) (rep bool, sep, bare string, err error) {
-	plus := strings.IndexByte(typeStr, '+')
-	if plus < 0 {
+	before, after, ok := strings.Cut(typeStr, "+")
+	if !ok {
 		return false, "", typeStr, nil
 	}
-	bare = strings.TrimSpace(typeStr[:plus])
-	sep, err = parseSepClause(strings.TrimSpace(typeStr[plus+1:]), inner)
+	bare = strings.TrimSpace(before)
+	sep, err = parseSepClause(strings.TrimSpace(after), inner)
 	if err != nil {
 		return false, "", "", err
 	}

@@ -4,10 +4,8 @@ import (
 	"fmt"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // Grid primitives (M5), built on ir.GridValue. The grid value type and its
@@ -162,9 +160,9 @@ var mapCells = &Primitive{
 		}
 		var outElem *ir.Type
 		if positional {
-			outElem, err = typecheck.LambdaType(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...)...)
+			outElem, err = lambdaType(lam, in, ir.Int(), ir.Int())
 		} else {
-			outElem, err = typecheck.LambdaType(lam, append([]*ir.Type{in.Elem}, ambientTypes()...)...)
+			outElem, err = lambdaType(lam, in.Elem)
 		}
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Map Cells: " + err.Error()}
@@ -186,10 +184,9 @@ var mapCells = &Primitive{
 					var r ir.Value
 					var err error
 					if positional {
-						r, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...),
-							append([]ir.Value{g, int64(i / g.Cols), int64(i % g.Cols)}, ambientArgs()...)...)
+						r, err = evalLambda(lam, []*ir.Type{in, ir.Int(), ir.Int()}, g, int64(i/g.Cols), int64(i%g.Cols))
 					} else {
-						r, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{in.Elem}, ambientTypes()...), append([]ir.Value{cell}, ambientArgs()...)...)
+						r, err = evalLambda(lam, []*ir.Type{in.Elem}, cell)
 					}
 					if err != nil {
 						return nil, runtimeErr("Map Cells", pos, "cell %d: %v", i, err)
@@ -367,7 +364,7 @@ var countCells = &Primitive{
 			return nil, err
 		}
 		if positional {
-			bodyType, err := typecheck.LambdaType(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...)...)
+			bodyType, err := lambdaType(lam, in, ir.Int(), ir.Int())
 			if err != nil {
 				return nil, &ResolveError{Pos: pos, Msg: "Count Cells: " + err.Error()}
 			}
@@ -395,8 +392,7 @@ var countCells = &Primitive{
 					var err error
 					if positional {
 						var r ir.Value
-						r, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{in, ir.Int(), ir.Int()}, ambientTypes()...),
-							append([]ir.Value{g, int64(i / g.Cols), int64(i % g.Cols)}, ambientArgs()...)...)
+						r, err = evalLambda(lam, []*ir.Type{in, ir.Int(), ir.Int()}, g, int64(i/g.Cols), int64(i%g.Cols))
 						if err == nil {
 							b, ok := r.(bool)
 							if !ok {

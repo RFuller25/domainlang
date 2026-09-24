@@ -132,7 +132,7 @@ func TestGroupBy(t *testing.T) {
 // random inputs.
 func TestGroupByPartitionsCoverAllElements(t *testing.T) {
 	rng := rand.New(rand.NewSource(19))
-	for iter := 0; iter < 200; iter++ {
+	for iter := range 200 {
 		n := rng.Intn(30) + 1
 		nums := make([]string, n)
 		vals := make([]int64, n)

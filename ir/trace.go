@@ -157,6 +157,11 @@ func SizeOf(v Value) (int, bool) {
 		return x.Rows * x.Cols, true
 	case *SparseValue:
 		return x.Len(), true
+	case *GraphValue:
+		// Its node count, which is what `size(g)` answers in the language, so
+		// the number beside a graph in a trace is the number a program would
+		// have read.
+		return x.Len(), true
 	}
 	return 0, false
 }

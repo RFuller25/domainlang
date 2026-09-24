@@ -15,12 +15,11 @@ package prims
 
 import (
 	"fmt"
+	"slices"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // exploreMode selects what a completed search reports.
@@ -75,7 +74,7 @@ var explore = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		nextT, err := typecheck.LambdaType(lam, append([]*ir.Type{in}, ambientTypes()...)...)
+		nextT, err := lambdaType(lam, in)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Explore: " + err.Error()}
 		}
@@ -118,7 +117,7 @@ var explore = &Primitive{
 		// elsewhere, where it simply prunes.
 		var until *ast.Lambda
 		if u, ok := args.Lambda("Until"); ok {
-			ut, err := typecheck.LambdaType(u, append([]*ir.Type{in}, ambientTypes()...)...)
+			ut, err := lambdaType(u, in)
 			if err != nil {
 				return nil, &ResolveError{Pos: pos, Msg: "Explore Until: " + err.Error()}
 			}
@@ -203,7 +202,7 @@ func exploreCost(args ArgSet, state *ir.Type, mode exploreMode, pos token.Positi
 	if arity == 2 {
 		params = []*ir.Type{state, state}
 	}
-	ct, err := typecheck.LambdaType(lam, append(params, ambientTypes()...)...)
+	ct, err := lambdaType(lam, params...)
 	if err != nil {
 		return nil, 0, &ResolveError{Pos: pos, Msg: "Explore Cost: " + err.Error()}
 	}
@@ -236,11 +235,11 @@ func exploreTallyArgs(args ArgSet, state *ir.Type, mode exploreMode, pos token.P
 			"Value: lambda (what a state with no successors contributes) and a Combine: lambda " +
 			"(how a state's successors fold together)"}
 	}
-	valueT, err := typecheck.LambdaType(value, append([]*ir.Type{state}, ambientTypes()...)...)
+	valueT, err := lambdaType(value, state)
 	if err != nil {
 		return nil, nil, nil, &ResolveError{Pos: pos, Msg: "Explore Value: " + err.Error()}
 	}
-	combineT, err := typecheck.LambdaType(combine, append([]*ir.Type{valueT, valueT}, ambientTypes()...)...)
+	combineT, err := lambdaType(combine, valueT, valueT)
 	if err != nil {
 		return nil, nil, nil, &ResolveError{Pos: pos, Msg: "Explore Combine: " + err.Error()}
 	}
@@ -288,9 +287,7 @@ func (s *search) run(seed ir.Value) (ir.Value, error) {
 // call applies a lambda to the given arguments, threading the ambient For
 // variables the way every other primitive here does.
 func (s *search) call(lam *ast.Lambda, params []*ir.Type, args ...ir.Value) (ir.Value, error) {
-	return eval.EvalLambdaTyped(lam,
-		append(params, ambientTypes()...),
-		append(args, ambientArgs()...)...)
+	return evalLambda(lam, params, args...)
 }
 
 // successors evaluates the Using: lambda.
@@ -356,24 +353,61 @@ func (s *search) edgeCost(from, to ir.Value) (int64, error) {
 // state space, and what makes "how many distinct configurations" answerable
 // at all.
 func (s *search) breadthFirst(seed ir.Value) (ir.Value, error) {
-	seen := map[any]bool{}
-	order := []ir.Value{}
-	dist := ir.NewMapValue()
+	// Each mode keeps only what its answer is made of: the states in order,
+	// how many there were, or each one's distance. visit records a state the
+	// first time it is met and reports whether it was new.
+	var (
+		order []ir.Value
+		count int64
+		dist  *ir.MapValue
+		seen  map[any]bool
+	)
+	if s.mode == exploreDistances {
+		dist = ir.NewMapValue()
+	} else {
+		seen = map[any]bool{}
+	}
+	visit := func(n ir.Value, d int64) bool {
+		if dist != nil {
+			return dist.PutNew(n, d)
+		}
+		k := ir.KeyOf(n)
+		if seen[k] {
+			return false
+		}
+		seen[k] = true
+		count++
+		if s.mode == exploreCollect {
+			order = append(order, n)
+		}
+		return true
+	}
+	// steps is the answer for Mode: Steps — -1 when the search exhausted
+	// without an Until: hit, the same "not there" sentinel Find Index uses.
+	result := func(steps int64) ir.Value {
+		switch s.mode {
+		case exploreCount:
+			return count
+		case exploreDistances:
+			return dist
+		case exploreSteps:
+			return steps
+		}
+		return order
+	}
 
 	var q ir.Queue[ir.Value]
 	var depth ir.Queue[int64]
 	q.Push(seed)
 	depth.Push(0)
-	seen[ir.KeyOf(seed)] = true
-	order = append(order, seed)
-	dist.Put(seed, int64(0))
+	visit(seed, 0)
 
 	// The seed itself can satisfy Until:, in which case the answer is zero
 	// steps — the search never expands anything.
 	if done, err := s.hit(seed); err != nil {
 		return nil, err
 	} else if done {
-		return exploreResult(s.mode, order, dist, 0), nil
+		return result(0), nil
 	}
 
 	for {
@@ -387,13 +421,9 @@ func (s *search) breadthFirst(seed ir.Value) (ir.Value, error) {
 			return nil, err
 		}
 		for _, n := range succ {
-			k := ir.KeyOf(n)
-			if seen[k] {
+			if !visit(n, d+1) {
 				continue
 			}
-			seen[k] = true
-			order = append(order, n)
-			dist.Put(n, d+1)
 			done, err := s.hit(n)
 			if err != nil {
 				return nil, err
@@ -411,7 +441,7 @@ func (s *search) breadthFirst(seed ir.Value) (ir.Value, error) {
 			depth.Push(d + 1)
 		}
 	}
-	return exploreResult(s.mode, order, dist, -1), nil
+	return result(-1), nil
 }
 
 // cheapest is Dijkstra over the same implicit graph: the frontier is a
@@ -540,8 +570,8 @@ func (s *search) tally(seed ir.Value) (ir.Value, error) {
 				}
 			}
 			kids[k] = succ
-			for i := len(succ) - 1; i >= 0; i-- {
-				stack = append(stack, frame{v: succ[i]})
+			for _, s := range slices.Backward(succ) {
+				stack = append(stack, frame{v: s})
 			}
 			continue
 		}
@@ -571,19 +601,4 @@ func (s *search) tally(seed ir.Value) (ir.Value, error) {
 		memo[k] = acc
 	}
 	return memo[ir.KeyOf(seed)], nil
-}
-
-// exploreResult shapes a finished search per the mode. steps is the answer for
-// Mode: Steps — -1 when the search exhausted without an Until: hit, the same
-// "not there" sentinel Find Index uses.
-func exploreResult(mode exploreMode, order []ir.Value, dist *ir.MapValue, steps int64) ir.Value {
-	switch mode {
-	case exploreCount:
-		return int64(len(order))
-	case exploreDistances:
-		return dist
-	case exploreSteps:
-		return steps
-	}
-	return order
 }

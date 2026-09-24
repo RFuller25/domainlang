@@ -584,28 +584,12 @@ func (p *parser) parsePart(startPos token.Position) (*ast.Statement, error) {
 		return nil, err
 	}
 	if p.cur().Kind != token.INDENT {
-		return nil, p.errBlockf("%s must be followed by an indented sub-pipeline", partDescription(stmt))
+		return nil, p.errBlockf("%s must be followed by an indented sub-pipeline", stmt.PartDescription())
 	}
 	if err := p.parseBlock(stmt); err != nil {
 		return nil, err
 	}
 	return stmt, nil
-}
-
-// partDescription names a Part the way its source line reads, for an error
-// message. `Part "1"` for the unroled form, `Part Draw` for a bare role,
-// `Part Every 120` for one with an argument.
-func partDescription(stmt *ast.Statement) string {
-	switch {
-	case stmt.PartRole == "":
-		return fmt.Sprintf("Part %q", stmt.PartName)
-	case stmt.PartArg == nil:
-		return "Part " + stmt.PartRole
-	case stmt.PartArg.IsInt:
-		return fmt.Sprintf("Part %s %d", stmt.PartRole, stmt.PartArg.Int)
-	default:
-		return fmt.Sprintf("Part %s %q", stmt.PartRole, stmt.PartArg.Text)
-	}
 }
 
 // startsPhrase reports whether a token can open a keyword-less statement: an

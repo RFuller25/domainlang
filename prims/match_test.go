@@ -114,7 +114,7 @@ func TestMatchPatternRoundTrip(t *testing.T) {
 	src := "Cursed Energy: stdin\n" +
 		"Cursed Technique: Match Pattern\n" +
 		"    Using: \"{a:int}-{b:int},{c:word}\"\n"
-	for iter := 0; iter < 200; iter++ {
+	for iter := range 200 {
 		a := int64(rng.Intn(2001) - 1000)
 		b := int64(rng.Intn(2001) - 1000)
 		c := fmt.Sprintf("w%d", rng.Intn(1000))

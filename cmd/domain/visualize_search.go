@@ -43,7 +43,7 @@ type searchTerm struct {
 // parseQuery breaks a query into terms.
 func parseQuery(q string) []searchTerm {
 	var terms []searchTerm
-	for _, word := range strings.Fields(q) {
+	for word := range strings.FieldsSeq(q) {
 		terms = append(terms, parseTerm(word))
 	}
 	return terms
@@ -75,8 +75,8 @@ func parseTerm(word string) searchTerm {
 
 // parseBound reads a `>5ms` or `<10%` comparison.
 func parseBound(cmp byte, rest string) (searchTerm, bool) {
-	if strings.HasSuffix(rest, "%") {
-		f, err := strconv.ParseFloat(strings.TrimSuffix(rest, "%"), 64)
+	if before, ok := strings.CutSuffix(rest, "%"); ok {
+		f, err := strconv.ParseFloat(before, 64)
 		if err != nil {
 			return searchTerm{}, false
 		}

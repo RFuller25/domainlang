@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -387,8 +388,8 @@ func divisorsOf(n int64) ([]any, error) {
 	for _, d := range small {
 		out = append(out, d)
 	}
-	for i := len(large) - 1; i >= 0; i-- {
-		out = append(out, large[i])
+	for _, l := range slices.Backward(large) {
+		out = append(out, l)
 	}
 	return out, nil
 }

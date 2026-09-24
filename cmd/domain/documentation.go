@@ -140,6 +140,18 @@ func cmdDocumentation(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "  Serving the documentation at %s\n", url)
 	fmt.Fprintln(stdout, "  Press Ctrl+C to close the domain.")
+	// The playground is a separate build artifact and is not committed, so a
+	// binary built with a plain `go build` serves a site whose Run buttons are
+	// simply absent. The site's own playground page explains that, but a
+	// reader browsing the reference never goes there and has no reason to
+	// suspect the buttons ever existed — so say it where they are looking.
+	if _, err := docs.FS.ReadFile("wasm/domain.wasm"); err != nil {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "  The in-browser playground is not built into this binary, so the")
+		fmt.Fprintln(stdout, "  Run buttons are absent. To include it:")
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, "      make build          # or: ./docs/wasm/build.sh && go build -o domain ./cmd/domain")
+	}
 	fmt.Fprintln(stdout)
 
 	openBrowser(url, stdout)

@@ -369,7 +369,41 @@ func cmdOptimize(path, src string, w, stderr io.Writer, color bool) int {
 			fmt.Fprintf(w, "  %s\n", r.Message)
 		}
 	}
+
+	// The other half of the report. Saying which rewrites applied and nothing
+	// about the ones that did not is how a program that deep-copies a map on
+	// every lap reads as fully optimized. `lint` carries the same finding with
+	// the advice attached; this is the short form, in the place a reader is
+	// already asking what the optimizer did.
+	if declined := optimizer.DeclinedInPlace(pipe); len(declined) > 0 {
+		fmt.Fprintf(w, "accumulator updates that still copy (%d):\n", len(declined))
+		for _, d := range declined {
+			fmt.Fprintf(w, "  line %d: `%s` in %s — %s\n",
+				d.Pos.Line, d.Update, d.Prim, declinedSummary(d.Reason))
+		}
+		fmt.Fprintf(w, "run `domain expansion: lint %s` for what to change\n", path)
+	}
 	return 0
+}
+
+// declinedSummary is the one-line form of a refusal; diag carries the long one
+// with the advice.
+func declinedSummary(reason string) string {
+	switch reason {
+	case optimizer.DeclinedReadAfter:
+		return "the accumulator is read after it"
+	case optimizer.DeclinedNotRooted:
+		return "its receiver is not the accumulator"
+	case optimizer.DeclinedKind:
+		return "the field it writes to is not an in-place collection"
+	case optimizer.DeclinedEffectful:
+		return "the body writes a binding with `:=`"
+	case optimizer.DeclinedAliasEscape:
+		return "the accumulator's storage escapes through take/drop/slice"
+	case optimizer.DeclinedUnownableState:
+		return "the loop's state cannot be copied on entry"
+	}
+	return reason
 }
 
 // cmdMaximumCompile is the whole ritual: fix what can be fixed, report what

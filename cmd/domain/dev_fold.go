@@ -73,6 +73,14 @@ func lastLineOf(st *ast.Statement) int {
 	for _, b := range st.Binds {
 		last = max(last, b.Pos.Line)
 	}
+	// A `Cursed Object:` / `Cursed Tool:` block is its declaration lines, so
+	// without these the fold stops at the keyword and hides nothing.
+	for _, d := range st.Decls {
+		last = max(last, d.Pos.Line)
+		for _, sub := range d.Body {
+			last = max(last, lastLineOf(sub))
+		}
+	}
 	for _, sub := range st.Block {
 		last = max(last, lastLineOf(sub))
 	}

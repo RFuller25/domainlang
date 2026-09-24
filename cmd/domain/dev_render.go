@@ -31,6 +31,9 @@ func (m devModel) view() string {
 	if m.showHelp {
 		return m.helpView()
 	}
+	if m.aocShowing {
+		return m.aocView()
+	}
 	if m.picker != nil {
 		return m.picker.view(m.width, m.height)
 	}
@@ -154,6 +157,8 @@ func (m devModel) decorFor(row int) lineDecor {
 // starts wandering.
 func (m devModel) bottomLine() string {
 	switch {
+	case m.aocAsk != nil:
+		return m.aocPromptLine()
 	case m.search != nil:
 		return truncateVis(m.search.prompt(), m.width)
 	case m.gotoLine != nil:
@@ -223,15 +228,6 @@ func (m devModel) floatingRows() ([]string, int) {
 		top = max(0, cursorRow-len(rows))
 	}
 	return rows, top
-}
-
-// gutter is one line's number, right-aligned to the width the longest one
-// needs. The width comes from the line count rather than from the number being
-// drawn, so a program does not shift its own text sideways as it grows past
-// ten lines.
-func gutter(n, width int) string {
-	s := strconv.Itoa(n)
-	return styDim.Render(strings.Repeat(" ", width-len(s)) + s + " │ ")
 }
 
 // statusLine says what is being edited, whether it is saved, and where the

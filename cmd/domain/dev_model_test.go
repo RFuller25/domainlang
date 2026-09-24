@@ -468,7 +468,7 @@ func TestDevCursorStaysVisiblePastTheRightEdge(t *testing.T) {
 		m.buf.col = col
 		m.scrollToCursor()
 		painted := ansi.Strip(m.view())
-		first := strings.SplitN(painted, "\n", 2)[0]
+		first, _, _ := strings.Cut(painted, "\n")
 
 		// The cursor's column, in cells, must fall inside the window.
 		want := ansi.StringWidth(long[:col]) - m.leftCol + m.gutterWidth()

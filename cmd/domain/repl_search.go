@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -57,9 +58,9 @@ func newHistorySearch(h *history, seed string) *historySearch {
 func (s *historySearch) setQuery(h *history, query string) {
 	s.query, s.matches, s.idx = query, nil, 0
 	needle := strings.ToLower(query)
-	for i := len(h.entries) - 1; i >= 0; i-- {
-		if needle == "" || strings.Contains(strings.ToLower(h.entries[i]), needle) {
-			s.matches = append(s.matches, h.entries[i])
+	for _, v := range slices.Backward(h.entries) {
+		if needle == "" || strings.Contains(strings.ToLower(v), needle) {
+			s.matches = append(s.matches, v)
 		}
 	}
 }

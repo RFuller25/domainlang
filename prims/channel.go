@@ -275,7 +275,7 @@ func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, 
 		return nil, &ResolveError{Pos: pos,
 			Msg: fmt.Sprintf("Fold lambda must take %d parameters (acc, item, ...), got %d", wantArity, len(lam.Params))}
 	}
-	bodyType, err := typecheck.LambdaType(lam, append([]*ir.Type{cur, over.Elem}, ambientTypes()...)...)
+	bodyType, err := lambdaType(lam, cur, over.Elem)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: "Fold: " + err.Error()}
 	}
@@ -304,7 +304,7 @@ func buildFoldOver(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, 
 			// or a sibling Channel may also be holding.
 			acc := ownAccumulator(lam, in)
 			for i, x := range xs {
-				acc, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{cur, over.Elem}, ambientTypes()...), append([]ir.Value{acc, x}, ambientArgs()...)...)
+				acc, err = evalLambda(lam, []*ir.Type{cur, over.Elem}, acc, x)
 				if err != nil {
 					return nil, runtimeErr("FoldOver", pos, "item %d: %v", i, err)
 				}
@@ -327,7 +327,7 @@ func buildCombine(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, p
 			Msg: fmt.Sprintf("Combine lambda takes %d parameter(s) but From: names %d channel(s) (plus %d ambient)",
 				len(lam.Params), len(froms), ambientDepth())}
 	}
-	outType, err := typecheck.LambdaType(lam, append(types, ambientTypes()...)...)
+	outType, err := lambdaType(lam, types...)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: "Combine: " + err.Error()}
 	}
@@ -347,7 +347,7 @@ func buildCombine(args ArgSet, froms []string, types []*ir.Type, cur *ir.Type, p
 				}
 				vals[i] = v
 			}
-			r, err := eval.EvalLambdaTyped(lam, append(types, ambientTypes()...), append(vals, ambientArgs()...)...)
+			r, err := evalLambda(lam, types, vals...)
 			if err != nil {
 				return nil, runtimeErr("Combine", pos, "%v", err)
 			}

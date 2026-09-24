@@ -10,7 +10,12 @@
 // single-threaded, one-call-at-a-time resolution).
 package prims
 
-import "domain/ir"
+import (
+	"domain/ast"
+	"domain/eval"
+	"domain/ir"
+	"domain/typecheck"
+)
 
 // ambientBinding is one enclosing For loop's variable: its name (currently
 // unused beyond documentation/debugging — lambdas bind ambient params
@@ -108,4 +113,16 @@ func ambientArgs() []ir.Value {
 		vs[i] = b.value
 	}
 	return vs
+}
+
+// lambdaType typechecks lam over its own parameter types with the enclosing
+// For loops' ambient types appended after them.
+func lambdaType(lam *ast.Lambda, types ...*ir.Type) (*ir.Type, error) {
+	return typecheck.LambdaType(lam, append(types, ambientTypes()...)...)
+}
+
+// evalLambda evaluates lam over its own parameters with the enclosing For
+// loops' ambient bindings appended after them.
+func evalLambda(lam *ast.Lambda, types []*ir.Type, vals ...ir.Value) (ir.Value, error) {
+	return eval.EvalLambdaTyped(lam, append(types, ambientTypes()...), append(vals, ambientArgs()...)...)
 }

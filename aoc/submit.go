@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -88,8 +89,8 @@ func (v Verdict) Summary() string {
 }
 
 func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
+	if before, _, ok := strings.Cut(s, "\n"); ok {
+		return before
 	}
 	return s
 }
@@ -120,13 +121,11 @@ func (c *Client) Submit(year, day, part int, answer string) (Verdict, error) {
 			Message: "part " + strconv.Itoa(part) + " is already solved, and the answer was " + right,
 		}, nil
 	}
-	for _, tried := range st.Wrong[strconv.Itoa(part)] {
-		if tried == answer {
-			return Verdict{
-				Kind: Wrong, Answer: answer,
-				Message: "this answer has already been sent and refused — not sending it again",
-			}, nil
-		}
+	if slices.Contains(st.Wrong[strconv.Itoa(part)], answer) {
+		return Verdict{
+			Kind: Wrong, Answer: answer,
+			Message: "this answer has already been sent and refused — not sending it again",
+		}, nil
 	}
 	if wait := st.NextAllowed.Sub(c.clock()); wait > 0 {
 		return Verdict{

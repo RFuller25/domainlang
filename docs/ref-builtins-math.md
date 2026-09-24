@@ -44,7 +44,7 @@ Reveal: stdout
 | `sign(n)` | `Int -> Int` | `-1`, `0`, or `1`. |
 | `gcd(a, b)` | `Int × Int -> Int` | Non-negative greatest common divisor; `gcd(0, 0) = 0`. |
 | `lcm(a, b)` | `Int × Int -> Int` | Non-negative least common multiple; `lcm(a, 0) = 0`. |
-| `modpow(b, e, m)` | `Int × Int × Int -> Int` | `b^e mod m` by binary exponentiation, result in `[0, m)`. **Error** if `e < 0` or `m <= 0`. |
+| `modpow(b, e, m)` | `Int × Int × Int -> Int` | `b^e mod m` by binary exponentiation, result in `[0, m)`, exact for every positive `m` (products are taken in 128 bits above `m ≈ 3e9`). **Error** if `e < 0` or `m <= 0`. |
 | `modinv(a, m)` | `Int × Int -> Int` | Multiplicative inverse of `a` mod `m`, in `[0, m)`. **Error** if `m <= 0` or `a` and `m` are not coprime. |
 | `solve2x2(a, b, c, d, e, f)` | `Int × … -> (Int, Int)` | Solves `a·x + b·y = c`, `d·x + e·y = f` (Cramer). **Error** when the determinant is zero or the solution is not integral. |
 | `mod(a, b)` | `Int × Int -> Int` | Euclidean modulo — the `%` operator as a function. Non-negative for a positive modulus whatever the sign of `a`. **Error** on a zero modulus. |
@@ -53,7 +53,7 @@ Reveal: stdout
 | `isqrt(n)` | `Int -> Int` | Integer square root: the largest `k` with `k*k <= n`. Exact at a perfect square, where `sqrt` rounds. **Error** on negative input. |
 | `clamp(v, lo, hi)` | polymorphic over Int/Float | `v` confined to `[lo, hi]`. **Error** when `lo > hi`. |
 | `factorial(n)` | `Int -> Int` | **Error** past `20!`, which overflows Int — a wrapped factorial is a wrong answer that looks right. |
-| `choose(n, k)` | `Int × Int -> Int` | Binomial coefficient, computed multiplicatively so it stays in range far past where `factorial` overflows. `0` when `k` is out of range. |
+| `choose(n, k)` | `Int × Int -> Int` | Binomial coefficient, computed multiplicatively so it stays in range far past where `factorial` overflows. `0` when `k` is out of range. **Error** when the answer itself exceeds Int. |
 | `min(a, b)` / `max(a, b)` | `N × N -> N` | The two-argument scalar form, beside the one-argument list reductions above. |
 
 ### Floats

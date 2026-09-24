@@ -428,8 +428,8 @@ func TestHelpListsOnlyFlagsMahoragaAccepts(t *testing.T) {
 		"--replay": "r.json", "--verify": "r.json",
 	}
 	seen := 0
-	for _, line := range strings.Split(section, "\n") {
-		for _, word := range strings.Fields(line) {
+	for line := range strings.SplitSeq(section, "\n") {
+		for word := range strings.FieldsSeq(line) {
 			word = strings.TrimSuffix(strings.TrimSuffix(word, ","), ":")
 			if !strings.HasPrefix(word, "-") || word == "-" {
 				continue

@@ -3,6 +3,7 @@ package codegen
 import (
 	"domain/ast"
 	"domain/ir"
+	"maps"
 )
 
 // Compiling `Consider x As/Of …` bindings (prims/locals.go).
@@ -31,9 +32,7 @@ func (g *gen) emitConsider(n *ir.Node, in string) (string, error) {
 	// cover, and a sibling statement must not see them.
 	saved := g.bindNames
 	scoped := make(exprEnv, len(saved)+len(binds))
-	for k, v := range saved {
-		scoped[k] = v
-	}
+	maps.Copy(scoped, saved)
 	g.bindNames = scoped
 	defer func() { g.bindNames = saved }()
 

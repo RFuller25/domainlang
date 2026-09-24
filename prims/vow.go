@@ -5,10 +5,8 @@ import (
 	"slices"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // Binding Vow: a debug-time assertion over the current pipeline value. A vow
@@ -70,7 +68,7 @@ func buildVowCheck(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Positi
 			return nil, "", nil, &ResolveError{Pos: pos,
 				Msg: "Binding Vow: Holds needs a Using: predicate"}
 		}
-		bt, err := typecheck.LambdaType(lam, append([]*ir.Type{in}, ambientTypes()...)...)
+		bt, err := lambdaType(lam, in)
 		if err != nil {
 			return nil, "", nil, &ResolveError{Pos: pos, Msg: "Binding Vow: " + err.Error()}
 		}
@@ -79,8 +77,7 @@ func buildVowCheck(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Positi
 				Msg: fmt.Sprintf("Binding Vow: Holds predicate must return Bool, got %s", bt)}
 		}
 		return func(v ir.Value) error {
-			r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in}, ambientTypes()...),
-				append([]ir.Value{v}, ambientArgs()...)...)
+			r, err := evalLambda(lam, []*ir.Type{in}, v)
 			if err != nil {
 				return err
 			}

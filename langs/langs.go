@@ -22,9 +22,11 @@ package langs
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -149,10 +151,8 @@ func ByExt(path string) (Spec, bool) {
 		return Spec{}, false
 	}
 	for _, s := range specs {
-		for _, e := range s.Exts {
-			if e == ext {
-				return s, true
-			}
+		if slices.Contains(s.Exts, ext) {
+			return s, true
 		}
 	}
 	return Spec{}, false
@@ -184,9 +184,7 @@ func (s Spec) Command(dir string) ([]string, map[string]string, error) {
 		argv = append(argv, filepath.Join(dir, s.File))
 	}
 	extra := map[string]string{}
-	for k, v := range s.Extra {
-		extra[k] = v
-	}
+	maps.Copy(extra, s.Extra)
 	return argv, extra, nil
 }
 

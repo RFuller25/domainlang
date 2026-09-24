@@ -16,7 +16,7 @@ across both: parsing (`Match Pattern`), dense and sparse grids,
 pairs/combinations, sets/maps, higher-order lambda operations (with a `Using:`
 that may be an [indented pipeline](docs/expressions.md) rather than an
 expression), named dataflow `Channel`s, loops, measured arguments,
-user-defined `Shikigami` + a prelude, and a **32-pass optimizer** (algorithm
+user-defined `Shikigami` + a prelude, and a **36-pass optimizer** (algorithm
 substitution, fusion, dead-code elimination, expression simplification).
 `domain build` compiles that same IR into a standalone, aggressively typed Go
 binary — every primitive and all 208 expression builtins have a codegen case,
@@ -44,7 +44,7 @@ go run ./cmd/domain build testdata/day1.domain -o day1
 ./day1 < testdata/day1_input.txt
 # 45000
 
-# Inspect the generated Go instead:
+# Print the generated Go as well (the binary is still built, as ./day1):
 go run ./cmd/domain build testdata/day1.domain --emit-go -
 
 # Or play something. Arrows move; q leaves.
@@ -344,7 +344,7 @@ Every keyword below is optional except where the row says otherwise — see
   `solve2x2`, `manhattan`/`neighbors4`/`rotr`, `occurrences`/`repeats`).
   The full map from the canonical Go helper library lives in
   [`docs/aoc-toolbox.md`](docs/aoc-toolbox.md).
-- **A 32-pass optimizer** that fires even through Shikigami abstraction (below).
+- **A 36-pass optimizer** that fires even through Shikigami abstraction (below).
 - **`mahoraga`** — where the optimizer asks what is true of every program,
   `domain expansion: mahoraga <file> <input> <expected>` asks what is true of
   *this* program on *this* input: it measures the input, searches a catalogue
@@ -421,7 +421,7 @@ ir/         typed pipeline graph, value/type model, runtime collections
 typecheck/  static expression typer (lambda output-type inference)
 eval/       dynamic expression evaluator (lambda bodies, runtime field access)
 prims/      primitive vocabulary + resolver/typechecker + Shikigami + prelude
-optimizer/  32 rewrite passes: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
+optimizer/  36 rewrite passes: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
 mahoraga/   input-adaptive codegen tunings: measure, search a catalogue, verify/replay
 interp/     tree-walking evaluator
 codegen/    Go compiler backend: optimized IR → typed Go source → `go build`

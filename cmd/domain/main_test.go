@@ -342,19 +342,21 @@ func TestParseBuildArgs(t *testing.T) {
 		opts    BuildOptions
 	}{
 		{"bare path", []string{"day1.domain"}, false, "day1.domain",
-			BuildOptions{Optimize: true}},
+			BuildOptions{Optimize: true, Opinions: true}},
 		{"output flag", []string{"day1.domain", "-o", "bin/day1"}, false, "day1.domain",
-			BuildOptions{Optimize: true, Out: "bin/day1"}},
+			BuildOptions{Optimize: true, Opinions: true, Out: "bin/day1"}},
 		{"long output flag before path", []string{"--output", "x", "day1.domain"}, false, "day1.domain",
-			BuildOptions{Optimize: true, Out: "x"}},
+			BuildOptions{Optimize: true, Opinions: true, Out: "x"}},
 		{"emit-go", []string{"day1.domain", "--emit-go", "-"}, false, "day1.domain",
-			BuildOptions{Optimize: true, EmitGo: "-"}},
+			BuildOptions{Optimize: true, Opinions: true, EmitGo: "-"}},
 		{"no-optimize and explain", []string{"--explain", "day1.domain", "--no-optimize"}, false, "day1.domain",
-			BuildOptions{Explain: true}},
+			BuildOptions{Explain: true, Opinions: true}},
 		{"run flag", []string{"day1.domain", "--run"}, false, "day1.domain",
-			BuildOptions{Optimize: true, Run: true}},
+			BuildOptions{Optimize: true, Opinions: true, Run: true}},
 		{"run with output and explain", []string{"--run", "-o", "bin/x", "day1.domain", "--explain"}, false, "day1.domain",
-			BuildOptions{Optimize: true, Run: true, Out: "bin/x", Explain: true}},
+			BuildOptions{Optimize: true, Opinions: true, Run: true, Out: "bin/x", Explain: true}},
+		{"quiet", []string{"day1.domain", "--quiet"}, false, "day1.domain",
+			BuildOptions{Optimize: true}},
 		{"missing path", []string{"-o", "x"}, true, "", BuildOptions{}},
 		{"-o without value", []string{"day1.domain", "-o"}, true, "", BuildOptions{}},
 		{"--emit-go without value", []string{"day1.domain", "--emit-go"}, true, "", BuildOptions{}},
@@ -669,6 +671,19 @@ func TestStatsReportedOnFailure(t *testing.T) {
 	}
 }
 
+// The compiler's performance warnings are on by default from the command
+// line, and --quiet is how they are turned off.
+func TestParseRunArgsOpinions(t *testing.T) {
+	_, opts, err := parseRunArgs([]string{"p.domain"})
+	if err != nil || !opts.Opinions {
+		t.Fatalf("Opinions = %v (err %v), want on by default", opts.Opinions, err)
+	}
+	_, opts, err = parseRunArgs([]string{"p.domain", "--quiet"})
+	if err != nil || opts.Opinions {
+		t.Fatalf("Opinions = %v (err %v), want off under --quiet", opts.Opinions, err)
+	}
+}
+
 func TestParseRunArgsStats(t *testing.T) {
 	_, opts, err := parseRunArgs([]string{"p.domain", "--stats", "--verbose"})
 	if err != nil {
@@ -795,5 +810,31 @@ func TestTraceAndStatsConflict(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot be combined") {
 		t.Errorf("error = %v, want it to say the two flags cannot be combined", err)
+	}
+}
+
+// A run prints the compiler's performance warnings on stderr, leaves stdout to
+// the program, and prints nothing with them turned off.
+func TestExecutePrintsOpinions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.domain")
+	src := "Cursed Energy: stdin\nCursed Technique: Extract Integers\n" +
+		"Cursed Technique: Apply\n    Using: (xs) -> first(sort(xs))\nReveal: stdout\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, on := range []bool{true, false} {
+		var out, errBuf bytes.Buffer
+		err := Execute(path, Options{Optimize: true, Opinions: on}, strings.NewReader("3 1 2"), &out, &errBuf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != "1\n" {
+			t.Errorf("stdout = %q, want the program's answer alone", out.String())
+		}
+		said := strings.Contains(errBuf.String(), "warning[perf]") &&
+			strings.Contains(errBuf.String(), "min(xs)")
+		if said != on {
+			t.Errorf("Opinions=%v: stderr = %q", on, errBuf.String())
+		}
 	}
 }

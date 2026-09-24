@@ -8,7 +8,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -131,44 +131,53 @@ func dmParseIntSeg(s string) int64 {
 	return dmParseInt(s)
 }
 
+func dmSelectNth(a []int64, n int) {
+	lo, hi := 0, len(a)-1
+	for lo < hi {
+		pivot := a[lo+(hi-lo)/2]
+		i, j := lo, hi
+		for i <= j {
+			for a[i] < pivot {
+				i++
+			}
+			for a[j] > pivot {
+				j--
+			}
+			if i <= j {
+				a[i], a[j] = a[j], a[i]
+				i++
+				j--
+			}
+		}
+		switch {
+		case n <= j:
+			hi = j
+		case n >= i:
+			lo = i
+		default:
+			return
+		}
+	}
+}
+
 func dmTopK(xs []int64, k int, desc bool) []int64 {
 	if k <= 0 || len(xs) == 0 {
 		return []int64{}
 	}
-	if k > len(xs) {
-		k = len(xs)
-	}
+	k = min(k, len(xs))
 	a := append([]int64(nil), xs...)
-	front := func(x, y int64) bool {
-		if desc {
-			return x > y
-		}
-		return x < y
+	var res []int64
+	if desc {
+		dmSelectNth(a, len(a)-k)
+		res = a[len(a)-k:]
+	} else {
+		dmSelectNth(a, k-1)
+		res = a[:k]
 	}
-	lo, hi := 0, len(a)-1
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		a[mid], a[hi] = a[hi], a[mid]
-		pivot := a[hi]
-		i := lo
-		for j := lo; j < hi; j++ {
-			if front(a[j], pivot) {
-				a[i], a[j] = a[j], a[i]
-				i++
-			}
-		}
-		a[i], a[hi] = a[hi], a[i]
-		switch {
-		case i == k-1:
-			lo, hi = 0, -1 // done
-		case i < k-1:
-			lo = i + 1
-		default:
-			hi = i - 1
-		}
+	slices.Sort(res)
+	if desc {
+		slices.Reverse(res)
 	}
-	res := a[:k]
-	sort.Slice(res, func(i, j int) bool { return front(res[i], res[j]) })
 	return res
 }
 

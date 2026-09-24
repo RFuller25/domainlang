@@ -44,38 +44,23 @@ func fuseAllPairsSum(p *ir.Pipeline) []Rewrite {
 // rewriteAllPairsNode swaps a node's interpreter for the hash-set version,
 // keeping its type signature.
 func rewriteAllPairsNode(n *ir.Node, mode string, target int64) {
-	pos := n.Pos
-	n.Prim = "HashSetPairScan"
 	n.Display = fmt.Sprintf("Cursed Hash-Set Scan (sum = %d, Mode: %s)", target, mode)
 	n.Meta["target"] = target
-	if mode == "Count" {
-		n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-			xs, err := ir.AsIntSlice(v)
-			if err != nil {
-				return nil, &ir.RuntimeError{Prim: "HashSetPairScan", Pos: pos, Msg: err.Error()}
-			}
-			return CountPairSum(xs, target), nil
-		}
-		return
-	}
-	// First
-	n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-		xs, err := ir.AsIntSlice(v)
-		if err != nil {
-			return nil, &ir.RuntimeError{Prim: "HashSetPairScan", Pos: pos, Msg: err.Error()}
-		}
-		pair, ok := FindPairSum(xs, target)
-		if !ok {
-			return nil, &ir.RuntimeError{Prim: "HashSetPairScan", Pos: pos,
-				Msg: "no combination satisfied the predicate"}
-		}
-		return ir.IntsToValue(pair), nil
-	}
+	lowerIntScan(n, "HashSetPairScan", mode,
+		func(xs []int64) int64 { return CountPairSum(xs, target) },
+		func(xs []int64) ([]int64, bool) { return FindPairSum(xs, target) })
 }
 
 // matchSumPair recognizes `(a, b) -> a + b = K` (in either operand order, and
 // with the literal on either side of '='), returning K.
 func matchSumPair(lam *ast.Lambda) (int64, bool) {
+	return matchCommutativePair(lam, token.PLUS)
+}
+
+// matchCommutativePair recognizes `(a, b) -> a op b = K` for a commutative op
+// (in either operand order, and with the literal on either side of '='),
+// returning K.
+func matchCommutativePair(lam *ast.Lambda, op token.Kind) (int64, bool) {
 	if len(lam.Params) != 2 {
 		return 0, false
 	}
@@ -85,17 +70,17 @@ func matchSumPair(lam *ast.Lambda) (int64, bool) {
 		// name; eval.EvalLambda's map-based Env makes the second binding
 		// shadow the first, so the naive path only ever sees one element
 		// doubled. The hash-set rewrite computes a real two-distinct-element
-		// sum instead, which would silently diverge from the naive oracle.
+		// result instead, which would silently diverge from the naive oracle.
 		return 0, false
 	}
 	eq, ok := lam.Body.(*ast.BinaryExpr)
 	if !ok || eq.Op != token.EQ {
 		return 0, false
 	}
-	if k, ok := intLit(eq.Left); ok && isSumOf(eq.Right, p0, p1) {
+	if k, ok := intLit(eq.Left); ok && isPairOp(eq.Right, op, p0, p1) {
 		return k, true
 	}
-	if k, ok := intLit(eq.Right); ok && isSumOf(eq.Left, p0, p1) {
+	if k, ok := intLit(eq.Right); ok && isPairOp(eq.Left, op, p0, p1) {
 		return k, true
 	}
 	return 0, false
@@ -108,10 +93,10 @@ func intLit(e ast.Expr) (int64, bool) {
 	return 0, false
 }
 
-// isSumOf reports whether e is `p0 + p1` or `p1 + p0`.
-func isSumOf(e ast.Expr, p0, p1 string) bool {
+// isPairOp reports whether e is `p0 op p1` or `p1 op p0`.
+func isPairOp(e ast.Expr, op token.Kind, p0, p1 string) bool {
 	be, ok := e.(*ast.BinaryExpr)
-	if !ok || be.Op != token.PLUS {
+	if !ok || be.Op != op {
 		return false
 	}
 	l, lok := identName(be.Left)

@@ -9,6 +9,15 @@
 # The menu is derived rather than typed twice. `Part Entity "Menu":` is the one
 # place that says what a scene offers, and every Part that changes the scene
 # calls it by name afterwards.
+#
+# It is also the one game here with something worth remembering after it ends:
+# the fastest trip yet. `Part World:` opens with `Domain Expansion: Load` —
+# a record on disk if a previous run left one, `Default:` (no record) if not —
+# and arriving updates and `Save`s it, so the next real playthrough starts
+# already knowing what it is trying to beat. A replayed run never touches that
+# file (`Default:` is what every golden test sees on the way in, and there is
+# nothing to diff on the way out), which is exactly why the frame right after
+# arrival is what proves the number was actually computed.
 
 Innate Domain: Game Dev
 
@@ -16,7 +25,12 @@ Cursed Object: goal As 200
 
 Part World:
     Cursed Technique: Apply
-        Using: (w) -> {scene: "trail", shown: "", menu: emptylist(""), lines: emptylist(""), cursor: 0, day: 1, mile: 0, food: 120, money: 60, oxen: 2, health: 5, leaving: 1 = 0, note: "The wagon is loaded. Oregon is 200 miles west."}
+        Consider saved Of
+            Domain Expansion: Load
+                Path: (w) -> "oregon-best.json"
+                Into: {bestDay: Int}
+                Default: (w) -> {bestDay: 0}
+        Using: (w) -> {scene: "trail", shown: "", menu: emptylist(""), lines: emptylist(""), cursor: 0, day: 1, mile: 0, food: 120, money: 60, oxen: 2, health: 5, leaving: 1 = 0, bestDay: saved.bestDay, note: "The wagon is loaded. Oregon is 200 miles west."}
 
 Part Start:
     Shikigami: Menu
@@ -114,6 +128,19 @@ Part Every 600:
                 else w
     Shikigami: Menu
 
+    # Arriving is the one moment worth remembering. `bestDay` only ever goes
+    # down, and `Save` fires every lap of this timer regardless — cheap and
+    # idempotent, the same way the docs' own Save examples fire on every key
+    # press rather than only the lap that changed something.
+    Cursed Technique: Apply
+        Using: (w) ->
+            if w.scene = "arrived" and (w.bestDay = 0 or w.day < w.bestDay)
+                then with(w, "bestDay", w.day)
+                else w
+    Domain Expansion: Save
+        Path: (w) -> "oregon-best.json"
+        Value: (w) -> {bestDay: w.bestDay}
+
 Part Draw:
     Cursed Technique: Apply
         Using: (w) -> with(w, "lines", emptylist(""))
@@ -129,6 +156,7 @@ Part Draw:
                 style(text("THE OREGON TRAIL"), "bold"),
                 text("day " + totext(w.day) + "    mile " + totext(w.mile) + " of " + totext(goal)),
                 text("food " + totext(w.food) + "   coin " + totext(w.money) + "   oxen " + totext(w.oxen) + "   health " + totext(w.health)),
+                text("best trip " + (if w.bestDay = 0 then "none yet" else totext(w.bestDay) + " days")),
                 margin(style(text(w.note), "yellow"), 0, 1),
                 text(textjoin(w.lines, "\n"))))
 

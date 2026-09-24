@@ -17,7 +17,7 @@ func genInts(n int) []byte {
 	r := rand.New(rand.NewSource(1))
 	var sb strings.Builder
 	sb.Grow(n * 6)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
@@ -33,7 +33,7 @@ func genIntsNeedle(n int) []byte {
 	needle := n * 9 / 10
 	var sb strings.Builder
 	sb.Grow(n * 6)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
@@ -51,11 +51,11 @@ func genRows(n int) []byte {
 	r := rand.New(rand.NewSource(3))
 	var sb strings.Builder
 	sb.Grow(n * 32)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
-		for j := 0; j < 8; j++ {
+		for j := range 8 {
 			if j > 0 {
 				sb.WriteByte(' ')
 			}
@@ -73,11 +73,11 @@ func genWords(n int) []byte {
 	const alphabet = "abqxyz"
 	var sb strings.Builder
 	sb.Grow(n * 13)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
-		for j := 0; j < 12; j++ {
+		for range 12 {
 			sb.WriteByte(alphabet[r.Intn(len(alphabet))])
 		}
 	}
@@ -90,7 +90,7 @@ func genRanges(n int) []byte {
 	r := rand.New(rand.NewSource(5))
 	var sb strings.Builder
 	sb.Grow(n * 14)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
@@ -114,11 +114,11 @@ func genMaze(n int) []byte {
 	r := rand.New(rand.NewSource(7))
 	var sb strings.Builder
 	sb.Grow(n * (n + 1))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
-		for j := 0; j < n; j++ {
+		for j := range n {
 			if i == 0 && j == 0 || r.Intn(5) > 0 {
 				sb.WriteByte('.')
 			} else {
@@ -140,11 +140,11 @@ func genLetters(n int) []byte {
 	const alphabet = "abcde"
 	var sb strings.Builder
 	sb.Grow(n * 31)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
-		for j := 0; j < 30; j++ {
+		for range 30 {
 			sb.WriteByte(alphabet[r.Intn(len(alphabet))])
 		}
 	}
@@ -159,7 +159,7 @@ func genKeyed(n int) []byte {
 	keys := r.Perm(n)
 	var sb strings.Builder
 	sb.Grow(n * 14)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
@@ -175,7 +175,7 @@ func genSpans(n int) []byte {
 	r := rand.New(rand.NewSource(10))
 	var sb strings.Builder
 	sb.Grow(n * 16)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
@@ -192,7 +192,7 @@ func genEdges(n int) []byte {
 	nodes := n/4 + 2
 	var sb strings.Builder
 	sb.Grow(n * 14)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
@@ -264,7 +264,7 @@ func genFloats(n int) []byte {
 	r := rand.New(rand.NewSource(14))
 	var sb strings.Builder
 	sb.Grow(n * 9)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
@@ -278,11 +278,11 @@ func genGrid(n int) []byte {
 	r := rand.New(rand.NewSource(6))
 	var sb strings.Builder
 	sb.Grow(n * (n + 1))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
-		for j := 0; j < n; j++ {
+		for range n {
 			sb.WriteByte(byte('1' + r.Intn(9)))
 		}
 	}

@@ -477,7 +477,7 @@ func TestLexNeverPanicsOnArbitraryBytes(t *testing.T) {
 
 func strings8x(s string, n int) string {
 	out := ""
-	for i := 0; i < n; i++ {
+	for range n {
 		out += s
 	}
 	return out

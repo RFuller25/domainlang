@@ -45,10 +45,6 @@ func Global(i int) ir.Value { return globals[i] }
 // SetGlobal writes slot i.
 func SetGlobal(i int, v ir.Value) { globals[i] = v }
 
-// GlobalCount is how many slots the current run has, for the tools that report
-// on a run rather than take part in it.
-func GlobalCount() int { return len(globals) }
-
 // SnapshotGlobals copies the slot array, and RestoreGlobals puts one back.
 //
 // A `Part` runs its body against a copy so that writes inside it cannot be

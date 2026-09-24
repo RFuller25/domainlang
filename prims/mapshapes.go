@@ -37,7 +37,6 @@ import (
 	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // oneArgLambda reads the Using: lambda of a one-parameter shape-preserving map
@@ -47,7 +46,7 @@ func oneArgLambda(args ArgSet, prim string, param *ir.Type, pos token.Position) 
 	if err != nil {
 		return nil, nil, err
 	}
-	out, err := typecheck.LambdaType(lam, append([]*ir.Type{param}, ambientTypes()...)...)
+	out, err := lambdaType(lam, param)
 	if err != nil {
 		return nil, nil, &ResolveError{Pos: pos, Msg: prim + ": " + err.Error()}
 	}
@@ -56,8 +55,7 @@ func oneArgLambda(args ArgSet, prim string, param *ir.Type, pos token.Position) 
 
 // applyOne runs a one-parameter mapping lambda over one value.
 func applyOne(lam *ast.Lambda, param *ir.Type, v ir.Value, prim string, pos token.Position) (ir.Value, error) {
-	r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{param}, ambientTypes()...),
-		append([]ir.Value{v}, ambientArgs()...)...)
+	r, err := evalLambda(lam, []*ir.Type{param}, v)
 	if err != nil {
 		return nil, runtimeErr(prim, pos, "%v", err)
 	}
@@ -206,7 +204,7 @@ var mapWeights = &Primitive{
 			return nil, err
 		}
 		params := []*ir.Type{in.Elem, in.Elem, ir.Int()}
-		out, err := typecheck.LambdaType(lam, append(params, ambientTypes()...)...)
+		out, err := lambdaType(lam, params...)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Map Weights: " + err.Error()}
 		}

@@ -162,6 +162,12 @@ const declProduct = `func dmProduct[T int64 | float64](xs []T) T {
 // seed is the operator's identity, so the empty list leaves a later fold
 // unchanged — the rule sum(0)/product(1) follow, and for `and` that is all bits
 // set rather than zero.
+// bitReduceName is the Go helper a bit reduction compiles to: bandall is
+// dmBandall.
+func bitReduceName(name string) string {
+	return "dm" + strings.ToUpper(name[:1]) + name[1:]
+}
+
 func declBitReduce(name string) string {
 	seed, op := "0", "|"
 	switch name {
@@ -170,7 +176,7 @@ func declBitReduce(name string) string {
 	case "bxorall":
 		op = "^"
 	}
-	return "func dm" + strings.Title(name) + "(xs []int64) int64 {\n" +
+	return "func " + bitReduceName(name) + "(xs []int64) int64 {\n" +
 		"\tacc := int64(" + seed + ")\n" +
 		"\tfor _, x := range xs {\n" +
 		"\t\tacc " + op + "= x\n" +

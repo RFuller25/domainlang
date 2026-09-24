@@ -10,7 +10,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"domain/interp"
 	"domain/prims"
 	"domain/runner"
+	"domain/token"
 )
 
 type statsOptions struct {
@@ -174,9 +174,7 @@ func Stats(root string, opts statsOptions, stdout, stderr io.Writer) int {
 	rep := &statsReport{Root: root, Config: cfg, Runs: opts.Runs, Rows: rows, Vocab: vocab}
 	switch {
 	case opts.JSON:
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(rep.jsonShape()); err != nil {
+		if err := writeJSON(stdout, rep.jsonShape()); err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 1
 		}
@@ -271,10 +269,9 @@ func expectedFile(program string) string {
 // countLOC returns non-blank non-comment lines and the raw line count. The
 // headline number is the one a reader would arrive at by counting.
 func countLOC(src string) (loc, total int) {
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		total++
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
+		if strings.TrimSpace(line) == "" || token.IsCommentLine(line) {
 			continue
 		}
 		loc++

@@ -28,7 +28,7 @@ func TestTopologicalSortOverEdgeList(t *testing.T) {
 func TestTopologicalSortIsDeterministic(t *testing.T) {
 	src := edgeSrc("Domain Expansion: Topological Sort\n")
 	first, _ := runPipeline(t, src, "b -> z\na -> z\nc -> z")
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		again, _ := runPipeline(t, src, "b -> z\na -> z\nc -> z")
 		if ir.FormatValue(first) != ir.FormatValue(again) {
 			t.Fatalf("order is not deterministic: %s vs %s",

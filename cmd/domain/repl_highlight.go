@@ -78,15 +78,21 @@ func highlightSource(src string, color bool) string {
 // the lexer dropped. It works a line at a time because a style applies to a
 // line: handing a trailing newline to a renderer pads what follows it, which
 // would move the program's own text.
+//
+// A gap is by construction outside any string literal — the lexer's STRING
+// token covers the whole of one — so a marker found here is a comment, both
+// spellings alike.
 func gapText(s string) string {
-	if !strings.Contains(s, "#") {
-		return s
-	}
 	lines := strings.Split(s, "\n")
+	painted := false
 	for i, line := range lines {
-		if j := strings.IndexByte(line, '#'); j >= 0 {
+		if j := token.CommentStart(line); j >= 0 {
 			lines[i] = line[:j] + styComment.Render(line[j:])
+			painted = true
 		}
+	}
+	if !painted {
+		return s
 	}
 	return strings.Join(lines, "\n")
 }
@@ -114,6 +120,15 @@ const (
 	faceNumber
 	facePunct
 	faceComment
+	// faceDeclName is a name being declared rather than read: the `x` of
+	// `Consider x As …`, the `total` of `Cursed Object: total As 0`, and the
+	// left side of a `:=`. It is the one place in a line where a reader learns
+	// where a name comes from, so it is worth telling apart from every other
+	// use of the same word.
+	faceDeclName
+	// faceAssign is `:=` itself, which is not an operator over values the way
+	// `+` is — it writes a name — and reads better in its own colour.
+	faceAssign
 	faceCursor
 	// The editor's decorations. They are faces rather than a separate mechanism
 	// because a selection, a search hit and the cursor are all the same kind of
@@ -130,9 +145,15 @@ func faceFor(toks []token.Token, i int) face {
 		return faceString
 	case token.INT, token.FLOAT:
 		return faceNumber
+	case token.ASSIGN:
+		return faceAssign
 	case token.IDENT:
 		switch {
 		case inKeywordPhrase(toks, i):
+			return faceKeyword
+		case declaresName(toks, i):
+			return faceDeclName
+		case declWord(toks, i):
 			return faceKeyword
 		case i+1 < len(toks) && toks[i+1].Kind == token.COLON && startsLine(toks, i):
 			return faceArgName // an indented `Using:` / `From:` / `Seed:` label
@@ -141,6 +162,85 @@ func faceFor(toks []token.Token, i int) face {
 	default:
 		return facePunct
 	}
+}
+
+// declaresName reports whether the IDENT at i is a name being *declared*: the
+// bound name of a `Consider`, the declared name of a `Cursed Object` /
+// `Cursed Tool`, or the target of a `:=`.
+//
+// The three shapes the parser accepts (parser/binding.go) are:
+//
+//	Consider x As …            /  Consider x Of …
+//	Cursed Object: total As 0  /  Cursed Tool: total Of Sum
+//	    total As 0             — a line of the indented block form
+//	    n := n + 1             — the expression layer's own write
+//
+// The last of the block-form lines is the only one with no keyword to lean on,
+// and it is recognized by `As` alone: `NAME As` opens nothing else in the
+// language, while `NAME Of` is also how an operation phrase reads
+// (`Subsets of 3`), so the `Of` spelling is claimed only where a keyword on
+// the same line has already said what the line is. That matters because the
+// editor lexes one line at a time (dev_highlight.go) and so has no block to
+// consult.
+func declaresName(toks []token.Token, i int) bool {
+	if i+1 < len(toks) && toks[i+1].Kind == token.ASSIGN {
+		return true
+	}
+	prep := func(j int) (as, of bool) {
+		if j >= len(toks) || toks[j].Kind != token.IDENT || toks[j].Pos.Line != toks[i].Pos.Line {
+			return false, false
+		}
+		return strings.EqualFold(toks[j].Literal, "as"), strings.EqualFold(toks[j].Literal, "of")
+	}
+	as, of := prep(i + 1)
+	if !as && !of {
+		return false
+	}
+	if i > 0 && strings.EqualFold(toks[i-1].Literal, "consider") &&
+		toks[i-1].Kind == token.IDENT && startsLine(toks, i-1) {
+		return true
+	}
+	if i > 0 && toks[i-1].Kind == token.COLON && declKeywordBefore(toks, i-1) {
+		return true
+	}
+	return as && startsLine(toks, i)
+}
+
+// declWord reports whether the IDENT at i is one of the contextual words that
+// make a declaration line rather than part of what it declares: the `Consider`
+// that opens one, or the `As` / `Of` that separates the name from its value.
+// They are keywords only in this shape — a phrase that merely starts with the
+// word "Consider" is still the operation it always was — which is the parser's
+// own rule (parser/binding.go) and so is applied here rather than by matching
+// the word anywhere it appears.
+func declWord(toks []token.Token, i int) bool {
+	if strings.EqualFold(toks[i].Literal, "consider") && startsLine(toks, i) &&
+		i+1 < len(toks) && toks[i+1].Kind == token.IDENT && declaresName(toks, i+1) {
+		return true
+	}
+	if !strings.EqualFold(toks[i].Literal, "as") && !strings.EqualFold(toks[i].Literal, "of") {
+		return false
+	}
+	return i > 0 && toks[i-1].Kind == token.IDENT && declaresName(toks, i-1)
+}
+
+// declKeywordBefore reports whether the COLON at i closes a `Cursed Object` or
+// `Cursed Tool` keyword — the two statements whose operand is a name they
+// declare rather than an operation phrase.
+func declKeywordBefore(toks []token.Token, i int) bool {
+	end := i
+	for i > 0 && toks[i-1].Kind == token.IDENT && toks[i-1].Pos.Line == toks[end].Pos.Line {
+		i--
+	}
+	if !startsLine(toks, i) {
+		return false
+	}
+	var words []string
+	for j := i; j < end; j++ {
+		words = append(words, toks[j].Literal)
+	}
+	kw, n, ok := ast.KeywordPrefix(words)
+	return ok && n == len(words) && (kw == "Cursed Object" || kw == "Cursed Tool")
 }
 
 // faceStyle is the paint for a role. It is a function rather than a table
@@ -162,6 +262,10 @@ func faceStyle(f face) lipgloss.Style {
 		return styPunct
 	case faceComment:
 		return styComment
+	case faceDeclName:
+		return styDeclName
+	case faceAssign:
+		return styAssign
 	case faceCursor:
 		return styCursor
 	case faceSelect:

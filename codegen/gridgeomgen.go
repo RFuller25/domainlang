@@ -282,36 +282,8 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 		in = m
 	}
-	// An edge list is folded into the adjacency map first, exactly as the
-	// interpreter does, so one algorithm serves both input shapes.
-	if edges, _ := n.Meta["edges"].(bool); edges {
-		g.helper("dmFail", declFail, "fmt", "os")
-		m, e := g.fresh("m"), g.fresh("e")
-		tuple := n.In.Elem != nil && n.In.Elem.Kind == ir.KTuple
-		from, to := e+".f0", e+".f1"
-		if !tuple {
-			from, to = e+"[0]", e+"[1]"
-		}
-		g.wl("%s := dmNewMap[%s, []%s]()", m, keyGo, keyGo)
-		g.wl("for _, %s := range %s {", e, in)
-		g.in()
-		if !tuple {
-			g.wl("if len(%s) != 2 {", e)
-			g.in()
-			g.wl(`dmFail("Topological Sort: an edge is not a (from, to) pair")`)
-			g.out()
-			g.wl("}")
-		}
-		// Keyed by the function it declares (as in emitGroupBy): two different
-		// keys for one declaration would emit dmAppend twice.
-		g.helper("dmAppend", declMapAppend)
-		g.wl("dmAppend(&%s, %s, %s)", m, from, to)
-		g.wl("if _, ok := %s.vals[%s]; !ok { %s.put(%s, nil) }", m, to, m, to)
-		g.out()
-		g.wl("}")
-		in = m
-	}
 	g.helper("dmFail", declFail, "fmt", "os")
+	g.helper("dmTopo", declTopo)
 	// The renderer is only used to name a node in the cycle error. Scalars
 	// have no fmtFunc — they are printed directly everywhere else — so the
 	// function is built per kind here.
@@ -329,65 +301,113 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		}
 		fmtFn = f
 	}
-	g.helper("dmTopoSort", fmt.Sprintf(`func dmTopoSort[K comparable](m dmMap[K, []K], render func(K) string) []K {
-	var order []K
-	index := map[K]int{}
-	add := func(n K) int {
-		if i, seen := index[n]; seen {
-			return i
+	v := g.fresh("v")
+	// An edge list numbers its nodes in first-seen order across both ends of
+	// each edge and keeps each node's successors in edge order — exactly what
+	// the interpreter's adjacency map ends up holding — so it is numbered
+	// directly, one hash per endpoint, with no map built in between.
+	if edges, _ := n.Meta["edges"].(bool); edges {
+		t, e := g.fresh("t"), g.fresh("e")
+		tuple := n.In.Elem != nil && n.In.Elem.Kind == ir.KTuple
+		from, to := e+".f0", e+".f1"
+		if !tuple {
+			from, to = e+"[0]", e+"[1]"
 		}
-		index[n] = len(order)
-		order = append(order, n)
-		return len(order) - 1
-	}
-	for _, k := range m.keys {
-		add(k)
-	}
-	// Number every node first — successors need not be keys — so the two
-	// working structures below can be slices indexed by node number rather
-	// than maps hashing one.
-	for _, k := range m.keys {
-		for _, s := range m.vals[k] {
-			add(s)
+		g.wl("%s := dmNewTopo[%s](len(%s))", t, keyGo, in)
+		g.wl("for _, %s := range %s {", e, in)
+		g.in()
+		if !tuple {
+			g.wl("if len(%s) != 2 {", e)
+			g.in()
+			g.wl(`dmFail("Topological Sort: an edge is not a (from, to) pair")`)
+			g.out()
+			g.wl("}")
 		}
+		f := g.fresh("f")
+		g.wl("%s := %s.id(%s)", f, t, from)
+		g.wl("%s.edge(%s, %s.id(%s))", t, f, t, to)
+		g.out()
+		g.wl("}")
+		g.wl("%s := %s.sort(%s)", v, t, fmtFn)
+		return v, nil
 	}
-	adj := make([][]int, len(order))
-	indeg := make([]int, len(order))
-	for _, k := range m.keys {
-		from := index[k]
-		for _, s := range m.vals[k] {
-			to := index[s]
-			adj[from] = append(adj[from], to)
-			indeg[to]++
-		}
+	g.helper("dmTopoSort", declTopoSort)
+	g.wl("%s := dmTopoSort(%s, %s)", v, in, fmtFn)
+	return v, nil
+}
+
+// declTopo numbers a graph's nodes and records its edges as it goes, so a
+// node is hashed once per mention and the working structures are slices
+// indexed by node number. sort is Kahn's algorithm: ready nodes leave in
+// number order, which is the tie-break Topological Sort documents.
+const declTopo = `type dmTopo[K comparable] struct {
+	order []K
+	index map[K]int
+	adj   [][]int
+	indeg []int
+}
+
+func dmNewTopo[K comparable](hint int) *dmTopo[K] {
+	return &dmTopo[K]{index: make(map[K]int, hint)}
+}
+
+func (t *dmTopo[K]) id(n K) int {
+	if i, ok := t.index[n]; ok {
+		return i
 	}
-	ready := make([]int, 0, len(order))
-	for i := range order {
-		if indeg[i] == 0 {
+	i := len(t.order)
+	t.index[n] = i
+	t.order = append(t.order, n)
+	t.adj = append(t.adj, nil)
+	t.indeg = append(t.indeg, 0)
+	return i
+}
+
+func (t *dmTopo[K]) edge(from, to int) {
+	t.adj[from] = append(t.adj[from], to)
+	t.indeg[to]++
+}
+
+func (t *dmTopo[K]) sort(render func(K) string) []K {
+	ready := make([]int, 0, len(t.order))
+	for i, d := range t.indeg {
+		if d == 0 {
 			ready = append(ready, i)
 		}
 	}
-	out := make([]K, 0, len(order))
+	out := make([]K, 0, len(t.order))
 	for head := 0; head < len(ready); head++ {
 		i := ready[head]
-		out = append(out, order[i])
-		for _, j := range adj[i] {
-			indeg[j]--
-			if indeg[j] == 0 {
+		out = append(out, t.order[i])
+		for _, j := range t.adj[i] {
+			t.indeg[j]--
+			if t.indeg[j] == 0 {
 				ready = append(ready, j)
 			}
 		}
 	}
-	if len(out) != len(order) {
-		for i := range order {
-			if indeg[i] > 0 {
-				dmFail("Topological Sort: the graph has a cycle (%%s is still blocked after %%d of %%d nodes were ordered)", render(order[i]), len(out), len(order))
+	if len(out) != len(t.order) {
+		for i, d := range t.indeg {
+			if d > 0 {
+				dmFail("Topological Sort: the graph has a cycle (%s is still blocked after %d of %d nodes were ordered)", render(t.order[i]), len(out), len(t.order))
 			}
 		}
 	}
 	return out
-}`))
-	v := g.fresh("v")
-	g.wl("%s := dmTopoSort(%s, %s)", v, in, fmtFn)
-	return v, nil
-}
+}`
+
+// declTopoSort sorts an adjacency map. Keys are numbered first, in order —
+// key i is node i — and successors that are not keys after them in the order
+// they are met, the same numbering the interpreter uses. Needs dmTopo.
+const declTopoSort = `func dmTopoSort[K comparable](m dmMap[K, []K], render func(K) string) []K {
+	t := dmNewTopo[K](len(m.keys))
+	for _, k := range m.keys {
+		t.id(k)
+	}
+	for from, k := range m.keys {
+		for _, s := range m.vals[k] {
+			t.edge(from, t.id(s))
+		}
+	}
+	return t.sort(render)
+}`

@@ -395,6 +395,78 @@ func diffCases() []diffCase {
 				"Cursed Technique: Apply\n    Using: (s) -> size(s)\n" +
 				"Reveal: stdout\n",
 			explain: "write in place"},
+		{name: "group sums become a running sum per key",
+			src: p("Maximum Technique: Group By\n    Using: (n) -> n % 4\n" +
+				"Cursed Technique: Map Values\n    Using: (b) -> sum(b)\n"),
+			explain: "running sum per key"},
+		{name: "group lengths become a count per key",
+			src: p("Maximum Technique: Group By\n    Using: (n) -> n % 4\n" +
+				"Cursed Technique: Map Values\n    Using: (b) -> length(b)\n"),
+			explain: "running count per key"},
+		{name: "a failing group key still fails",
+			src: p("Maximum Technique: Group By\n    Using: (n) -> 12 / n\n" +
+				"Cursed Technique: Map Values\n    Using: (b) -> sum(b)\n"),
+			explain: "running sum per key"},
+		{name: "any other bucket reduction keeps its groups",
+			src: p("Maximum Technique: Group By\n    Using: (n) -> n % 4\n" +
+				"Cursed Technique: Map Values\n    Using: (b) -> max(b)\n"),
+			explainAbsent: "per key"},
+		// --- Text built by a fold ---
+		{name: "a text fold appends to one buffer",
+			src:     p("Maximum Technique: Fold\n    Seed: \"\"\n    Using: (acc, x) -> acc + totext(x) + \",\"\n"),
+			explain: "one buffer"},
+		{name: "a text fold keeps its seed",
+			src:     p("Maximum Technique: Fold\n    Seed: \"[\"\n    Using: (acc, x) -> acc + (totext(x * 2) + \";\")\n"),
+			explain: "one buffer"},
+		{name: "a part that reads the accumulator stays a fold",
+			src:           p("Maximum Technique: Fold\n    Seed: \"\"\n    Using: (acc, x) -> acc + totext(length(acc))\n"),
+			explainAbsent: "one buffer"},
+		{name: "a failing part fails on the same element",
+			src:         p("Maximum Technique: Fold\n    Seed: \"\"\n    Using: (acc, x) -> acc + totext(12 / x)\n"),
+			explain:     "one buffer",
+			extraInputs: []string{"3\n0\n4"}},
+		// --- cheaper equivalent builtins ---
+		{name: "a map's key list searched becomes a key probe",
+			src: p("Cursed Technique: Apply\n" +
+				"    Using: (xs) -> tuple(contains(keys(tomap(zip(xs, xs))), 3), contains(tolist(toset(xs)), 4))\n"),
+			explain: "cheaper equivalent builtin"},
+		{name: "a list built only to be measured is not built",
+			src: p("Cursed Technique: Apply\n" +
+				"    Using: (xs) -> length(keys(tomap(zip(xs, xs)))) + length(sort(xs)) + length(reverse(xs)) + length(tolist(toset(xs)))\n"),
+			explain: "cheaper equivalent builtin"},
+		{name: "idempotent transforms applied twice run once",
+			src: p("Cursed Technique: Apply\n" +
+				"    Using: (xs) -> concat(sort(sort(xs)), concat(unique(unique(xs)), reverse(reverse(xs))))\n"),
+			explain: "cheaper equivalent builtin"},
+		// --- loop-invariant code motion ---
+		{name: "an invariant list membership becomes a set",
+			src: p("Cursed Technique: Filter\n" +
+				"    Consider wanted Of (xs) -> take(xs, 3)\n" +
+				"    Using: (x) -> contains(wanted, x)\n"),
+			explain: "a set once"},
+		{name: "invariant work moves out of the lambda",
+			src: p("Cursed Technique: Map Each\n" +
+				"    Consider all Of Itself\n" +
+				"    Using: (x) -> x * 100 + sum(sort(all))\n"),
+			explain: "hoisted `sum(sort(all))`"},
+		{name: "invariant work that can fail stays per element",
+			src: p("Cursed Technique: Map Each\n" +
+				"    Consider all Of Itself\n" +
+				"    Using: (x) -> x + max(all)\n"),
+			explainAbsent: "hoisted"},
+		{name: "a name some lambda writes is not invariant",
+			src: p("Cursed Technique: Map Each\n" +
+				"    Consider seen As 0\n" +
+				"    Using: (x) -> seen := seen + x\n" +
+				"Cursed Technique: Filter\n" +
+				"    Consider limit Of Itself\n" +
+				"    Using: (x) -> x > sum(unique(limit))\n"),
+			explain: "hoisted `sum(unique(limit))`"},
+		{name: "work that reads the element stays",
+			src: p("Cursed Technique: Filter\n" +
+				"    Consider all Of Itself\n" +
+				"    Using: (x) -> contains(sort(all), x + 1)\n"),
+			explain: "made `sort(all)` a set"},
 		{name: "Scan keeps every accumulator, so it still copies",
 			src: listHeader + "Cursed Technique: Scan\n" +
 				"    Seed: (xs) -> emptyset(0)\n" +
@@ -421,7 +493,7 @@ func TestPassesMatchNaiveOracle(t *testing.T) {
 
 			inputs := append([]string{}, c.extraInputs...)
 			inputs = append(inputs, "", "0", "3\n3\n3")
-			for i := 0; i < 60; i++ {
+			for range 60 {
 				inputs = append(inputs, intsInput(randInts(rng, 12, 9)))
 			}
 			for _, input := range inputs {

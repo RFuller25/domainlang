@@ -88,6 +88,20 @@ type devModel struct {
 	// undone. Nil when this buffer was opened directly.
 	origin *devOrigin
 
+	// aoc is the day that has been fetched — kept whether its screen is
+	// showing or not, the way lastRun is, so that dismissing the description
+	// does not put the puzzle down. aocShowing is whether it owns the screen,
+	// aocAsk the year-and-day question that opens it, and aocBusy what a
+	// request in flight is doing: non-empty only while one is, which is what
+	// keeps a second one from being started on top of it.
+	aoc        *devAoC
+	aocShowing bool
+	// aocWanted is a day named on the command line, fetched as the editor
+	// opens. Nil the rest of the time.
+	aocWanted *[2]int
+	aocAsk    *aocPrompt
+	aocBusy   string
+
 	picker   *picker
 	search   *devSearch
 	complete *devComplete
@@ -146,7 +160,11 @@ func (m devModel) Init() tea.Cmd {
 	// the dark palette stands until (and unless) a report says otherwise.
 	// The program is analyzed straight away so an opened file shows its types
 	// before it is touched, rather than only after the first keystroke.
-	return tea.Batch(tea.RequestBackgroundColor, analyzeCmd(m.gen, m.path, m.buf.text()))
+	cmds := []tea.Cmd{tea.RequestBackgroundColor, analyzeCmd(m.gen, m.path, m.buf.text())}
+	if m.aocWanted != nil {
+		cmds = append(cmds, aocFetchCmd(nil, m.aocWanted[0], m.aocWanted[1], false))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m devModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -180,6 +198,12 @@ func (m devModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case devRunDoneMsg:
 		return m.finishRun(msg.result)
+
+	case aocFetchedMsg:
+		return m.finishAoCFetch(msg)
+
+	case aocSubmittedMsg:
+		return m.finishAoCSubmit(msg)
 
 	case devSampleMsg:
 		// A tick from a run that has ended, or from one that was never being
@@ -243,6 +267,14 @@ func (m devModel) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "stopping…"
 		}
 		return m, nil
+	}
+	// The puzzle screen owns the keyboard while it is up, the way the monitor
+	// does: it is a screen, not a panel beside the program.
+	if m.aocShowing {
+		return m.aocKey(msg)
+	}
+	if m.aocAsk != nil {
+		return m.aocPromptKey(msg)
 	}
 	if m.output != nil {
 		return m.outputKey(msg)
@@ -461,6 +493,12 @@ func (m devModel) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.suggest = sg
 		return m, nil
+
+	case key.Matches(msg, m.keys.AdventOfCode):
+		return m.openAoC()
+
+	case key.Matches(msg, m.keys.Check):
+		return m.checkAnswer()
 
 	case key.Matches(msg, m.keys.Docs):
 		m.browser = newDocBrowser()
@@ -715,6 +753,12 @@ func (m devModel) open(path string) (tea.Model, tea.Cmd) {
 	// The monitor is one of those answers: its source context and its hot lines
 	// are line numbers into the program that was open when it ran.
 	m.monitor, m.lastRun = nil, nil
+	// The puzzle is not one of them — a day is often two programs, and the
+	// description is still the description — but which file it had bound as an
+	// input no longer describes this buffer.
+	if m.aoc != nil {
+		m.aoc.bound = ""
+	}
 	m.gen++
 	return m, analyzeCmd(m.gen, m.path, m.buf.text())
 }

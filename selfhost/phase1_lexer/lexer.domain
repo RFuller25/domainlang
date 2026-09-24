@@ -1,0 +1,123 @@
+Inherited Technique: lex_classify
+
+Cursed Energy: stdin
+Cursed Object: srcText Of Itself
+Cursed Object: lines As split(srcText, "\n")
+Cursed Object: ln As length(lines)
+
+Cursed Object: indents As list(0)
+Cursed Object: toks As emptylist(record("kind", "", "text", "", "line", 0))
+Cursed Object: li As 0
+Cursed Object: inString As 0
+Cursed Object: strbuf As ""
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> li < ln
+    Cursed Object: raw Of (v) -> item(lines, li)
+    Cursed Object: content Of (v) -> trim(raw)
+    Cursed Object: width Of (v) -> length(raw) - length(content)
+    Cursed Object: isCode Of (v) -> ikke (length(content) = 0 or charat(content, 0) = "#")
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if ikke isCode then
+                v
+            else if width > last(indents) then
+                ((v also indents := concat(indents, list(width)))
+                    also toks := concat(toks, list(record("kind", "INDENT", "text", "", "line", li + 1))))
+            else
+                v
+        )
+
+    Simple Domain: While
+        Using: (v) -> isCode and length(indents) > 1 and last(indents) > width
+        Cursed Technique: Apply
+            Using: (v) -> ((v also indents := take(indents, length(indents) - 1))
+                also toks := concat(toks, list(record("kind", "DEDENT", "text", "", "line", li + 1))))
+
+    Cursed Object: ci As 0
+    Cursed Object: cn Of (v) -> length(content)
+    Cursed Technique: Apply
+        Using: (v) -> 0
+    Simple Domain: While
+        Using: (v) -> isCode and ci < cn
+        Cursed Object: ch Of (v) -> charat(content, ci)
+        Cursed Object: ch2 Of (v) -> (if ci + 1 < cn then charat(content, ci + 1) else "")
+        Cursed Technique: Apply
+            Using: (v) -> record("ch", ch, "ch2", ch2)
+        Shikigami: Classify Char
+        Cursed Object: cls Of Itself
+        Cursed Technique: Apply
+            Using: (v) -> 0
+
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if inString = 1 then
+                    (
+                        if ch = "\"" then
+                            (((v also toks := concat(toks, list(record("kind", "STRING", "text", strbuf, "line", li + 1))))
+                                also inString := 0) also ci := ci + 1)
+                        else if ch = "\\" and ch2 = "\"" then
+                            ((v also strbuf := strbuf + "\"") also ci := ci + 2)
+                        else if ch = "\\" and ch2 = "n" then
+                            ((v also strbuf := strbuf + "\n") also ci := ci + 2)
+                        else if ch = "\\" and ch2 = "\\" then
+                            ((v also strbuf := strbuf + "\\") also ci := ci + 2)
+                        else
+                            ((v also strbuf := strbuf + ch) also ci := ci + 1)
+                    )
+                else if cls.kind = "STRSTART" then
+                    (((v also inString := 1) also strbuf := "") also ci := ci + 1)
+                else if cls.skipRest = 1 then
+                    (v also ci := cn)
+                else if cls.kind = "" then
+                    (v also ci := ci + cls.consumed)
+                else
+                    ((v also toks := concat(toks, list(record("kind", cls.kind, "text", cls.text, "line", li + 1))))
+                        also ci := ci + cls.consumed)
+            )
+    Cursed Technique: Apply
+        Using: (v) -> (if isCode then (v also toks := concat(toks, list(record("kind", "NEWLINE", "text", "", "line", li + 1)))) else v)
+    Cursed Technique: Apply
+        Using: (v) -> (v also li := li + 1)
+
+Simple Domain: While
+    Using: (v) -> length(indents) > 1
+    Cursed Technique: Apply
+        Using: (v) -> ((v also indents := take(indents, length(indents) - 1))
+            also toks := concat(toks, list(record("kind", "DEDENT", "text", "", "line", ln + 1))))
+
+Cursed Technique: Apply
+    Using: (v) -> toks
+Reveal: stderr
+
+Cursed Object: tn As length(toks)
+Cursed Object: ti As 0
+Cursed Object: buf2 As ""
+Cursed Object: toks2 As emptylist(record("kind", "", "text", "", "line", 0))
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> ti < tn
+    Cursed Object: tk Of (v) -> item(toks, ti)
+    Cursed Object: wordish Of (v) -> (tk.kind = "DIGIT" or tk.kind = "LETTER")
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if wordish then
+                ((v also buf2 := buf2 + tk.text) also ti := ti + 1)
+            else if tk.kind = "SPACE" then
+                (((v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", tk.line)))))
+                    also buf2 := "")
+                    also ti := ti + 1)
+            else
+                ((((v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", tk.line)))))
+                    also buf2 := "")
+                    also toks2 := concat(toks2, list(tk)))
+                    also ti := ti + 1)
+        )
+
+Cursed Technique: Apply
+    Using: (v) -> (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", ln))))
+Reveal: stdout

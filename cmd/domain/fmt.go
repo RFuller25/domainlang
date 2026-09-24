@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"domain/format"
@@ -46,10 +47,8 @@ func parseFmtArgs(args []string) (paths []string, opts fmtOptions, err error) {
 		return nil, opts, fmt.Errorf("fmt needs at least one file (or - for stdin)")
 	}
 	if opts.Write {
-		for _, p := range paths {
-			if p == "-" {
-				return nil, opts, fmt.Errorf("cannot use -w with stdin")
-			}
+		if slices.Contains(paths, "-") {
+			return nil, opts, fmt.Errorf("cannot use -w with stdin")
 		}
 	}
 	return paths, opts, nil

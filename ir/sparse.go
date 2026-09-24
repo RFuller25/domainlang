@@ -2,6 +2,7 @@ package ir
 
 import (
 	"cmp"
+	"maps"
 	"slices"
 )
 
@@ -120,9 +121,7 @@ func (s *SparseValue) Clone() *SparseValue {
 		cells: make(map[[2]int64]Value, len(s.cells)),
 		minR:  s.minR, maxR: s.maxR, minC: s.minC, maxC: s.maxC,
 	}
-	for k, v := range s.cells {
-		out.cells[k] = v
-	}
+	maps.Copy(out.cells, s.cells)
 	return out
 }
 

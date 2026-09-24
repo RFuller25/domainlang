@@ -8,6 +8,7 @@ saving a file first.
 domain expansion: development day7.domain              # open a program
 domain expansion: development                          # pick one
 domain expansion: development day7.domain --input day7.txt
+domain expansion: development day7.domain --aoc 2023/7 # open on a puzzle
 ```
 
 The other `expansion:` commands analyze a program you already have. This is the
@@ -16,6 +17,7 @@ one you write it in.
 | Flag | Effect |
 |---|---|
 | `--input FILE` / `-i FILE` | bind the program's input before opening |
+| `--aoc YEAR/DAY` | fetch that Advent of Code day as the editor opens ([below](#advent-of-code)) |
 
 A file that does not exist yet is not an error — it is a new program under that
 name, and nothing is written until you save. A bare invocation opens the file
@@ -158,6 +160,13 @@ since it is real and simply has nowhere on disk to jump to.
 | `alt+↑` / `alt+↓` | walk the recorded stages, watching the value change |
 | `alt+e` | what the optimizer did to the last run |
 
+### Puzzles
+
+| Key | |
+|---|---|
+| `alt+c` | fetch an [Advent of Code](#advent-of-code) day — the puzzle, your input and the example |
+| `alt+x` | check the last run's answer for the part you are on |
+
 ## Running a program
 
 `ctrl+r` resolves the buffer and runs it, optimized, exactly as `domain run`
@@ -291,6 +300,118 @@ the program on screen. The recording carries the buffer's own source, so the
 stepper's source pane shows the program you are looking at rather than whatever
 is on disk under that name.
 
+## Advent of Code
+
+`alt+c` asks for a year and a day, and fetches three things: the puzzle text,
+your own puzzle input, and the worked example out of the description. The
+description takes the screen, the two input files land beside the program, and
+the example is bound as the program's input.
+
+```
+domain expansion: development  advent of code                        2023 day 7
+────────────────────────────────────────────────────────────────────────────────
+  Camel Cards  part 1 of 1  ☆☆                     example: aoc-2023-07.example
+
+   --- Day 7: Camel Cards ---
+
+  Your all-expenses-paid trip turns out to be a ride in an airship. Because
+  the journey is long, you can play a game: Camel Cards. In Camel Cards, you
+  get a list of hands, and your goal is to order them based on the strength of
+  each hand.
+
+  For example:
+
+      32T3K 765
+      T55J5 684
+      KK677 28
+
+    • the first hand is a pair of threes, so it is the weakest of the five
+    • the second is three of a kind
+
+ check  part 1: 6440 — the site has not seen this one
+         from the only line of output, against the example
+
+  y sends 6440 to adventofcode.com  ·  any other key leaves it unsent
+```
+
+The loop is one screen: read the puzzle, `ctrl+r` to run, `c` to check, `i` to
+switch from the example to your real input, `c` again, `y` to send the answer.
+
+| Key | On the puzzle screen |
+|---|---|
+| `c` | check what the last run produced |
+| `s` | check, then offer to submit |
+| `y` | send the offered answer (nothing else does) |
+| `e` / `i` | read the example / your own input |
+| `1` / `2` | part one / part two |
+| `ctrl+r` | run the program without leaving the puzzle |
+| `r` | re-read the page — part two appears once part one is solved |
+| `d` | another day |
+| `esc` | back to the program; `alt+c` returns to the same day |
+
+**The example is bound first, not your input.** It is the input a program is
+*written* against — small enough to read, walked through by the prose, and with
+its answer in the text. `i` switches to the real one for the run that counts.
+Both are written beside the program as `aoc-YEAR-DD.example` and
+`aoc-YEAR-DD.input`, and the binding goes into the program's `Cursed Energy:`
+stage like any other, so the program runs the same way under `domain run`.
+
+Which listing in the description is the example is a **guess** — the first one
+with more than one line in it. It is on screen, so a wrong guess is visible
+rather than silent, and a corrected file is never overwritten by opening the
+day again (`r` rewrites both).
+
+**The answer comes from the run, not from typing.** A `Part "1":` block labels
+its own output, so a [two-part program](walkthroughs.md) says which number
+belongs to which part and there is nothing to guess. Without Parts the rule is
+stated on screen — "the only line of output", "line 2 of 3" — rather than
+applied silently.
+
+**Checking costs no request** when the site's answer is already known: a solved
+part carries "your puzzle answer was" on its page, which is what makes this
+worth pressing while refactoring a day you have already finished. When the site
+has not seen the answer, the only thing that knows is the site, so the answer is
+*offered* and `y` sends it.
+
+### The session cookie
+
+Your puzzle input is yours — the site hands it out against the session cookie
+your browser holds — so that cookie is the one thing to configure. Copy the
+value of the cookie named `session` from a logged-in browser, then either:
+
+```sh
+export AOC_SESSION=<the value>          # or
+echo <the value> > ~/.config/domain/aoc-session
+```
+
+`~/.adventofcode.session` is read too, for anyone who already keeps one there
+for another tool. The cookie is a login: keep it out of anything you commit,
+and expect it to expire after about a month — the site answers an expired one
+with a 400, and the editor says so in those words rather than as a status code.
+
+`AOC_CONTACT` is added to the `User-Agent` — an address to reach you at, which
+is what [the site's automation guidelines][automation] ask of anything that
+fetches on your behalf.
+
+[automation]: https://www.reddit.com/r/adventofcode/wiki/faqs/automation
+
+### What it does not ask twice
+
+The same guidelines are the reason for the shape of the rest of it:
+
+- **Inputs are fetched once, ever.** They cannot change, so the second fetch of
+  a day makes no request at all. Everything is cached under
+  `~/.cache/domain/aoc/YEAR/DD/`, written `0600` because a puzzle input is a
+  personal file.
+- **The puzzle page is re-read only when asked** — by `r`, or automatically
+  after a correct answer, which is the one moment the page is known to have
+  changed.
+- **A day is not fetched before it unlocks.** Midnight EST on the day; asking
+  earlier is refused here, with the time it opens, rather than at the server.
+- **An answer already refused is never sent again**, and the countdown the site
+  quotes after a wrong answer is waited out locally rather than walked into.
+
+## The input file
 
 `ctrl+e` opens a browser over every file beside the program — an input is
 whatever the puzzle gave you, so it is not filtered to `.domain` — and points

@@ -129,13 +129,55 @@ Style and hygiene (warnings):
   in an indented lambda argument (`Size: (xs) -> length(xs) / 2`, see
   [primitives.md](ref-transforms.md#measured-arguments)).
 
-Performance hints:
+Clarity hints (code `clarity`) — spellings the optimizer already rewrites, so
+nothing is left to pay, but whose source reads better another way:
 
-- `Sort` followed by `Reverse` — one sort in the opposite direction (the
-  optimizer already fuses this; the hint is about source clarity);
+- `Sort` followed by `Reverse` — one sort in the opposite direction;
 - two sorts in a row — the first is wasted work;
 - `Sort` followed by `Take Item 0` — an O(n log n) spelling of `Min`/`Max`;
 - `Filter` followed by `Count` — one fused `Count Matching` pass.
+
+Performance findings (code `perf`) are the costs that *are* left to pay — see
+the next section.
+
+## The compiler's opinions
+
+Beyond "it works" and "it does not", the compiler has a view on how a
+program is written. It acts on that view in one of two ways:
+
+1. **If it can make the program faster without changing anything the program
+   can observe, it does, silently.** The optimizer's passes
+   ([optimizer.md](optimizer.md)) rewrite on every run and build; `--explain`
+   lists what they did. Among them: invariant work moved out of a per-element
+   lambda (`sort(all)` computed once instead of per element), a `contains`
+   over a fixed list turned into a set lookup, `contains(keys(m), k)` into
+   `haskey(m, k)`, `length(sort(xs))` into `length(xs)`, a Text built by
+   `acc + …` in a `Fold` into one buffer.
+2. **If it cannot, it warns** (`warning[perf]`), saying what the program pays,
+   what to write instead, and — in a note — why it did not make the change
+   itself. `domain run` and `domain build` print these on stderr before the
+   program runs; `--quiet` hides them. They never stop a program running.
+
+The warnings, today:
+
+- **Invariant work it could not move.** Work in a per-element lambda that does
+  not depend on the element, left in place because it can fail (moved out, it
+  would fail even over an empty list, which never evaluated it), because the
+  lambda is shared by two stages, or because its type is not visible from the
+  stage. The help writes the `Consider` that computes it once.
+- **A sort or a reversal to read one element.** `first(sort(xs))` and
+  `item(sort(xs), 0)` are `min(xs)`; `last(sort(xs))` is `max(xs)`;
+  `first(reverse(xs))` is `last(xs)`. The compiler does not swap them itself
+  because on an empty list the two report different errors.
+- **A pair or triple scan left quadratic.** `All Pairs` / `Combinations 3`
+  whose predicate is a sum of its parameters equal to something that is not
+  an integer literal: the O(n) and O(n²) hash scans are specialised on the
+  target at compile time.
+
+`expansion: lint` shows these alongside the rest. It also shows the perf
+*hints* — a stage stood down for reading a global something writes, an update
+that keeps its copy — which `run` and `build` leave out: those are prices for a
+choice the program made, and a program built on globals has dozens of them.
 
 ## The commands
 
@@ -171,7 +213,7 @@ the file is touched.
    statements after the final `Reveal`, and deleting unused Channels. Each
    rewrite is applied one at a time and the program is re-resolved after
    each; a rewrite that would break the program is rolled back.
-2. *The IR report* — everything the 32-pass optimizer will substitute on
+2. *The IR report* — everything the 36-pass optimizer will substitute on
    every run/build of the (possibly rewritten) program, in the same wording
    as `--explain`.
 

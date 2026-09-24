@@ -9,7 +9,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -552,9 +551,7 @@ func (v *traceView) writeJSON(w io.Writer, withGo, withExprs bool) error {
 	for _, r := range v.rewrites {
 		doc.Optimizer = append(doc.Optimizer, r.Message)
 	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(doc)
+	return writeJSON(w, doc)
 }
 
 // header is the one-line description of the recording: what was run, how much

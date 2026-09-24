@@ -99,6 +99,31 @@ quicksort or pair loop — the thesis survives compilation intact.
   makes `n + (n := x) + n` mean the same thing in both backends. Nothing is
   wrapped in a program that never writes: those compile to exactly the Go they
   compiled to before the operator existed.
+- **Elementwise chains compile to one loop.** A source (a list in hand, or a
+  `Split` by a literal separator), any run of `Map Each`, `Filter` and
+  `Convert To Integers`, and a sink (`Sum`, `Count`, `Count Matching`, a
+  literal `Join`, or the surviving elements) become a single loop in which
+  each element passes through every stage before the next is read — no
+  stage's output list is built:
+
+  ```go
+  var b3 strings.Builder
+  b3.Grow(len(v1))
+  for { … line5 := … ; b3.WriteString(strings.ToUpper(line5)); b3.WriteString("!") … }
+  ```
+
+  Running stages element by element instead of list by list is only
+  invisible when nothing can tell the difference, so a chain is fused only
+  while every lambda in it is pure (no `:=`, no global something writes, no
+  randomness) and at most one stage can fail. With two fallible stages, stage
+  two could fail on element one before stage one fails on element five, and
+  the binary would report a different error than the interpreter; with one,
+  the first failure is the same element's either way. A `Join` builds its
+  answer in memory rather than writing to stdout as it goes, for the same
+  reason: a failing stage must stop the program before anything is printed,
+  as it does unfused. Named multi-stage shapes that need more than this (a
+  parse fused into a keyed extremum, say) keep their own lowerings, which are
+  tried first.
 - **Match Pattern compiles to scanners.** A template whose holes are all
   ints (with literal separators a greedy scan provably cannot mis-split)
   becomes a hand-rolled string scanner — no regexp at runtime. Word/text

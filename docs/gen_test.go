@@ -115,7 +115,7 @@ func readOrFail(t *testing.T, path string) string {
 // gallery has a Run button where the recipe would go.
 func leadingComment(src string) (title, description string) {
 	var lines []string
-	for _, line := range strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(src, "\r\n", "\n"), "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			break
 		}
@@ -169,7 +169,7 @@ func collectLibs(t *testing.T, baseDir, source string, into map[string]string) m
 // comment — what is left once the leading block is stripped.
 func countCodeLines(src string) int {
 	n := 0
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		t := strings.TrimSpace(line)
 		if t != "" && !strings.HasPrefix(t, "#") {
 			n++
@@ -284,7 +284,7 @@ func pageAnchors(t *testing.T, page string) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
 	fence := false
-	for _, line := range strings.Split(docFile(t, page), "\n") {
+	for line := range strings.SplitSeq(docFile(t, page), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			fence = !fence
 			continue
@@ -299,8 +299,8 @@ func pageAnchors(t *testing.T, page string) map[string]bool {
 		}
 		raw := strings.TrimSpace(trimmed)
 		out[slugify(raw)] = true
-		if i := strings.Index(raw, "—"); i >= 0 {
-			out[slugify(raw[:i])] = true
+		if before, _, ok := strings.Cut(raw, "—"); ok {
+			out[slugify(before)] = true
 		}
 	}
 	return out

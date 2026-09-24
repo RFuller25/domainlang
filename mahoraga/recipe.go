@@ -477,10 +477,7 @@ func (r *Recipe) pin(add func(*Contract)) { add(&r.Contract) }
 func (r *Recipe) setIdleStages(stages []IdleStage) {
 	r.IdleStages = nil
 	for _, st := range stages {
-		r.IdleStages = append(r.IdleStages, IdleStageJSON{
-			Key: st.Key, Prim: st.Prim, Line: st.Line,
-			Why: st.Why, Size: st.Size, Calls: st.Calls,
-		})
+		r.IdleStages = append(r.IdleStages, IdleStageJSON(st))
 	}
 }
 
@@ -511,9 +508,7 @@ func (r *Recipe) setFacts(f Facts) {
 		})
 	}
 	for _, site := range f.ListSites {
-		r.Facts.ListSites = append(r.Facts.ListSites, ListSiteJSON{
-			Key: site.Key, Line: site.Line, Length: site.Length, Fills: site.Fills,
-		})
+		r.Facts.ListSites = append(r.Facts.ListSites, ListSiteJSON(site))
 	}
 }
 

@@ -70,6 +70,7 @@ func (g *gen) emitScan(n *ir.Node, in string) (string, error) {
 		g.wl("var %s %s = %s", acc, accGo, seed)
 		g.wl("for %s, %s := range %s {", i, e, in)
 		g.in()
+		g.keepElem(e, body)
 		g.wl("%s = %s", acc, body)
 		g.wl("%s[%s] = %s", v, i, acc)
 		g.out()

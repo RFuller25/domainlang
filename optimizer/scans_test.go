@@ -2,6 +2,7 @@ package optimizer
 
 import (
 	"math/rand"
+	"slices"
 	"sort"
 	"testing"
 )
@@ -15,14 +16,14 @@ func naiveKth(xs []int64, k int, desc bool) int64 {
 	if desc {
 		sort.Slice(a, func(i, j int) bool { return a[i] > a[j] })
 	} else {
-		sort.Slice(a, func(i, j int) bool { return a[i] < a[j] })
+		slices.Sort(a)
 	}
 	return a[k]
 }
 
 func naiveTripleCount(xs []int64, target int64) int64 {
 	var c int64
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			for k := j + 1; k < len(xs); k++ {
 				if xs[i]+xs[j]+xs[k] == target {
@@ -35,7 +36,7 @@ func naiveTripleCount(xs []int64, target int64) int64 {
 }
 
 func naiveTripleFirst(xs []int64, target int64) ([]int64, bool) {
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			for k := j + 1; k < len(xs); k++ {
 				if xs[i]+xs[j]+xs[k] == target {
@@ -49,7 +50,7 @@ func naiveTripleFirst(xs []int64, target int64) ([]int64, bool) {
 
 func naiveDiffCount(xs []int64, target int64, flipped bool) int64 {
 	var c int64
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			d := xs[i] - xs[j]
 			if flipped {
@@ -64,7 +65,7 @@ func naiveDiffCount(xs []int64, target int64, flipped bool) int64 {
 }
 
 func naiveDiffFirst(xs []int64, target int64, flipped bool) ([]int64, bool) {
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			d := xs[i] - xs[j]
 			if flipped {
@@ -88,7 +89,7 @@ func randInts(rng *rand.Rand, maxLen, span int) []int64 {
 
 func TestKthOrderStatisticMatchesNaive(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))
-	for iter := 0; iter < 3000; iter++ {
+	for iter := range 3000 {
 		xs := randInts(rng, 25, 10)
 		if len(xs) == 0 {
 			continue
@@ -106,7 +107,7 @@ func TestKthOrderStatisticMatchesNaive(t *testing.T) {
 
 func TestTripleSumMatchesNaive(t *testing.T) {
 	rng := rand.New(rand.NewSource(3))
-	for iter := 0; iter < 2000; iter++ {
+	for iter := range 2000 {
 		xs := randInts(rng, 18, 6)
 		target := int64(rng.Intn(31) - 15)
 		if got, want := CountTripleSum(xs, target), naiveTripleCount(xs, target); got != want {
@@ -122,7 +123,7 @@ func TestTripleSumMatchesNaive(t *testing.T) {
 
 func TestPairDiffMatchesNaive(t *testing.T) {
 	rng := rand.New(rand.NewSource(4))
-	for iter := 0; iter < 3000; iter++ {
+	for iter := range 3000 {
 		xs := randInts(rng, 22, 8)
 		target := int64(rng.Intn(21) - 10)
 		for _, flipped := range []bool{false, true} {

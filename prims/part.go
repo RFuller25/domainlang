@@ -44,7 +44,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 	// are the same label twice.
 	key := partKey(stmt)
 	if r.parts[key] {
-		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("%s is already defined", partDescription(stmt))}
+		return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("%s is already defined", stmt.PartDescription())}
 	}
 	if role.Max >= 0 {
 		if n := r.roleCounts[stmt.PartRole]; n >= role.Max {
@@ -64,11 +64,11 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 	}
 	if in == nil && role.In == nil {
 		return nil, &ResolveError{Pos: stmt.Pos,
-			Msg: fmt.Sprintf("%s has no upstream value to branch from", partDescription(stmt))}
+			Msg: fmt.Sprintf("%s has no upstream value to branch from", stmt.PartDescription())}
 	}
 	if len(stmt.Block) == 0 {
 		return nil, &ResolveError{Pos: stmt.Pos,
-			Msg: fmt.Sprintf("%s has an empty body", partDescription(stmt)), NeedsBlock: true}
+			Msg: fmt.Sprintf("%s has an empty body", stmt.PartDescription()), NeedsBlock: true}
 	}
 
 	// A role may put values in scope for its body — the key an input carried,
@@ -82,7 +82,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 	if role.Binds != nil {
 		var berr error
 		if binds, berr = role.Binds(stmt.PartArg, r.facts()); berr != nil {
-			return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("%s: %v", partDescription(stmt), berr)}
+			return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf("%s: %v", stmt.PartDescription(), berr)}
 		}
 		for _, b := range binds {
 			typecheck.PushBinding(b.Name, b.Type)
@@ -102,7 +102,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 	if role.Out != nil {
 		if want := role.Out(r.world); want != nil && !subType.Equal(want) {
 			return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(
-				"%s must produce %s, but its body produces %s", partDescription(stmt), want, subType)}
+				"%s must produce %s, but its body produces %s", stmt.PartDescription(), want, subType)}
 		}
 	}
 	if role.DefinesWorld {
@@ -112,7 +112,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 		if subType == nil || subType.Kind != ir.KRecord {
 			return nil, &ResolveError{Pos: stmt.Pos, Msg: fmt.Sprintf(
 				"%s must produce a Record — the world is read and rewritten by name, so its parts need names — but its body produces %s",
-				partDescription(stmt), subType)}
+				stmt.PartDescription(), subType)}
 		}
 		r.world = subType
 	}
@@ -128,7 +128,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 		Prim:    "Part",
 		In:      cur,
 		Out:     cur, // passthrough
-		Display: partDescription(stmt),
+		Display: stmt.PartDescription(),
 		// The "nodes" key is what puts this body in optimizer.nodeLists, so
 		// in-place passes (expression simplification, algorithm substitution)
 		// fire inside a Part exactly as they do inside a Channel or a loop.
@@ -176,7 +176,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 			// The body's result is what the Part actually computed; the node
 			// itself passes its input through. A body that failed reports nil.
 			var body ir.Value
-			ctx.PushFrame(partDescription(stmt), subType)
+			ctx.PushFrame(stmt.PartDescription(), subType)
 			defer func() { ctx.PopFrame(body) }()
 
 			v, err := runBody(ctx, subNodes, in)
@@ -302,20 +302,6 @@ func partKey(stmt *ast.Statement) string {
 		return fmt.Sprintf("%s\x00#%d", stmt.PartRole, stmt.PartArg.Int)
 	default:
 		return stmt.PartRole + "\x00" + stmt.PartArg.Text
-	}
-}
-
-// partDescription names a Part the way its source line reads.
-func partDescription(stmt *ast.Statement) string {
-	switch {
-	case stmt.PartRole == "":
-		return fmt.Sprintf("Part %q", stmt.PartName)
-	case stmt.PartArg == nil:
-		return "Part " + stmt.PartRole
-	case stmt.PartArg.IsInt:
-		return fmt.Sprintf("Part %s %d", stmt.PartRole, stmt.PartArg.Int)
-	default:
-		return fmt.Sprintf("Part %s %q", stmt.PartRole, stmt.PartArg.Text)
 	}
 }
 

@@ -1,0 +1,39 @@
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (s) -> split(s, "\n")
+Cursed Object: lines Of Itself
+Cursed Object: ln As length(lines)
+
+Cursed Object: indents As list(0)
+Cursed Object: events As emptylist("")
+Cursed Object: li As 0
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> li < ln
+    Cursed Object: raw Of (v) -> item(lines, li)
+    Cursed Object: stripped Of (v) -> trim(raw)
+    Cursed Object: width Of (v) -> length(raw) - length(stripped)
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if length(stripped) = 0 then
+                ((v also li := li + 1) also events := concat(events, list("BLANK")))
+            else if width > last(indents) then
+                (((v also indents := concat(indents, list(width)))
+                    also events := concat(events, list("INDENT")))
+                    also li := li + 1)
+            else
+                (v also li := li + 1)
+        )
+    Cursed Technique: Apply
+        Using: (v) -> 0
+    Simple Domain: While
+        Using: (v) -> length(indents) > 1 and last(indents) > width
+        Cursed Technique: Apply
+            Using: (v) -> ((v also indents := take(indents, length(indents) - 1)) also events := concat(events, list("DEDENT")))
+    Cursed Technique: Apply
+        Using: (v) -> if length(stripped) = 0 then v else v also events := concat(events, list("LINE:" + stripped))
+
+Cursed Technique: Apply
+    Using: (v) -> events
+Reveal: stdout

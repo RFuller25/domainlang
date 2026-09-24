@@ -252,6 +252,27 @@ func TestReplTopLevelCommentTravelsWithItsStatement(t *testing.T) {
 	}
 }
 
+// The word marker is a comment at the prompt too, and behaves exactly as `#`
+// does: held aside for the statement it introduces, never evaluated.
+func TestReplTechnicallyCommentIsNotAStatement(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("nums.txt", []byte("1\n2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := runRepl(t,
+		"technically the puzzle input",
+		"Cursed Energy: nums.txt",
+		":list",
+		":quit",
+	)
+	if !strings.Contains(out, "technically the puzzle input\nCursed Energy: nums.txt") {
+		t.Errorf("comment did not stay with its statement:\n%s", out)
+	}
+	if got := strings.Count(out, "=> "); got != 1 {
+		t.Errorf("comment line was evaluated: %d results in\n%s", got, out)
+	}
+}
+
 // :load and :save round-trip a real program — comments, blank lines and all —
 // and count statements rather than lines.
 func TestReplLoadSaveKeepsCommentsAndLayout(t *testing.T) {

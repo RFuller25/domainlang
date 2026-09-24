@@ -1,0 +1,778 @@
+Cursed Energy: stdin
+Cursed Object: srcText Of Itself
+Cursed Object: lines As split(srcText, "\n")
+Cursed Object: ln As length(lines)
+
+Cursed Object: indents As list(0)
+Cursed Object: toks As emptylist(record("kind", "", "text", "", "line", 0))
+Cursed Object: li As 0
+Cursed Object: inString As 0
+Cursed Object: strbuf As ""
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> li < ln
+    Cursed Object: raw Of (v) -> item(lines, li)
+    Cursed Object: content Of (v) -> trim(raw)
+    Cursed Object: width Of (v) -> length(raw) - length(content)
+    Cursed Object: isCode Of (v) -> ikke (length(content) = 0 or charat(content, 0) = "#")
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if ikke isCode then
+                v
+            else if width > last(indents) then
+                ((v also indents := concat(indents, list(width)))
+                    also toks := concat(toks, list(record("kind", "INDENT", "text", "", "line", li + 1))))
+            else
+                v
+        )
+
+    Simple Domain: While
+        Using: (v) -> isCode and length(indents) > 1 and last(indents) > width
+        Cursed Technique: Apply
+            Using: (v) -> ((v also indents := take(indents, length(indents) - 1))
+                also toks := concat(toks, list(record("kind", "DEDENT", "text", "", "line", li + 1))))
+
+    Cursed Object: ci As 0
+    Cursed Object: cn Of (v) -> length(content)
+    Cursed Technique: Apply
+        Using: (v) -> 0
+    Simple Domain: While
+        Using: (v) -> isCode and ci < cn
+        Cursed Object: ch Of (v) -> charat(content, ci)
+        Cursed Object: ch2 Of (v) -> (if ci + 1 < cn then charat(content, ci + 1) else "")
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if inString = 1 then
+                    (
+                        if ch = "\"" then
+                            (((v also toks := concat(toks, list(record("kind", "STRING", "text", strbuf, "line", li + 1))))
+                                also inString := 0) also ci := ci + 1)
+                        else if ch = "\\" and ch2 = "\"" then
+                            ((v also strbuf := strbuf + "\"") also ci := ci + 2)
+                        else if ch = "\\" and ch2 = "n" then
+                            ((v also strbuf := strbuf + "\n") also ci := ci + 2)
+                        else if ch = "\\" and ch2 = "\\" then
+                            ((v also strbuf := strbuf + "\\") also ci := ci + 2)
+                        else
+                            ((v also strbuf := strbuf + ch) also ci := ci + 1)
+                    )
+                else if ch = "\"" then
+                    (((v also inString := 1) also strbuf := "") also ci := ci + 1)
+                else if ch = "#" then
+                    (v also ci := cn)
+                else if ch = " " then
+                    ((v also toks := concat(toks, list(record("kind", "SPACE", "text", "", "line", li + 1)))) also ci := ci + 1)
+                else if isdigit(ch) then
+                    ((v also toks := concat(toks, list(record("kind", "DIGIT", "text", ch, "line", li + 1)))) also ci := ci + 1)
+                else if isalpha(ch) or ch = "_" then
+                    ((v also toks := concat(toks, list(record("kind", "LETTER", "text", ch, "line", li + 1)))) also ci := ci + 1)
+                else if ch = "-" and ch2 = ">" then
+                    ((v also toks := concat(toks, list(record("kind", "ARROW", "text", "->", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = ":" and ch2 = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "ASSIGN", "text", ":=", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = "<" and ch2 = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "LE", "text", "<=", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = ">" and ch2 = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "GE", "text", ">=", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = ":" then
+                    ((v also toks := concat(toks, list(record("kind", "COLON", "text", ":", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "," then
+                    ((v also toks := concat(toks, list(record("kind", "COMMA", "text", ",", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "." then
+                    ((v also toks := concat(toks, list(record("kind", "DOT", "text", ".", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "(" then
+                    ((v also toks := concat(toks, list(record("kind", "LPAREN", "text", "(", "line", li + 1)))) also ci := ci + 1)
+                else if ch = ")" then
+                    ((v also toks := concat(toks, list(record("kind", "RPAREN", "text", ")", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "+" then
+                    ((v also toks := concat(toks, list(record("kind", "PLUS", "text", "+", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "-" then
+                    ((v also toks := concat(toks, list(record("kind", "MINUS", "text", "-", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "*" then
+                    ((v also toks := concat(toks, list(record("kind", "STAR", "text", "*", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "/" then
+                    ((v also toks := concat(toks, list(record("kind", "SLASH", "text", "/", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "%" then
+                    ((v also toks := concat(toks, list(record("kind", "PERCENT", "text", "%", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "EQ", "text", "=", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "<" then
+                    ((v also toks := concat(toks, list(record("kind", "LT", "text", "<", "line", li + 1)))) also ci := ci + 1)
+                else if ch = ">" then
+                    ((v also toks := concat(toks, list(record("kind", "GT", "text", ">", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "{" then
+                    ((v also toks := concat(toks, list(record("kind", "LBRACE", "text", "{", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "}" then
+                    ((v also toks := concat(toks, list(record("kind", "RBRACE", "text", "}", "line", li + 1)))) also ci := ci + 1)
+                else
+                    (v also ci := ci + 1)
+            )
+    Cursed Technique: Apply
+        Using: (v) -> (if isCode then (v also toks := concat(toks, list(record("kind", "NEWLINE", "text", "", "line", li + 1)))) else v)
+    Cursed Technique: Apply
+        Using: (v) -> (v also li := li + 1)
+
+Simple Domain: While
+    Using: (v) -> length(indents) > 1
+    Cursed Technique: Apply
+        Using: (v) -> ((v also indents := take(indents, length(indents) - 1))
+            also toks := concat(toks, list(record("kind", "DEDENT", "text", "", "line", ln + 1))))
+
+Cursed Technique: Apply
+    Using: (v) -> toks
+Reveal: stderr
+
+Cursed Object: tn As length(toks)
+Cursed Object: ti As 0
+Cursed Object: buf2 As ""
+Cursed Object: toks2 As emptylist(record("kind", "", "text", "", "line", 0))
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> ti < tn
+    Cursed Object: tk Of (v) -> item(toks, ti)
+    Cursed Object: wordish Of (v) -> (tk.kind = "DIGIT" or tk.kind = "LETTER")
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if wordish then
+                ((v also buf2 := buf2 + tk.text) also ti := ti + 1)
+            else if tk.kind = "SPACE" then
+                (((v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", tk.line)))))
+                    also buf2 := "")
+                    also ti := ti + 1)
+            else
+                ((((v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", tk.line)))))
+                    also buf2 := "")
+                    also toks2 := concat(toks2, list(tk)))
+                    also ti := ti + 1)
+        )
+
+Cursed Technique: Apply
+    Using: (v) -> (v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", ln)))))
+Cursed Technique: Apply
+    Using: (v) -> toks2
+Reveal: stderr
+
+Cursed Object: tokWitness As record("kind", "", "text", "", "line", 0)
+Cursed Object: nodeWitness As record("kind", "ROOT", "text", "", "num", 0, "left", 0 - 1, "right", 0 - 1, "line", 0, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", "")
+
+Cursed Object: parseArena As list(nodeWitness)
+Cursed Object: pstack As list(0)
+Cursed Object: lastLineIdx As (0 - 1)
+Cursed Object: pendingToks As emptylist("")
+Cursed Object: pendingTokRecs As emptylist(tokWitness)
+Cursed Object: pi As 0
+Cursed Object: pn As length(toks2)
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> pi < pn
+    Cursed Object: t Of (v) -> item(toks2, pi)
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if t.kind = "INDENT" then
+                ((v also pstack := concat(pstack, list(lastLineIdx))) also pi := pi + 1)
+            else if t.kind = "DEDENT" then
+                ((v also pstack := take(pstack, length(pstack) - 1)) also pi := pi + 1)
+            else if t.kind = "NEWLINE" then
+                consider newIdx as length(parseArena) in
+                consider lineText as textjoin(pendingToks, " ") in
+                consider parentIdx as last(pstack) in
+                consider parentNode as item(parseArena, parentIdx) in
+                consider newLine as record("kind", "LINE", "text", lineText, "num", 0, "left", 0 - 1, "right", 0 - 1, "line", t.line, "kids", emptylist(0), "toks", pendingTokRecs, "stageKind", "", "stageArg", "") in
+                consider updatedParent as record("kind", parentNode.kind, "text", parentNode.text, "num", parentNode.num, "left", parentNode.left, "right", parentNode.right, "line", parentNode.line, "kids", concat(parentNode.kids, list(newIdx)), "toks", parentNode.toks, "stageKind", parentNode.stageKind, "stageArg", parentNode.stageArg) in
+                    ((((((v also parseArena := concat(parseArena, list(newLine)))
+                        also parseArena := set(parseArena, parentIdx, updatedParent))
+                        also lastLineIdx := newIdx)
+                        also pendingToks := emptylist(""))
+                        also pendingTokRecs := emptylist(tokWitness))
+                        also pi := pi + 1)
+            else
+                (((v also pendingToks := concat(pendingToks, list(t.text))) also pendingTokRecs := concat(pendingTokRecs, list(t))) also pi := pi + 1)
+        )
+
+Cursed Technique: Apply
+    Using: (v) -> parseArena
+Reveal: stderr
+
+Cursed Object: numLines As length(parseArena)
+Cursed Object: li2 As 0
+Cursed Object: curToks As emptylist(tokWitness)
+Cursed Object: curLen As 0
+Cursed Object: arrowPos As (0 - 1)
+Cursed Object: aj As 0
+Cursed Object: bodyToks As emptylist(tokWitness)
+Cursed Object: bodyLen As 0
+Cursed Object: valstackE As emptylist(0)
+Cursed Object: opstackE As emptylist("")
+Cursed Object: kE As 0
+Cursed Object: waitingE As ""
+Cursed Object: cj As 0
+Cursed Object: unsupported As 0
+Cursed Object: parenIsCall As emptylist(0)
+Cursed Object: parenFuncName As emptylist("")
+Cursed Object: parenValLen As emptylist(0)
+Cursed Object: expectPrimary As 1
+Cursed Object: ifCondStack As emptylist(0)
+Cursed Object: ifThenStack As emptylist(0)
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> li2 < numLines
+    Cursed Object: lnode Of (v) -> item(parseArena, li2)
+    Cursed Object: isUsing Of (v) -> (lnode.kind = "LINE" and length(lnode.toks) >= 2 and item(lnode.toks, 0).kind = "IDENT" and item(lnode.toks, 0).text = "Using")
+
+    Cursed Technique: Apply
+        Using: (v) -> ((((((v also curToks := (if isUsing then lnode.toks else emptylist(tokWitness)))
+            also curLen := (if isUsing then length(lnode.toks) else 0))
+            also arrowPos := (0 - 1))
+            also aj := 0)
+            also bodyToks := emptylist(tokWitness))
+            also bodyLen := 0)
+
+    Simple Domain: While
+        Using: (v) -> aj < curLen and arrowPos = (0 - 1)
+        Cursed Object: atok Of (v) -> item(curToks, aj)
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if atok.kind = "ARROW" then
+                    ((v also arrowPos := aj) also aj := aj + 1)
+                else
+                    (v also aj := aj + 1)
+            )
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if arrowPos = (0 - 1) then
+                v
+            else
+                ((v also bodyToks := slice(curToks, arrowPos + 1, curLen)) also bodyLen := (curLen - arrowPos - 1))
+        )
+
+    Cursed Technique: Apply
+        Using: (v) -> ((v also cj := 0) also unsupported := 0)
+
+    Simple Domain: While
+        Using: (v) -> cj < bodyLen and unsupported = 0
+        Cursed Object: sup Of (v) -> item(bodyToks, cj)
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if sup.kind = "INT" or sup.kind = "IDENT" or sup.kind = "STRING" or sup.kind = "PLUS" or sup.kind = "MINUS" or sup.kind = "STAR" or sup.kind = "SLASH" or sup.kind = "PERCENT" or sup.kind = "EQ" or sup.kind = "LT" or sup.kind = "GT" or sup.kind = "LE" or sup.kind = "GE" or sup.kind = "LPAREN" or sup.kind = "RPAREN" or sup.kind = "COMMA" or sup.kind = "DOT" then
+                    (v also cj := cj + 1)
+                else
+                    (v also unsupported := 1)
+            )
+
+    Cursed Technique: Apply
+        Using: (v) -> ((((((((((v also valstackE := emptylist(0)) also opstackE := emptylist("")) also kE := 0) also waitingE := "")
+            also parenIsCall := emptylist(0)) also parenFuncName := emptylist("")) also parenValLen := emptylist(0)) also expectPrimary := 1)
+            also ifCondStack := emptylist(0)) also ifThenStack := emptylist(0))
+
+    Simple Domain: While
+        Using: (v) -> unsupported = 0 and (kE < bodyLen or ikke waitingE = "")
+        Cursed Object: bt Of (v) -> (if kE < bodyLen then item(bodyToks, kE) else tokWitness)
+        Cursed Object: bt2 Of (v) -> (if kE + 1 < bodyLen then item(bodyToks, kE + 1) else tokWitness)
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if waitingE = "" then
+                    if bt.kind = "INT" then
+                        consider newIdx as length(parseArena) in
+                            ((((v also parseArena := concat(parseArena, list(record("kind", "NUM", "text", "", "num", toint(bt.text), "left", 0 - 1, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                also valstackE := concat(valstackE, list(newIdx)))
+                                also kE := kE + 1)
+                                also expectPrimary := 0)
+                    else if bt.kind = "STRING" then
+                        consider newIdx as length(parseArena) in
+                            ((((v also parseArena := concat(parseArena, list(record("kind", "STR", "text", bt.text, "num", 0, "left", 0 - 1, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                also valstackE := concat(valstackE, list(newIdx)))
+                                also kE := kE + 1)
+                                also expectPrimary := 0)
+                    else if bt.kind = "MINUS" and expectPrimary = 1 then
+                        if bt2.kind = "INT" then
+                            consider newIdx as length(parseArena) in
+                                ((((v also parseArena := concat(parseArena, list(record("kind", "NUM", "text", "", "num", 0 - toint(bt2.text), "left", 0 - 1, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                    also valstackE := concat(valstackE, list(newIdx)))
+                                    also kE := kE + 2)
+                                    also expectPrimary := 0)
+                        else
+                            (v also unsupported := 1)
+                    else if bt.kind = "IDENT" and (bt.text = "and" or bt.text = "or") and expectPrimary = 0 then
+                        (((v also waitingE := bt.text) also kE := kE + 1) also expectPrimary := 1)
+                    else if bt.kind = "IDENT" and bt.text = "ikke" and expectPrimary = 1 then
+                        ((v also opstackE := concat(opstackE, list("NOT"))) also kE := kE + 1)
+                    else if bt.kind = "IDENT" and bt.text = "if" and expectPrimary = 1 then
+                        ((v also opstackE := concat(opstackE, list("IFCOND"))) also kE := kE + 1)
+                    else if bt.kind = "IDENT" and bt.text = "then" and expectPrimary = 0 then
+                        ((v also waitingE := "THEN") also kE := kE + 1)
+                    else if bt.kind = "IDENT" and bt.text = "else" and expectPrimary = 0 then
+                        ((v also waitingE := "ELSE") also kE := kE + 1)
+                    else if bt.kind = "IDENT" and bt2.kind = "LPAREN" then
+                        ((((((v also parenIsCall := concat(parenIsCall, list(1)))
+                            also parenFuncName := concat(parenFuncName, list(bt.text)))
+                            also parenValLen := concat(parenValLen, list(length(valstackE))))
+                            also opstackE := concat(opstackE, list("(")))
+                            also kE := kE + 2)
+                            also expectPrimary := 1)
+                    else if bt.kind = "IDENT" then
+                        consider newIdx as length(parseArena) in
+                            ((((v also parseArena := concat(parseArena, list(record("kind", "IDENT", "text", bt.text, "num", 0, "left", 0 - 1, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                also valstackE := concat(valstackE, list(newIdx)))
+                                also kE := kE + 1)
+                                also expectPrimary := 0)
+                    else if bt.kind = "LPAREN" then
+                        ((((((v also parenIsCall := concat(parenIsCall, list(0)))
+                            also parenFuncName := concat(parenFuncName, list("")))
+                            also parenValLen := concat(parenValLen, list(length(valstackE))))
+                            also opstackE := concat(opstackE, list("(")))
+                            also kE := kE + 1)
+                            also expectPrimary := 1)
+                    else if bt.kind = "RPAREN" then
+                        ((v also waitingE := "RPAREN") also kE := kE + 1)
+                    else if bt.kind = "COMMA" then
+                        ((v also waitingE := "COMMA") also kE := kE + 1)
+                    else if bt.kind = "DOT" and expectPrimary = 0 then
+                        ((v also waitingE := "DOT") also kE := kE + 1)
+                    else
+                        (((v also waitingE := bt.kind) also kE := kE + 1) also expectPrimary := 1)
+                else
+                    if waitingE = "DOT" then
+                        if length(valstackE) = 0 or ikke (bt.kind = "IDENT") then
+                            (v also unsupported := 1)
+                        else
+                            consider baseIdx as last(valstackE) in
+                            consider vs1 as take(valstackE, length(valstackE) - 1) in
+                            consider newIdx as length(parseArena) in
+                                ((((v also parseArena := concat(parseArena, list(record("kind", "FIELD", "text", bt.text, "num", 0, "left", baseIdx, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                    also valstackE := concat(vs1, list(newIdx)))
+                                    also waitingE := "")
+                                    also kE := kE + 1)
+                    else if waitingE = "THEN" then
+                        if length(opstackE) = 0 then
+                            (v also unsupported := 1)
+                        else if last(opstackE) = "IFCOND" then
+                            consider condIdx as last(valstackE) in
+                            consider vsC as take(valstackE, length(valstackE) - 1) in
+                                ((((((v also valstackE := vsC)
+                                    also ifCondStack := concat(ifCondStack, list(condIdx)))
+                                    also opstackE := take(opstackE, length(opstackE) - 1))
+                                    also opstackE := concat(opstackE, list("IFTHEN")))
+                                    also waitingE := "")
+                                    also expectPrimary := 1)
+                        else
+                            consider opsym as last(opstackE) in
+                            if opsym = "NOT" then
+                                consider cIdx as last(valstackE) in
+                                consider vsC2 as take(valstackE, length(valstackE) - 1) in
+                                consider newIdx as length(parseArena) in
+                                    (((v also parseArena := concat(parseArena, list(record("kind", "NOT", "text", "", "num", 0, "left", cIdx, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                        also valstackE := concat(vsC2, list(newIdx)))
+                                        also opstackE := take(opstackE, length(opstackE) - 1))
+                            else
+                                consider rIdx as last(valstackE) in
+                                consider vs1 as take(valstackE, length(valstackE) - 1) in
+                                consider lIdx as last(vs1) in
+                                consider vs2 as take(vs1, length(vs1) - 1) in
+                                consider newIdx as length(parseArena) in
+                                    (((v also parseArena := concat(parseArena, list(record("kind", opsym, "text", "", "num", 0, "left", lIdx, "right", rIdx, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                        also valstackE := concat(vs2, list(newIdx)))
+                                        also opstackE := take(opstackE, length(opstackE) - 1))
+                    else if waitingE = "ELSE" then
+                        if length(opstackE) = 0 then
+                            (v also unsupported := 1)
+                        else if last(opstackE) = "IFTHEN" then
+                            consider thenIdx as last(valstackE) in
+                            consider vsT as take(valstackE, length(valstackE) - 1) in
+                                ((((((v also valstackE := vsT)
+                                    also ifThenStack := concat(ifThenStack, list(thenIdx)))
+                                    also opstackE := take(opstackE, length(opstackE) - 1))
+                                    also opstackE := concat(opstackE, list("IFELSE")))
+                                    also waitingE := "")
+                                    also expectPrimary := 1)
+                        else
+                            consider opsym as last(opstackE) in
+                            if opsym = "NOT" then
+                                consider cIdx as last(valstackE) in
+                                consider vsC2 as take(valstackE, length(valstackE) - 1) in
+                                consider newIdx as length(parseArena) in
+                                    (((v also parseArena := concat(parseArena, list(record("kind", "NOT", "text", "", "num", 0, "left", cIdx, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                        also valstackE := concat(vsC2, list(newIdx)))
+                                        also opstackE := take(opstackE, length(opstackE) - 1))
+                            else
+                                consider rIdx as last(valstackE) in
+                                consider vs1 as take(valstackE, length(valstackE) - 1) in
+                                consider lIdx as last(vs1) in
+                                consider vs2 as take(vs1, length(vs1) - 1) in
+                                consider newIdx as length(parseArena) in
+                                    (((v also parseArena := concat(parseArena, list(record("kind", opsym, "text", "", "num", 0, "left", lIdx, "right", rIdx, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                        also valstackE := concat(vs2, list(newIdx)))
+                                        also opstackE := take(opstackE, length(opstackE) - 1))
+                    else if waitingE = "RPAREN" or waitingE = "COMMA" then
+                        if length(opstackE) = 0 then
+                            (v also unsupported := 1)
+                        else if last(opstackE) = "(" then
+                            if waitingE = "COMMA" then
+                                ((v also waitingE := "") also expectPrimary := 1)
+                            else
+                                consider nArgs as (length(valstackE) - last(parenValLen)) in
+                                if last(parenIsCall) = 1 then
+                                    consider fname as last(parenFuncName) in
+                                    consider argIdxs as slice(valstackE, length(valstackE) - nArgs, length(valstackE)) in
+                                    consider restVal as take(valstackE, length(valstackE) - nArgs) in
+                                    consider newIdx as length(parseArena) in
+                                        (((((((( v also parseArena := concat(parseArena, list(record("kind", "CALL", "text", fname, "num", 0, "left", 0 - 1, "right", 0 - 1, "line", bt.line, "kids", argIdxs, "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                            also valstackE := concat(restVal, list(newIdx)))
+                                            also opstackE := take(opstackE, length(opstackE) - 1))
+                                            also parenIsCall := take(parenIsCall, length(parenIsCall) - 1))
+                                            also parenFuncName := take(parenFuncName, length(parenFuncName) - 1))
+                                            also parenValLen := take(parenValLen, length(parenValLen) - 1))
+                                            also waitingE := "")
+                                            also expectPrimary := 0)
+                                else
+                                    (((((( v also opstackE := take(opstackE, length(opstackE) - 1))
+                                        also parenIsCall := take(parenIsCall, length(parenIsCall) - 1))
+                                        also parenFuncName := take(parenFuncName, length(parenFuncName) - 1))
+                                        also parenValLen := take(parenValLen, length(parenValLen) - 1))
+                                        also waitingE := "")
+                                        also expectPrimary := 0)
+                        else
+                            consider opsym as last(opstackE) in
+                            if opsym = "IFELSE" then
+                                consider elseIdx as last(valstackE) in
+                                consider vsE as take(valstackE, length(valstackE) - 1) in
+                                consider thenIdx as last(ifThenStack) in
+                                consider ifThenRest as take(ifThenStack, length(ifThenStack) - 1) in
+                                consider condIdx as last(ifCondStack) in
+                                consider ifCondRest as take(ifCondStack, length(ifCondStack) - 1) in
+                                consider newIdx as length(parseArena) in
+                                    ((((( v also parseArena := concat(parseArena, list(record("kind", "IF", "text", "", "num", 0, "left", 0 - 1, "right", 0 - 1, "line", bt.line, "kids", list(condIdx, thenIdx, elseIdx), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                        also valstackE := concat(vsE, list(newIdx)))
+                                        also ifThenStack := ifThenRest)
+                                        also ifCondStack := ifCondRest)
+                                        also opstackE := take(opstackE, length(opstackE) - 1))
+                            else if opsym = "NOT" then
+                                consider cIdx as last(valstackE) in
+                                consider vsC as take(valstackE, length(valstackE) - 1) in
+                                consider newIdx as length(parseArena) in
+                                    (((v also parseArena := concat(parseArena, list(record("kind", "NOT", "text", "", "num", 0, "left", cIdx, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                        also valstackE := concat(vsC, list(newIdx)))
+                                        also opstackE := take(opstackE, length(opstackE) - 1))
+                            else
+                                consider rIdx as last(valstackE) in
+                                consider vs1 as take(valstackE, length(valstackE) - 1) in
+                                consider lIdx as last(vs1) in
+                                consider vs2 as take(vs1, length(vs1) - 1) in
+                                consider newIdx as length(parseArena) in
+                                    (((v also parseArena := concat(parseArena, list(record("kind", opsym, "text", "", "num", 0, "left", lIdx, "right", rIdx, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                        also valstackE := concat(vs2, list(newIdx)))
+                                        also opstackE := take(opstackE, length(opstackE) - 1))
+                    else
+                        if length(opstackE) = 0 or last(opstackE) = "(" or last(opstackE) = "IFCOND" or last(opstackE) = "IFTHEN" or last(opstackE) = "IFELSE" then
+                            ((v also opstackE := concat(opstackE, list(waitingE))) also waitingE := "")
+                        else
+                            consider precOf as (
+                                if last(opstackE) = "or" then 0
+                                else if last(opstackE) = "and" then 2
+                                else if last(opstackE) = "NOT" then 3
+                                else if last(opstackE) = "EQ" or last(opstackE) = "LT" or last(opstackE) = "GT" or last(opstackE) = "LE" or last(opstackE) = "GE" then 4
+                                else if last(opstackE) = "STAR" or last(opstackE) = "SLASH" or last(opstackE) = "PERCENT" then 8
+                                else 6
+                            ) in
+                            consider precWait as (
+                                if waitingE = "or" then 0
+                                else if waitingE = "and" then 2
+                                else if waitingE = "EQ" or waitingE = "LT" or waitingE = "GT" or waitingE = "LE" or waitingE = "GE" then 4
+                                else if waitingE = "STAR" or waitingE = "SLASH" or waitingE = "PERCENT" then 8
+                                else 6
+                            ) in
+                            if precWait > precOf then
+                                ((v also opstackE := concat(opstackE, list(waitingE))) also waitingE := "")
+                            else
+                                consider opsym as last(opstackE) in
+                                if opsym = "NOT" then
+                                    consider cIdx as last(valstackE) in
+                                    consider vsC as take(valstackE, length(valstackE) - 1) in
+                                    consider newIdx as length(parseArena) in
+                                        (((v also parseArena := concat(parseArena, list(record("kind", "NOT", "text", "", "num", 0, "left", cIdx, "right", 0 - 1, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                            also valstackE := concat(vsC, list(newIdx)))
+                                            also opstackE := take(opstackE, length(opstackE) - 1))
+                                else
+                                    consider rIdx as last(valstackE) in
+                                    consider vs1 as take(valstackE, length(valstackE) - 1) in
+                                    consider lIdx as last(vs1) in
+                                    consider vs2 as take(vs1, length(vs1) - 1) in
+                                    consider newIdx as length(parseArena) in
+                                        (((v also parseArena := concat(parseArena, list(record("kind", opsym, "text", "", "num", 0, "left", lIdx, "right", rIdx, "line", bt.line, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                            also valstackE := concat(vs2, list(newIdx)))
+                                            also opstackE := take(opstackE, length(opstackE) - 1))
+            )
+
+    Simple Domain: While
+        Using: (v) -> unsupported = 0 and length(opstackE) > 0
+        Cursed Technique: Apply
+            Using: (v) -> (
+                consider opsym as last(opstackE) in
+                if opsym = "IFCOND" or opsym = "IFTHEN" then
+                    (v also unsupported := 1)
+                else if opsym = "IFELSE" then
+                    consider elseIdx as last(valstackE) in
+                    consider vsE as take(valstackE, length(valstackE) - 1) in
+                    consider thenIdx as last(ifThenStack) in
+                    consider ifThenRest as take(ifThenStack, length(ifThenStack) - 1) in
+                    consider condIdx as last(ifCondStack) in
+                    consider ifCondRest as take(ifCondStack, length(ifCondStack) - 1) in
+                    consider newIdx as length(parseArena) in
+                        ((((( v also parseArena := concat(parseArena, list(record("kind", "IF", "text", "", "num", 0, "left", 0 - 1, "right", 0 - 1, "line", 0, "kids", list(condIdx, thenIdx, elseIdx), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                                also valstackE := concat(vsE, list(newIdx)))
+                                also ifThenStack := ifThenRest)
+                                also ifCondStack := ifCondRest)
+                                also opstackE := take(opstackE, length(opstackE) - 1))
+                else if opsym = "NOT" then
+                    consider cIdx as last(valstackE) in
+                    consider vsC as take(valstackE, length(valstackE) - 1) in
+                    consider newIdx as length(parseArena) in
+                        (((v also parseArena := concat(parseArena, list(record("kind", "NOT", "text", "", "num", 0, "left", cIdx, "right", 0 - 1, "line", 0, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                            also valstackE := concat(vsC, list(newIdx)))
+                            also opstackE := take(opstackE, length(opstackE) - 1))
+                else
+                    consider rIdx as last(valstackE) in
+                    consider vs1 as take(valstackE, length(valstackE) - 1) in
+                    consider lIdx as last(vs1) in
+                    consider vs2 as take(vs1, length(vs1) - 1) in
+                    consider newIdx as length(parseArena) in
+                        (((v also parseArena := concat(parseArena, list(record("kind", opsym, "text", "", "num", 0, "left", lIdx, "right", rIdx, "line", 0, "kids", emptylist(0), "toks", emptylist(tokWitness), "stageKind", "", "stageArg", ""))))
+                            also valstackE := concat(vs2, list(newIdx)))
+                            also opstackE := take(opstackE, length(opstackE) - 1))
+            )
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if unsupported = 1 or ikke (length(valstackE) = 1) then
+                v
+            else
+                consider rootIdxE as last(valstackE) in
+                consider ln2 as item(parseArena, li2) in
+                consider updated2 as record("kind", ln2.kind, "text", ln2.text, "num", ln2.num, "left", rootIdxE, "right", ln2.right, "line", ln2.line, "kids", ln2.kids, "toks", ln2.toks, "stageKind", ln2.stageKind, "stageArg", ln2.stageArg) in
+                    (v also parseArena := set(parseArena, li2, updated2))
+        )
+
+    Cursed Technique: Apply
+        Using: (v) -> (v also li2 := li2 + 1)
+
+Cursed Object: numLines2 As length(parseArena)
+Cursed Object: li3 As 0
+Cursed Object: kindAcc As emptylist("")
+Cursed Object: argAcc As emptylist("")
+Cursed Object: seenColon As 0
+Cursed Object: sj As 0
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> li3 < numLines2
+    Cursed Object: nd3 Of (v) -> item(parseArena, li3)
+    Cursed Object: isLine3 Of (v) -> nd3.kind = "LINE"
+
+    Cursed Technique: Apply
+        Using: (v) -> ((((v also kindAcc := emptylist("")) also argAcc := emptylist("")) also seenColon := 0) also sj := 0)
+
+    Simple Domain: While
+        Using: (v) -> isLine3 and sj < length(nd3.toks)
+        Cursed Object: stok Of (v) -> item(nd3.toks, sj)
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if seenColon = 0 then
+                    if stok.kind = "COLON" then
+                        ((v also seenColon := 1) also sj := sj + 1)
+                    else
+                        ((v also kindAcc := concat(kindAcc, list(stok.text))) also sj := sj + 1)
+                else
+                    ((v also argAcc := concat(argAcc, list(stok.text))) also sj := sj + 1)
+            )
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if isLine3 and seenColon = 1 then
+                consider updated3 as record("kind", nd3.kind, "text", nd3.text, "num", nd3.num, "left", nd3.left, "right", nd3.right, "line", nd3.line, "kids", nd3.kids, "toks", nd3.toks, "stageKind", textjoin(kindAcc, " "), "stageArg", textjoin(argAcc, " ")) in
+                    (v also parseArena := set(parseArena, li3, updated3))
+            else
+                v
+        )
+
+    Cursed Technique: Apply
+        Using: (v) -> (v also li3 := li3 + 1)
+
+Cursed Object: rootKids As item(parseArena, 0).kids
+Cursed Object: nStages As length(rootKids)
+Cursed Object: stageI As 1
+Cursed Object: runVal As 0
+Cursed Object: runValS As ""
+Cursed Object: runIsStr As 0
+Cursed Object: evalOK As 1
+
+Cursed Object: firstLine Of (v) -> item(parseArena, item(rootKids, 0))
+Cursed Technique: Apply
+    Using: (v) -> (
+        if firstLine.stageKind = "Cursed Energy" and isdigit(firstLine.stageArg) then
+            (v also runVal := toint(firstLine.stageArg))
+        else
+            (v also evalOK := 0)
+    )
+
+Cursed Object: curExprRoot As (0 - 1)
+Cursed Object: stkE1 As emptylist(0)
+Cursed Object: orderE As emptylist(0)
+Cursed Object: postorderE As emptylist(0)
+Cursed Object: valStackI As emptylist(0)
+Cursed Object: valStackK As emptylist("")
+Cursed Object: valStackS As emptylist("")
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> evalOK = 1 and stageI < nStages
+    Cursed Object: curLineIdx Of (v) -> item(rootKids, stageI)
+    Cursed Object: curLine Of (v) -> item(parseArena, curLineIdx)
+    Cursed Object: usingIdx Of (v) -> (if length(curLine.kids) > 0 then item(curLine.kids, 0) else (0 - 1))
+    Cursed Object: isApplyStage Of (v) -> (curLine.stageKind = "Cursed Technique" and curLine.stageArg = "Apply")
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if curLine.stageKind = "Reveal" then
+                (v also curExprRoot := (0 - 1))
+            else if isApplyStage and ikke (usingIdx = (0 - 1)) and ikke (item(parseArena, usingIdx).left = (0 - 1)) then
+                (v also curExprRoot := item(parseArena, usingIdx).left)
+            else
+                ((v also curExprRoot := (0 - 1)) also evalOK := 0)
+        )
+
+    Cursed Technique: Apply
+        Using: (v) -> ((((((v also stkE1 := (if curExprRoot = (0 - 1) then emptylist(0) else list(curExprRoot))) also orderE := emptylist(0)) also valStackI := emptylist(0)) also valStackK := emptylist("")) also valStackS := emptylist("")))
+
+    Simple Domain: While
+        Using: (v) -> length(stkE1) > 0
+        Cursed Object: curNodeIdx Of (v) -> last(stkE1)
+        Cursed Object: curNode Of (v) -> item(parseArena, curNodeIdx)
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if curNode.kind = "IF" then
+                    (((v also stkE1 := take(stkE1, length(stkE1) - 1))
+                        also orderE := concat(orderE, list(curNodeIdx)))
+                        also stkE1 := concat(stkE1, curNode.kids))
+                else
+                    (((v also stkE1 := take(stkE1, length(stkE1) - 1))
+                        also orderE := concat(orderE, list(curNodeIdx)))
+                        also stkE1 := (if curNode.left = (0 - 1) then stkE1 else concat(stkE1, list(curNode.left))))
+                        also stkE1 := (if curNode.right = (0 - 1) then stkE1 else concat(stkE1, list(curNode.right)))
+            )
+
+    Cursed Technique: Apply
+        Using: (v) -> (v also postorderE := reverse(orderE))
+
+    Cursed Object: qn2 Of (v) -> length(postorderE)
+    Cursed Object: qi2 As 0
+    Cursed Technique: Apply
+        Using: (v) -> (v also qi2 := 0)
+
+    Simple Domain: While
+        Using: (v) -> qi2 < qn2
+        Cursed Object: qnode Of (v) -> item(parseArena, item(postorderE, qi2))
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if qnode.kind = "NUM" then
+                    ((((v also valStackK := concat(valStackK, list("I"))) also valStackI := concat(valStackI, list(qnode.num))) also valStackS := concat(valStackS, list(""))) also qi2 := qi2 + 1)
+                else if qnode.kind = "IDENT" then
+                    ((((v also valStackK := concat(valStackK, list("I"))) also valStackI := concat(valStackI, list(runVal))) also valStackS := concat(valStackS, list(""))) also qi2 := qi2 + 1)
+                else if qnode.kind = "STR" then
+                    ((((v also valStackK := concat(valStackK, list("S"))) also valStackI := concat(valStackI, list(0))) also valStackS := concat(valStackS, list(qnode.text))) also qi2 := qi2 + 1)
+                else if qnode.kind = "NOT" then
+                    consider cK as last(valStackK) in
+                    consider cI as last(valStackI) in
+                    consider vsK as take(valStackK, length(valStackK) - 1) in
+                    consider vsI as take(valStackI, length(valStackI) - 1) in
+                    consider vsS as take(valStackS, length(valStackS) - 1) in
+                    consider ok as (cK = "I") in
+                    consider rv as (if ok and cI = 0 then 1 else 0) in
+                        (((((v also valStackK := concat(vsK, list("I"))) also valStackI := concat(vsI, list(rv))) also valStackS := concat(vsS, list(""))) also evalOK := (if ok then evalOK else 0)) also qi2 := qi2 + 1)
+                else if qnode.kind = "IF" then
+                    consider elseK as last(valStackK) in
+                    consider elseI as last(valStackI) in
+                    consider elseS as last(valStackS) in
+                    consider vsA_K as take(valStackK, length(valStackK) - 1) in
+                    consider vsA_I as take(valStackI, length(valStackI) - 1) in
+                    consider vsA_S as take(valStackS, length(valStackS) - 1) in
+                    consider thenK as last(vsA_K) in
+                    consider thenI as last(vsA_I) in
+                    consider thenS as last(vsA_S) in
+                    consider vsB_K as take(vsA_K, length(vsA_K) - 1) in
+                    consider vsB_I as take(vsA_I, length(vsA_I) - 1) in
+                    consider vsB_S as take(vsA_S, length(vsA_S) - 1) in
+                    consider condK as last(vsB_K) in
+                    consider condI as last(vsB_I) in
+                    consider vsC_K as take(vsB_K, length(vsB_K) - 1) in
+                    consider vsC_I as take(vsB_I, length(vsB_I) - 1) in
+                    consider vsC_S as take(vsB_S, length(vsB_S) - 1) in
+                    consider ok as (condK = "I") in
+                    consider takeThen as (ok and ikke (condI = 0)) in
+                    consider rvK as (if takeThen then thenK else elseK) in
+                    consider rvI as (if takeThen then thenI else elseI) in
+                    consider rvS as (if takeThen then thenS else elseS) in
+                        (((((v also valStackK := concat(vsC_K, list(rvK))) also valStackI := concat(vsC_I, list(rvI))) also valStackS := concat(vsC_S, list(rvS))) also evalOK := (if ok then evalOK else 0)) also qi2 := qi2 + 1)
+                else if qnode.kind = "PLUS" or qnode.kind = "MINUS" or qnode.kind = "STAR" or qnode.kind = "SLASH" or qnode.kind = "PERCENT" or qnode.kind = "EQ" or qnode.kind = "LT" or qnode.kind = "GT" or qnode.kind = "LE" or qnode.kind = "GE" or qnode.kind = "and" or qnode.kind = "or" then
+                    consider rK as last(valStackK) in
+                    consider rI as last(valStackI) in
+                    consider vs1_K as take(valStackK, length(valStackK) - 1) in
+                    consider vs1_I as take(valStackI, length(valStackI) - 1) in
+                    consider vs1_S as take(valStackS, length(valStackS) - 1) in
+                    consider lK as last(vs1_K) in
+                    consider lI as last(vs1_I) in
+                    consider vs2_K as take(vs1_K, length(vs1_K) - 1) in
+                    consider vs2_I as take(vs1_I, length(vs1_I) - 1) in
+                    consider vs2_S as take(vs1_S, length(vs1_S) - 1) in
+                    consider ok as (lK = "I" and rK = "I") in
+                    consider rv as (
+                        if ikke ok then 0
+                        else if qnode.kind = "PLUS" then lI + rI
+                        else if qnode.kind = "MINUS" then lI - rI
+                        else if qnode.kind = "STAR" then lI * rI
+                        else if qnode.kind = "SLASH" then lI / rI
+                        else if qnode.kind = "PERCENT" then lI % rI
+                        else if qnode.kind = "EQ" then (if lI = rI then 1 else 0)
+                        else if qnode.kind = "LT" then (if lI < rI then 1 else 0)
+                        else if qnode.kind = "GT" then (if lI > rI then 1 else 0)
+                        else if qnode.kind = "LE" then (if lI <= rI then 1 else 0)
+                        else if qnode.kind = "GE" then (if lI >= rI then 1 else 0)
+                        else if qnode.kind = "and" then (if ikke (lI = 0) and ikke (rI = 0) then 1 else 0)
+                        else (if ikke (lI = 0) or ikke (rI = 0) then 1 else 0)
+                    ) in
+                        (((((v also valStackK := concat(vs2_K, list("I"))) also valStackI := concat(vs2_I, list(rv))) also valStackS := concat(vs2_S, list(""))) also evalOK := (if ok then evalOK else 0)) also qi2 := qi2 + 1)
+                else
+                    ((v also evalOK := 0) also qi2 := qi2 + 1)
+            )
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if curExprRoot = (0 - 1) then
+                v
+            else if evalOK = 1 and length(valStackK) = 1 and last(valStackK) = "I" then
+                ((v also runVal := last(valStackI)) also runIsStr := 0)
+            else if evalOK = 1 and length(valStackK) = 1 and last(valStackK) = "S" then
+                ((v also runValS := last(valStackS)) also runIsStr := 1)
+            else
+                (v also evalOK := 0)
+        )
+
+    Cursed Technique: Apply
+        Using: (v) -> (v also stageI := stageI + 1)
+
+Cursed Technique: Apply
+    Using: (v) -> (if evalOK = 1 then (if runIsStr = 1 then runValS else totext(runVal)) else "EVAL_FAILED")
+Reveal: stdout

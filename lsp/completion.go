@@ -182,7 +182,7 @@ func CompletionItems(prefix string) []map[string]any {
 // typed into does not parse most of the time — which is exactly when the
 // completions matter most.
 func documentScope(text string) string {
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -298,11 +298,11 @@ func scopeItems() []map[string]any {
 // splitKeyword returns the text of a trimmed line before its first ':'. ok is
 // false when there is no colon yet.
 func splitKeyword(trimmed string) (key string, ok bool) {
-	i := strings.IndexByte(trimmed, ':')
-	if i < 0 {
+	before, _, ok := strings.Cut(trimmed, ":")
+	if !ok {
 		return "", false
 	}
-	return strings.TrimSpace(trimmed[:i]), true
+	return strings.TrimSpace(before), true
 }
 
 // canonicalKeyword resolves a (possibly differently-cased) keyword to its

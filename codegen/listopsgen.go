@@ -17,13 +17,20 @@ import (
 // leave declared and unused.
 
 func (g *gen) emitPrefixWhile(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
 	elemGo, err := g.goType(n.In.Elem)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
+	}
+	// optimizer.elideConstEarlyExits: a predicate that is constantly false at
+	// the boundary leaves the empty list, and no lambda.
+	if empty, _ := n.Meta["empty"].(bool); empty {
+		v := g.fresh("v")
+		g.wl("%s := []%s{}", v, elemGo)
+		return v, nil
+	}
+	lam, err := g.nodeLambda(n)
+	if err != nil {
+		return "", err
 	}
 	cut, i := g.fresh("cut"), g.fresh("i")
 	body, _, err := g.compileExpr(lam.Body, exprEnv{

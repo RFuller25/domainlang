@@ -131,10 +131,7 @@ func (s *Search) runProbe(bin, out string) error {
 // the baseline costs, with a floor for programs too quick for the multiple to
 // mean anything.
 func (s *Search) probeTimeout() time.Duration {
-	limit := 30 * s.baseline.Mean
-	if limit < minProbeTimeout {
-		limit = minProbeTimeout
-	}
+	limit := max(30*s.baseline.Mean, minProbeTimeout)
 	return limit
 }
 

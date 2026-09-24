@@ -4,10 +4,8 @@ import (
 	"fmt"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // This file holds the v0.2 higher-order primitives: the ones that consume a
@@ -126,7 +124,7 @@ var mapEach = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		outElem, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
+		outElem, err := lambdaType(lam, elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Map Each: " + err.Error()}
 		}
@@ -144,7 +142,7 @@ var mapEach = &Primitive{
 				}
 				out := make([]ir.Value, len(items))
 				for i, e := range items {
-					r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{e}, ambientArgs()...)...)
+					r, err := evalLambda(lam, []*ir.Type{elem}, e)
 					if err != nil {
 						return nil, runtimeErr("Map Each", pos, "element %d: %v", i, err)
 					}
@@ -412,7 +410,7 @@ var fold = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		accType, err := typecheck.LambdaType(lam, append([]*ir.Type{seedType, elem}, ambientTypes()...)...)
+		accType, err := lambdaType(lam, seedType, elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Fold: " + err.Error()}
 		}
@@ -440,7 +438,7 @@ var fold = &Primitive{
 				}
 				acc = ownAccumulator(lam, acc)
 				for i, e := range items {
-					acc, err = eval.EvalLambdaTyped(lam, append([]*ir.Type{seedType, elem}, ambientTypes()...), append([]ir.Value{acc, e}, ambientArgs()...)...)
+					acc, err = evalLambda(lam, []*ir.Type{seedType, elem}, acc, e)
 					if err != nil {
 						return nil, runtimeErr("Fold", pos, "element %d: %v", i, err)
 					}
@@ -484,7 +482,7 @@ var groupBy = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
+		keyType, err := lambdaType(lam, elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Group By: " + err.Error()}
 		}
@@ -505,7 +503,7 @@ var groupBy = &Primitive{
 				}
 				m := ir.NewMapValue()
 				for i, e := range items {
-					k, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{e}, ambientArgs()...)...)
+					k, err := evalLambda(lam, []*ir.Type{elem}, e)
 					if err != nil {
 						return nil, runtimeErr("Group By", pos, "element %d: %v", i, err)
 					}
@@ -594,7 +592,7 @@ func setFromGroup(g ir.Value, id string, pos token.Position) (*ir.SetValue, erro
 // ---------------------------------------------------------------------------
 
 func requirePredicate(lam *ast.Lambda, elem *ir.Type, prim string, pos token.Position) error {
-	bodyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
+	bodyType, err := lambdaType(lam, elem)
 	if err != nil {
 		return &ResolveError{Pos: pos, Msg: prim + ": " + err.Error()}
 	}
@@ -608,7 +606,7 @@ func requirePredicate(lam *ast.Lambda, elem *ir.Type, prim string, pos token.Pos
 // evalPredicate runs a one-parameter predicate lambda; elem is the
 // statically inferred parameter type (nil when unknown).
 func evalPredicate(lam *ast.Lambda, elem *ir.Type, e ir.Value) (bool, error) {
-	r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{e}, ambientArgs()...)...)
+	r, err := evalLambda(lam, []*ir.Type{elem}, e)
 	if err != nil {
 		return false, err
 	}

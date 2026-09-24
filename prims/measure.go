@@ -5,10 +5,8 @@ import (
 	"math"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // Measured arguments: a primitive's Int argument written either as the literal
@@ -69,9 +67,7 @@ func (m Measured) value(v ir.Value) (int64, error) {
 	if m.Lambda == nil {
 		return m.Lit, nil
 	}
-	r, err := eval.EvalLambdaTyped(m.Lambda,
-		append([]*ir.Type{m.In}, ambientTypes()...),
-		append([]ir.Value{v}, ambientArgs()...)...)
+	r, err := evalLambda(m.Lambda, []*ir.Type{m.In}, v)
 	if err != nil {
 		return 0, runtimeErr(m.Prim, m.Pos, "%s: %v", m.Name, err)
 	}
@@ -189,7 +185,7 @@ func measuredLambdaType(lam *ast.Lambda, prim, name string, in *ir.Type, pos tok
 			"%s: %s: lambda must take %d parameter(s), got %d",
 			prim, name, wantArity, len(lam.Params))}
 	}
-	out, err := typecheck.LambdaType(lam, append([]*ir.Type{in}, ambientTypes()...)...)
+	out, err := lambdaType(lam, in)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf("%s: %s: %v", prim, name, err)}
 	}
@@ -277,9 +273,7 @@ func (m MeasuredText) Resolve(v ir.Value) (string, error) {
 	if m.Lambda == nil {
 		return m.Lit, nil
 	}
-	r, err := eval.EvalLambdaTyped(m.Lambda,
-		append([]*ir.Type{m.In}, ambientTypes()...),
-		append([]ir.Value{v}, ambientArgs()...)...)
+	r, err := evalLambda(m.Lambda, []*ir.Type{m.In}, v)
 	if err != nil {
 		return "", runtimeErr(m.Prim, m.Pos, "%s: %v", m.Name, err)
 	}
@@ -364,9 +358,7 @@ func (m MeasuredValue) Resolve(v ir.Value) (ir.Value, error) {
 	if m.Lambda == nil {
 		return m.Lit, nil
 	}
-	r, err := eval.EvalLambdaTyped(m.Lambda,
-		append([]*ir.Type{m.In}, ambientTypes()...),
-		append([]ir.Value{v}, ambientArgs()...)...)
+	r, err := evalLambda(m.Lambda, []*ir.Type{m.In}, v)
 	if err != nil {
 		return nil, runtimeErr(m.Prim, m.Pos, "%s: %v", m.Name, err)
 	}

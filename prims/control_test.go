@@ -129,7 +129,7 @@ func TestLoopResolveErrors(t *testing.T) {
 // identity, over many random lists.
 func TestReverseTwiceIsIdentity(t *testing.T) {
 	rng := rand.New(rand.NewSource(11))
-	for iter := 0; iter < 200; iter++ {
+	for iter := range 200 {
 		n := rng.Intn(11) + 1 // empty input is covered separately (TestReverseEmptyList)
 		nums := make([]string, n)
 		want := make([]ir.Value, n)

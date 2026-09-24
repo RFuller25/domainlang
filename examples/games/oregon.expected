@@ -2,6 +2,7 @@
 │THE OREGON TRAIL                              │
 │day 1    mile 0 of 200                        │
 │food 120   coin 60   oxen 2   health 5        │
+│best trip none yet                            │
 │                                              │
 │The wagon is loaded. Oregon is 200 miles west.│
 │                                              │
@@ -14,6 +15,7 @@
 │THE OREGON TRAIL                              │
 │day 1    mile 0 of 200                        │
 │food 120   coin 60   oxen 2   health 5        │
+│best trip none yet                            │
 │                                              │
 │The wagon is loaded. Oregon is 200 miles west.│
 │                                              │
@@ -26,6 +28,7 @@
 │THE OREGON TRAIL                     │
 │day 8    mile 124 of 200             │
 │food 56   coin 47   oxen 3   health 4│
+│best trip none yet                   │
 │                                     │
 │You make 19 miles.                   │
 │                                     │
@@ -36,6 +39,7 @@
 │THE OREGON TRAIL                     │
 │day 8    mile 124 of 200             │
 │food 56   coin 47   oxen 3   health 4│
+│best trip none yet                   │
 │                                     │
 │You make camp for the night.         │
 │                                     │
@@ -48,6 +52,7 @@
 │THE OREGON TRAIL                     │
 │day 13    mile 213 of 200            │
 │food 21   coin 47   oxen 3   health 3│
+│best trip 13 days                    │
 │                                     │
 │Oregon, on day 13.                   │
 │                                     │

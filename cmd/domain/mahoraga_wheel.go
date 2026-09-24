@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -687,16 +686,4 @@ func clock(d time.Duration) string {
 		d = 0
 	}
 	return fmt.Sprintf("%02d:%02d", int(d.Minutes()), int(d.Seconds())%60)
-}
-
-// trimName shortens a turn name for a narrow roster without losing which turn
-// it is: the first word of these names is the distinguishing one.
-func trimName(s string, w int) string {
-	if len([]rune(s)) <= w {
-		return s
-	}
-	if i := strings.IndexByte(s, ' '); i > 0 && i <= w {
-		return s[:i]
-	}
-	return truncateVis(s, w)
 }

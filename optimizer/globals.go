@@ -4,6 +4,7 @@ import (
 	"domain/ast"
 	"domain/ir"
 	"domain/token"
+	"slices"
 )
 
 // Globals and the rewrites (prims/globals.go).
@@ -99,12 +100,7 @@ func impure(e ast.Expr) bool {
 		if id, ok := x.Fn.(*ast.Ident); ok && ast.Nondeterministic(id.Name) {
 			return true
 		}
-		for _, a := range x.Args {
-			if impure(a) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(x.Args, impure)
 	case *ast.CondExpr:
 		return impure(x.Cond) || impure(x.Then) || impure(x.Else)
 	case *ast.LetExpr:
@@ -113,12 +109,7 @@ func impure(e ast.Expr) bool {
 		if impure(x.Body) {
 			return true
 		}
-		for _, c := range x.Clauses {
-			if impure(c) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(x.Clauses, impure)
 	}
 	return false
 }
@@ -147,10 +138,8 @@ func nodesTouchGlobals(nodes []*ir.Node) bool {
 					return true
 				}
 			case [][]*ir.Node:
-				for _, sub := range m {
-					if nodesTouchGlobals(sub) {
-						return true
-					}
+				if slices.ContainsFunc(m, nodesTouchGlobals) {
+					return true
 				}
 			}
 		}

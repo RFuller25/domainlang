@@ -17,7 +17,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -271,9 +270,7 @@ type battleReport struct {
 
 func (r *battleReport) write(w io.Writer, opts battleOptions) {
 	if opts.JSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(r.jsonShape())
+		_ = writeJSON(w, r.jsonShape())
 		return
 	}
 	r.writePlain(w)
@@ -297,7 +294,7 @@ func (r *battleReport) writePlain(w io.Writer) {
 	for i := range r.Results {
 		res := &r.Results[i]
 		fmt.Fprintf(w, "  %s\n", r.Contestants[i].Label)
-		fmt.Fprintf(w, "    run     %s\n", battleTime(res))
+		fmt.Fprintf(w, "    run     %s\n", benchTime(res))
 		if res.Build > 0 {
 			fmt.Fprintf(w, "    build   %s\n", interp.FormatDuration(res.Build))
 			fmt.Fprintf(w, "    first   %s  (build + run — what you wait for the first time)\n",
@@ -397,19 +394,6 @@ func (r *battleReport) writeRules(w io.Writer) {
 	fmt.Fprintf(w, "    · the Domain side is %s\n", side)
 	fmt.Fprintf(w, "    · the %s side runs as its own runtime runs it, with no added flags\n", r.Lang)
 	fmt.Fprintf(w, "    · build time is reported separately and is not counted in the run\n")
-}
-
-func battleTime(res *runner.Result) string {
-	switch {
-	case res.Err != nil:
-		return "—"
-	case res.Timeout:
-		return "did not finish"
-	case res.ExitCode != 0:
-		return fmt.Sprintf("exit %d", res.ExitCode)
-	default:
-		return interp.FormatDuration(res.Wall)
-	}
 }
 
 type battleSideJSON struct {

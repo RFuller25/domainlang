@@ -2,6 +2,7 @@ package optimizer
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -730,11 +731,8 @@ func (m *linearMarker) walk(e ast.Expr, usedAfter bool) {
 		for i, a := range x.Args {
 			// Later arguments run after this one, so their reads count.
 			after := usedAfter
-			for _, later := range x.Args[i+1:] {
-				if m.reads(later) {
-					after = true
-					break
-				}
+			if slices.ContainsFunc(x.Args[i+1:], m.reads) {
+				after = true
 			}
 			m.walk(a, after)
 		}
@@ -987,10 +985,5 @@ func (m *linearMarker) reads(e ast.Expr) bool {
 }
 
 func (m *linearMarker) readsAny(es []ast.Expr) bool {
-	for _, e := range es {
-		if m.reads(e) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(es, m.reads)
 }

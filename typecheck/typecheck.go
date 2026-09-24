@@ -12,6 +12,7 @@ package typecheck
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"domain/ast"
@@ -1983,10 +1984,8 @@ func containsView(t *ir.Type) bool {
 	case ir.KMap:
 		return containsView(t.Key) || containsView(t.Elem)
 	case ir.KTuple:
-		for _, e := range t.Elems {
-			if containsView(e) {
-				return true
-			}
+		if slices.ContainsFunc(t.Elems, containsView) {
+			return true
 		}
 	case ir.KRecord:
 		for _, f := range t.Fields {

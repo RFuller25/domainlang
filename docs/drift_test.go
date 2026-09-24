@@ -30,7 +30,7 @@ import (
 // the question worth guarding is whether the reader can find the thing at all.
 func tableRows(src string) []string {
 	var out []string
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "|") {
 			out = append(out, line)
 		}
@@ -300,7 +300,8 @@ func TestPassCatalogNumberingIsConsistent(t *testing.T) {
 	// spelling nothing recounts when a pass is added.
 	names := map[int]string{
 		28: "Twenty-eight", 29: "Twenty-nine", 30: "Thirty", 31: "Thirty-one",
-		32: "Thirty-two", 33: "Thirty-three", 34: "Thirty-four",
+		32: "Thirty-two", 33: "Thirty-three", 34: "Thirty-four", 35: "Thirty-five",
+		36: "Thirty-six", 37: "Thirty-seven", 38: "Thirty-eight", 39: "Thirty-nine", 40: "Forty",
 	}
 	families, ok := names[last-1]
 	if !ok {
@@ -627,7 +628,7 @@ func TestDocumentedEditorKeysAreBound(t *testing.T) {
 	}
 	bound := map[string]bool{}
 	for _, m := range regexp.MustCompile(`row\("([^"]+)"`).FindAllStringSubmatch(body, -1) {
-		for _, k := range strings.Split(m[1], "/") {
+		for k := range strings.SplitSeq(m[1], "/") {
 			bound[strings.TrimSpace(k)] = true
 		}
 	}
@@ -644,7 +645,7 @@ func TestDocumentedEditorKeysAreBound(t *testing.T) {
 	page := docFile(t, "development.md")
 	keyish := regexp.MustCompile(`^(?:ctrl|alt|shift)\+\S+$`)
 	checked := 0
-	for _, line := range strings.Split(page, "\n") {
+	for line := range strings.SplitSeq(page, "\n") {
 		if !strings.HasPrefix(line, "| `") {
 			continue
 		}

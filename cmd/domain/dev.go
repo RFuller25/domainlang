@@ -8,6 +8,7 @@
 //	domain expansion: development day7.domain          # open a program
 //	domain expansion: development                      # pick one
 //	domain expansion: development day7.domain --input day7.txt
+//	domain expansion: development day7.domain --aoc 2023/7
 //
 // A file that does not exist yet is not an error — it is a new program under
 // that name, which is what naming one is for. A bare invocation opens the file
@@ -21,14 +22,20 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
+
+	"domain/aoc"
 )
 
 // devOptions are the parsed `development` arguments.
 type devOptions struct {
 	Input string // --input FILE: the program's input, preselected
+	// AoCYear and AoCDay are the puzzle to open with, from --aoc. Zero when
+	// none was asked for, which is every invocation outside December.
+	AoCYear, AoCDay int
 }
 
 // parseDevelopmentArgs reads `[file] [--input FILE]`.
@@ -46,8 +53,20 @@ func parseDevelopmentArgs(args []string) (string, devOptions, error) {
 			opts.Input = args[i]
 		case strings.HasPrefix(a, "--input="):
 			opts.Input = strings.TrimPrefix(a, "--input=")
+		case a == "--aoc":
+			if i+1 >= len(args) {
+				return "", opts, fmt.Errorf("%s needs a year and a day, like --aoc 2023/7", a)
+			}
+			i++
+			if err := opts.setAoC(args[i]); err != nil {
+				return "", opts, err
+			}
+		case strings.HasPrefix(a, "--aoc="):
+			if err := opts.setAoC(strings.TrimPrefix(a, "--aoc=")); err != nil {
+				return "", opts, err
+			}
 		case strings.HasPrefix(a, "-"):
-			return "", opts, fmt.Errorf("unknown flag %q (development accepts only --input)", a)
+			return "", opts, fmt.Errorf("unknown flag %q (development accepts --input and --aoc)", a)
 		case path != "":
 			return "", opts, fmt.Errorf("unexpected extra argument %q", a)
 		default:
@@ -55,6 +74,21 @@ func parseDevelopmentArgs(args []string) (string, devOptions, error) {
 		}
 	}
 	return path, opts, nil
+}
+
+// setAoC reads the `--aoc` value. It is checked here rather than in the editor
+// so that a typo is a message on the terminal you typed it into, instead of a
+// screen that opens and immediately complains.
+func (o *devOptions) setAoC(value string) error {
+	year, day, err := parseYearDay(value, time.Now())
+	if err != nil {
+		return fmt.Errorf("--aoc %s: %v", value, err)
+	}
+	if err := aoc.Validate(year, day, time.Now()); err != nil {
+		return fmt.Errorf("--aoc %s: %v", value, err)
+	}
+	o.AoCYear, o.AoCDay = year, day
+	return nil
 }
 
 // Development opens the editor and returns the process exit code.
@@ -89,6 +123,13 @@ func Development(path string, opts devOptions, stdin io.Reader, stdout, stderr i
 	m.input = opts.Input
 	if path == "" {
 		m.picker = newPicker(":load", ".")
+	}
+	// A day asked for on the command line is fetched as the editor opens, so
+	// that `--aoc 2023/7` lands on the puzzle rather than on a prompt asking
+	// which puzzle.
+	if opts.AoCDay != 0 {
+		m.aocWanted = &[2]int{opts.AoCYear, opts.AoCDay}
+		m.aocBusy = fmt.Sprintf("advent of code %d day %d…", opts.AoCYear, opts.AoCDay)
 	}
 
 	p := tea.NewProgram(m,

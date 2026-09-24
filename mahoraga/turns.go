@@ -11,6 +11,7 @@ package mahoraga
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -405,9 +406,7 @@ func (s *Search) sizeableSites() []ListSite {
 // the champion's map is shared with every candidate built from it.
 func withCapacity(m map[string]int, key string, n int) map[string]int {
 	out := make(map[string]int, len(m)+1)
-	for k, old := range m {
-		out[k] = old
-	}
+	maps.Copy(out, m)
 	out[key] = n
 	return out
 }
@@ -516,9 +515,7 @@ func (s *Search) pinnableConstants() []Constant {
 // withConstant returns the map plus one entry, leaving the original alone.
 func withConstant(m map[string]int64, key string, v int64) map[string]int64 {
 	out := make(map[string]int64, len(m)+1)
-	for k, old := range m {
-		out[k] = old
-	}
+	maps.Copy(out, m)
 	out[key] = v
 	return out
 }

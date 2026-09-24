@@ -395,14 +395,9 @@ func buildCommand(program string, c Config, opts Options) (*command, error) {
 	return cmd, nil
 }
 
-// LoadPipeline runs the front end over a program file and optionally
-// optimizes it. Callers that need the *unoptimized* pipeline for measurement
-// (coverage, which must not let fuseMapMap hide a Map Each) pass false.
-func LoadPipeline(program string, optimize bool) (*ir.Pipeline, error) {
-	src, err := os.ReadFile(program)
-	if err != nil {
-		return nil, err
-	}
+// Resolve runs the front end — lex, parse, resolve — over a program file's
+// source, leaving the pipeline unoptimized. Errors are prefixed with the path.
+func Resolve(program string, src []byte) (*ir.Pipeline, error) {
 	toks, err := lexer.Lex(string(src))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", program, err)
@@ -414,6 +409,26 @@ func LoadPipeline(program string, optimize bool) (*ir.Pipeline, error) {
 	pipe, err := prims.ResolveWith(prog, prims.FileOptions(program))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", program, err)
+	}
+	return pipe, nil
+}
+
+// resolveFile reads a program file and runs Resolve over it.
+func resolveFile(program string) (*ir.Pipeline, error) {
+	src, err := os.ReadFile(program)
+	if err != nil {
+		return nil, err
+	}
+	return Resolve(program, src)
+}
+
+// LoadPipeline runs the front end over a program file and optionally
+// optimizes it. Callers that need the *unoptimized* pipeline for measurement
+// (coverage, which must not let fuseMapMap hide a Map Each) pass false.
+func LoadPipeline(program string, optimize bool) (*ir.Pipeline, error) {
+	pipe, err := resolveFile(program)
+	if err != nil {
+		return nil, err
 	}
 	optimizer.Optimize(pipe, optimize)
 	return pipe, nil
@@ -422,21 +437,9 @@ func LoadPipeline(program string, optimize bool) (*ir.Pipeline, error) {
 // LoadRewrites runs the front end and reports which optimizer passes fired,
 // for the callers that want the rewrite list rather than the pipeline.
 func LoadRewrites(program string) (*ir.Pipeline, []optimizer.Rewrite, error) {
-	src, err := os.ReadFile(program)
+	pipe, err := resolveFile(program)
 	if err != nil {
 		return nil, nil, err
-	}
-	toks, err := lexer.Lex(string(src))
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %v", program, err)
-	}
-	prog, err := parser.Parse(string(src), toks)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %v", program, err)
-	}
-	pipe, err := prims.ResolveWith(prog, prims.FileOptions(program))
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %v", program, err)
 	}
 	return pipe, optimizer.Optimize(pipe, true), nil
 }
@@ -737,34 +740,14 @@ func Interpret(program string, optimize bool, ctx *ir.Context) (*ir.Pipeline, ir
 	return pipe, v, err
 }
 
-// Prebuild compiles a configuration up front, so a campaign that is about to
-// run thousands of inputs through it pays the build once and reports a build
-// failure before the search starts rather than on the first candidate.
-func Prebuild(program string, c Config, opts Options) error {
-	_, err := buildCommand(program, c, opts)
-	return err
-}
-
 // LoadPipelineSchedule runs the front end and optimizes with a chosen pass
 // schedule, for the callers searching that space (`domain expansion:
 // mahoraga`). The zero Schedule is the default pipeline, so this with no
 // argument is LoadPipeline(program, true).
 func LoadPipelineSchedule(program string, s optimizer.Schedule) (*ir.Pipeline, error) {
-	src, err := os.ReadFile(program)
+	pipe, err := resolveFile(program)
 	if err != nil {
 		return nil, err
-	}
-	toks, err := lexer.Lex(string(src))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", program, err)
-	}
-	prog, err := parser.Parse(string(src), toks)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", program, err)
-	}
-	pipe, err := prims.ResolveWith(prog, prims.FileOptions(program))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", program, err)
 	}
 	optimizer.OptimizeWith(pipe, s)
 	return pipe, nil

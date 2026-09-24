@@ -434,7 +434,7 @@ func (r *resolver) resolveGlobalValue(d *ast.Binding, cur *ir.Type, keyword stri
 			return fail("`%s: %s Of` takes a %d-parameter lambda over the current value, got %d",
 				keyword, d.Name, want, len(lam.Params))
 		}
-		typ, err := typecheck.LambdaType(lam, append([]*ir.Type{cur}, ambientTypes()...)...)
+		typ, err := lambdaType(lam, cur)
 		if err != nil {
 			return fail("`%s: %s Of`: %v", keyword, d.Name, err)
 		}

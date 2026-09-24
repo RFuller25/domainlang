@@ -67,9 +67,7 @@ type runtimeBind struct {
 func (b *runtimeBind) value(v ir.Value) (ir.Value, error) {
 	switch {
 	case b.lam != nil:
-		r, err := eval.EvalLambdaTyped(b.lam,
-			append([]*ir.Type{b.in}, ambientTypes()...),
-			append([]ir.Value{v}, ambientArgs()...)...)
+		r, err := evalLambda(b.lam, []*ir.Type{b.in}, v)
 		if err != nil {
 			return nil, runtimeErr("Consider "+b.name, b.pos, "%v", err)
 		}
@@ -290,7 +288,7 @@ func (r *resolver) resolveBind(b *ast.Binding, cur *ir.Type, written bool) (loca
 			return fail("`Consider %s Of` takes a %d-parameter lambda over the current value, got %d",
 				b.Name, want, len(lam.Params))
 		}
-		typ, err := typecheck.LambdaType(lam, append([]*ir.Type{cur}, ambientTypes()...)...)
+		typ, err := lambdaType(lam, cur)
 		if err != nil {
 			return fail("`Consider %s Of`: %v", b.Name, err)
 		}
@@ -679,8 +677,8 @@ func inlineCall(b *localBind, args []ast.Expr, pos token.Position) (ast.Expr, er
 	}
 
 	out := body
-	for i := len(params) - 1; i >= 0; i-- {
-		out = &ast.LetExpr{Name: params[i], Value: args[i], Body: out, Pos: pos}
+	for i, param := range slices.Backward(params) {
+		out = &ast.LetExpr{Name: param, Value: args[i], Body: out, Pos: pos}
 	}
 	return out, nil
 }

@@ -42,7 +42,7 @@ func TestNoSourceFileIsGitIgnored(t *testing.T) {
 		".mod": true, ".sum": true, ".ts": true, ".tmLanguage": true,
 	}
 	var bad []string
-	for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for f := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if f == "" {
 			continue
 		}
@@ -75,7 +75,7 @@ func TestEveryGoFileIsTracked(t *testing.T) {
 		t.Skipf("git not available: %v", err)
 	}
 	var untracked []string
-	for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for f := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if f == "" || filepath.Ext(f) != ".go" {
 			continue
 		}

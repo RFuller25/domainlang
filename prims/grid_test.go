@@ -78,13 +78,13 @@ func TestConvertToGridNotRectangular(t *testing.T) {
 // identity, over many random rectangular grids.
 func TestTransposeTwiceIsIdentity(t *testing.T) {
 	rng := rand.New(rand.NewSource(13))
-	for iter := 0; iter < 100; iter++ {
+	for iter := range 100 {
 		rows := rng.Intn(6) + 1
 		cols := rng.Intn(6) + 1
 		lines := make([]string, rows)
-		for r := 0; r < rows; r++ {
+		for r := range rows {
 			digits := make([]byte, cols)
-			for c := 0; c < cols; c++ {
+			for c := range cols {
 				digits[c] = byte('0' + rng.Intn(10))
 			}
 			lines[r] = string(digits)
@@ -98,8 +98,8 @@ func TestTransposeTwiceIsIdentity(t *testing.T) {
 		if g.Rows != rows || g.Cols != cols {
 			t.Fatalf("iter %d: dims got %dx%d want %dx%d", iter, g.Rows, g.Cols, rows, cols)
 		}
-		for r := 0; r < rows; r++ {
-			for c := 0; c < cols; c++ {
+		for r := range rows {
+			for c := range cols {
 				cell, _ := g.At(r, c)
 				want, _ := strconv.ParseInt(string(lines[r][c]), 10, 64)
 				if cell.(int64) != want {

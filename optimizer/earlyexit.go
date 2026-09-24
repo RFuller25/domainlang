@@ -313,3 +313,78 @@ func literalPredicate(n *ir.Node) (value bool, ok bool) {
 	}
 	return b.Value, true
 }
+
+// fuseGroupReduce turns Group By feeding a Map Values that reduces each bucket
+// into a keyed running reduction, so no bucket list is ever built:
+//
+//	Group By(k) + Map Values((b) -> sum(b))    → per-key running sum
+//	Group By(k) + Map Values((b) -> length(b)) → per-key count (Count By)
+//
+// Keys land in the order Group By would first have met them, and the key
+// lambda runs on the same elements in the same order, so a key that fails
+// fails on the same element; the fused node reports it as Group By did. The
+// reductions themselves cannot fail — Int addition wraps, a count is a count.
+func fuseGroupReduce(p *ir.Pipeline) []Rewrite {
+	return rewritePairs(p, func(a, b *ir.Node) ([]*ir.Node, string, bool) {
+		if a.Prim != "Group By" || b.Prim != "Map Values" || a.In == nil || a.In.Kind != ir.KList {
+			return nil, "", false
+		}
+		key, reducer := nodeLambda(a), nodeLambda(b)
+		if key == nil || reducer == nil || len(key.Params) != 1 || len(reducer.Params) != 1 {
+			return nil, "", false
+		}
+		call, ok := reducer.Body.(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 {
+			return nil, "", false
+		}
+		fn, _ := call.Fn.(*ast.Ident)
+		arg, _ := call.Args[0].(*ast.Ident)
+		if fn == nil || arg == nil || arg.Name != reducer.Params[0] {
+			return nil, "", false
+		}
+		var reduce string
+		switch {
+		case fn.Name == "sum" && a.In.Elem != nil && a.In.Elem.Kind == ir.KInt:
+			reduce = "sum"
+		case fn.Name == "length":
+			reduce = "count"
+		default:
+			return nil, "", false
+		}
+		elem, pos := a.In.Elem, a.Pos
+		fused := &ir.Node{
+			Prim:    "Group Reduce",
+			In:      a.In,
+			Out:     b.Out,
+			Display: fmt.Sprintf("Group By + %s per key (fused)", reduce),
+			Meta:    map[string]any{"lambda": key, "reduce": reduce},
+			Pos:     pos,
+			Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+				xs, err := ir.AsList(v)
+				if err != nil {
+					return nil, &ir.RuntimeError{Prim: "Group By", Pos: pos, Msg: err.Error()}
+				}
+				m := ir.NewMapValue()
+				for i, x := range xs {
+					k, err := eval.EvalLambdaTyped(key, []*ir.Type{elem}, x)
+					if err != nil {
+						return nil, &ir.RuntimeError{Prim: "Group By", Pos: pos,
+							Msg: fmt.Sprintf("element %d: %v", i, err)}
+					}
+					d := int64(1)
+					if reduce == "sum" {
+						d = x.(int64)
+					}
+					cur, _ := m.Get(k)
+					n, _ := cur.(int64)
+					m.Put(k, n+d)
+				}
+				return m, nil
+			},
+		}
+		return []*ir.Node{fused},
+			fmt.Sprintf("Domain rewrote Group By + Map Values (%s of each group) → a running %s per key (no groups built). Guaranteed hit.",
+				fn.Name, reduce),
+			true
+	})
+}

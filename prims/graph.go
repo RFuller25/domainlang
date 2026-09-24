@@ -16,10 +16,8 @@ import (
 	"strings"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // graphEdgeNode reports the node type of an edge-list input, and whether the
@@ -645,8 +643,8 @@ func graphSCC(g *ir.GraphValue) [][]int {
 		comp[i] = -1
 	}
 	var out [][]int
-	for i := len(order) - 1; i >= 0; i-- {
-		root := order[i]
+	for _, root := range slices.Backward(order) {
+
 		if comp[root] != -1 {
 			continue
 		}
@@ -854,7 +852,7 @@ var accumulateUp = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		ownT, err := typecheck.LambdaType(lam, append([]*ir.Type{in.Elem}, ambientTypes()...)...)
+		ownT, err := lambdaType(lam, in.Elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Accumulate Up: " + err.Error()}
 		}
@@ -866,7 +864,7 @@ var accumulateUp = &Primitive{
 		// under here" means almost every time it is asked.
 		combine, hasCombine := args.Lambda("Combine")
 		if hasCombine {
-			ct, err := typecheck.LambdaType(combine, append([]*ir.Type{ir.Int(), ir.Int()}, ambientTypes()...)...)
+			ct, err := lambdaType(combine, ir.Int(), ir.Int())
 			if err != nil {
 				return nil, &ResolveError{Pos: pos, Msg: "Accumulate Up: Combine: " + err.Error()}
 			}
@@ -894,9 +892,7 @@ var accumulateUp = &Primitive{
 						"expected a Graph, got %s", ir.DescribeValue(v))
 				}
 				own := func(n ir.Value) (int64, error) {
-					r, err := eval.EvalLambdaTyped(lam,
-						append([]*ir.Type{in.Elem}, ambientTypes()...),
-						append([]ir.Value{n}, ambientArgs()...)...)
+					r, err := evalLambda(lam, []*ir.Type{in.Elem}, n)
 					if err != nil {
 						return 0, runtimeErr("Accumulate Up", pos, "%s: %v", ir.FormatValue(n), err)
 					}
@@ -909,9 +905,7 @@ var accumulateUp = &Primitive{
 				fold := func(a, b int64) (int64, error) { return a + b, nil }
 				if hasCombine {
 					fold = func(a, b int64) (int64, error) {
-						r, err := eval.EvalLambdaTyped(combine,
-							append([]*ir.Type{ir.Int(), ir.Int()}, ambientTypes()...),
-							append([]ir.Value{a, b}, ambientArgs()...)...)
+						r, err := evalLambda(combine, []*ir.Type{ir.Int(), ir.Int()}, a, b)
 						if err != nil {
 							return 0, runtimeErr("Accumulate Up", pos, "Combine: %v", err)
 						}

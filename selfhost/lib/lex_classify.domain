@@ -1,0 +1,95 @@
+# A Shikigami library (searched for via $DOMAIN_PATH — see
+# selfhost/run_tests.sh, which exports it — and imported as
+# `Inherited Technique: lex_classify`) holding the ONE piece of the selfhost
+# lexer that is a pure function of its inputs: given the character at the
+# cursor and a one-character lookahead, which token (if any) does it start,
+# how much text does it carry, and how many characters does it consume.
+#
+# This is a genuine answer to the file-per-phase duplication tax documented
+# in selfhost/README.md: every phaseN file used to carry its own byte-for-
+# byte copy of this ~30-branch if/else chain, so adding one token (like the
+# `{`/`}` braces) meant patching it in up to six places by hand. A library
+# can only hold Shikigami definitions, never pipeline statements ("Inherited
+# Technique — importing a library" in docs/language.md) — and a Shikigami's
+# scalar parameters are inlined as compile-time literals, not runtime values
+# ("a parameter is a value written at the call site" — prims/shikigami.go),
+# so a per-character value that changes every lap of the lexer's own While
+# loop cannot be handed in as a named argument the way `factor: 7` can in
+# the docs' own Shikigami example. What a Shikigami's IN type *can* carry is
+# an ordinary runtime Record, piped in like any other pipeline stage's
+# current value (exactly how examples/games/tetris.domain threads its whole
+# `w` world record through `Shikigami: Fits` / `Shikigami: Move` with no
+# named params at all) — so the caller bundles `ch`/`ch2` into a Record
+# immediately before the call, and that's what this Shikigami actually reads.
+#
+# The stateful char-by-char string-escape accumulation (`strbuf`) and the
+# token-list-building glue (`toks := concat(...)`) read and write globals
+# that a sealed, imported Shikigami is never allowed to touch ("A Shikigami
+# from the prelude or an Inherited Technique import is sealed" — same doc,
+# Cursed Object section) — so those stay behind in every copy. What moves
+# here is the actual classification RULE TABLE: the one thing that changes
+# every time a token is added, and the one thing six copies used to disagree
+# about by accident (`<`, `>`, `/`, `%`, `{`, `}` were each added to some
+# copies before others, across this project's own history).
+#
+# `kind = "STRSTART"` tells the caller to itself flip its own `inString`/
+# `strbuf` globals — those stay caller-side, not returned as data, since a
+# library holds no state of its own between calls.
+# `skipRest = 1` (a `#` outside a string) tells the caller to jump its own
+# cursor straight to end-of-line, discarding the rest as a comment.
+# `kind = ""` with `skipRest = 0` is the catch-all: an unrecognised
+# character, consumed and silently dropped, same as every copy always did.
+Shikigami "Classify Char"
+    Cursed Technique: Apply
+        Using: (pair) -> (
+            if pair.ch = "\"" then
+                record("kind", "STRSTART", "text", "", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "#" then
+                record("kind", "", "text", "", "consumed", 0, "skipRest", 1)
+            else if pair.ch = " " then
+                record("kind", "SPACE", "text", "", "consumed", 1, "skipRest", 0)
+            else if isdigit(pair.ch) then
+                record("kind", "DIGIT", "text", pair.ch, "consumed", 1, "skipRest", 0)
+            else if isalpha(pair.ch) or pair.ch = "_" then
+                record("kind", "LETTER", "text", pair.ch, "consumed", 1, "skipRest", 0)
+            else if pair.ch = "-" and pair.ch2 = ">" then
+                record("kind", "ARROW", "text", "->", "consumed", 2, "skipRest", 0)
+            else if pair.ch = ":" and pair.ch2 = "=" then
+                record("kind", "ASSIGN", "text", ":=", "consumed", 2, "skipRest", 0)
+            else if pair.ch = "<" and pair.ch2 = "=" then
+                record("kind", "LE", "text", "<=", "consumed", 2, "skipRest", 0)
+            else if pair.ch = ">" and pair.ch2 = "=" then
+                record("kind", "GE", "text", ">=", "consumed", 2, "skipRest", 0)
+            else if pair.ch = ":" then
+                record("kind", "COLON", "text", ":", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "," then
+                record("kind", "COMMA", "text", ",", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "." then
+                record("kind", "DOT", "text", ".", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "(" then
+                record("kind", "LPAREN", "text", "(", "consumed", 1, "skipRest", 0)
+            else if pair.ch = ")" then
+                record("kind", "RPAREN", "text", ")", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "+" then
+                record("kind", "PLUS", "text", "+", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "-" then
+                record("kind", "MINUS", "text", "-", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "*" then
+                record("kind", "STAR", "text", "*", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "/" then
+                record("kind", "SLASH", "text", "/", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "%" then
+                record("kind", "PERCENT", "text", "%", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "=" then
+                record("kind", "EQ", "text", "=", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "<" then
+                record("kind", "LT", "text", "<", "consumed", 1, "skipRest", 0)
+            else if pair.ch = ">" then
+                record("kind", "GT", "text", ">", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "{" then
+                record("kind", "LBRACE", "text", "{", "consumed", 1, "skipRest", 0)
+            else if pair.ch = "}" then
+                record("kind", "RBRACE", "text", "}", "consumed", 1, "skipRest", 0)
+            else
+                record("kind", "", "text", "", "consumed", 1, "skipRest", 0)
+        )

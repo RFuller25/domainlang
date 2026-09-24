@@ -11,13 +11,9 @@ import (
 func formatCorpus(t *testing.T) map[string]Value {
 	t.Helper()
 	grid := NewGridValue(2, 3)
-	for i, cell := range []Value{int64(1), int64(22), int64(3), int64(4), int64(5), int64(6)} {
-		grid.Cells[i] = cell
-	}
+	copy(grid.Cells, []Value{int64(1), int64(22), int64(3), int64(4), int64(5), int64(6)})
 	textGrid := NewGridValue(2, 2)
-	for i, cell := range []Value{"a", "b", "c", "d"} {
-		textGrid.Cells[i] = cell
-	}
+	copy(textGrid.Cells, []Value{"a", "b", "c", "d"})
 	m := NewMapValue()
 	m.Put("alpha", int64(1))
 	m.Put("beta", int64(2))

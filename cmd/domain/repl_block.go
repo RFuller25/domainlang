@@ -90,7 +90,7 @@ func (b *blockEditor) update(msg tea.Msg) (open bool, body []string, cmd tea.Cmd
 // with the blank lines a text editor collects along the way dropped.
 func (b *blockEditor) lines() []string {
 	var out []string
-	for _, line := range strings.Split(b.ta.Value(), "\n") {
+	for line := range strings.SplitSeq(b.ta.Value(), "\n") {
 		line = strings.TrimRight(line, " \t")
 		if strings.TrimSpace(line) == "" {
 			continue

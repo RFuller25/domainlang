@@ -77,7 +77,7 @@ func naiveDijkstraAt(rows, cols int, costs []int64, sr, sc, tr, tc int64) int64 
 
 func TestBFSTargetMatchesFullSearch(t *testing.T) {
 	rng := rand.New(rand.NewSource(21))
-	for iter := 0; iter < 4000; iter++ {
+	for iter := range 4000 {
 		rows, cols := rng.Intn(7)+1, rng.Intn(7)+1
 		mask := make([]bool, rows*cols)
 		for i := range mask {
@@ -98,7 +98,7 @@ func TestBFSTargetMatchesFullSearch(t *testing.T) {
 
 func TestDijkstraTargetMatchesFullSearch(t *testing.T) {
 	rng := rand.New(rand.NewSource(22))
-	for iter := 0; iter < 4000; iter++ {
+	for iter := range 4000 {
 		rows, cols := rng.Intn(7)+1, rng.Intn(7)+1
 		costs := make([]int64, rows*cols)
 		for i := range costs {

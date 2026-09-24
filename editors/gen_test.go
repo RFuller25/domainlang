@@ -323,7 +323,7 @@ func TestEveryPhraseWordInTheRepositoryIsHighlighted(t *testing.T) {
 	highlighted := map[string]bool{}
 	add := func(words ...string) {
 		for _, w := range words {
-			for _, part := range strings.Fields(w) {
+			for part := range strings.FieldsSeq(w) {
 				highlighted[strings.ToLower(part)] = true
 			}
 		}
@@ -438,7 +438,7 @@ func phraseWords(prog *ast.Program) []string {
 // than to the language's vocabulary.
 func localName(prog *ast.Program, word string) bool {
 	for _, d := range prog.Shikigamis {
-		for _, w := range strings.Fields(d.Name) {
+		for w := range strings.FieldsSeq(d.Name) {
 			if strings.EqualFold(w, word) {
 				return true
 			}
@@ -549,7 +549,7 @@ func TestBothGrammarsKnowBothCommentMarkers(t *testing.T) {
 // failure above shows what it has instead of asserting into the void.
 func commentRuleOf(t *testing.T, path string) string {
 	t.Helper()
-	for _, line := range strings.Split(readFile(t, path), "\n") {
+	for line := range strings.SplitSeq(readFile(t, path), "\n") {
 		if strings.Contains(line, "domainComment") || strings.Contains(line, `"match": "(?:#`) {
 			return strings.TrimSpace(line)
 		}
@@ -630,7 +630,7 @@ func vimForeignPatterns(t *testing.T) string {
 		t.Fatal(err)
 	}
 	var sb strings.Builder
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "\"") {
 			continue // a comment

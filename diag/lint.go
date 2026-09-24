@@ -50,6 +50,7 @@ func lintResolved(prog *ast.Program, pipe *ir.Pipeline, src string) []Diagnostic
 	lintBindings(prog, add)
 	lintDeclinedInPlace(pipe, add)
 	lintGlobalStandDowns(pipe, add)
+	lintOpinions(pipe, add)
 	lintGlobalDeclaredInALoop(prog, add)
 	return ds
 }
@@ -441,8 +442,8 @@ func forEachSequence(prog *ast.Program, visit func([]*ast.Statement)) {
 	}
 }
 
-// lintChannels warns about Channels that are defined but never consumed.
-func lintChannels(prog *ast.Program, add func(Diagnostic)) {
+// consumedChannels names every Channel some statement reads `From:`.
+func consumedChannels(prog *ast.Program) map[string]bool {
 	used := map[string]bool{}
 	forEachSequence(prog, func(stmts []*ast.Statement) {
 		for _, s := range stmts {
@@ -461,6 +462,12 @@ func lintChannels(prog *ast.Program, add func(Diagnostic)) {
 			}
 		}
 	})
+	return used
+}
+
+// lintChannels warns about Channels that are defined but never consumed.
+func lintChannels(prog *ast.Program, add func(Diagnostic)) {
+	used := consumedChannels(prog)
 	for _, s := range prog.Statements {
 		if s.Keyword == "Channel" && s.ChannelName != "" && !used[s.ChannelName] {
 			add(Diagnostic{
@@ -701,7 +708,7 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 				flip = "Ascending"
 			}
 			add(Diagnostic{
-				Severity: Hint, Code: "perf", Pos: s.Pos,
+				Severity: Hint, Code: "clarity", Pos: s.Pos,
 				Msg: "Sort followed by Reverse is one sort in the opposite direction",
 				Help: fmt.Sprintf("write `%s%s, %s` and drop the Reverse",
 					keywordPrefix(s, "Domain Expansion"), sortName(s), flip),
@@ -714,7 +721,7 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 		// Sort followed by another Sort: the first is wasted work.
 		if _, second := sortDirection(next); second {
 			add(Diagnostic{
-				Severity: Warning, Code: "perf", Pos: s.Pos,
+				Severity: Warning, Code: "clarity", Pos: s.Pos,
 				Msg:  "two sorts in a row; the second ordering wins and this sort is wasted work",
 				Help: "delete this line",
 			})
@@ -729,7 +736,7 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 				want = "Max"
 			}
 			add(Diagnostic{
-				Severity: Hint, Code: "perf", Pos: s.Pos,
+				Severity: Hint, Code: "clarity", Pos: s.Pos,
 				Msg: "sorting the whole list to take the first item is O(n log n) for an O(n) question",
 				Help: fmt.Sprintf("replace both lines with `%s%s`",
 					keywordPrefix(s, "Maximum Technique"), want),
@@ -747,7 +754,7 @@ func lintPatterns(stmts []*ast.Statement, add func(Diagnostic)) {
 			if next.Keyword == "Maximum Technique" && next.Op != nil &&
 				len(next.Op.Words) == 1 && strings.EqualFold(next.Op.Words[0], "Count") {
 				add(Diagnostic{
-					Severity: Hint, Code: "perf", Pos: s.Pos,
+					Severity: Hint, Code: "clarity", Pos: s.Pos,
 					Msg: "Filter followed by Count can be a single pass",
 					Help: "write `" + keywordPrefix(next, "Maximum Technique") +
 						"Count Matching` with the same Using: lambda",

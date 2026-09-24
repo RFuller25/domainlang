@@ -66,7 +66,7 @@ func moduleFiles(goSrc string) (gomod, gosum string, err error) {
 // requireLines is the generated require block, one "path version" per line.
 func requireLines() []string {
 	var out []string
-	for _, line := range strings.Split(depsRequire, "\n") {
+	for line := range strings.SplitSeq(depsRequire, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			out = append(out, line)
 		}
@@ -177,7 +177,7 @@ func WithModuleHeader(goSrc string) (string, error) {
 		"// the versions the compiler that emitted it was built against. `domain build`\n" +
 		"// writes them into a throwaway module of its own; to build this source by\n" +
 		"// hand, put this go.mod beside it, and this repository's go.sum with it.\n//\n")
-	for _, line := range strings.Split(strings.TrimRight(gomod, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(gomod, "\n"), "\n") {
 		if line == "" {
 			b.WriteString("//\n")
 			continue

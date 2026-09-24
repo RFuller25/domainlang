@@ -510,7 +510,7 @@ func TestShikigamiParamInsideConditional(t *testing.T) {
 func TestDeepNonRecursiveInliningIsAllowed(t *testing.T) {
 	var src string
 	const depth = 200
-	for i := 0; i < depth; i++ {
+	for i := range depth {
 		src += fmt.Sprintf("Shikigami \"Step %d\" : List<Int> -> List<Int>\n", i)
 		if i == 0 {
 			src += "    Cursed Technique: Map Each\n        Using: (x) -> x + 1\n"

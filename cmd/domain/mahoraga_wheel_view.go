@@ -16,6 +16,8 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -533,8 +535,14 @@ func (m *wheelModel) header() string {
 		state = styKey.Render("finishing…")
 	case m.paused:
 		state = styKey.Render("held")
+	case m.active > len(m.handles):
+		// The second look reports itself past the eighth turn, because it is
+		// not a ninth kind of adaptation — it is the turns' own candidates
+		// being measured again. There is no handle for it and the status line
+		// says what is happening instead of counting to nine out of eight.
+		state = styKey.Render("second look")
 	case m.active > 0:
-		state = styDim.Render(fmt.Sprintf("turn %d of 8", m.active))
+		state = styDim.Render(fmt.Sprintf("turn %d of %d", m.active, len(m.handles)))
 	default:
 		state = styDim.Render("starting")
 	}
@@ -956,10 +964,7 @@ func (m *wheelModel) passesBody() []string {
 }
 
 func (m *wheelModel) wheelHelpBody() []string {
-	sections := []struct {
-		name  string
-		pairs [][2]string
-	}{
+	sections := []helpSection{
 		{"while the wheel turns", [][2]string{
 			{"space", "hold the animation — the search keeps running"},
 			{"s", "abandon the turn in flight and move to the next one"},
@@ -988,16 +993,7 @@ func (m *wheelModel) wheelHelpBody() []string {
 			{"the end", "the champion is re-measured against the baseline, interleaved"},
 		}},
 	}
-	var out []string
-	for _, sec := range sections {
-		out = append(out, "  "+styHeading.Render(sec.name))
-		for _, p := range sec.pairs {
-			out = append(out, "    "+styKey.Render(pad(p[0], 14))+
-				styDim.Render(truncateVis(p[1], max(10, m.width-20))))
-		}
-		out = append(out, "")
-	}
-	return out
+	return helpSectionLines(sections, m.width)
 }
 
 // tuningLines renders what the code generator was told about the input, in the
@@ -1018,7 +1014,43 @@ func tuningLines(t codegen.Tuning) []string {
 		out = append(out, fmt.Sprintf("memory limit %s — the backstop under a disabled collector",
 			formatBytes(uint64(t.MemoryLimitBytes))))
 	}
+	if t.MaxProcs > 0 {
+		out = append(out, fmt.Sprintf("%d scheduler thread(s) — the collector's mark workers cost "+
+			"more here than they save", t.MaxProcs))
+	}
+	// Sorted, because a map's iteration order is not something a display may
+	// inherit: the same recipe has to draw the same panel twice.
+	for _, key := range slices.Sorted(maps.Keys(t.ListCapacities)) {
+		out = append(out, fmt.Sprintf("%d elements reserved for the list at %s — measured, not grown into",
+			t.ListCapacities[key], siteLabel(key)))
+	}
+	for _, key := range slices.Sorted(maps.Keys(t.Constants)) {
+		out = append(out, fmt.Sprintf("%s pinned to %d — measured, not computed",
+			bindingLabel(key), t.Constants[key]))
+	}
 	return out
+}
+
+// siteLabel renders a list accumulator's key as `line 30` rather than
+// `list:Stream@30:5`.
+func siteLabel(key string) string {
+	at := strings.LastIndex(key, "@")
+	if at < 0 {
+		return key
+	}
+	line, _, _ := strings.Cut(key[at+1:], ":")
+	return "line " + line
+}
+
+// bindingLabel renders a pinned binding's key the way a reader wrote it:
+// `l at line 6` rather than `Consider@6:5#l`.
+func bindingLabel(key string) string {
+	at, hash := strings.LastIndex(key, "@"), strings.LastIndex(key, "#")
+	if at < 0 || hash < at {
+		return key
+	}
+	line, _, _ := strings.Cut(key[at+1:hash], ":")
+	return key[hash+1:] + " at line " + line
 }
 
 // contractLines renders what a pinned recipe requires of an input. The clauses

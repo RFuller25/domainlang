@@ -238,10 +238,7 @@ const maxHeapForGCOff = 2 << 30 // 2 GiB
 // rather than out of memory. Without this the entry would be a promise about
 // every future input, made from one measurement.
 func memoryLimitFor(heapSys uint64) int64 {
-	limit := heapSys * 4
-	if limit < 64<<20 {
-		limit = 64 << 20
-	}
+	limit := max(heapSys*4, 64<<20)
 	return int64(limit)
 }
 

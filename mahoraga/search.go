@@ -641,14 +641,6 @@ func (s *Search) Run() (*Recipe, error) {
 	return s.recipe, nil
 }
 
-// turnNotYet is a turn the catalogue has not reached. It is a real entry
-// rather than a gap so the wheel still has eight handles and the report says
-// plainly which ones are not built.
-func (s *Search) turnNotYet() error {
-	s.recipe.noteTurnSkipped()
-	return nil
-}
-
 // finish re-measures the champion against the baseline, interleaved, and
 // writes the adapted binary.
 //
@@ -730,7 +722,7 @@ func copyFile(from, to string) error {
 // profileCommand runs a built binary with the CPU profile hook enabled.
 func profileCommand(bin, out string) *exec.Cmd {
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "DOMAIN_CPU_PROFILE="+out)
+	cmd.Env = append(os.Environ(), codegen.EnvCPUProfile+"="+out)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd

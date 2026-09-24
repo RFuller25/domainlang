@@ -1,5 +1,7 @@
 package ir
 
+import "maps"
+
 import "slices"
 
 // GraphValue is the explicit graph: a directed, Int-weighted adjacency over
@@ -222,15 +224,11 @@ func (g *GraphValue) Clone() *GraphValue {
 		edges: make(map[[2]int]int, len(g.edges)),
 	}
 	copy(out.nodes, g.nodes)
-	for k, v := range g.index {
-		out.index[k] = v
-	}
+	maps.Copy(out.index, g.index)
 	for i, arcs := range g.adj {
 		out.adj[i] = slices.Clone(arcs)
 	}
-	for k, v := range g.edges {
-		out.edges[k] = v
-	}
+	maps.Copy(out.edges, g.edges)
 	return out
 }
 

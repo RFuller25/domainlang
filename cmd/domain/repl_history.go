@@ -41,7 +41,7 @@ func newHistory() *history {
 	h := &history{path: historyPath()}
 	if h.path != "" {
 		if data, err := os.ReadFile(h.path); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
+			for line := range strings.SplitSeq(string(data), "\n") {
 				if line != "" {
 					h.entries = append(h.entries, line)
 				}

@@ -91,28 +91,23 @@ func (u *devUndoStack) record(b *devBuffer, typing bool, now time.Time) {
 }
 
 // undo restores the previous step, keeping the current one for redo.
-func (u *devUndoStack) undo(b *devBuffer) bool {
-	if len(u.past) == 0 {
+func (u *devUndoStack) undo(b *devBuffer) bool { return u.step(b, &u.past, &u.future) }
+
+// redo reapplies the step undo withdrew, keeping the current one for undo.
+func (u *devUndoStack) redo(b *devBuffer) bool { return u.step(b, &u.future, &u.past) }
+
+// step moves the buffer one snapshot along: it pops from, restores it, and
+// pushes the state it replaced onto to.
+func (u *devUndoStack) step(b *devBuffer, from, to *[]devSnapshot) bool {
+	if len(*from) == 0 {
 		return false
 	}
-	u.future = append(u.future, snapshot(b))
-	last := u.past[len(u.past)-1]
-	u.past = u.past[:len(u.past)-1]
+	*to = append(*to, snapshot(b))
+	last := (*from)[len(*from)-1]
+	*from = (*from)[:len(*from)-1]
 	last.restore(b)
 	// The run is over: typing after an undo must not merge into the step that
 	// was just withdrawn.
-	u.openRun = false
-	return true
-}
-
-func (u *devUndoStack) redo(b *devBuffer) bool {
-	if len(u.future) == 0 {
-		return false
-	}
-	u.past = append(u.past, snapshot(b))
-	next := u.future[len(u.future)-1]
-	u.future = u.future[:len(u.future)-1]
-	next.restore(b)
 	u.openRun = false
 	return true
 }

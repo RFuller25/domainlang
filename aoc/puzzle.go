@@ -243,7 +243,7 @@ const hardBreak = '\x00'
 func squeeze(s string) string {
 	s = spaceRe.ReplaceAllString(s, " ")
 	var out []string
-	for _, line := range strings.Split(s, string(hardBreak)) {
+	for line := range strings.SplitSeq(s, string(hardBreak)) {
 		out = append(out, strings.TrimSpace(line))
 	}
 	return strings.Join(out, "\n")

@@ -182,14 +182,7 @@ func (r *resolver) sigErr(name string, callPos token.Position, err error) error 
 // whereDefined names the file and position a definition lives at, the same way
 // whereInBody does for errors raised inside a body.
 func (r *resolver) whereDefined(name string, pos token.Position) string {
-	switch r.origins[name].Origin {
-	case "prelude":
-		return fmt.Sprintf("prelude source %s", pos)
-	case "import":
-		return fmt.Sprintf("%s:%s", r.displays[name], pos)
-	default:
-		return fmt.Sprintf("defined at %s", pos)
-	}
+	return r.where(name, pos, "defined at")
 }
 
 // wrapShikigamiErr builds the inlining trace for an error inside a Shikigami
@@ -211,13 +204,19 @@ func (r *resolver) wrapShikigamiErr(name string, callPos token.Position, err err
 // only line and column, so without this an error inside an imported library
 // would print coordinates that look like the user's own file.
 func (r *resolver) whereInBody(name string, pos token.Position) string {
+	return r.where(name, pos, "body at")
+}
+
+// where labels pos with the source the named definition came from, or with
+// local when it is the user's own file.
+func (r *resolver) where(name string, pos token.Position, local string) string {
 	switch r.origins[name].Origin {
 	case "prelude":
 		return fmt.Sprintf("prelude source %s", pos)
 	case "import":
 		return fmt.Sprintf("%s:%s", r.displays[name], pos)
 	default:
-		return fmt.Sprintf("body at %s", pos)
+		return fmt.Sprintf("%s %s", local, pos)
 	}
 }
 

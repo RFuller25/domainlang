@@ -1,6 +1,7 @@
 package diag
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -207,12 +208,7 @@ func TestIndentWidthsAboveExcludesCommentLine(t *testing.T) {
 		"D: z\n"
 	widths := indentWidthsAbove(src, 6) // one past the last line
 	has := func(w int) bool {
-		for _, x := range widths {
-			if x == w {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(widths, w)
 	}
 	if has(8) {
 		t.Fatalf("comment line's incidental width 8 leaked into widths: %v", widths)

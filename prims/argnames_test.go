@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"testing"
@@ -21,20 +22,24 @@ import (
 // collects the string literal passed there at every call site.
 func TestArgNamesCoversEveryArgumentTheRegistryReads(t *testing.T) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", nil, 0)
+	paths, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("parsing the package: %v", err)
+		t.Fatal(err)
 	}
-	pkg, ok := pkgs["prims"]
-	if !ok {
-		t.Fatal("package prims not found in .")
+	var files []*ast.File
+	for _, path := range paths {
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing the package: %v", err)
+		}
+		files = append(files, f)
 	}
 
 	// Which parameter position holds the argument name, per function or method
 	// that takes one. Methods are keyed by their bare name: ArgSet is the only
 	// receiver in this package whose methods take a `name`.
 	namePos := map[string]int{}
-	for _, f := range pkg.Files {
+	for _, f := range files {
 		for _, d := range f.Decls {
 			fn, ok := d.(*ast.FuncDecl)
 			if !ok || fn.Type.Params == nil {
@@ -56,7 +61,7 @@ func TestArgNamesCoversEveryArgumentTheRegistryReads(t *testing.T) {
 	}
 
 	read := map[string]token.Pos{}
-	for _, f := range pkg.Files {
+	for _, f := range files {
 		if isTestFile(fset, f) {
 			continue
 		}

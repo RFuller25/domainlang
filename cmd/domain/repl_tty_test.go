@@ -985,7 +985,7 @@ func TestReplTTYProgressCountsTopLevelStagesOnly(t *testing.T) {
 	p := &progressCounter{}
 	p.SetTotal(2)
 	p.Step(ir.StepEvent{Depth: 0})
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		p.Step(ir.StepEvent{Depth: 1})
 	}
 	if done, _ := p.Counts(); done != 1 {

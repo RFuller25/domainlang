@@ -1,0 +1,198 @@
+Cursed Energy: stdin
+Cursed Object: srcText Of Itself
+Cursed Object: lines As split(srcText, "\n")
+Cursed Object: ln As length(lines)
+
+Cursed Object: indents As list(0)
+Cursed Object: toks As emptylist(record("kind", "", "text", "", "line", 0))
+Cursed Object: li As 0
+Cursed Object: inString As 0
+Cursed Object: strbuf As ""
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> li < ln
+    Cursed Object: raw Of (v) -> item(lines, li)
+    Cursed Object: content Of (v) -> trim(raw)
+    Cursed Object: width Of (v) -> length(raw) - length(content)
+    Cursed Object: isCode Of (v) -> ikke (length(content) = 0 or charat(content, 0) = "#")
+
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if ikke isCode then
+                v
+            else if width > last(indents) then
+                ((v also indents := concat(indents, list(width)))
+                    also toks := concat(toks, list(record("kind", "INDENT", "text", "", "line", li + 1))))
+            else
+                v
+        )
+
+    Simple Domain: While
+        Using: (v) -> isCode and length(indents) > 1 and last(indents) > width
+        Cursed Technique: Apply
+            Using: (v) -> ((v also indents := take(indents, length(indents) - 1))
+                also toks := concat(toks, list(record("kind", "DEDENT", "text", "", "line", li + 1))))
+
+    Cursed Object: ci As 0
+    Cursed Object: cn Of (v) -> length(content)
+    Cursed Technique: Apply
+        Using: (v) -> 0
+    Simple Domain: While
+        Using: (v) -> isCode and ci < cn
+        Cursed Object: ch Of (v) -> charat(content, ci)
+        Cursed Object: ch2 Of (v) -> (if ci + 1 < cn then charat(content, ci + 1) else "")
+        Cursed Technique: Apply
+            Using: (v) -> (
+                if inString = 1 then
+                    (
+                        if ch = "\"" then
+                            (((v also toks := concat(toks, list(record("kind", "STRING", "text", strbuf, "line", li + 1))))
+                                also inString := 0) also ci := ci + 1)
+                        else if ch = "\\" and ch2 = "\"" then
+                            ((v also strbuf := strbuf + "\"") also ci := ci + 2)
+                        else if ch = "\\" and ch2 = "n" then
+                            ((v also strbuf := strbuf + "\n") also ci := ci + 2)
+                        else if ch = "\\" and ch2 = "\\" then
+                            ((v also strbuf := strbuf + "\\") also ci := ci + 2)
+                        else
+                            ((v also strbuf := strbuf + ch) also ci := ci + 1)
+                    )
+                else if ch = "\"" then
+                    (((v also inString := 1) also strbuf := "") also ci := ci + 1)
+                else if ch = "#" then
+                    (v also ci := cn)
+                else if ch = " " then
+                    ((v also toks := concat(toks, list(record("kind", "SPACE", "text", "", "line", li + 1)))) also ci := ci + 1)
+                else if isdigit(ch) then
+                    ((v also toks := concat(toks, list(record("kind", "DIGIT", "text", ch, "line", li + 1)))) also ci := ci + 1)
+                else if isalpha(ch) or ch = "_" then
+                    ((v also toks := concat(toks, list(record("kind", "LETTER", "text", ch, "line", li + 1)))) also ci := ci + 1)
+                else if ch = "-" and ch2 = ">" then
+                    ((v also toks := concat(toks, list(record("kind", "ARROW", "text", "->", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = ":" and ch2 = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "ASSIGN", "text", ":=", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = "<" and ch2 = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "LE", "text", "<=", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = ">" and ch2 = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "GE", "text", ">=", "line", li + 1))))
+                        also ci := ci + 2)
+                else if ch = ":" then
+                    ((v also toks := concat(toks, list(record("kind", "COLON", "text", ":", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "," then
+                    ((v also toks := concat(toks, list(record("kind", "COMMA", "text", ",", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "." then
+                    ((v also toks := concat(toks, list(record("kind", "DOT", "text", ".", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "(" then
+                    ((v also toks := concat(toks, list(record("kind", "LPAREN", "text", "(", "line", li + 1)))) also ci := ci + 1)
+                else if ch = ")" then
+                    ((v also toks := concat(toks, list(record("kind", "RPAREN", "text", ")", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "+" then
+                    ((v also toks := concat(toks, list(record("kind", "PLUS", "text", "+", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "-" then
+                    ((v also toks := concat(toks, list(record("kind", "MINUS", "text", "-", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "*" then
+                    ((v also toks := concat(toks, list(record("kind", "STAR", "text", "*", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "/" then
+                    ((v also toks := concat(toks, list(record("kind", "SLASH", "text", "/", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "%" then
+                    ((v also toks := concat(toks, list(record("kind", "PERCENT", "text", "%", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "=" then
+                    ((v also toks := concat(toks, list(record("kind", "EQ", "text", "=", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "<" then
+                    ((v also toks := concat(toks, list(record("kind", "LT", "text", "<", "line", li + 1)))) also ci := ci + 1)
+                else if ch = ">" then
+                    ((v also toks := concat(toks, list(record("kind", "GT", "text", ">", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "{" then
+                    ((v also toks := concat(toks, list(record("kind", "LBRACE", "text", "{", "line", li + 1)))) also ci := ci + 1)
+                else if ch = "}" then
+                    ((v also toks := concat(toks, list(record("kind", "RBRACE", "text", "}", "line", li + 1)))) also ci := ci + 1)
+                else
+                    (v also ci := ci + 1)
+            )
+    Cursed Technique: Apply
+        Using: (v) -> (if isCode then (v also toks := concat(toks, list(record("kind", "NEWLINE", "text", "", "line", li + 1)))) else v)
+    Cursed Technique: Apply
+        Using: (v) -> (v also li := li + 1)
+
+Simple Domain: While
+    Using: (v) -> length(indents) > 1
+    Cursed Technique: Apply
+        Using: (v) -> ((v also indents := take(indents, length(indents) - 1))
+            also toks := concat(toks, list(record("kind", "DEDENT", "text", "", "line", ln + 1))))
+
+Cursed Technique: Apply
+    Using: (v) -> toks
+Reveal: stderr
+
+Cursed Object: tn As length(toks)
+Cursed Object: ti As 0
+Cursed Object: buf2 As ""
+Cursed Object: toks2 As emptylist(record("kind", "", "text", "", "line", 0))
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> ti < tn
+    Cursed Object: tk Of (v) -> item(toks, ti)
+    Cursed Object: wordish Of (v) -> (tk.kind = "DIGIT" or tk.kind = "LETTER")
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if wordish then
+                ((v also buf2 := buf2 + tk.text) also ti := ti + 1)
+            else if tk.kind = "SPACE" then
+                (((v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", tk.line)))))
+                    also buf2 := "")
+                    also ti := ti + 1)
+            else
+                ((((v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", tk.line)))))
+                    also buf2 := "")
+                    also toks2 := concat(toks2, list(tk)))
+                    also ti := ti + 1)
+        )
+
+Cursed Technique: Apply
+    Using: (v) -> (v also toks2 := (if buf2 = "" then toks2 else concat(toks2, list(record("kind", (if isdigit(buf2) then "INT" else "IDENT"), "text", buf2, "line", ln)))))
+Cursed Technique: Apply
+    Using: (v) -> toks2
+Reveal: stderr
+
+Cursed Object: parseArena As list(record("kind", "ROOT", "text", "", "line", 0, "kids", emptylist(0)))
+Cursed Object: pstack As list(0)
+Cursed Object: lastLineIdx As (0 - 1)
+Cursed Object: pendingToks As emptylist("")
+Cursed Object: pi As 0
+Cursed Object: pn As length(toks2)
+
+Cursed Technique: Apply
+    Using: (v) -> 0
+Simple Domain: While
+    Using: (v) -> pi < pn
+    Cursed Object: t Of (v) -> item(toks2, pi)
+    Cursed Technique: Apply
+        Using: (v) -> (
+            if t.kind = "INDENT" then
+                ((v also pstack := concat(pstack, list(lastLineIdx))) also pi := pi + 1)
+            else if t.kind = "DEDENT" then
+                ((v also pstack := take(pstack, length(pstack) - 1)) also pi := pi + 1)
+            else if t.kind = "NEWLINE" then
+                consider newIdx as length(parseArena) in
+                consider lineText as textjoin(pendingToks, " ") in
+                consider parentIdx as last(pstack) in
+                consider parentNode as item(parseArena, parentIdx) in
+                consider updatedParent as record("kind", parentNode.kind, "text", parentNode.text, "line", parentNode.line, "kids", concat(parentNode.kids, list(newIdx))) in
+                    (((((v also parseArena := concat(parseArena, list(record("kind", "LINE", "text", lineText, "line", t.line, "kids", emptylist(0)))))
+                        also parseArena := set(parseArena, parentIdx, updatedParent))
+                        also lastLineIdx := newIdx)
+                        also pendingToks := emptylist(""))
+                        also pi := pi + 1)
+            else
+                ((v also pendingToks := concat(pendingToks, list(t.text))) also pi := pi + 1)
+        )
+
+Cursed Technique: Apply
+    Using: (v) -> parseArena
+Reveal: stdout

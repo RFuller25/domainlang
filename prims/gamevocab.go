@@ -95,57 +95,7 @@ var toJSON = &Primitive{
 // It is a passthrough. The world it was given is the world it hands back, so
 // the Part it sits in still satisfies its contract and the value that reaches
 // `Part Ending:` is the one the game ended on.
-var quit = &Primitive{
-	ID:      "Quit",
-	Keyword: "Simple Domain",
-	Match:   func(op *ast.Operation) bool { return hasWord(op, "Quit") },
-	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
-		if in == nil {
-			return nil, &ResolveError{Pos: pos, Msg: "Quit has no value to pass through"}
-		}
-		// The unconditional form is the common one; a predicate makes it
-		// "stop when this is true", which saves wrapping the whole body in a
-		// conditional that has to produce the world either way.
-		lam, hasLam := args.Lambda("Using")
-		if hasLam {
-			t, err := typecheck.LambdaType(lam, append([]*ir.Type{in}, ambientTypes()...)...)
-			if err != nil {
-				return nil, &ResolveError{Pos: pos, Msg: "Quit: " + err.Error()}
-			}
-			if t == nil || t.Kind != ir.KBool {
-				return nil, &ResolveError{Pos: pos, Msg: "Quit's Using: lambda must answer true or false, got " + t.String()}
-			}
-		}
-		display := "Quit"
-		if hasLam {
-			display = "Quit when"
-		}
-		return &ir.Node{
-			Prim: "Quit", In: in, Out: in, Display: display,
-			Meta: map[string]any{"lambda": lam},
-			Pos:  pos,
-			Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
-				if !hasLam {
-					ctx.Quit = true
-					return v, nil
-				}
-				r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in}, ambientTypes()...),
-					append([]ir.Value{v}, ambientArgs()...)...)
-				if err != nil {
-					return nil, runtimeErr("Quit", pos, "%v", err)
-				}
-				b, ok := r.(bool)
-				if !ok {
-					return nil, runtimeErr("Quit", pos, "expected true or false, got %s", ir.DescribeValue(r))
-				}
-				if b {
-					ctx.Quit = true
-				}
-				return v, nil
-			},
-		}, nil
-	},
-}
+var quit = signalPrim("Quit", func(ctx *ir.Context) { ctx.Quit = true })
 
 // beep — `Simple Domain: Beep`, optionally `Using:` a predicate.
 //
@@ -157,56 +107,60 @@ var quit = &Primitive{
 // It is a **passthrough**, on the same shape as Quit: the value it was given
 // is the value it hands back, so it drops into a pipeline anywhere a body is
 // already threading a value through, not only where that value is the world.
-var beep = &Primitive{
-	ID:      "Beep",
-	Keyword: "Simple Domain",
-	Match:   func(op *ast.Operation) bool { return hasWord(op, "Beep") },
-	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
-		if in == nil {
-			return nil, &ResolveError{Pos: pos, Msg: "Beep has no value to pass through"}
-		}
-		// The unconditional form is the common one; a predicate makes it "beep
-		// when this is true", which saves wrapping the whole body in a
-		// conditional that has to produce the value either way.
-		lam, hasLam := args.Lambda("Using")
-		if hasLam {
-			t, err := typecheck.LambdaType(lam, append([]*ir.Type{in}, ambientTypes()...)...)
-			if err != nil {
-				return nil, &ResolveError{Pos: pos, Msg: "Beep: " + err.Error()}
+var beep = signalPrim("Beep", func(ctx *ir.Context) { ctx.Beep = true })
+
+// signalPrim builds a passthrough `Simple Domain: <id>` that raises a signal
+// on the context. The unconditional form is the common one; a `Using:`
+// predicate makes it "raise when this is true", which saves wrapping the whole
+// body in a conditional that has to produce the value either way.
+func signalPrim(id string, raise func(*ir.Context)) *Primitive {
+	return &Primitive{
+		ID:      id,
+		Keyword: "Simple Domain",
+		Match:   func(op *ast.Operation) bool { return hasWord(op, id) },
+		Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
+			if in == nil {
+				return nil, &ResolveError{Pos: pos, Msg: id + " has no value to pass through"}
 			}
-			if t == nil || t.Kind != ir.KBool {
-				return nil, &ResolveError{Pos: pos, Msg: "Beep's Using: lambda must answer true or false, got " + t.String()}
-			}
-		}
-		display := "Beep"
-		if hasLam {
-			display = "Beep when"
-		}
-		return &ir.Node{
-			Prim: "Beep", In: in, Out: in, Display: display,
-			Meta: map[string]any{"lambda": lam},
-			Pos:  pos,
-			Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
-				if !hasLam {
-					ctx.Beep = true
-					return v, nil
-				}
-				r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in}, ambientTypes()...),
-					append([]ir.Value{v}, ambientArgs()...)...)
+			lam, hasLam := args.Lambda("Using")
+			if hasLam {
+				t, err := lambdaType(lam, in)
 				if err != nil {
-					return nil, runtimeErr("Beep", pos, "%v", err)
+					return nil, &ResolveError{Pos: pos, Msg: id + ": " + err.Error()}
 				}
-				b, ok := r.(bool)
-				if !ok {
-					return nil, runtimeErr("Beep", pos, "expected true or false, got %s", ir.DescribeValue(r))
+				if t == nil || t.Kind != ir.KBool {
+					return nil, &ResolveError{Pos: pos, Msg: id + "'s Using: lambda must answer true or false, got " + t.String()}
 				}
-				if b {
-					ctx.Beep = true
-				}
-				return v, nil
-			},
-		}, nil
-	},
+			}
+			display := id
+			if hasLam {
+				display = id + " when"
+			}
+			return &ir.Node{
+				Prim: id, In: in, Out: in, Display: display,
+				Meta: map[string]any{"lambda": lam},
+				Pos:  pos,
+				Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
+					if !hasLam {
+						raise(ctx)
+						return v, nil
+					}
+					r, err := evalLambda(lam, []*ir.Type{in}, v)
+					if err != nil {
+						return nil, runtimeErr(id, pos, "%v", err)
+					}
+					b, ok := r.(bool)
+					if !ok {
+						return nil, runtimeErr(id, pos, "expected true or false, got %s", ir.DescribeValue(r))
+					}
+					if b {
+						raise(ctx)
+					}
+					return v, nil
+				},
+			}, nil
+		},
+	}
 }
 
 // load — `Domain Expansion: Load`, reading persisted state back in.
@@ -471,14 +425,6 @@ func requireTextLambda(lam *ast.Lambda, in *ir.Type, name string, pos token.Posi
 	}
 	return nil
 }
-
-// pending — `pending("tag")`, whether a request is still out.
-//
-// One request is in flight per tag and a new one supersedes the old, so a
-// reply can be lost. That is the right trade for a position poll and the wrong
-// one for a move nobody may drop, which is why the loss is visible: a program
-// that must not lose one asks first.
-var pendingBuiltin = "pending"
 
 // collectRequests finds every request a program fires, before any Part is
 // resolved.

@@ -46,7 +46,7 @@ func naiveWindowedExtrema(xs []int64, size, step int64, min bool) []int64 {
 
 func TestWindowedSumsMatchNaive(t *testing.T) {
 	rng := rand.New(rand.NewSource(11))
-	for iter := 0; iter < 5000; iter++ {
+	for iter := range 5000 {
 		xs := randInts(rng, 30, 12)
 		size := int64(rng.Intn(6) + 1)
 		step := int64(rng.Intn(4) + 1)
@@ -60,7 +60,7 @@ func TestWindowedSumsMatchNaive(t *testing.T) {
 
 func TestWindowedExtremaMatchNaive(t *testing.T) {
 	rng := rand.New(rand.NewSource(12))
-	for iter := 0; iter < 5000; iter++ {
+	for iter := range 5000 {
 		xs := randInts(rng, 30, 12)
 		size := int64(rng.Intn(6) + 1)
 		step := int64(rng.Intn(4) + 1)

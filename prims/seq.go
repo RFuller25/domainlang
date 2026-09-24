@@ -6,10 +6,8 @@ import (
 	"strings"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // The section-D remainder: sequence transforms (Window, Flatten, Enumerate)
@@ -198,7 +196,7 @@ var countBy = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
+		keyType, err := lambdaType(lam, elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Count By: " + err.Error()}
 		}
@@ -219,7 +217,7 @@ var countBy = &Primitive{
 				}
 				m := ir.NewMapValue()
 				for i, x := range xs {
-					k, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{x}, ambientArgs()...)...)
+					k, err := evalLambda(lam, []*ir.Type{elem}, x)
 					if err != nil {
 						return nil, runtimeErr("Count By", pos, "item %d: %v", i, err)
 					}
@@ -268,7 +266,7 @@ func keyedExtremum(id string, better func(c int) bool) *Primitive {
 			if err != nil {
 				return nil, err
 			}
-			keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
+			keyType, err := lambdaType(lam, elem)
 			if err != nil {
 				return nil, &ResolveError{Pos: pos, Msg: id + ": " + err.Error()}
 			}
@@ -316,7 +314,7 @@ func keyedExtremum(id string, better func(c int) bool) *Primitive {
 // intKey evaluates a key lambda expected to produce an Int; elem is the
 // statically inferred parameter type (nil when unknown).
 func intKey(lam *ast.Lambda, elem *ir.Type, x ir.Value) (int64, error) {
-	k, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{elem}, ambientTypes()...), append([]ir.Value{x}, ambientArgs()...)...)
+	k, err := evalLambda(lam, []*ir.Type{elem}, x)
 	if err != nil {
 		return 0, err
 	}
@@ -331,9 +329,7 @@ func intKey(lam *ast.Lambda, elem *ir.Type, x ir.Value) (int64, error) {
 // the key lambda produced, for the comparison in ir.Compare to order. The
 // key's type was checked at resolve time.
 func anyKey(lam *ast.Lambda, elem *ir.Type, x ir.Value) (ir.Value, error) {
-	return eval.EvalLambdaTyped(lam,
-		append([]*ir.Type{elem}, ambientTypes()...),
-		append([]ir.Value{x}, ambientArgs()...)...)
+	return evalLambda(lam, []*ir.Type{elem}, x)
 }
 
 func splitID(id string) []string { return strings.Split(id, " ") }
@@ -358,7 +354,7 @@ var sortBy = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		keyType, err := typecheck.LambdaType(lam, append([]*ir.Type{elem}, ambientTypes()...)...)
+		keyType, err := lambdaType(lam, elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Sort By: " + err.Error()}
 		}

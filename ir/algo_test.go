@@ -7,13 +7,13 @@ func TestQueueFIFO(t *testing.T) {
 	if _, ok := q.Pop(); ok {
 		t.Fatal("Pop on empty queue should report ok=false")
 	}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		q.Push(i)
 	}
 	if q.Len() != 10 {
 		t.Fatalf("Len = %d, want 10", q.Len())
 	}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		v, ok := q.Pop()
 		if !ok || v != i {
 			t.Fatalf("Pop = %d,%v, want %d,true", v, ok, i)
@@ -28,12 +28,12 @@ func TestQueueFIFO(t *testing.T) {
 func TestQueueWrap(t *testing.T) {
 	var q Queue[int]
 	next, expect := 0, 0
-	for round := 0; round < 50; round++ {
-		for i := 0; i < 3; i++ {
+	for round := range 50 {
+		for range 3 {
 			q.Push(next)
 			next++
 		}
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			v, ok := q.Pop()
 			if !ok || v != expect {
 				t.Fatalf("round %d: Pop = %d,%v, want %d,true", round, v, ok, expect)

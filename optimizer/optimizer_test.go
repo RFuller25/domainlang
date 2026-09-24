@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ func naiveTopKSum(xs []int64, k int, desc bool) int64 {
 	if desc {
 		sort.Slice(a, func(i, j int) bool { return a[i] > a[j] })
 	} else {
-		sort.Slice(a, func(i, j int) bool { return a[i] < a[j] })
+		slices.Sort(a)
 	}
 	if k > len(a) {
 		k = len(a)
@@ -35,7 +36,7 @@ func naiveTopKList(xs []int64, k int, desc bool) []int64 {
 	if desc {
 		sort.Slice(a, func(i, j int) bool { return a[i] > a[j] })
 	} else {
-		sort.Slice(a, func(i, j int) bool { return a[i] < a[j] })
+		slices.Sort(a)
 	}
 	if k > len(a) {
 		k = len(a)
@@ -60,7 +61,7 @@ func equalSlices(a, b []int64) bool {
 // naive sort+take, for both list and sum forms.
 func TestTopKMatchesNaiveOracle(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
-	for iter := 0; iter < 2000; iter++ {
+	for iter := range 2000 {
 		n := rng.Intn(30)
 		xs := make([]int64, n)
 		for i := range xs {
@@ -321,5 +322,31 @@ func TestScheduleMaxRounds(t *testing.T) {
 	OptimizeWith(pipe, Schedule{MaxRounds: 1})
 	if len(pipe.Nodes) != 1 {
 		t.Errorf("one round did not apply the fusion: %d nodes", len(pipe.Nodes))
+	}
+}
+
+// TestSelectionOnDuplicateHeavyInput pins the partition scheme. Lomuto
+// partitioning moves one element per pass over a run of equal values, so a
+// Top K or kth-order-statistic over a list of 0s and 1s was quadratic: at this
+// size it took tens of seconds, far longer than the sort it replaced. Hoare
+// partitioning splits the runs evenly and finishes in milliseconds.
+func TestSelectionOnDuplicateHeavyInput(t *testing.T) {
+	const n = 200_000
+	xs := make([]int64, n)
+	for i := range xs {
+		xs[i] = int64(i % 2)
+	}
+	for _, desc := range []bool{false, true} {
+		top := TopK(xs, n/2, desc)
+		want := int64(0)
+		if desc {
+			want = 1
+		}
+		if len(top) != n/2 || top[0] != want || top[n/2-1] != want {
+			t.Fatalf("TopK(desc=%v) returned the wrong half", desc)
+		}
+		if got := KthOrderStatistic(xs, n/2, desc); got != 1-want {
+			t.Fatalf("KthOrderStatistic(desc=%v) = %d, want %d", desc, got, 1-want)
+		}
 	}
 }

@@ -219,10 +219,7 @@ func TestRunnableProgramCountsAreCurrent(t *testing.T) {
 		t.Helper()
 		norm := normalize(src)
 		for _, loc := range regexp.MustCompile(`\b`+noun+`\b`).FindAllStringIndex(norm, -1) {
-			from := loc[0] - 60
-			if from < 0 {
-				from = 0
-			}
+			from := max(loc[0]-60, 0)
 			near := anyWord.FindAllString(norm[from:loc[0]], -1)
 			if len(near) == 0 {
 				continue
@@ -348,7 +345,7 @@ func slugify(s string) string {
 func headings(src string) map[string]bool {
 	out := map[string]bool{}
 	fence := false
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			fence = !fence
 			continue
@@ -437,7 +434,7 @@ type docHeading struct {
 func referenceHeadings(t *testing.T) (anchors map[string]bool, byName map[string][]docHeading) {
 	t.Helper()
 	anchors, byName = map[string]bool{}, map[string][]docHeading{}
-	for _, line := range strings.Split(referenceText(t), "\n") {
+	for line := range strings.SplitSeq(referenceText(t), "\n") {
 		trimmed := strings.TrimLeft(line, "#")
 		level := len(line) - len(trimmed)
 		if level < 1 || level > 6 || !strings.HasPrefix(trimmed, " ") {
@@ -446,8 +443,8 @@ func referenceHeadings(t *testing.T) (anchors map[string]bool, byName map[string
 		raw := strings.TrimSpace(trimmed)
 		anchors[slugify(raw)] = true
 		names, sig := raw, ""
-		if i := strings.Index(raw, "—"); i >= 0 {
-			names, sig = raw[:i], strings.TrimSpace(raw[i+len("—"):])
+		if before, after, ok := strings.Cut(raw, "—"); ok {
+			names, sig = before, strings.TrimSpace(after)
 			// The renderer also emits the short alias — the part before the
 			// em dash — so a link survives an edit to the signature.
 			if short := slugify(names); short != "" {
@@ -458,7 +455,7 @@ func referenceHeadings(t *testing.T) (anchors map[string]bool, byName map[string
 			continue
 		}
 		h := docHeading{sig: sig}
-		for _, n := range strings.Split(names, "/") {
+		for n := range strings.SplitSeq(names, "/") {
 			h.names = append(h.names, strings.TrimSpace(n))
 		}
 		for _, n := range h.names {

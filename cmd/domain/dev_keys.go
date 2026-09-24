@@ -56,19 +56,21 @@ type devKeyMap struct {
 	Format     key.Binding
 	Docs       key.Binding
 
-	Run       key.Binding
-	Visualize key.Binding
-	Monitor   key.Binding
-	Input     key.Binding
-	Suggest   key.Binding
-	StageNext key.Binding
-	StagePrev key.Binding
-	Fix       key.Binding
-	FixAll    key.Binding
-	Explain   key.Binding
-	Fold      key.Binding
-	UnfoldAll key.Binding
-	JumpBack  key.Binding
+	Run          key.Binding
+	AdventOfCode key.Binding
+	Check        key.Binding
+	Visualize    key.Binding
+	Monitor      key.Binding
+	Input        key.Binding
+	Suggest      key.Binding
+	StageNext    key.Binding
+	StagePrev    key.Binding
+	Fix          key.Binding
+	FixAll       key.Binding
+	Explain      key.Binding
+	Fold         key.Binding
+	UnfoldAll    key.Binding
+	JumpBack     key.Binding
 }
 
 func defaultDevKeys() devKeyMap {
@@ -98,8 +100,14 @@ func defaultDevKeys() devKeyMap {
 		Format:     key.NewBinding(key.WithKeys("alt+f")),
 		Docs:       key.NewBinding(key.WithKeys("alt+d")),
 
-		Run:       key.NewBinding(key.WithKeys("ctrl+r")),
-		Visualize: key.NewBinding(key.WithKeys("ctrl+t")),
+		Run: key.NewBinding(key.WithKeys("ctrl+r")),
+		// The calendar and the answer. alt+c opens the day and alt+x checks
+		// what the last run made of it — the two halves of a December evening,
+		// in the cluster that holds everything the language knows about the
+		// program rather than about the buffer.
+		AdventOfCode: key.NewBinding(key.WithKeys("alt+c")),
+		Check:        key.NewBinding(key.WithKeys("alt+x")),
+		Visualize:    key.NewBinding(key.WithKeys("ctrl+t")),
 		// The monitor opens itself on ctrl+r and closes on any key; alt+m is
 		// for the run whose screen was dismissed by one that was meant for the
 		// program.
@@ -152,6 +160,15 @@ func devHelpBody() []string {
 	row("alt+a", "apply the fix for this line")
 	row("alt+A", "apply every confident fix")
 	row("alt+f", "format the program")
+
+	section("Advent of Code")
+	row("alt+c", "fetch a year and day — the puzzle, your input, and the example")
+	row("alt+x", "check the last run's answer for the part you are on")
+	row("c / s", "check / submit, on the puzzle screen")
+	row("e / i", "read the example / your own input")
+	row("1 / 2", "part one / part two")
+	row("r / d", "re-read the page / another day")
+	row("ctrl+r", "run the program without leaving the puzzle")
 
 	section("Running")
 	row("ctrl+e", "choose the input file — then it offers an opening")

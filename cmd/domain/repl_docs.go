@@ -67,7 +67,7 @@ func docsPageFor(code string) string {
 		return "data-model"
 	case "resolve":
 		return "primitives"
-	case "style", "perf", "lint":
+	case "style", "perf", "clarity", "lint":
 		return "diagnostics"
 	default:
 		return "README"

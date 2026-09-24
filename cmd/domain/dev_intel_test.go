@@ -60,7 +60,7 @@ func TestDevTypeHintIsDroppedWhenItWouldNotFit(t *testing.T) {
 	painted := ansi.Strip(m.view())
 	// No row overflows: with no soft wrap, a long line is clipped rather than
 	// left to wrap and push the status line off the bottom.
-	for _, line := range strings.Split(painted, "\n") {
+	for line := range strings.SplitSeq(painted, "\n") {
 		if ansi.StringWidth(line) > m.width {
 			t.Errorf("a row overflowed a narrow terminal: %q", line)
 		}
@@ -279,6 +279,67 @@ func TestDevInspectDescribesThePrimitiveUnderTheCursor(t *testing.T) {
 	m = devKey(m, "x")
 	if m.inspect != nil {
 		t.Error("a keystroke did not close the panel")
+	}
+}
+
+// A word under the cursor is a question about the word. The panel answers with
+// the kind of name it is, its type, and the line that declares it.
+func TestDevInspectDescribesTheNameUnderTheCursor(t *testing.T) {
+	const src = `Cursed Object: target As 2020
+Cursed Energy: input.txt
+Shikigami: Ints
+Cursed Technique: Map Each
+    Using: (n) -> n + target
+Cursed Tool: target As target + 1
+Reveal: stdout`
+	m := settle(t, newTestDevModel(src))
+	m.buf.row = 4
+	m.buf.col = strings.Index(m.buf.line(), "target")
+	m = devKey(m, "alt+k")
+
+	if m.inspect == nil {
+		t.Fatal("alt+k on a name showed nothing")
+	}
+	body := ansi.Strip(strings.Join(m.inspect.lines, "\n"))
+	for _, want := range []string{"target", "Int", "global, line 1",
+		"Cursed Object: target As 2020", "written on line 6"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the panel is missing %q:\n%s", want, body)
+		}
+	}
+
+	// Off a name, the statement is still what is described.
+	m.inspect = nil
+	m.buf.row, m.buf.col = 3, 0 // on `Cursed Technique: Map Each`
+	m = devKey(m, "alt+k")
+	if m.inspect == nil {
+		t.Fatal("alt+k on a statement showed nothing")
+	}
+	body = ansi.Strip(strings.Join(m.inspect.lines, "\n"))
+	if !strings.Contains(body, "Map Each") {
+		t.Errorf("the panel does not name the primitive:\n%s", body)
+	}
+}
+
+// ctrl+] follows a name to the line that declares it, the same key that
+// follows a Shikigami call to its definition.
+func TestDevGoToDefinitionFollowsAName(t *testing.T) {
+	const src = `Cursed Object: target As 2020
+Cursed Energy: input.txt
+Shikigami: Ints
+Cursed Technique: Map Each
+    Using: (n) -> n + target
+Reveal: stdout`
+	m := settle(t, newTestDevModel(src))
+	m.buf.row = 4
+	m.buf.col = strings.Index(m.buf.line(), "target")
+
+	m = devKey(m, "ctrl+]")
+	if m.buf.row != 0 {
+		t.Errorf("cursor on row %d, want 0 — the declaration", m.buf.row)
+	}
+	if !strings.Contains(m.status, "target") {
+		t.Errorf("status is %q", m.status)
 	}
 }
 
@@ -568,17 +629,13 @@ func TestDevAnalysisAndRunDoNotRaceEachOther(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 15 {
 				analyzeCmd(m.gen, m.path, m.buf.text())()
 			}
-		}()
+		})
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 5 {
 			next, cmd := m.runProgram()
 			for _, msg := range collectMsgs(cmd) {
@@ -586,7 +643,7 @@ func TestDevAnalysisAndRunDoNotRaceEachOther(t *testing.T) {
 			}
 			_ = next
 		}
-	}()
+	})
 	wg.Wait()
 }
 

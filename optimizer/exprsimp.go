@@ -131,8 +131,69 @@ func (s *simplifier) rewriteLocal(e ast.Expr) (ast.Expr, bool) {
 		}
 	case *ast.BinaryExpr:
 		return s.rewriteBinary(x)
+	case *ast.CallExpr:
+		return s.rewriteCall(x)
 	}
 	return e, false
+}
+
+// rewriteCall replaces a builtin call with a cheaper one that gives the same
+// answer: a list built only to be measured or searched, or an idempotent
+// transform applied twice. Every rule is exact — both sides are total on
+// anything that typechecked, so nothing that could fail is discarded — and
+// none depends on element order among Floats.
+//
+//	contains(keys(m), k)     → haskey(m, k)     a key list scanned → one probe
+//	contains(tolist(s), x)   → contains(s, x)   a list scanned → one probe
+//	length(keys(m))          → size(m)          and values, entries, tolist
+//	length(sort(xs))         → length(xs)       and reverse: a copy, measured
+//	length(chars(s))         → length(s)        both count runes
+//	sort(sort(xs))           → sort(xs)         and unique(unique(xs))
+//	reverse(reverse(xs))     → xs
+func (s *simplifier) rewriteCall(x *ast.CallExpr) (ast.Expr, bool) {
+	fn := builtinName(x)
+	if len(x.Args) == 0 {
+		return x, false
+	}
+	inner, _ := x.Args[0].(*ast.CallExpr)
+	if inner == nil || len(inner.Args) != 1 {
+		return x, false
+	}
+	arg := inner.Args[0]
+	call := func(name string, args ...ast.Expr) ast.Expr {
+		s.mark("cheaper equivalent builtin")
+		return &ast.CallExpr{Fn: &ast.Ident{Name: name, Pos: x.Pos}, Args: args, Pos: x.Pos}
+	}
+	switch fn {
+	case "contains":
+		if len(x.Args) != 2 {
+			return x, false
+		}
+		switch builtinName(inner) {
+		case "keys":
+			return call("haskey", arg, x.Args[1]), true
+		case "tolist":
+			return call("contains", arg, x.Args[1]), true
+		}
+	case "length":
+		switch builtinName(inner) {
+		case "keys", "values", "entries", "tolist":
+			return call("size", arg), true
+		case "sort", "reverse", "chars":
+			return call("length", arg), true
+		}
+	case "sort", "unique":
+		if builtinName(inner) == fn {
+			s.mark("cheaper equivalent builtin")
+			return inner, true
+		}
+	case "reverse":
+		if builtinName(inner) == "reverse" {
+			s.mark("cheaper equivalent builtin")
+			return arg, true
+		}
+	}
+	return x, false
 }
 
 func (s *simplifier) rewriteBinary(x *ast.BinaryExpr) (ast.Expr, bool) {

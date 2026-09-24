@@ -29,32 +29,11 @@ func fuseAllPairsProduct(p *ir.Pipeline) []Rewrite {
 				continue
 			}
 
-			pos := n.Pos
-			n.Prim = "DivisorPairScan"
 			n.Display = fmt.Sprintf("Cursed Divisor Scan (product = %d, Mode: %s)", target, mode)
 			n.Meta["target"] = target
-			if mode == "Count" {
-				n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-					xs, err := ir.AsIntSlice(v)
-					if err != nil {
-						return nil, &ir.RuntimeError{Prim: "DivisorPairScan", Pos: pos, Msg: err.Error()}
-					}
-					return CountPairProduct(xs, target), nil
-				}
-			} else {
-				n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-					xs, err := ir.AsIntSlice(v)
-					if err != nil {
-						return nil, &ir.RuntimeError{Prim: "DivisorPairScan", Pos: pos, Msg: err.Error()}
-					}
-					pair, ok := FindPairProduct(xs, target)
-					if !ok {
-						return nil, &ir.RuntimeError{Prim: "DivisorPairScan", Pos: pos,
-							Msg: "no combination satisfied the predicate"}
-					}
-					return ir.IntsToValue(pair), nil
-				}
-			}
+			lowerIntScan(n, "DivisorPairScan", mode,
+				func(xs []int64) int64 { return CountPairProduct(xs, target) },
+				func(xs []int64) ([]int64, bool) { return FindPairProduct(xs, target) })
 			rewrites = append(rewrites, Rewrite{Message: fmt.Sprintf(
 				"Domain rewrote All Pairs (product = %d) → Cursed Divisor Scan. Guaranteed hit.", target)})
 		}
@@ -65,38 +44,7 @@ func fuseAllPairsProduct(p *ir.Pipeline) []Rewrite {
 // matchProductPair recognizes `(a, b) -> a * b = K` (in either operand order,
 // and with the literal on either side of '='), returning K.
 func matchProductPair(lam *ast.Lambda) (int64, bool) {
-	if len(lam.Params) != 2 {
-		return 0, false
-	}
-	p0, p1 := lam.Params[0], lam.Params[1]
-	if p0 == p1 {
-		return 0, false // shadowed binding, see matchSumPair
-	}
-	eq, ok := lam.Body.(*ast.BinaryExpr)
-	if !ok || eq.Op != token.EQ {
-		return 0, false
-	}
-	if k, ok := intLit(eq.Left); ok && isProductOf(eq.Right, p0, p1) {
-		return k, true
-	}
-	if k, ok := intLit(eq.Right); ok && isProductOf(eq.Left, p0, p1) {
-		return k, true
-	}
-	return 0, false
-}
-
-// isProductOf reports whether e is `p0 * p1` or `p1 * p0`.
-func isProductOf(e ast.Expr, p0, p1 string) bool {
-	be, ok := e.(*ast.BinaryExpr)
-	if !ok || be.Op != token.STAR {
-		return false
-	}
-	l, lok := identName(be.Left)
-	r, rok := identName(be.Right)
-	if !lok || !rok {
-		return false
-	}
-	return (l == p0 && r == p1) || (l == p1 && r == p0)
+	return matchCommutativePair(lam, token.STAR)
 }
 
 // CountPairProduct counts index pairs i<j with xs[i]*xs[j] == target in O(n).

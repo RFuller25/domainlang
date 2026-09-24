@@ -169,7 +169,7 @@ func TestDescribeValue(t *testing.T) {
 
 func TestFormatShortTruncatesLongText(t *testing.T) {
 	long := ""
-	for i := 0; i < 60; i++ {
+	for range 60 {
 		long += "x"
 	}
 	got := FormatShort(long)
@@ -225,7 +225,7 @@ func TestRuntimeErrorMessage(t *testing.T) {
 // 8-entry elision, and the default case.
 func TestFormatShort(t *testing.T) {
 	long := ""
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		long += "x"
 	}
 	rec := NewRecordValue()

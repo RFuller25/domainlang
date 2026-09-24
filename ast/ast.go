@@ -5,6 +5,7 @@
 package ast
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -243,6 +244,22 @@ type PartArg struct {
 	Int   int64
 	IsInt bool
 	Pos   token.Position
+}
+
+// PartDescription names a Part the way its source line reads, for a message.
+// `Part "1"` for the unroled form, `Part Draw` for a bare role, `Part Every
+// 120` for one with an argument.
+func (s *Statement) PartDescription() string {
+	switch {
+	case s.PartRole == "":
+		return fmt.Sprintf("Part %q", s.PartName)
+	case s.PartArg == nil:
+		return "Part " + s.PartRole
+	case s.PartArg.IsInt:
+		return fmt.Sprintf("Part %s %d", s.PartRole, s.PartArg.Int)
+	default:
+		return fmt.Sprintf("Part %s %q", s.PartRole, s.PartArg.Text)
+	}
 }
 
 // Operation is a parsed operation phrase: the text after a keyword's colon.

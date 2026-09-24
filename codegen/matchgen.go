@@ -795,7 +795,7 @@ func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemG
 				// that dominate AoC templates ("-", ",", ": ").
 				fmt.Fprintf(&b, "\tif i+%d > len(s) {\n\t\treturn out, false\n\t}\n", k)
 				conds := make([]string, k)
-				for o := 0; o < k; o++ {
+				for o := range k {
 					idxExpr := "i"
 					if o > 0 {
 						idxExpr = fmt.Sprintf("i+%d", o)

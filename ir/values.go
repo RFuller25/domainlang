@@ -45,24 +45,30 @@ func AsInt(v Value) (int64, error) {
 }
 
 // AsIntSlice converts a list of integers to a []int64.
-func AsIntSlice(v Value) ([]int64, error) {
+func AsIntSlice(v Value) ([]int64, error) { return asSlice(v, AsInt) }
+
+// asSlice converts a list Value element by element.
+func asSlice[T any](v Value, conv func(Value) (T, error)) ([]T, error) {
 	l, err := AsList(v)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]int64, len(l))
+	out := make([]T, len(l))
 	for i, e := range l {
-		n, err := AsInt(e)
+		x, err := conv(e)
 		if err != nil {
 			return nil, fmt.Errorf("list element %d: %w", i, err)
 		}
-		out[i] = n
+		out[i] = x
 	}
 	return out, nil
 }
 
 // IntsToValue wraps a []int64 as a list Value.
-func IntsToValue(xs []int64) []Value {
+func IntsToValue(xs []int64) []Value { return toValues(xs) }
+
+// toValues boxes each element of a typed slice as a Value.
+func toValues[T any](xs []T) []Value {
 	out := make([]Value, len(xs))
 	for i, x := range xs {
 		out[i] = x
@@ -83,30 +89,10 @@ func AsFloat(v Value) (float64, error) {
 }
 
 // AsFloatSlice converts a list of floats (or ints, widened) to a []float64.
-func AsFloatSlice(v Value) ([]float64, error) {
-	l, err := AsList(v)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]float64, len(l))
-	for i, e := range l {
-		f, err := AsFloat(e)
-		if err != nil {
-			return nil, fmt.Errorf("list element %d: %w", i, err)
-		}
-		out[i] = f
-	}
-	return out, nil
-}
+func AsFloatSlice(v Value) ([]float64, error) { return asSlice(v, AsFloat) }
 
 // FloatsToValue wraps a []float64 as a list Value.
-func FloatsToValue(xs []float64) []Value {
-	out := make([]Value, len(xs))
-	for i, x := range xs {
-		out[i] = x
-	}
-	return out
-}
+func FloatsToValue(xs []float64) []Value { return toValues(xs) }
 
 // FormatFloat renders a Float exactly as both backends print it: shortest
 // round-trip 'g' form. Keep codegen's declFmtFloat in sync with this.
@@ -555,6 +541,12 @@ func FormatShort(v Value) string {
 			return "Sparse 0x0 (0 set)"
 		}
 		return fmt.Sprintf("Sparse %dx%d (%d set)", maxR-minR+1, maxC-minC+1, x.Len())
+	case *GraphValue:
+		// Its counts, the way a Grid gives its dimensions: an adjacency listed
+		// in full is what the *long* form is for, and a graph reaching the
+		// default below rendered as Go's view of the struct — `&{[a b c]
+		// map[a:0 b:1…` — which is the representation, not the value.
+		return fmt.Sprintf("Graph %d nodes (%d arcs)", x.Len(), x.EdgeCount())
 	default:
 		return fmt.Sprintf("%v", v)
 	}

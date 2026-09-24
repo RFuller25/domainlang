@@ -130,7 +130,7 @@ func TestInferIsIdempotentAndLeavesKeywordsAlone(t *testing.T) {
 	for _, s := range prog.Statements {
 		before = append(before, s.Keyword)
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := Infer(prog); err != nil {
 			t.Fatalf("round %d: %v", i, err)
 		}

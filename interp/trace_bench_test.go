@@ -3,6 +3,7 @@ package interp
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,7 +46,7 @@ func benchPipeline(b *testing.B) (*ir.Pipeline, string) {
 		b.Fatal(err)
 	}
 	var sb strings.Builder
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		fmt.Fprintf(&sb, "%d\n", i%97)
 	}
 	return pipe, strings.TrimRight(sb.String(), "\n")
@@ -177,12 +178,7 @@ func (r *recordingTracer) PushFrame(label string, _ *ir.Type) {
 func (r *recordingTracer) PopFrame(ir.Value) { r.depth-- }
 
 func (r *recordingTracer) sawFrame(label string) bool {
-	for _, f := range r.frames {
-		if f == label {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.frames, label)
 }
 
 func (r *recordingTracer) sawNestedPrim(prim string) bool {

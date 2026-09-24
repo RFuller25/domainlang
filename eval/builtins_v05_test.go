@@ -60,6 +60,10 @@ func TestV05IntMath(t *testing.T) {
 		{"pow(2, 10)", "1024"},
 		{"pow(3, 0)", "1"},
 		{"isqrt(0)", "0"},
+		{"isqrt(2)", "1"}, // the Newton iteration this replaced answered 2
+		{"isqrt(3)", "1"},
+		{"isqrt(8)", "2"},
+		{"isqrt(9223372036854775807)", "3037000499"},
 		{"isqrt(35)", "5"},
 		{"isqrt(36)", "6"}, // exact at a perfect square, unlike float sqrt
 		{"isqrt(1000000000000)", "1000000"},

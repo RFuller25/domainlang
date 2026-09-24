@@ -131,7 +131,7 @@ func parseBenchArgs(args []string) (string, benchOptions, error) {
 // for, which is the whole reason this flag exists.
 func parseCells(s string) ([]runner.Config, error) {
 	var out []runner.Config
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -238,9 +238,7 @@ func Bench(path string, opts benchOptions, stdout, stderr io.Writer) int {
 
 	switch {
 	case opts.JSON:
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(rep.jsonShape()); err != nil {
+		if err := writeJSON(stdout, rep.jsonShape()); err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 1
 		}
@@ -520,6 +518,13 @@ func (r *benchReport) jsonShape() benchJSON {
 		out.Cells = append(out.Cells, c)
 	}
 	return out
+}
+
+// writeJSON writes v as indented JSON, the shape every --json report shares.
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }
 
 // ---------------------------------------------------------------------------

@@ -271,7 +271,7 @@ func TestRecordCapturesValues(t *testing.T) {
 // than either dropped or held whole.
 func TestRecordTruncatesHugeValues(t *testing.T) {
 	var sb strings.Builder
-	for i := 0; i < 20000; i++ {
+	for i := range 20000 {
 		fmt.Fprintf(&sb, "%d,", i)
 	}
 	rec := record(t, listPrefix+"Reveal: stdout\n", strings.TrimSuffix(sb.String(), ","), 0)

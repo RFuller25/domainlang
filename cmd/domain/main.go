@@ -30,17 +30,19 @@ import (
 	_ "domain/game"
 	"domain/interp"
 	"domain/ir"
-	"domain/lexer"
 	"domain/mahoraga"
 	"domain/optimizer"
-	"domain/parser"
-	"domain/prims"
 	"domain/runner"
 )
 
 // Options controls a single run.
 type Options struct {
-	Explain  bool
+	Explain bool
+	// Opinions prints the compiler's performance warnings — costs it found
+	// and could not remove itself — on stderr before running. The CLI turns
+	// it on; --quiet turns it off. Callers that build Options themselves
+	// (the tests, the REPL) leave it off and see nothing new.
+	Opinions bool
 	Optimize bool
 	Release  bool // skip Binding Vows (debug-on / release-off)
 	Stats    bool // report per-stage counts and timings on stderr
@@ -61,6 +63,7 @@ type Options struct {
 // BuildOptions controls a single build.
 type BuildOptions struct {
 	Explain  bool
+	Opinions bool // as Options.Opinions
 	Optimize bool
 	Release  bool   // compile Binding Vows out of the binary
 	Out      string // binary output path; "" derives it from the source name
@@ -146,7 +149,7 @@ func main() {
 		// argument means the compiler is wanted.
 		args := os.Args[1:]
 		if isImplicitRun(args) {
-			err := Execute(args[0], Options{Optimize: true}, os.Stdin, os.Stdout, os.Stderr)
+			err := Execute(args[0], Options{Optimize: true, Opinions: true}, os.Stdin, os.Stdout, os.Stderr)
 			runner.WriteReport()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "domain: %v\n", err)
@@ -219,6 +222,8 @@ Expansion commands (the diagnostics engine):
 
 Shared flags (run and build):
   --explain      print the algorithm substitutions the optimizer made
+  --quiet        hide the compiler's performance warnings (costs it found
+                 and could not remove itself; printed to stderr by default)
   --no-optimize  use the naive pipeline (skip the optimizer)
   --release      shed Binding Vows: run skips them, build compiles them out
 
@@ -265,11 +270,13 @@ Examples:
 }
 
 func parseRunArgs(args []string) (string, Options, error) {
-	opts := Options{Optimize: true}
+	opts := Options{Optimize: true, Opinions: true}
 	var path string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
+		case "--quiet":
+			opts.Opinions = false
 		case "--explain":
 			opts.Explain = true
 		case "--no-optimize":
@@ -335,11 +342,13 @@ func Check(path string, stdout, stderr io.Writer) error {
 }
 
 func parseBuildArgs(args []string) (string, BuildOptions, error) {
-	opts := BuildOptions{Optimize: true}
+	opts := BuildOptions{Optimize: true, Opinions: true}
 	var path string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
+		case "--quiet":
+			opts.Opinions = false
 		case "--explain":
 			opts.Explain = true
 		case "--no-optimize":
@@ -389,22 +398,10 @@ func loadPipeline(path string, optimize, explain bool, stderr io.Writer) (*ir.Pi
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-
-	toks, err := lexer.Lex(string(src))
+	pipe, err := runner.Resolve(path, src)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", path, err)
+		return nil, err
 	}
-
-	prog, err := parser.Parse(string(src), toks)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", path, err)
-	}
-
-	pipe, err := prims.ResolveWith(prog, prims.FileOptions(path))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", path, err)
-	}
-
 	rewrites := optimizer.Optimize(pipe, optimize)
 	if explain {
 		if len(rewrites) == 0 {
@@ -423,6 +420,9 @@ func Execute(path string, opts Options, stdin io.Reader, stdout, stderr io.Write
 	pipe, err := loadPipeline(path, opts.Optimize, opts.Explain, stderr)
 	if err != nil {
 		return err
+	}
+	if opts.Opinions && opts.Optimize {
+		printOpinions(path, stderr)
 	}
 
 	ctx := &ir.Context{
@@ -488,6 +488,9 @@ func Build(path string, opts BuildOptions, stdin io.Reader, stdout, stderr io.Wr
 	pipe, err := loadPipeline(path, opts.Optimize, opts.Explain, stderr)
 	if err != nil {
 		return err
+	}
+	if opts.Opinions && opts.Optimize {
+		printOpinions(path, stderr)
 	}
 	if opts.Recipe != "" {
 		if pipe, build, tuning, err = applyRecipe(path, opts, stderr); err != nil {

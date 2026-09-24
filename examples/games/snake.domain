@@ -83,10 +83,21 @@ Part Every 150:
 
 Part Draw:
     Cursed Technique: Apply
+        # `w.plane` is a `Sparse<Text>`, and `draw` has always taken one. What's
+        # new is that its cells may be `View`s instead of plain characters:
+        # `Map Cells` (the 1-parameter form, since a `Sparse` maps its default
+        # too) turns each glyph into a styled one, and `draw` lays the board out
+        # exactly as before, colour and all. `Reveal` never shows it — a replay
+        # diffs the same bytes either way — but a played terminal does.
+        Consider board Of
+            Cursed Technique: Apply
+                Using: (w) -> w.plane
+            Cursed Technique: Map Cells
+                Using: (c) -> if c = "o" then style(text(c), "green") else if c = "*" then style(text(c), "bold red") else text(c)
         Using: (w) ->
             stack(
                 beside(text("score "), style(text(totext(w.score)), "bold yellow")),
-                box(draw(w.plane)),
+                box(draw(board)),
                 text(if w.over then "game over" else "arrows move, q quits"))
 
 Part Ending:

@@ -3,6 +3,7 @@ package codegen
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -185,13 +186,7 @@ func (g *gen) ordered(code string, t *ir.Type) (string, error) {
 // directions: an argument to its left must be read before the write, and one
 // to its right after it.
 func (g *gen) orderArgs(exprs []ast.Expr, args []string, types []*ir.Type) error {
-	writes := false
-	for _, a := range exprs {
-		if ast.HasUpdate(a) {
-			writes = true
-			break
-		}
-	}
+	writes := slices.ContainsFunc(exprs, ast.HasUpdate)
 	if !writes || len(args) < 2 {
 		return nil
 	}
@@ -318,9 +313,7 @@ func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) 
 	// the compiler's own appetite.
 	var decls strings.Builder
 	inner := make(exprEnv, len(env)+4)
-	for k, v := range env {
-		inner[k] = v
-	}
+	maps.Copy(inner, env)
 	// Locals declared in this block, so a binding that shadows an earlier one
 	// gets a fresh Go name. Nested closures gave each binding its own scope for
 	// free; in one block a repeated `consider x` would be a redeclaration.
@@ -555,8 +548,9 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if _, err := listElem(0); err != nil {
 			return "", nil, err
 		}
-		g.helper("dm"+strings.Title(name), declBitReduce(name))
-		return "dm" + strings.Title(name) + "(" + args[0] + ")", ir.Int(), nil
+		fn := bitReduceName(name)
+		g.helper(fn, declBitReduce(name))
+		return fn + "(" + args[0] + ")", ir.Int(), nil
 	case "and", "or":
 		// A *function*, so both arguments are evaluated before it runs — the
 		// interpreter evaluates every argument before dispatching, and a
@@ -819,6 +813,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "dmLcm(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "modpow":
 		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmMulMod", declMulMod, "math/bits")
 		g.helper("dmModPow", declModPow)
 		return "dmModPow(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
 	case "mod":
@@ -849,7 +844,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "dmPow(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "isqrt":
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmISqrt", declISqrt)
+		g.helper("dmISqrt", declISqrt, "math")
 		return "dmISqrt(" + args[0] + ")", ir.Int(), nil
 	case "factorial":
 		g.helper("dmFail", declFail, "fmt", "os")
@@ -857,7 +852,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "dmFactorial(" + args[0] + ")", ir.Int(), nil
 	case "choose":
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmChoose", declChoose)
+		g.helper("dmChoose", declChoose, "math", "math/bits")
 		return "dmChoose(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "clamp":
 		g.helper("dmFail", declFail, "fmt", "os")
@@ -878,6 +873,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "dmClamp(" + a[0] + ", " + a[1] + ", " + a[2] + ")", res, nil
 	case "modinv":
 		g.helper("dmFail", declFail, "fmt", "os")
+		g.helper("dmMulMod", declMulMod, "math/bits")
 		g.helper("dmModInv", declModInv)
 		return "dmModInv(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 
@@ -2205,10 +2201,6 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 	default:
 		return "", nil, fmt.Errorf("unsupported operator %s", x.Op)
 	}
-}
-
-func scalarKind(k ir.TypeKind) bool {
-	return k == ir.KInt || k == ir.KFloat || k == ir.KText || k == ir.KBool
 }
 
 // isFloatType reports whether t is exactly Float.

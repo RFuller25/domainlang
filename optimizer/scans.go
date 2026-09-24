@@ -2,6 +2,7 @@ package optimizer
 
 import (
 	"fmt"
+	"slices"
 
 	"domain/ast"
 	"domain/eval"
@@ -64,8 +65,12 @@ func fuseSortTakeItem(p *ir.Pipeline) []Rewrite {
 // KthOrderStatistic returns the element at index k of xs sorted in the
 // requested order, without fully sorting. k must be in range.
 func KthOrderStatistic(xs []int64, k int, desc bool) int64 {
-	top := TopK(xs, k+1, desc)
-	return top[k]
+	a := slices.Clone(xs)
+	if desc {
+		k = len(a) - 1 - k
+	}
+	selectNth(a, k)
+	return a[k]
 }
 
 // ---------------------------------------------------------------------------
@@ -89,32 +94,11 @@ func fuseTripleSum(p *ir.Pipeline) []Rewrite {
 				continue
 			}
 
-			pos := n.Pos
-			n.Prim = "HashSetTripleScan"
 			n.Display = fmt.Sprintf("Cursed Hash-Set Triple Scan (sum = %d, Mode: %s)", target, mode)
 			n.Meta["target"] = target
-			if mode == "Count" {
-				n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-					xs, err := ir.AsIntSlice(v)
-					if err != nil {
-						return nil, &ir.RuntimeError{Prim: "HashSetTripleScan", Pos: pos, Msg: err.Error()}
-					}
-					return CountTripleSum(xs, target), nil
-				}
-			} else {
-				n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-					xs, err := ir.AsIntSlice(v)
-					if err != nil {
-						return nil, &ir.RuntimeError{Prim: "HashSetTripleScan", Pos: pos, Msg: err.Error()}
-					}
-					triple, ok := FindTripleSum(xs, target)
-					if !ok {
-						return nil, &ir.RuntimeError{Prim: "HashSetTripleScan", Pos: pos,
-							Msg: "no combination satisfied the predicate"}
-					}
-					return ir.IntsToValue(triple), nil
-				}
-			}
+			lowerIntScan(n, "HashSetTripleScan", mode,
+				func(xs []int64) int64 { return CountTripleSum(xs, target) },
+				func(xs []int64) ([]int64, bool) { return FindTripleSum(xs, target) })
 			rewrites = append(rewrites, Rewrite{Message: fmt.Sprintf(
 				"Domain rewrote Combinations 3 (sum = %d) → Cursed Hash-Set Triple Scan. Guaranteed hit.", target)})
 		}
@@ -236,33 +220,12 @@ func fusePairDiff(p *ir.Pipeline) []Rewrite {
 				continue
 			}
 
-			pos := n.Pos
-			n.Prim = "HashSetDiffScan"
 			n.Display = fmt.Sprintf("Cursed Hash-Set Difference Scan (diff = %d, Mode: %s)", target, mode)
 			n.Meta["target"] = target
 			n.Meta["flipped"] = flipped
-			if mode == "Count" {
-				n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-					xs, err := ir.AsIntSlice(v)
-					if err != nil {
-						return nil, &ir.RuntimeError{Prim: "HashSetDiffScan", Pos: pos, Msg: err.Error()}
-					}
-					return CountPairDiff(xs, target, flipped), nil
-				}
-			} else {
-				n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
-					xs, err := ir.AsIntSlice(v)
-					if err != nil {
-						return nil, &ir.RuntimeError{Prim: "HashSetDiffScan", Pos: pos, Msg: err.Error()}
-					}
-					pair, ok := FindPairDiff(xs, target, flipped)
-					if !ok {
-						return nil, &ir.RuntimeError{Prim: "HashSetDiffScan", Pos: pos,
-							Msg: "no combination satisfied the predicate"}
-					}
-					return ir.IntsToValue(pair), nil
-				}
-			}
+			lowerIntScan(n, "HashSetDiffScan", mode,
+				func(xs []int64) int64 { return CountPairDiff(xs, target, flipped) },
+				func(xs []int64) ([]int64, bool) { return FindPairDiff(xs, target, flipped) })
 			rewrites = append(rewrites, Rewrite{Message: fmt.Sprintf(
 				"Domain rewrote All Pairs (difference = %d) → Cursed Hash-Set Scan. Guaranteed hit.", target)})
 		}

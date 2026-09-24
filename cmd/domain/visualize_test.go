@@ -510,7 +510,7 @@ func visPlain(t *testing.T) []string {
 // of the two right-hand percentage columns to be filled and always present.
 func pctOn(t *testing.T, line string) float64 {
 	t.Helper()
-	for _, f := range strings.Fields(line) {
+	for f := range strings.FieldsSeq(line) {
 		if !strings.HasSuffix(f, "%") {
 			continue
 		}
@@ -1059,7 +1059,7 @@ func TestVisualModelTinyTerminal(t *testing.T) {
 		if out := m.View().Content; out == "" {
 			t.Errorf("%s should render something on a tiny terminal", key)
 		}
-		for _, line := range strings.Split(strings.TrimRight(m.View().Content, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(m.View().Content, "\n"), "\n") {
 			if n := ansi.StringWidth(line); n > 20 {
 				t.Errorf("%s: line is %d columns wide, want <= 20: %q", key, n, line)
 			}
@@ -1206,7 +1206,7 @@ func TestVisualizePlainShowsWhatABlockProduced(t *testing.T) {
 	}
 	// The block's row carries the body's type in the out-type column rather
 	// than the List<Int> it passes through.
-	for _, line := range strings.Split(got, "\n") {
+	for line := range strings.SplitSeq(got, "\n") {
 		if strings.HasPrefix(line, `Channel "total"`) && !strings.Contains(line, "Int") {
 			t.Errorf("the channel row should report its body's Int result:\n%s", line)
 		}
@@ -1578,7 +1578,7 @@ func TestVisualizePlainFoldsUsingBodies(t *testing.T) {
 		t.Errorf("the body's steps should appear once, folded, got %d:\n%s", n, got)
 	}
 	// And the body's rows are under the stage that ran them, not beside it.
-	for _, line := range strings.Split(got, "\n") {
+	for line := range strings.SplitSeq(got, "\n") {
 		if strings.HasPrefix(line, "Convert List to Integers") || strings.HasPrefix(line, "Sum ") {
 			t.Errorf("a body's step should not be a top-level row:\n%s", line)
 		}

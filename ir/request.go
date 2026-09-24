@@ -20,6 +20,32 @@ type RequestSpec struct {
 	TimeoutMS int64
 }
 
+// CollectRequestSpecs walks a pipeline for the requests it can fire, keyed by
+// tag.
+//
+// A Request may sit anywhere a statement may — inside a Start, an input
+// handler, a timer, a Shikigami inlined into any of them — so this recurses
+// through every node list rather than looking only at the top level. Missing
+// one would mean a reply arriving with no shape to decode into.
+func CollectRequestSpecs(nodes []*Node, out map[string]*RequestSpec) {
+	for _, n := range nodes {
+		if n == nil || n.Meta == nil {
+			continue
+		}
+		if spec, ok := n.Meta["request"].(*RequestSpec); ok && spec != nil {
+			out[spec.Tag] = spec
+		}
+		if sub, ok := n.Meta["nodes"].([]*Node); ok {
+			CollectRequestSpecs(sub, out)
+		}
+		if subs, ok := n.Meta[MetaBindNodes].([][]*Node); ok {
+			for _, s := range subs {
+				CollectRequestSpecs(s, out)
+			}
+		}
+	}
+}
+
 // RequestCall is one firing: the spec, plus what the lambdas made of the world.
 type RequestCall struct {
 	Spec    *RequestSpec

@@ -9,7 +9,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -149,9 +148,7 @@ func Coverage(root string, opts coverageOptions, stdout, stderr io.Writer) int {
 	rep := &coverageReport{Root: root, Dynamic: opts.Dynamic, Total: len(progs)}
 	rep.collect(progs)
 	if opts.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(rep.jsonShape(opts)); err != nil {
+		if err := writeJSON(stdout, rep.jsonShape(opts)); err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 1
 		}
@@ -506,7 +503,7 @@ func (r *coverageReport) jsonShape(opts coverageOptions) coverageJSON {
 		sort.Strings(out.NeverRan)
 	}
 	for _, s := range r.Skipped {
-		out.Skipped = append(out.Skipped, skippedJSON{s.Path, s.Reason})
+		out.Skipped = append(out.Skipped, skippedJSON(s))
 	}
 	return out
 }

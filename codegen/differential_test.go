@@ -131,7 +131,7 @@ func genGridInput(r *rand.Rand) string {
 	lines := make([]string, rows)
 	for i := range lines {
 		var row strings.Builder
-		for c := 0; c < cols; c++ {
+		for range cols {
 			fmt.Fprintf(&row, "%d", r.Intn(10))
 		}
 		lines[i] = row.String()

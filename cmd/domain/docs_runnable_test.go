@@ -166,7 +166,7 @@ func TestDocExamplesCompile(t *testing.T) {
 // answer is on one line by construction — the declaration is hoisted, so it
 // needs no context to be read.
 func exampleScope(src string) string {
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		line = strings.TrimSpace(line)
 		if rest, ok := strings.CutPrefix(line, "Innate Domain:"); ok {
 			return strings.TrimSpace(rest)

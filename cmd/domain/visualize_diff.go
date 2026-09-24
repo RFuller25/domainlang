@@ -172,11 +172,11 @@ func scalarChange(in, out recordedValue, w int) []string {
 		return []string{styDim.Render("  unchanged"), "  " + styValue.Render(truncateVis(before, w-2))}
 	}
 	lines := []string{styDim.Render("  was")}
-	for _, l := range strings.Split(before, "\n") {
+	for l := range strings.SplitSeq(before, "\n") {
 		lines = append(lines, "  "+styErr.Render(truncateVis(showEnds(l), w-2)))
 	}
 	lines = append(lines, "", styDim.Render("  now"))
-	for _, l := range strings.Split(after, "\n") {
+	for l := range strings.SplitSeq(after, "\n") {
 		lines = append(lines, "  "+styMatch.Render(truncateVis(showEnds(l), w-2)))
 	}
 	return lines

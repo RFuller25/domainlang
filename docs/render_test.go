@@ -401,7 +401,7 @@ func TestNoPageShowsLiteralEmphasisMarkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := astar.ReplaceAllString(code.ReplaceAllString(renderMarkdown(t, string(md)), ""), "")
-		for _, line := range strings.Split(text, "\n") {
+		for line := range strings.SplitSeq(text, "\n") {
 			if strings.Contains(line, "*") {
 				t.Errorf("%s renders a literal asterisk: %s", page, strings.TrimSpace(line))
 			}

@@ -173,9 +173,17 @@ func (m devModel) diagnosticLine() string {
 type devInspect struct{ lines []string }
 
 // inspectAtCursor builds the panel, or reports that there is nothing to say.
+//
+// A name under the cursor is answered first. Pointing at a word is a question
+// about that word — where does `total` come from, and what is it? — and the
+// statement it sits on is only the answer when the cursor is not on a name the
+// program declares.
 func (m devModel) inspectAtCursor() (devInspect, bool) {
 	if m.intel.analysis == nil {
 		return devInspect{}, false
+	}
+	if sym, ok := m.intel.analysis.SymbolAt(m.buf.row+1, m.buf.col); ok {
+		return devInspect{lines: symbolPanel(sym)}, true
 	}
 	ins, ok := m.intel.analysis.InspectLine(m.buf.row + 1)
 	if !ok {
@@ -200,6 +208,31 @@ func (m devModel) inspectAtCursor() (devInspect, bool) {
 	return devInspect{lines: out}, true
 }
 
+// symbolPanel describes one declared name: its type, where it came from, the
+// line that declares it, and — for a global — the lines that change it, which
+// is the difference between a constant and something a loop is driving.
+func symbolPanel(sym lsp.Symbol) []string {
+	head := styTitle.Render(sym.Name)
+	if sym.Type != "" {
+		head += styDim.Render(" : ") + styType.Render(sym.Type)
+	}
+	out := []string{head, styDim.Render(fmt.Sprintf("%s, line %d", sym.Kind, sym.Pos.Line))}
+	if sym.Decl != "" {
+		out = append(out, "", highlightSource(sym.Decl, true))
+	}
+	switch {
+	case len(sym.Writes) > 0:
+		lines := make([]string, len(sym.Writes))
+		for i, l := range sym.Writes {
+			lines[i] = fmt.Sprint(l)
+		}
+		out = append(out, "", styDim.Render("written on line "+strings.Join(lines, ", ")))
+	case sym.Kind == lsp.KindGlobal:
+		out = append(out, "", styDim.Render("never written after it is declared"))
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // go to definition
 // ---------------------------------------------------------------------------
@@ -211,9 +244,9 @@ func (m devModel) jumpToDefinition() (devModel, bool) {
 		return m, false
 	}
 	from, fromLine := m.path, m.buf.row+1
-	loc, ok := m.intel.analysis.DefinitionAt(m.buf.row + 1)
+	loc, ok := m.intel.analysis.DefinitionAtPos(m.buf.row+1, m.buf.col)
 	if !ok {
-		m.status = "no Shikigami call on this line"
+		m.status = "no name under the cursor, and no Shikigami call on this line"
 		return m, false
 	}
 	switch {

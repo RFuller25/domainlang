@@ -295,7 +295,7 @@ func read(t *testing.T, path string) string {
 func openingOf(t *testing.T, path string) string {
 	t.Helper()
 	seenSource := false
-	for _, line := range strings.Split(read(t, path), "\n") {
+	for line := range strings.SplitSeq(read(t, path), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue

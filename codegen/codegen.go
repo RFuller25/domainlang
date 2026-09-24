@@ -317,7 +317,7 @@ func (g *gen) readMarks(src string) (string, map[*ir.Node]Span) {
 	spans := map[*ir.Node]Span{}
 	starts := map[int]int{} // marker id -> the line its code starts on
 	var kept []string
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		mark := strings.TrimSpace(line)
 		if !strings.HasPrefix(mark, markPrefix) {
 			kept = append(kept, line)
@@ -454,6 +454,14 @@ func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
 			i += consumed - 1
 			continue
 		}
+		if consumed, v, ok, err := g.tryStream(nodes[i:], cur); err != nil {
+			return "", err
+		} else if ok {
+			endMark()
+			cur = v
+			i += consumed - 1
+			continue
+		}
 		mark := g.main.Len()
 		v, err := g.emitNode(nodes[i], cur)
 		if err != nil {
@@ -464,6 +472,15 @@ func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
 		cur = v
 	}
 	return cur, nil
+}
+
+// keepElem blanks an element variable that the code consuming it never
+// mentions — a lambda may ignore its parameter (`(s) -> 5`), and Go refuses a
+// variable nothing reads. The same job keepAlive does between whole stages.
+func (g *gen) keepElem(elem, code string) {
+	if !regexp.MustCompile(`\b` + regexp.QuoteMeta(elem) + `\b`).MatchString(code) {
+		g.wl("_ = %s", elem)
+	}
 }
 
 // keepAlive blanks the previous pipeline variable when the node that just ran
@@ -652,6 +669,10 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitZipWith(n, in)
 	case "Group By":
 		return g.emitGroupBy(n, in)
+	case "Group Reduce":
+		return g.emitGroupReduce(n, in)
+	case "Text Fold":
+		return g.emitTextFold(n, in)
 	case "Intersect", "Union":
 		return g.emitSetReduce(n, in)
 	case "Difference":
@@ -775,9 +796,9 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 	case "Part":
 		return g.emitPart(n, in)
 	case "Quit":
-		return g.emitQuit(n, in)
+		return g.emitSignal(n, in, "dmQuit")
 	case "Beep":
-		return g.emitBeep(n, in)
+		return g.emitSignal(n, in, "dmBeep")
 	case "Load":
 		return g.emitLoad(n, in)
 	case "Save":
@@ -1032,10 +1053,10 @@ func lessExpr(t *ir.Type, a, b string) (string, error) {
 	case ir.KTuple:
 		// Built right to left: f0 < f0 || (f0 == f0 && (f1 < f1 || ...)).
 		expr := ""
-		for i := len(t.Elems) - 1; i >= 0; i-- {
+		for i, v := range slices.Backward(t.Elems) {
 			af := a + "." + tupleField(i)
 			bf := b + "." + tupleField(i)
-			inner, err := lessExpr(t.Elems[i], af, bf)
+			inner, err := lessExpr(v, af, bf)
 			if err != nil {
 				return "", err
 			}
@@ -1093,7 +1114,8 @@ func (g *gen) emitPartialSelect(n *ir.Node, in string) (string, error) {
 	if hasMeasured(n, "k") {
 		k = "int(" + k + ")"
 	}
-	g.helper("dmTopK", declTopK, "sort")
+	g.helper("dmSelectNth", declSelectNth)
+	g.helper("dmTopK", declTopK, "slices")
 	if !thenSum {
 		v := g.fresh("v")
 		g.wl("%s := dmTopK(%s, %s, %v)", v, in, k, desc)
@@ -1277,59 +1299,29 @@ func (g *gen) emitHashSetPairScan(n *ir.Node, in string) (string, error) {
 // emitHashSetDiffScan lowers the optimizer's O(n) rewrite of the
 // difference-to-constant pair search (optimizer.fusePairDiff).
 func (g *gen) emitHashSetDiffScan(n *ir.Node, in string) (string, error) {
-	mode, _ := n.Meta["mode"].(string)
-	target, ok := n.Meta["target"].(int64)
-	if !ok {
-		return "", unsupported(n, "missing target metadata")
-	}
 	flipped, _ := n.Meta["flipped"].(bool)
-	v := g.fresh("v")
-	if mode == "Count" {
-		g.helper("dmDiffCount", declDiffCount)
-		g.wl("%s := dmDiffCount(%s, %d, %v)", v, in, target, flipped)
-		return v, nil
-	}
-	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmDiffFirst", declDiffFirst)
-	okv := g.fresh("ok")
-	g.wl("%s, %s := dmDiffFirst(%s, %d, %v)", v, okv, in, target, flipped)
-	g.wl("if !%s {", okv)
-	g.in()
-	g.wl("dmFail(%s)", goStr("no combination satisfied the predicate"))
-	g.out()
-	g.wl("}")
-	return v, nil
+	return g.emitTargetScan(n, in, fmt.Sprintf(", %v", flipped),
+		"dmDiffCount", declDiffCount, "dmDiffFirst", declDiffFirst)
 }
 
 // emitHashSetTripleScan lowers the optimizer's O(n²) rewrite of the
 // sum-to-constant triple search (optimizer.fuseTripleSum).
 func (g *gen) emitHashSetTripleScan(n *ir.Node, in string) (string, error) {
-	mode, _ := n.Meta["mode"].(string)
-	target, ok := n.Meta["target"].(int64)
-	if !ok {
-		return "", unsupported(n, "missing target metadata")
-	}
-	v := g.fresh("v")
-	if mode == "Count" {
-		g.helper("dmTripleCount", declTripleCount)
-		g.wl("%s := dmTripleCount(%s, %d)", v, in, target)
-		return v, nil
-	}
-	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmTripleFirst", declTripleFirst)
-	okv := g.fresh("ok")
-	g.wl("%s, %s := dmTripleFirst(%s, %d)", v, okv, in, target)
-	g.wl("if !%s {", okv)
-	g.in()
-	g.wl("dmFail(%s)", goStr("no combination satisfied the predicate"))
-	g.out()
-	g.wl("}")
-	return v, nil
+	return g.emitTargetScan(n, in, "",
+		"dmTripleCount", declTripleCount, "dmTripleFirst", declTripleFirst)
 }
 
 // emitDivisorPairScan lowers the optimizer's O(n) rewrite of the
 // product-to-constant pair search (optimizer.fuseAllPairsProduct).
 func (g *gen) emitDivisorPairScan(n *ir.Node, in string) (string, error) {
+	return g.emitTargetScan(n, in, "",
+		"dmProductCount", declProductCount, "dmProductFirst", declProductFirst)
+}
+
+// emitTargetScan calls the runtime helper behind one of the optimizer's
+// target scans: countFn(in, target extra) in Mode Count, and in Mode First
+// firstFn, failing the way the interpreter does when nothing matched.
+func (g *gen) emitTargetScan(n *ir.Node, in, extra, countFn, countDecl, firstFn, firstDecl string) (string, error) {
 	mode, _ := n.Meta["mode"].(string)
 	target, ok := n.Meta["target"].(int64)
 	if !ok {
@@ -1337,14 +1329,14 @@ func (g *gen) emitDivisorPairScan(n *ir.Node, in string) (string, error) {
 	}
 	v := g.fresh("v")
 	if mode == "Count" {
-		g.helper("dmProductCount", declProductCount)
-		g.wl("%s := dmProductCount(%s, %d)", v, in, target)
+		g.helper(countFn, countDecl)
+		g.wl("%s := %s(%s, %d%s)", v, countFn, in, target, extra)
 		return v, nil
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmProductFirst", declProductFirst)
+	g.helper(firstFn, firstDecl)
 	okv := g.fresh("ok")
-	g.wl("%s, %s := dmProductFirst(%s, %d)", v, okv, in, target)
+	g.wl("%s, %s := %s(%s, %d%s)", v, okv, firstFn, in, target, extra)
 	g.wl("if !%s {", okv)
 	g.in()
 	g.wl("dmFail(%s)", goStr("no combination satisfied the predicate"))
@@ -1354,7 +1346,7 @@ func (g *gen) emitDivisorPairScan(n *ir.Node, in string) (string, error) {
 }
 
 // emitQuickselectItem lowers the optimizer's Sort + Take Item fusion: the
-// kth order statistic via dmTopK, with Take Item's bounds behavior.
+// kth order statistic via dmSelectItem, with Take Item's bounds behavior.
 func (g *gen) emitQuickselectItem(n *ir.Node, in string) (string, error) {
 	idx, _ := n.Meta["index"].(int)
 	desc, _ := n.Meta["desc"].(bool)
@@ -1366,6 +1358,7 @@ func (g *gen) emitQuickselectItem(n *ir.Node, in string) (string, error) {
 		g.wl("var %s int64", v)
 		return v, nil
 	}
+	g.helper("dmSelectNth", declSelectNth)
 	g.helper("dmSelectItem", declSelectItem)
 	g.wl("if len(%s) <= %d {", in, idx)
 	g.in()
@@ -1600,6 +1593,7 @@ func (g *gen) emitMapEach(n *ir.Node, in string) (string, error) {
 	g.wl("%s := make([]%s, len(%s))", v, outElemGo, in)
 	g.wl("for %s, %s := range %s {", i, e, in)
 	g.in()
+	g.keepElem(e, body)
 	g.wl("%s[%s] = %s", v, i, body)
 	g.out()
 	g.wl("}")
@@ -1619,28 +1613,16 @@ func (g *gen) emitSplitMapSum(sep string, mapNode, sumNode *ir.Node, in string) 
 	if err != nil {
 		return "", unsupported(sumNode, "%v", err)
 	}
-	v := g.fresh("v")
-	str, idx, line := g.fresh("str"), g.fresh("idx"), g.fresh("line")
+	v, line := g.fresh("v"), g.fresh("line")
 	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: line, typ: mapNode.In.Elem}})
 	if err != nil {
 		return "", unsupported(mapNode, "lambda: %v", err)
 	}
 	g.wl("var %s %s", v, acc)
-	g.wl("%s := %s", str, in)
-	g.wl("for {")
-	g.in()
-	if len(sep) == 1 {
-		g.wl("%s := strings.IndexByte(%s, %q)", idx, str, sep[0])
-	} else {
-		g.wl("%s := strings.Index(%s, %s)", idx, str, goStr(sep))
-	}
-	g.wl("%s := %s", line, str)
-	g.wl("if %s >= 0 { %s = %s[:%s] }", idx, line, str, idx)
-	g.wl("%s += %s", v, body)
-	g.wl("if %s < 0 { break }", idx)
-	g.wl("%s = %s[%s+%d:]", str, str, idx, len(sep))
-	g.out()
-	g.wl("}")
+	g.emitLines(sep, in, line, func() {
+		g.keepElem(line, body)
+		g.wl("%s += %s", v, body)
+	})
 	return v, nil
 }
 
@@ -1663,6 +1645,7 @@ func (g *gen) emitMapSum(n *ir.Node, in string) (string, error) {
 	g.wl("var %s %s", v, acc)
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
+	g.keepElem(e, body)
 	g.wl("%s += %s", v, body)
 	g.out()
 	g.wl("}")
@@ -1787,6 +1770,7 @@ func (g *gen) emitFold(n *ir.Node, in string) (string, error) {
 	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
+	g.keepElem(e, body)
 	g.wl("%s = %s", acc, body)
 	g.out()
 	g.wl("}")

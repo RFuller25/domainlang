@@ -653,9 +653,7 @@ func ResolveWith(prog *ast.Program, opts ResolveOptions) (pipe *ir.Pipeline, err
 		delete(r.displays, d.Name)
 	}
 	if opts.Sites != nil {
-		for name, site := range r.origins {
-			opts.Sites[name] = site
-		}
+		maps.Copy(opts.Sites, r.origins)
 	}
 
 	// A role that *defines* rather than runs — `Part Entity "Creep":` — lowers

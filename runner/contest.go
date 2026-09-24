@@ -288,13 +288,6 @@ func splitLines(b []byte) []string {
 	return out
 }
 
-// SameOutput reports whether two results printed the same thing, ignoring a
-// trailing newline.
-func SameOutput(a, b *Result) bool {
-	n, _, _ := firstDifference(a.Stdout, b.Stdout)
-	return n == 0
-}
-
 // Speedup is a ÷ b as a ratio, or 0 when either side has no time.
 func Speedup(a, b time.Duration) float64 {
 	if a <= 0 || b <= 0 {

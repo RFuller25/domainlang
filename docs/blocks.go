@@ -58,16 +58,6 @@ func (b Block) hasFlag(want string) bool {
 	return false
 }
 
-// Flag returns the value of a `key=value` entry in the info string.
-func (b Block) Flag(key string) (string, bool) {
-	for _, f := range b.flags() {
-		if v, ok := strings.CutPrefix(f, key+"="); ok {
-			return v, true
-		}
-	}
-	return "", false
-}
-
 // Blocks extracts every fenced block from one page, whatever its language.
 // Callers filter by Lang; keeping them all is what lets the runnable harness
 // find the ```input and ```output blocks that follow a ```domain run.
@@ -190,7 +180,7 @@ func Examples(page, src string) ([]Example, string) {
 // Source reports the file the program reads, and whether it reads stdin.
 // `Cursed Energy: <target>` names a file; the literal `stdin` reads stdin.
 func (e Example) Source() (file string, stdin bool) {
-	for _, line := range strings.Split(e.Block.Source, "\n") {
+	for line := range strings.SplitSeq(e.Block.Source, "\n") {
 		t := strings.TrimSpace(line)
 		rest, ok := strings.CutPrefix(t, "Cursed Energy:")
 		if !ok {

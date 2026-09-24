@@ -432,14 +432,18 @@ func writeMahoragaVerdict(w io.Writer, r *mahoraga.Recipe, opts mahoraga.Options
 	// was moving underneath it.
 	if r.DriftedRaces > 0 {
 		fmt.Fprintf(w, "  %d of %d races ran while the machine was more than %.0f%% away from\n",
-			r.DriftedRaces, len(r.Adaptations), mahoraga.DriftNotable*100)
+			r.DriftedRaces, max(r.Races, r.DriftedRaces), mahoraga.DriftNotable*100)
 		fmt.Fprintf(w, "  where it started — the comparisons still hold, the box was just busy\n")
 	}
 	// A candidate that measured faster and still could not be told from the
 	// champion is not a failed candidate; it is a question the measurement
-	// budget could not answer. Saying so is the difference between "this does
-	// not work here" and "ask again with more runs", and only one of those is
-	// something the user can act on.
+	// budget could not answer. The search now spends some of that budget
+	// answering it — the second look re-races them at full length — so the
+	// report says what was re-asked before it says what is still open.
+	if r.SecondLook > 0 {
+		fmt.Fprintf(w, "  %d candidate(s) the screen could not settle were raced again at full\n", r.SecondLook)
+		fmt.Fprintf(w, "  length after the turns; anything kept from that is listed above\n")
+	}
 	if r.Inconclusive > 0 {
 		fmt.Fprintf(w, "  %d looked faster and could not be distinguished from the champion —\n", r.Inconclusive)
 		fmt.Fprintf(w, "  a quieter machine or `--runs %d` would settle them\n", 3*max(opts.BaselineRuns, mahoraga.DefaultBaselineRuns))

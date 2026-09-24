@@ -3,6 +3,7 @@ package optimizer
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"domain/ast"
 	"domain/eval"
@@ -376,7 +377,7 @@ func fuseFoldSum(p *ir.Pipeline) []Rewrite {
 				continue
 			}
 			lam := nodeLambda(n)
-			if lam == nil || len(lam.Params) != 2 || !isSumOf(lam.Body, lam.Params[0], lam.Params[1]) {
+			if lam == nil || len(lam.Params) != 2 || !isPairOp(lam.Body, token.PLUS, lam.Params[0], lam.Params[1]) {
 				continue
 			}
 			pos := n.Pos
@@ -403,6 +404,127 @@ func fuseFoldSum(p *ir.Pipeline) []Rewrite {
 		}
 	}
 	return rewrites
+}
+
+// fuseTextFold turns a Fold that builds Text by appending to its accumulator —
+// `Seed: "…"` and `(acc, x) -> acc + e1 + e2 …` with no eᵢ reading acc — into
+// one buffer written once per element. Appending to a Text copies all of it,
+// so the fold was quadratic in its output: 80k short lines took seconds in
+// either backend, where a buffer takes milliseconds.
+//
+// The parts run on the same elements in the same order, left to right, as
+// they did inside the fold, so a part that fails fails on the same element and
+// is reported as the Fold's own failure.
+func fuseTextFold(p *ir.Pipeline) []Rewrite {
+	var rewrites []Rewrite
+	for _, list := range nodeLists(p) {
+		for i, n := range list {
+			if n.Prim != "Fold" || hasMeasuredArg(n) || n.In == nil || n.In.Kind != ir.KList {
+				continue
+			}
+			seed, ok := n.Meta["seed"].(string)
+			if !ok {
+				continue
+			}
+			lam := nodeLambda(n)
+			if lam == nil || len(lam.Params) != 2 {
+				continue
+			}
+			parts, ok := appendsTo(lam.Body, lam.Params[0])
+			if !ok {
+				continue
+			}
+			tail := parts[0]
+			for _, e := range parts[1:] {
+				tail = &ast.BinaryExpr{Op: token.PLUS, Left: tail, Right: e, Pos: exprPos(e)}
+			}
+			step := &ast.Lambda{Params: lam.Params, Body: tail, Pos: lam.Pos}
+			elem, pos := n.In.Elem, n.Pos
+			list[i] = &ir.Node{
+				Prim:    "Text Fold",
+				In:      n.In,
+				Out:     ir.Text(),
+				Display: "Fold (Text, appended to one buffer)",
+				Meta:    map[string]any{"lambda": step, "seed": seed},
+				Pos:     pos,
+				Eval: func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+					items, err := ir.AsList(v)
+					if err != nil {
+						return nil, &ir.RuntimeError{Prim: "Fold", Pos: pos, Msg: err.Error()}
+					}
+					var b strings.Builder
+					b.WriteString(seed)
+					for k, e := range items {
+						r, err := eval.EvalLambdaTyped(step, []*ir.Type{ir.Text(), elem}, "", e)
+						if err != nil {
+							return nil, &ir.RuntimeError{Prim: "Fold", Pos: pos, Msg: fmt.Sprintf("element %d: %v", k, err)}
+						}
+						b.WriteString(r.(string))
+					}
+					return b.String(), nil
+				},
+			}
+			rewrites = append(rewrites, Rewrite{Message: "Domain rewrote Fold (Text, `acc + …`) → one buffer appended once per element: " +
+				"no copy of everything built so far on every step. Guaranteed hit."})
+		}
+	}
+	return rewrites
+}
+
+// appendsTo recognises `acc + e1 + e2 …` (either association) where acc is
+// the leftmost operand and no eᵢ mentions it, returning e1, e2, ….
+func appendsTo(body ast.Expr, acc string) ([]ast.Expr, bool) {
+	var parts []ast.Expr
+	cur := body
+	for {
+		be, ok := cur.(*ast.BinaryExpr)
+		if !ok || be.Op != token.PLUS {
+			break
+		}
+		parts = append([]ast.Expr{be.Right}, parts...)
+		cur = be.Left
+	}
+	if id, ok := cur.(*ast.Ident); !ok || id.Name != acc || len(parts) == 0 {
+		return nil, false
+	}
+	for _, e := range parts {
+		if mentions(e, acc) {
+			return nil, false
+		}
+	}
+	return parts, true
+}
+
+// mentions reports whether name occurs anywhere in e. A node kind it does not
+// know counts as a mention, so an unfamiliar shape stands the rewrite down.
+func mentions(e ast.Expr, name string) bool {
+	switch x := e.(type) {
+	case *ast.IntLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.GlobalRef:
+		return false
+	case *ast.Ident:
+		return x.Name == name
+	case *ast.UnaryExpr:
+		return mentions(x.X, name)
+	case *ast.BinaryExpr:
+		return mentions(x.Left, name) || mentions(x.Right, name)
+	case *ast.FieldAccess:
+		return mentions(x.Target, name)
+	case *ast.CallExpr:
+		if mentions(x.Fn, name) {
+			return true
+		}
+		for _, a := range x.Args {
+			if mentions(a, name) {
+				return true
+			}
+		}
+		return false
+	case *ast.CondExpr:
+		return mentions(x.Cond, name) || mentions(x.Then, name) || mentions(x.Else, name)
+	case *ast.LetExpr:
+		return mentions(x.Value, name) || (x.Name != name && mentions(x.Body, name))
+	}
+	return true
 }
 
 // elideConstPredicates handles predicates the expression passes folded to a

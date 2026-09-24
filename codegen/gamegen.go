@@ -19,6 +19,7 @@ package codegen
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -162,34 +163,12 @@ func readGame(p *ir.Pipeline) (*gameProgram, error) {
 	slices.SortStableFunc(prog.every, func(a, b *gamePart) int {
 		return int(a.period - b.period)
 	})
-	collectRequestSpecs(p.Nodes, prog.specs)
+	ir.CollectRequestSpecs(p.Nodes, prog.specs)
 	for tag := range prog.specs {
 		prog.tags = append(prog.tags, tag)
 	}
 	slices.Sort(prog.tags)
 	return prog, nil
-}
-
-// collectRequestSpecs walks a pipeline for the requests it can fire. A Request
-// may sit anywhere a statement may — inside a Start, a handler, a timer, a
-// Shikigami inlined into any of them — so this recurses.
-func collectRequestSpecs(nodes []*ir.Node, out map[string]*ir.RequestSpec) {
-	for _, n := range nodes {
-		if n == nil || n.Meta == nil {
-			continue
-		}
-		if spec, ok := n.Meta["request"].(*ir.RequestSpec); ok && spec != nil {
-			out[spec.Tag] = spec
-		}
-		if sub, ok := n.Meta["nodes"].([]*ir.Node); ok {
-			collectRequestSpecs(sub, out)
-		}
-		if subs, ok := n.Meta[ir.MetaBindNodes].([][]*ir.Node); ok {
-			for _, s := range subs {
-				collectRequestSpecs(s, out)
-			}
-		}
-	}
 }
 
 // emitGameParts compiles every Part body into a function of its own.
@@ -258,9 +237,7 @@ func (g *gen) partFunc(prog *gameProgram, part *gamePart, in, out *ir.Type) erro
 
 	sig := param + " " + inGo
 	binds := make(exprEnv, len(savedBinds)+len(part.binds))
-	for k, v := range savedBinds {
-		binds[k] = v
-	}
+	maps.Copy(binds, savedBinds)
 	for _, b := range part.binds {
 		p := g.fresh("pb")
 		bindGo, terr := g.goType(b.Type)
@@ -468,14 +445,17 @@ func replyFields(t *ir.Type) replyFieldNames {
 // the Game Dev vocabulary (prims/gamevocab.go)
 // ---------------------------------------------------------------------------
 
-// emitQuit lowers `Simple Domain: Quit`. It is a passthrough: the world it was
-// given is the world it hands back, so the Part it sits in still satisfies its
-// contract and the value that reaches `Part Ending:` is the one the game ended
-// on.
-func (g *gen) emitQuit(n *ir.Node, in string) (string, error) {
+// emitSignal lowers `Simple Domain: Quit` and `Beep`. Each is a passthrough:
+// the value it was given is the value it hands back, so the Part it sits in
+// still satisfies its contract. It sets a flag (dmQuit, dmBeep) the runtime
+// checks after the body returns, rather than doing anything itself, because
+// ending the game and ringing the bell are the runtime's business — consumed
+// once per frame, in both the played loop and the replayed one, on the same
+// terms game/play.go and game/replay.go check them.
+func (g *gen) emitSignal(n *ir.Node, in, flag string) (string, error) {
 	lam, _ := n.Meta["lambda"].(*ast.Lambda)
 	if lam == nil {
-		g.wl("dmQuit = true")
+		g.wl("%s = true", flag)
 		return in, nil
 	}
 	g.bindAmbientParams(lam)
@@ -485,32 +465,7 @@ func (g *gen) emitQuit(n *ir.Node, in string) (string, error) {
 	}
 	g.wl("if %s {", cond)
 	g.in()
-	g.wl("dmQuit = true")
-	g.out()
-	g.wl("}")
-	return in, nil
-}
-
-// emitBeep lowers `Simple Domain: Beep`. Same shape as emitQuit — a
-// passthrough that sets a flag the runtime checks after the body returns,
-// rather than doing anything itself, because ringing the bell is the
-// runtime's business (dmBeep is consumed once per frame, in both the played
-// loop and the replayed one, on the same terms game/play.go and
-// game/replay.go check dmQuit).
-func (g *gen) emitBeep(n *ir.Node, in string) (string, error) {
-	lam, _ := n.Meta["lambda"].(*ast.Lambda)
-	if lam == nil {
-		g.wl("dmBeep = true")
-		return in, nil
-	}
-	g.bindAmbientParams(lam)
-	cond, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
-	g.wl("if %s {", cond)
-	g.in()
-	g.wl("dmBeep = true")
+	g.wl("%s = true", flag)
 	g.out()
 	g.wl("}")
 	return in, nil

@@ -39,7 +39,7 @@ import (
 // whether its first meaningful line is a source stage. `Inherited Technique` and
 // `Shikigami` definitions may precede it, since both are declarations.
 func isProgram(src string) bool {
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		t := strings.TrimSpace(line)
 		if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(line, " ") {
 			continue

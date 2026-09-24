@@ -4,10 +4,8 @@ import (
 	"fmt"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // Sparse grid primitives: the dedicated nested/sparse grid type.
@@ -263,7 +261,7 @@ func mapCellsSparseNode(args ArgSet, in *ir.Type, pos token.Position) (*ir.Node,
 	if err != nil {
 		return nil, err
 	}
-	outElem, err := typecheck.LambdaType(lam, append([]*ir.Type{in.Elem}, ambientTypes()...)...)
+	outElem, err := lambdaType(lam, in.Elem)
 	if err != nil {
 		return nil, &ResolveError{Pos: pos, Msg: "Map Cells: " + err.Error()}
 	}
@@ -279,13 +277,13 @@ func mapCellsSparseNode(args ArgSet, in *ir.Type, pos token.Position) (*ir.Node,
 			if !ok {
 				return nil, runtimeErr("Map Cells", pos, "expected Sparse, got %s", ir.DescribeValue(v))
 			}
-			newDef, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in.Elem}, ambientTypes()...), append([]ir.Value{sp.Def}, ambientArgs()...)...)
+			newDef, err := evalLambda(lam, []*ir.Type{in.Elem}, sp.Def)
 			if err != nil {
 				return nil, runtimeErr("Map Cells", pos, "default: %v", err)
 			}
 			out := ir.NewSparseValue(newDef)
 			for _, p := range sp.Points() {
-				r, err := eval.EvalLambdaTyped(lam, append([]*ir.Type{in.Elem}, ambientTypes()...), append([]ir.Value{sp.At(p[0], p[1])}, ambientArgs()...)...)
+				r, err := evalLambda(lam, []*ir.Type{in.Elem}, sp.At(p[0], p[1]))
 				if err != nil {
 					return nil, runtimeErr("Map Cells", pos, "cell (%d, %d): %v", p[0], p[1], err)
 				}

@@ -15,7 +15,7 @@ import (
 // bruteFirstPair is the naive oracle: the values of the lexicographically-first
 // index pair i<j summing to target.
 func bruteFirstPair(xs []int64, target int64) ([]int64, bool) {
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			if xs[i]+xs[j] == target {
 				return []int64{xs[i], xs[j]}, true
@@ -27,7 +27,7 @@ func bruteFirstPair(xs []int64, target int64) ([]int64, bool) {
 
 func bruteCountPairs(xs []int64, target int64) int64 {
 	var c int64
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			if xs[i]+xs[j] == target {
 				c++
@@ -41,7 +41,7 @@ func bruteCountPairs(xs []int64, target int64) int64 {
 // oracle across many random inputs (the v0.1 oracle methodology).
 func TestPairSumMatchesOracle(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
-	for iter := 0; iter < 3000; iter++ {
+	for iter := range 3000 {
 		n := rng.Intn(20)
 		xs := make([]int64, n)
 		for i := range xs {
@@ -127,7 +127,7 @@ func dupParamLambda() *ast.Lambda {
 // repeated parameter name), and eval.EvalLambda's map-based Env made the
 // second binding shadow the first, so the naive evaluator only ever saw one
 // element of the pair (doubled) — it never actually summed two distinct list
-// elements. matchSumPair used to accept this shape anyway (isSumOf only
+// elements. matchSumPair used to accept this shape anyway (isPairOp only
 // checks that the two operand names are {p0, p1} as a set), which meant the
 // optimizer would install a real two-distinct-element hash-set scan in place
 // of a naive path that computes something else entirely — an optimization

@@ -1,6 +1,6 @@
 # Mahoraga: adapting a program to one input
 
-The optimizer's [32 passes](optimizer.md) all answer the same question: what
+The optimizer's [36 passes](optimizer.md) all answer the same question: what
 is true of *every* program that reaches them? That question is why the
 optimizer's design is mostly safety rules — a rewrite that helps this input
 but might be wrong on another isn't eligible, full stop.

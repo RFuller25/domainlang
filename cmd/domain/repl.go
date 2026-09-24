@@ -39,6 +39,7 @@ import (
 	"domain/lexer"
 	"domain/parser"
 	"domain/prims"
+	"domain/token"
 )
 
 // The session's fixed strings. The interactive editor prints its own prompts,
@@ -171,7 +172,7 @@ func (r *repl) handleLine(line string) (quit bool) {
 			return false
 		}
 		r.pending = append(r.pending, strings.ReplaceAll(line, "\t", "    "))
-	case strings.HasPrefix(line, "#"):
+	case token.IsCommentLine(line):
 		// A comment at the top level is not a statement: hold it and let it
 		// travel with the statement it introduces, the way :load keeps a
 		// file's comments attached to what they describe.
@@ -577,7 +578,7 @@ func splitStatements(src string) []string {
 			cur = nil
 		}
 	}
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		trimmed := strings.TrimRight(line, " \t\r")
 		indented := trimmed != "" && (trimmed[0] == ' ' || trimmed[0] == '\t')
 		switch {
@@ -587,7 +588,7 @@ func splitStatements(src string) []string {
 			if len(stmts) > 0 || len(cur) > 0 || len(lead) > 0 {
 				lead = append(lead, "")
 			}
-		case !indented && strings.HasPrefix(strings.TrimSpace(trimmed), "#"):
+		case !indented && token.IsCommentLine(trimmed):
 			lead = append(lead, trimmed)
 		case indented:
 			cur = append(append(cur, lead...), trimmed)
@@ -615,9 +616,8 @@ func splitStatements(src string) []string {
 func statementCount(stmts []string) int {
 	n := 0
 	for _, chunk := range stmts {
-		for _, line := range strings.Split(chunk, "\n") {
-			t := strings.TrimSpace(line)
-			if t == "" || strings.HasPrefix(t, "#") {
+		for line := range strings.SplitSeq(chunk, "\n") {
+			if strings.TrimSpace(line) == "" || token.IsCommentLine(line) {
 				continue
 			}
 			if line[0] != ' ' && line[0] != '\t' {

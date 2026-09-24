@@ -279,24 +279,7 @@ func deadCodeRewrite(prog *ast.Program) *rewriteOp {
 
 // unusedChannelRewrite deletes a Channel definition nothing consumes.
 func unusedChannelRewrite(prog *ast.Program) *rewriteOp {
-	used := map[string]bool{}
-	forEachSequence(prog, func(stmts []*ast.Statement) {
-		for _, s := range stmts {
-			for _, a := range s.Args {
-				if a.Name != "From" {
-					continue
-				}
-				switch v := a.Value.(type) {
-				case ast.IdentArg:
-					used[v.Value] = true
-				case ast.IdentListArg:
-					for _, n := range v.Values {
-						used[n] = true
-					}
-				}
-			}
-		}
-	})
+	used := consumedChannels(prog)
 	for _, s := range prog.Statements {
 		if s.Keyword == "Channel" && s.ChannelName != "" && !used[s.ChannelName] {
 			start, end := stmtExtent(s)

@@ -14,6 +14,18 @@ import (
 // Product By / Zip With accumulate in one loop with no intermediate slice.
 
 func (g *gen) emitQuantifier(n *ir.Node, in string) (string, error) {
+	// optimizer.elideConstEarlyExits replaces a constant predicate with its
+	// answer, or with an emptiness test, and leaves no lambda behind.
+	if answer, ok := n.Meta["const"].(bool); ok {
+		v := g.fresh("v")
+		g.wl("%s := %v", v, answer)
+		return v, nil
+	}
+	if want, ok := n.Meta["nonempty"].(bool); ok {
+		v := g.fresh("v")
+		g.wl("%s := (len(%s) > 0) == %v", v, in, want)
+		return v, nil
+	}
 	lam, err := g.nodeLambda(n)
 	if err != nil {
 		return "", err

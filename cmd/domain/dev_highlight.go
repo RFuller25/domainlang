@@ -63,13 +63,13 @@ func facesFor(line string) []face {
 }
 
 // markComment paints a trailing comment. The lexer drops comments entirely, so
-// they are found in the gaps rather than among the tokens — and a '#' inside a
-// string literal is not a comment, which is why this runs *after* the tokens
-// have claimed their bytes.
+// they are found in the gaps rather than among the tokens — and a marker inside
+// a string literal is not a comment, which is why this runs *after* the tokens
+// have claimed their bytes: a byte some token owns cannot open a comment.
 func markComment(out []face, line string) {
 	for i := range len(line) {
-		if line[i] != '#' || out[i] != facePlain {
-			continue // a '#' a token already owns is inside a string literal
+		if out[i] != facePlain || token.CommentMarker(line, i) == 0 {
+			continue
 		}
 		for j := i; j < len(line); j++ {
 			out[j] = faceComment

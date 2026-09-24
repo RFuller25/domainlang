@@ -136,71 +136,19 @@ const declSqrt = `func dmSqrt(f float64) float64 {
 	return math.Sqrt(f)
 }`
 
-// declTopK is the compiled counterpart of optimizer.TopK: quickselect the k
-// front-most elements, then sort just those k.
-const declTopK = `func dmTopK(xs []int64, k int, desc bool) []int64 {
-	if k <= 0 || len(xs) == 0 {
-		return []int64{}
-	}
-	if k > len(xs) {
-		k = len(xs)
-	}
-	a := append([]int64(nil), xs...)
-	front := func(x, y int64) bool {
-		if desc {
-			return x > y
-		}
-		return x < y
-	}
-	lo, hi := 0, len(a)-1
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		a[mid], a[hi] = a[hi], a[mid]
-		pivot := a[hi]
-		i := lo
-		for j := lo; j < hi; j++ {
-			if front(a[j], pivot) {
-				a[i], a[j] = a[j], a[i]
-				i++
-			}
-		}
-		a[i], a[hi] = a[hi], a[i]
-		switch {
-		case i == k-1:
-			lo, hi = 0, -1 // done
-		case i < k-1:
-			lo = i + 1
-		default:
-			hi = i - 1
-		}
-	}
-	res := a[:k]
-	sort.Slice(res, func(i, j int) bool { return front(res[i], res[j]) })
-	return res
-}`
-
-// declSelectItem returns the kth order statistic (ascending, or descending when
-// desc) via an in-place Hoare quickselect on a copy of the input — no sort. The
-// kth order statistic is a unique value regardless of partition scheme or ties,
-// so the result is identical to dmTopK(xs, k+1, desc)[k] without materializing
-// and sorting the whole k-front.
-const declSelectItem = `func dmSelectItem(xs []int64, k int, desc bool) int64 {
-	a := append([]int64(nil), xs...)
-	less := func(x, y int64) bool {
-		if desc {
-			return x > y
-		}
-		return x < y
-	}
+// declSelectNth is the compiled counterpart of optimizer.selectNth: Hoare
+// quickselect of ascending index n, in place. See that function for why the
+// partition scheme matters.
+const declSelectNth = `func dmSelectNth(a []int64, n int) {
 	lo, hi := 0, len(a)-1
 	for lo < hi {
 		pivot := a[lo+(hi-lo)/2]
 		i, j := lo, hi
 		for i <= j {
-			for less(a[i], pivot) {
+			for a[i] < pivot {
 				i++
 			}
-			for less(pivot, a[j]) {
+			for a[j] > pivot {
 				j--
 			}
 			if i <= j {
@@ -209,14 +157,49 @@ const declSelectItem = `func dmSelectItem(xs []int64, k int, desc bool) int64 {
 				j--
 			}
 		}
-		if k <= j {
+		switch {
+		case n <= j:
 			hi = j
-		} else if k >= i {
+		case n >= i:
 			lo = i
-		} else {
-			break
+		default:
+			return
 		}
 	}
+}`
+
+// declTopK is the compiled counterpart of optimizer.TopK: select the k-front,
+// then sort only it. Needs dmSelectNth.
+const declTopK = `func dmTopK(xs []int64, k int, desc bool) []int64 {
+	if k <= 0 || len(xs) == 0 {
+		return []int64{}
+	}
+	k = min(k, len(xs))
+	a := append([]int64(nil), xs...)
+	var res []int64
+	if desc {
+		dmSelectNth(a, len(a)-k)
+		res = a[len(a)-k:]
+	} else {
+		dmSelectNth(a, k-1)
+		res = a[:k]
+	}
+	slices.Sort(res)
+	if desc {
+		slices.Reverse(res)
+	}
+	return res
+}`
+
+// declSelectItem is the compiled counterpart of optimizer.KthOrderStatistic:
+// the element at index k of the requested order, with no sort. Needs
+// dmSelectNth.
+const declSelectItem = `func dmSelectItem(xs []int64, k int, desc bool) int64 {
+	a := append([]int64(nil), xs...)
+	if desc {
+		k = len(a) - 1 - k
+	}
+	dmSelectNth(a, k)
 	return a[k]
 }`
 
@@ -745,6 +728,7 @@ const declPow = `func dmPow(b, e int64) int64 {
 	return r
 }`
 
+// declISqrt mirrors eval's isqrtInt: a float estimate corrected by division.
 const declISqrt = `func dmISqrt(x int64) int64 {
 	if x < 0 {
 		dmFail("isqrt: negative input %d", x)
@@ -752,13 +736,14 @@ const declISqrt = `func dmISqrt(x int64) int64 {
 	if x < 2 {
 		return x
 	}
-	n := x
-	g := x/2 + 1
-	for g < n {
-		n = g
-		g = (g + x/g) / 2
+	r := int64(math.Sqrt(float64(x)))
+	for r > x/r {
+		r--
 	}
-	return n
+	for r+1 <= x/(r+1) {
+		r++
+	}
+	return r
 }`
 
 const declFactorial = `func dmFactorial(n int64) int64 {
@@ -785,11 +770,18 @@ const declChoose = `func dmChoose(n, k int64) int64 {
 	if k > n-k {
 		k = n - k
 	}
-	r := int64(1)
+	r := uint64(1)
 	for i := int64(1); i <= k; i++ {
-		r = r * (n - k + i) / i
+		hi, lo := bits.Mul64(r, uint64(n-k+i))
+		if hi >= uint64(i) {
+			dmFail("choose: C(%d, %d) overflows Int", n, k)
+		}
+		r, _ = bits.Div64(hi, lo, uint64(i))
+		if r > math.MaxInt64 {
+			dmFail("choose: C(%d, %d) overflows Int", n, k)
+		}
 	}
-	return r
+	return int64(r)
 }`
 
 const declClamp = `func dmClamp[T int64 | float64](v, lo, hi T) T {
@@ -961,22 +953,40 @@ const declModPow = `func dmModPow(base, exp, m int64) int64 {
 		dmFail("modpow: exponent must be non-negative, got %d", exp)
 	}
 	result := int64(1) % m
-	base = ((base % m) + m) % m
+	base = dmFloorMod(base, m)
 	for exp > 0 {
 		if exp&1 == 1 {
-			result = result * base % m
+			result = dmMulMod(result, base, m)
 		}
-		base = base * base % m
+		base = dmMulMod(base, base, m)
 		exp >>= 1
 	}
 	return result
+}`
+
+// declMulMod mirrors eval's mulMod and floorMod: modular arithmetic exact for
+// every positive int64 modulus.
+const declMulMod = `func dmMulMod(a, b, m int64) int64 {
+	if m <= 3037000499 {
+		return a * b % m
+	}
+	hi, lo := bits.Mul64(uint64(a), uint64(b))
+	return int64(bits.Rem64(hi, lo, uint64(m)))
+}
+
+func dmFloorMod(a, m int64) int64 {
+	r := a % m
+	if r < 0 {
+		r += m
+	}
+	return r
 }`
 
 const declModInv = `func dmModInv(a, m int64) int64 {
 	if m <= 0 {
 		dmFail("modinv: modulus must be positive, got %d", m)
 	}
-	a = ((a % m) + m) % m
+	a = dmFloorMod(a, m)
 	r0, r1 := a, m
 	x0, x1 := int64(1), int64(0)
 	for r1 != 0 {
@@ -987,7 +997,7 @@ const declModInv = `func dmModInv(a, m int64) int64 {
 	if r0 != 1 {
 		dmFail("modinv: %d has no inverse modulo %d (not coprime)", a, m)
 	}
-	return ((x0 % m) + m) % m
+	return dmFloorMod(x0, m)
 }`
 
 const declToInt = `func dmToInt(s string) int64 {
@@ -2682,8 +2692,9 @@ func dmProbeReport() {
 // like the allocation report's.
 const EnvConstProbe = "DOMAIN_CONST_PROBE"
 
-// DeclConstProbe exposes the emitted probe helper for that test.
-func DeclConstProbe() string { return declConstProbe }
+// EnvCPUProfile names the file a profiling run writes its pprof CPU profile
+// into. The reader is mahoraga/search.go.
+const EnvCPUProfile = "DOMAIN_CPU_PROFILE"
 
 // declCPUProfile is the profile-collection half of what `domain expansion:
 // mahoraga` needs to feed Go's profile-guided optimization.
@@ -2717,10 +2728,6 @@ const declCPUProfile = `func dmCPUProfile() func() {
 		_ = f.Close()
 	}
 }`
-
-// DeclCPUProfile exposes the emitted profile helper so package runner, which
-// names the same environment variable, can pin the two together in a test.
-func DeclCPUProfile() string { return declCPUProfile }
 
 // The graph search runtime. Each mirrors the interpreter's function of the
 // same job in prims/graph.go — same traversal order, same insertion order into

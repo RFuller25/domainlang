@@ -50,13 +50,15 @@ var (
 	styValue lipgloss.Style
 
 	// Source, for the REPL's syntax highlighting.
-	styKeyword lipgloss.Style
-	styArgName lipgloss.Style
-	styNumber  lipgloss.Style
-	styString  lipgloss.Style
-	styPunct   lipgloss.Style
-	styComment lipgloss.Style
-	styFix     lipgloss.Style
+	styKeyword  lipgloss.Style
+	styArgName  lipgloss.Style
+	styNumber   lipgloss.Style
+	styString   lipgloss.Style
+	styPunct    lipgloss.Style
+	styComment  lipgloss.Style
+	styDeclName lipgloss.Style
+	styAssign   lipgloss.Style
+	styFix      lipgloss.Style
 
 	// heatRamp maps a share of the run to a color, coolest first. A profile is
 	// read by scanning for the hot end, so the ramp has to be legible at a
@@ -149,6 +151,12 @@ func useTheme(light bool) {
 	styString = fg("84", "28")
 	styPunct = fg("244", "242")
 	styComment = fg("240", "245")
+	// A declared name and the write that fills it. Both are deliberately
+	// warmer than the ordinary label colour: a line that introduces a name is
+	// the line a reader scans for, and `:=` is the one operator that changes
+	// something rather than computing it.
+	styDeclName = fg("215", "130")
+	styAssign = bold("209", "166")
 	styFix = fg("84", "28")
 
 	styWheelBase = fg("240", "250")
@@ -255,7 +263,7 @@ func wrapVis(s string, w int) []string {
 	}
 	var out []string
 	line := ""
-	for _, word := range strings.Fields(s) {
+	for word := range strings.FieldsSeq(s) {
 		switch {
 		case line == "":
 			line = word

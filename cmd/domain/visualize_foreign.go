@@ -296,7 +296,7 @@ func writeIndented(w io.Writer, label, text string) {
 		return
 	}
 	fmt.Fprintf(w, "    %s:\n", label)
-	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(text, "\n"), "\n") {
 		fmt.Fprintf(w, "      %s\n", showEnds(line))
 	}
 	if !strings.HasSuffix(text, "\n") {

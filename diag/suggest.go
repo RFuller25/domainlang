@@ -220,7 +220,7 @@ func fuzzyOp(words []string, ids []string) *opSuggestion {
 // uppercase-letter placeholders ("Select Top K" matches "Select Top 3").
 func idWords(id string) []string {
 	var out []string
-	for _, w := range strings.Fields(id) {
+	for w := range strings.FieldsSeq(id) {
 		if len(w) == 1 && w[0] >= 'A' && w[0] <= 'Z' {
 			continue
 		}

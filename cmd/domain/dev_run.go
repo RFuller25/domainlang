@@ -331,7 +331,7 @@ func (m devModel) outputView() []string {
 // does not run off the side of the pane.
 func wrapLines(s string, width int) []string {
 	var out []string
-	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(s, "\n"), "\n") {
 		for len(line) > width && width > 0 {
 			out = append(out, line[:width])
 			line = line[width:]

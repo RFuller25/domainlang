@@ -54,7 +54,7 @@ func TestStatsAttributesNestedWorkToItsLoop(t *testing.T) {
 	loop := node("Repeat 3", ir.Int())
 
 	// A loop's Eval reports its children first, then itself.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		s.PushFrame("Repeat 3 iter", nil)
 		s.Step(ir.StepEvent{Node: body, Out: int64(1), Dur: time.Millisecond})
 		s.PopFrame(nil)

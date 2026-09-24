@@ -13,10 +13,8 @@ import (
 	"fmt"
 
 	"domain/ast"
-	"domain/eval"
 	"domain/ir"
 	"domain/token"
-	"domain/typecheck"
 )
 
 // ---------------------------------------------------------------------------
@@ -115,7 +113,7 @@ var mapValues = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		outElem, err := typecheck.LambdaType(lam, append([]*ir.Type{in.Elem}, ambientTypes()...)...)
+		outElem, err := lambdaType(lam, in.Elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Map Values: " + err.Error()}
 		}
@@ -130,9 +128,7 @@ var mapValues = &Primitive{
 				out := ir.NewMapValue()
 				for _, k := range m.Keys() {
 					val, _ := m.Get(k)
-					nv, err := eval.EvalLambdaTyped(lam,
-						append([]*ir.Type{in.Elem}, ambientTypes()...),
-						append([]ir.Value{val}, ambientArgs()...)...)
+					nv, err := evalLambda(lam, []*ir.Type{in.Elem}, val)
 					if err != nil {
 						return nil, runtimeErr("Map Values", pos, "%v", err)
 					}
@@ -162,7 +158,7 @@ var filterEntries = &Primitive{
 		}
 		// Two parameters, key then value — the shape that reads naturally, and
 		// the one a Map's own rendering suggests.
-		bt, err := typecheck.LambdaType(lam, append([]*ir.Type{in.Key, in.Elem}, ambientTypes()...)...)
+		bt, err := lambdaType(lam, in.Key, in.Elem)
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Filter Entries: " + err.Error()}
 		}
@@ -181,9 +177,7 @@ var filterEntries = &Primitive{
 				out := ir.NewMapValue()
 				for _, k := range m.Keys() {
 					val, _ := m.Get(k)
-					keep, err := eval.EvalLambdaTyped(lam,
-						append([]*ir.Type{in.Key, in.Elem}, ambientTypes()...),
-						append([]ir.Value{k, val}, ambientArgs()...)...)
+					keep, err := evalLambda(lam, []*ir.Type{in.Key, in.Elem}, k, val)
 					if err != nil {
 						return nil, runtimeErr("Filter Entries", pos, "%v", err)
 					}

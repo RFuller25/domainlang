@@ -190,6 +190,15 @@ frame
 └─────┘
 ```
 
+`draw`'s cells may be `View`s instead of plain characters — built with
+`style` inside a `Map Cells`, over a `Grid`, a `Sparse` or a flat list of
+already-built row `View`s — and it colours each one instead of flattening it.
+A replayed frame is unaffected either way, since layout never depends on
+style; a played one shows the colour. `snake.domain` uses this to draw its
+snake green and its food red, over the same `Sparse<Text>` board it always
+had. See [`ref-builtins-view.md`](ref-builtins-view.md#colouring-a-board) for
+the shapes `draw` accepts and a worked example.
+
 ## Ending
 
 `Simple Domain: Quit` says the program is finished. It is a passthrough — the
@@ -342,6 +351,80 @@ One request is in flight per tag and firing again supersedes the one that was
 out — see [`ref-game-parts.md`](ref-game-parts.md#requests-and-replies) for why
 that is a correctness rule rather than a policy, and what `pending` is for.
 
+## Remembering things across runs
+
+A high score, a level unlocked — anything that should outlive the process
+goes through `Domain Expansion: Load` and `Save` rather than an ordinary file
+read. Unlike `Request`, a local file answers in the same tick it was asked, so
+`Load` produces the loaded value directly, in place — no round trip, no
+`Part Reply` to write. That's also why it lives inside a
+[`Consider … Of`](expressions.md#stage-bindings--consider--as--consider--of):
+it changes the *type* in flight, so it can't sit in the middle of a body whose
+value has to stay the world.
+
+```domain run
+Innate Domain: Game Dev
+
+Part World:
+    Cursed Technique: Apply
+        Consider save Of
+            Domain Expansion: Load
+                Path: (w) -> "save.json"
+                Into: {highScore: Int}
+                Default: (w) -> {highScore: 0}
+        Using: (w) -> {score: 0, highScore: save.highScore}
+
+Part On "key":
+    Cursed Technique: Apply
+        Using: (w) ->
+            consider next as w.score + 1
+            in with(with(w, "score", next), "highScore", if next > w.highScore then next else w.highScore)
+    Domain Expansion: Save
+        Path: (w) -> "save.json"
+        Value: (w) -> {highScore: w.highScore}
+
+Part Draw:
+    Cursed Technique: Apply
+        Using: (w) -> text(totext(w.score) + " (best " + totext(w.highScore) + ")")
+```
+```input
+frame
+key a
+key a
+frame
+```
+```output
+0 (best 0)
+
+2 (best 2)
+```
+
+`Default:` is what a fresh game gets — and it covers every way of getting
+nothing back, not just a missing file: no file at that path, one that isn't
+valid JSON, one whose shape doesn't fit `Into:`. A save that doesn't parse
+looks exactly like a missing one, so the game starts over instead of crashing
+on a corrupt file.
+
+`Save` is a passthrough, on `Beep`'s and `Quit`'s shape — the world it's given
+is the world it hands back — so it slots into a body wherever the value
+already being threaded through happens to be worth writing down. There's no
+`Part Reply` for it either: a fire-and-forget write is simpler than a
+question, in exactly the way `Save` is simpler than `Request`.
+
+**A replayed run never touches a real file.** `Default:` is what every golden
+test sees a `Load` produce, and there's nothing to diff on the way a `Save`
+would have written — the same rule that keeps a replayed `Request` off the
+network. A `load <json>` [script line](scopes.md#game-dev) stands in for a
+real save, read by the next `Load` the script reaches — but only a `Load`
+that fires *after* that line: `Part World:` and `Part Start:` run before the
+script is read at all, the same limitation `seed` already has, so a preloaded
+save can change what a handler or timer reads but never what the world opens
+with.
+
+`examples/games/oregon.domain` is the one shipped game built around this —
+the fastest trip to Oregon yet, loaded when the wagon sets out and saved again
+the moment it arrives.
+
 ## What a game may not do
 
 The scope takes nothing away from the vocabulary — a game can reach for
@@ -367,6 +450,9 @@ program may take.
 
 - [`ref-game-parts.md`](ref-game-parts.md) — the roles, what may happen, and
   what each one puts in scope.
+- [`ref-expansions.md`](ref-expansions.md#load--w---t-game-dev) — `Load` and
+  [`Save`](ref-expansions.md#save--w---w-game-dev) in full: every argument,
+  and what a failed read or write does instead of crashing.
 - [`ref-builtins-view.md`](ref-builtins-view.md) — the `View` type and its ten
   builtins.
 - [`ref-builtins-chance.md`](ref-builtins-chance.md) — `random`, `pick`,

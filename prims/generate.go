@@ -78,7 +78,7 @@ var iterate = &Primitive{
 				}
 				out := make([]ir.Value, n)
 				cur := v
-				for i := int64(0); i < n; i++ {
+				for i := range n {
 					cur, err = eval.EvalLambdaTyped(lam, params, cur)
 					if err != nil {
 						return nil, runtimeErr("Iterate", pos, "step %d: %v", i+1, err)

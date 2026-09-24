@@ -234,6 +234,10 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 
 	switch name {
 	case "pending":
+		// One request is in flight per tag and a new one supersedes the old,
+		// so a reply can be lost. That is the right trade for a position poll
+		// and the wrong one for a move nobody may drop, which is why the loss
+		// is visible: a program that must not lose one asks first.
 		tag, ok := args[0].(string)
 		if !ok {
 			return fail("pending() takes a tag as Text, got %s", ir.DescribeValue(args[0]))
@@ -1114,11 +1118,11 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			if !ok2 {
 				return fail("indexof: expected a Text needle, got %s", ir.DescribeValue(args[1]))
 			}
-			b := strings.Index(s, sub)
-			if b < 0 {
+			before, _, ok := strings.Cut(s, sub)
+			if !ok {
 				return int64(-1), nil
 			}
-			return int64(utf8.RuneCountInString(s[:b])), nil
+			return int64(utf8.RuneCountInString(before)), nil
 		}
 		xs, err := ir.AsList(args[0])
 		if err != nil {
@@ -2265,9 +2269,9 @@ func powInt(b, e int64) (int64, error) {
 	return r, nil
 }
 
-// isqrtInt is the integer square root: the largest n with n*n <= x. Newton's
-// method on int64, so it never rounds the way float sqrt does near a perfect
-// square — isqrt(k*k) is exactly k for every k in range.
+// isqrtInt is the integer square root: the largest n with n*n <= x, exact for
+// every x in range — including near a perfect square, where the float root
+// alone can land one off.
 func isqrtInt(x int64) (int64, error) {
 	if x < 0 {
 		return 0, fmt.Errorf("isqrt: negative input %d", x)
@@ -2275,13 +2279,18 @@ func isqrtInt(x int64) (int64, error) {
 	if x < 2 {
 		return x, nil
 	}
-	n := x
-	g := x/2 + 1
-	for g < n {
-		n = g
-		g = (g + x/g) / 2
+	// The float root is within one of the answer; the corrections compare by
+	// division so they cannot overflow near MaxInt64. (The Newton iteration
+	// this replaced started at x/2+1, which is already below x only from 3 on,
+	// so isqrt(2) came back as 2.)
+	r := int64(math.Sqrt(float64(x)))
+	for r > x/r {
+		r--
 	}
-	return n, nil
+	for r+1 <= x/(r+1) {
+		r++
+	}
+	return r, nil
 }
 
 // factorialInt errors on overflow rather than wrapping: 21! exceeds int64,
@@ -2316,11 +2325,22 @@ func chooseInt(n, k int64) (int64, error) {
 	}
 	// After step i the running value is C(n-k+i, i), always an integer, so
 	// the division is exact at every step and nothing is lost to truncation.
-	r := int64(1)
+	// The product before that division is taken in 128 bits: it can exceed
+	// int64 when the quotient does not — C(62, 31) fits, its last product
+	// does not — and each quotient is at most C(n, k), so a quotient that
+	// does not fit means the answer does not either.
+	r := uint64(1)
 	for i := int64(1); i <= k; i++ {
-		r = r * (n - k + i) / i
+		hi, lo := bits.Mul64(r, uint64(n-k+i))
+		if hi >= uint64(i) {
+			return 0, fmt.Errorf("choose: C(%d, %d) overflows Int", n, k)
+		}
+		r, _ = bits.Div64(hi, lo, uint64(i))
+		if r > math.MaxInt64 {
+			return 0, fmt.Errorf("choose: C(%d, %d) overflows Int", n, k)
+		}
 	}
-	return r, nil
+	return int64(r), nil
 }
 
 // gcdInt is the non-negative greatest common divisor; gcd(0, 0) = 0.
@@ -2350,15 +2370,38 @@ func modPow(base, exp, m int64) (int64, error) {
 		return 0, fmt.Errorf("modpow: exponent must be non-negative, got %d", exp)
 	}
 	result := int64(1) % m
-	base = ((base % m) + m) % m
+	base = floorMod(base, m)
 	for exp > 0 {
 		if exp&1 == 1 {
-			result = result * base % m
+			result = mulMod(result, base, m)
 		}
-		base = base * base % m
+		base = mulMod(base, base, m)
 		exp >>= 1
 	}
 	return result, nil
+}
+
+// mulMod is a*b mod m for a and b in [0, m). Below the square root of
+// MaxInt64 the product fits and plain arithmetic is fastest; above it the
+// product is taken in 128 bits, which a modulus like AoC 2019 day 22's
+// (~1.2e14) needs — plain int64 multiplication wrapped there and handed back
+// a negative "remainder".
+func mulMod(a, b, m int64) int64 {
+	if m <= 3037000499 {
+		return a * b % m
+	}
+	hi, lo := bits.Mul64(uint64(a), uint64(b))
+	return int64(bits.Rem64(hi, lo, uint64(m)))
+}
+
+// floorMod is a mod m in [0, m) for a positive m, without the overflow of
+// ((a % m) + m) % m when m is above MaxInt64/2.
+func floorMod(a, m int64) int64 {
+	r := a % m
+	if r < 0 {
+		r += m
+	}
+	return r
 }
 
 // modInverse computes the multiplicative inverse of a modulo m (extended
@@ -2367,7 +2410,7 @@ func modInverse(a, m int64) (int64, error) {
 	if m <= 0 {
 		return 0, fmt.Errorf("modinv: modulus must be positive, got %d", m)
 	}
-	a = ((a % m) + m) % m
+	a = floorMod(a, m)
 	// Extended Euclid on (a, m): track x with a*x ≡ r (mod m).
 	r0, r1 := a, m
 	x0, x1 := int64(1), int64(0)
@@ -2379,7 +2422,7 @@ func modInverse(a, m int64) (int64, error) {
 	if r0 != 1 {
 		return 0, fmt.Errorf("modinv: %d has no inverse modulo %d (not coprime)", a, m)
 	}
-	return ((x0 % m) + m) % m, nil
+	return floorMod(x0, m), nil
 }
 
 // solve2x2 solves the integer linear system a*x + b*y = c, d*x + e*y = f by

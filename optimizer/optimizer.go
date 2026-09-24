@@ -53,10 +53,8 @@ func typeHasFloat(t *ir.Type) bool {
 	if typeHasFloat(t.Elem) || typeHasFloat(t.Key) {
 		return true
 	}
-	for _, e := range t.Elems {
-		if typeHasFloat(e) {
-			return true
-		}
+	if slices.ContainsFunc(t.Elems, typeHasFloat) {
+		return true
 	}
 	for _, f := range t.Fields {
 		if typeHasFloat(f.Type) {
@@ -112,7 +110,9 @@ var passes = []pass{
 	{"fuseFilterFilter", fuseFilterFilter},
 	{"fuseFilterCount", fuseFilterCount},
 	{"fuseFoldSum", fuseFoldSum},
+	{"fuseTextFold", fuseTextFold},
 	{"fuseMapReduceBy", fuseMapReduceBy},
+	{"fuseGroupReduce", fuseGroupReduce},
 	{"fuseZipWith", fuseZipWith},
 	{"elideConstPredicates", elideConstPredicates},
 	{"elideConstEarlyExits", elideConstEarlyExits},
@@ -163,6 +163,10 @@ type Schedule struct {
 	// SkipLinear stands down markLinearAccumulators, which otherwise always
 	// runs once after the cascade settles.
 	SkipLinear bool
+
+	// SkipHoist stands down hoistInvariants, which otherwise always runs once
+	// after the cascade settles, before the linear pass.
+	SkipHoist bool
 }
 
 // PassNames is every pass in its declared order — what a caller enumerates to
@@ -174,6 +178,10 @@ func PassNames() []string {
 	}
 	return out
 }
+
+// HoistPassName is the loop-invariant code motion pass, which runs after the
+// cascade and before the linear pass.
+const HoistPassName = "hoistInvariants"
 
 // LinearPassName is the pass that runs after the cascade rather than in it.
 // Named here so a caller building a schedule can talk about it without
@@ -247,6 +255,14 @@ func OptimizeWith(p *ir.Pipeline, s Schedule) []Rewrite {
 		if applied == 0 {
 			break
 		}
+	}
+	// Invariant work moves out of stage lambdas once the cascade has settled:
+	// the cascade's fusions match adjacent stages, and a stage wrapped in the
+	// Consider that binds its hoisted values no longer sits beside its
+	// neighbour. It runs before the linear pass, which must see the final
+	// bodies (see below).
+	if !s.SkipHoist {
+		rewrites = append(rewrites, stamp(HoistPassName, hoistInvariants(p))...)
 	}
 	// Linear accumulators run once, *after* the cascade has settled, rather
 	// than inside it. The pass annotates expressions instead of rewriting the
@@ -343,25 +359,24 @@ func newPartialSelect(sortNode, topNode *ir.Node, k arg, desc, thenSum bool) *ir
 }
 
 // TopK returns the k elements that would appear first when xs is sorted in the
-// requested order, themselves sorted in that order. It uses quickselect to
-// partition, so it never fully sorts the input (only the k selected elements).
+// requested order, themselves sorted in that order. It selects before it
+// sorts, so only the k selected elements are ever sorted.
 func TopK(xs []int64, k int, desc bool) []int64 {
 	if k <= 0 || len(xs) == 0 {
 		return []int64{}
 	}
 	k = min(k, len(xs))
 	a := slices.Clone(xs)
-
-	// "front" reports whether x belongs ahead of y in the requested order.
-	front := func(x, y int64) bool {
-		if desc {
-			return x > y
-		}
-		return x < y
+	// Descending is ascending read from the other end: the k largest are the
+	// ones at and after ascending index len-k.
+	var res []int64
+	if desc {
+		selectNth(a, len(a)-k)
+		res = a[len(a)-k:]
+	} else {
+		selectNth(a, k-1)
+		res = a[:k]
 	}
-
-	quickselect(a, k, front)
-	res := a[:k]
 	slices.Sort(res)
 	if desc {
 		slices.Reverse(res)
@@ -369,36 +384,39 @@ func TopK(xs []int64, k int, desc bool) []int64 {
 	return res
 }
 
-// quickselect rearranges a so that the k front-most elements occupy a[:k]
-// (in arbitrary order), via Lomuto partitioning.
-func quickselect(a []int64, k int, front func(x, y int64) bool) {
+// selectNth rearranges a so that a[n] holds the element an ascending sort
+// would put there, with nothing greater before it and nothing smaller after.
+//
+// Partitioning is Hoare's, which stops on elements equal to the pivot from
+// both sides and so splits a run of duplicates evenly. Lomuto's scheme, which
+// this replaced, moves one element per pass over a run of equal values — on
+// duplicate-heavy input (a common shape for puzzle input) the "fast" path was
+// quadratic and far slower than the sort it stood in for.
+func selectNth(a []int64, n int) {
 	lo, hi := 0, len(a)-1
 	for lo < hi {
-		p := partition(a, lo, hi, front)
+		pivot := a[lo+(hi-lo)/2]
+		i, j := lo, hi
+		for i <= j {
+			for a[i] < pivot {
+				i++
+			}
+			for a[j] > pivot {
+				j--
+			}
+			if i <= j {
+				a[i], a[j] = a[j], a[i]
+				i++
+				j--
+			}
+		}
 		switch {
-		case p == k-1:
-			return
-		case p < k-1:
-			lo = p + 1
+		case n <= j:
+			hi = j
+		case n >= i:
+			lo = i
 		default:
-			hi = p - 1
+			return
 		}
 	}
-}
-
-func partition(a []int64, lo, hi int, front func(x, y int64) bool) int {
-	// Median-of-three-ish: use the middle element as pivot to avoid worst case
-	// on already-sorted input.
-	mid := lo + (hi-lo)/2
-	a[mid], a[hi] = a[hi], a[mid]
-	pivot := a[hi]
-	i := lo
-	for j := lo; j < hi; j++ {
-		if front(a[j], pivot) {
-			a[i], a[j] = a[j], a[i]
-			i++
-		}
-	}
-	a[i], a[hi] = a[hi], a[i]
-	return i
 }

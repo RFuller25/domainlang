@@ -8,6 +8,7 @@ package prims
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,7 +45,7 @@ func buildFloatSort(op *ast.Operation, pos token.Position) *ir.Node {
 			if desc {
 				sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
 			} else {
-				sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+				slices.Sort(out)
 			}
 			return ir.FloatsToValue(out), nil
 		},

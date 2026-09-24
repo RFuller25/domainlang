@@ -12,7 +12,7 @@ import (
 
 func naiveProductCount(xs []int64, target int64) int64 {
 	var c int64
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			if xs[i]*xs[j] == target {
 				c++
@@ -23,7 +23,7 @@ func naiveProductCount(xs []int64, target int64) int64 {
 }
 
 func naiveProductFirst(xs []int64, target int64) ([]int64, bool) {
-	for i := 0; i < len(xs); i++ {
+	for i := range xs {
 		for j := i + 1; j < len(xs); j++ {
 			if xs[i]*xs[j] == target {
 				return []int64{xs[i], xs[j]}, true
@@ -35,7 +35,7 @@ func naiveProductFirst(xs []int64, target int64) ([]int64, bool) {
 
 func TestPairProductMatchesNaive(t *testing.T) {
 	rng := rand.New(rand.NewSource(5))
-	for iter := 0; iter < 5000; iter++ {
+	for iter := range 5000 {
 		xs := randInts(rng, 22, 6)
 		// Half the iterations aim at reachable products (including 0), the
 		// rest at arbitrary small targets that mostly miss.

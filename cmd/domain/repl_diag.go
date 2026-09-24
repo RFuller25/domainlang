@@ -65,11 +65,11 @@ func linkCode(block, code string, color bool) string {
 		return block
 	}
 	tag := "[" + code + "]"
-	i := strings.Index(block, tag)
-	if i < 0 {
+	before, after, ok := strings.Cut(block, tag)
+	if !ok {
 		return block
 	}
-	return block[:i] + docsLink(tag, docsPageFor(code), color) + block[i+len(tag):]
+	return before + docsLink(tag, docsPageFor(code), color) + after
 }
 
 // repairedLine applies one fix to src and returns the line it repaired, so the

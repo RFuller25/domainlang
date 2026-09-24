@@ -287,51 +287,66 @@ func (g *gen) emitFieldsUnionCount(sep, in string) string {
 	g.helper("dmParseFieldsInt", declParseFieldsInt)
 	g.imp("strings")
 	seen, buf, x := g.fresh("seen"), g.fresh("buf"), g.fresh("x")
-	ok, fields, s := g.fresh("ok"), g.fresh("fields"), g.fresh("s")
-	emitBody := func(line string) {
-		g.wl("if r, %s := dmParseFieldsIntInto(%s, %s); %s {", ok, line, buf, ok)
-		g.in()
-		g.wl("%s = r", buf)
-		g.out()
-		g.wl("} else {")
-		g.in()
-		g.wl("%s := strings.Fields(%s)", fields, line)
-		g.wl("%s = %s[:0]", buf, buf)
-		g.wl("for _, %s := range %s { %s = append(%s, dmParseIntSeg(%s)) }", s, fields, buf, buf, s)
-		g.out()
-		g.wl("}")
+	line := g.fresh("line")
+	emitBody := func() {
+		g.emitParseFieldsInto(line, buf)
 		g.wl("for _, %s := range %s { %s[%s] = struct{}{} }", x, buf, seen, x)
 	}
 	g.wl("%s := make(map[int64]struct{})", seen)
 	g.wl("var %s []int64", buf)
-	if sep == "" {
-		line := g.fresh("line")
-		g.wl("for _, %s := range %s {", line, in)
-		g.in()
-		emitBody(line)
-		g.out()
-		g.wl("}")
-	} else {
-		str, idx, line := g.fresh("str"), g.fresh("idx"), g.fresh("line")
-		g.wl("%s := %s", str, in)
-		g.wl("for {")
-		g.in()
-		if len(sep) == 1 {
-			g.wl("%s := strings.IndexByte(%s, %q)", idx, str, sep[0])
-		} else {
-			g.wl("%s := strings.Index(%s, %s)", idx, str, goStr(sep))
-		}
-		g.wl("%s := %s", line, str)
-		g.wl("if %s >= 0 { %s = %s[:%s] }", idx, line, str, idx)
-		emitBody(line)
-		g.wl("if %s < 0 { break }", idx)
-		g.wl("%s = %s[%s+%d:]", str, str, idx, len(sep))
-		g.out()
-		g.wl("}")
-	}
+	g.emitLines(sep, in, line, emitBody)
 	v := g.fresh("v")
 	g.wl("%s := int64(len(%s))", v, seen)
 	return v
+}
+
+// emitLines emits a loop binding line to each line of in and running body. When
+// sep == "" in is already-split []string lines; otherwise in is the un-split
+// string and the loop walks it exactly as strings.Split(in, sep) would, so the
+// []string is never materialized.
+func (g *gen) emitLines(sep, in, line string, body func()) {
+	if sep == "" {
+		g.wl("for _, %s := range %s {", line, in)
+		g.in()
+		body()
+		g.out()
+		g.wl("}")
+		return
+	}
+	str, idx := g.fresh("str"), g.fresh("idx")
+	g.wl("%s := %s", str, in)
+	g.wl("for {")
+	g.in()
+	if len(sep) == 1 {
+		g.wl("%s := strings.IndexByte(%s, %q)", idx, str, sep[0])
+	} else {
+		g.wl("%s := strings.Index(%s, %s)", idx, str, goStr(sep))
+	}
+	g.wl("%s := %s", line, str)
+	g.wl("if %s >= 0 { %s = %s[:%s] }", idx, line, str, idx)
+	body()
+	g.wl("if %s < 0 { break }", idx)
+	g.wl("%s = %s[%s+%d:]", str, str, idx, len(sep))
+	g.out()
+	g.wl("}")
+}
+
+// emitParseFieldsInto parses line's whitespace-separated integers into buf,
+// reusing its storage: the fast all-digits path when it applies, else
+// strings.Fields and dmParseIntSeg per field.
+func (g *gen) emitParseFieldsInto(line, buf string) {
+	ok, fields, s := g.fresh("ok"), g.fresh("fields"), g.fresh("s")
+	g.wl("if r, %s := dmParseFieldsIntInto(%s, %s); %s {", ok, line, buf, ok)
+	g.in()
+	g.wl("%s = r", buf)
+	g.out()
+	g.wl("} else {")
+	g.in()
+	g.wl("%s := strings.Fields(%s)", fields, line)
+	g.wl("%s = %s[:0]", buf, buf)
+	g.wl("for _, %s := range %s { %s = append(%s, dmParseIntSeg(%s)) }", s, fields, buf, buf, s)
+	g.out()
+	g.wl("}")
 }
 
 // emitFieldsKeyedExtremum streams Split Fields + Convert To Integers +
@@ -358,23 +373,14 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 		return "", unsupported(extNode, "key: %v", err)
 	}
 	best, bestK, found := g.fresh("best"), g.fresh("bestK"), g.fresh("found")
-	ok, fields, s, k := g.fresh("ok"), g.fresh("fields"), g.fresh("s"), g.fresh("k")
+	k := g.fresh("k")
 	beats, err := keyBeats(extNode.Prim, keyT, k, bestK)
 	if err != nil {
 		return "", unsupported(extNode, "%v", err)
 	}
-	emitBody := func(line string) {
-		g.wl("if r, %s := dmParseFieldsIntInto(%s, %s); %s {", ok, line, buf, ok)
-		g.in()
-		g.wl("%s = r", buf)
-		g.out()
-		g.wl("} else {")
-		g.in()
-		g.wl("%s := strings.Fields(%s)", fields, line)
-		g.wl("%s = %s[:0]", buf, buf)
-		g.wl("for _, %s := range %s { %s = append(%s, dmParseIntSeg(%s)) }", s, fields, buf, buf, s)
-		g.out()
-		g.wl("}")
+	line := g.fresh("line")
+	emitBody := func() {
+		g.emitParseFieldsInto(line, buf)
 		g.wl("%s := %s", k, kbody)
 		g.wl("if !%s || %s {", found, beats)
 		g.in()
@@ -388,31 +394,7 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 	g.wl("var %s []int64", best)
 	g.wl("var %s %s", bestK, keyGo)
 	g.wl("%s := false", found)
-	if sep == "" {
-		line := g.fresh("line")
-		g.wl("for _, %s := range %s {", line, in)
-		g.in()
-		emitBody(line)
-		g.out()
-		g.wl("}")
-	} else {
-		str, idx, line := g.fresh("str"), g.fresh("idx"), g.fresh("line")
-		g.wl("%s := %s", str, in)
-		g.wl("for {")
-		g.in()
-		if len(sep) == 1 {
-			g.wl("%s := strings.IndexByte(%s, %q)", idx, str, sep[0])
-		} else {
-			g.wl("%s := strings.Index(%s, %s)", idx, str, goStr(sep))
-		}
-		g.wl("%s := %s", line, str)
-		g.wl("if %s >= 0 { %s = %s[:%s] }", idx, line, str, idx)
-		emitBody(line)
-		g.wl("if %s < 0 { break }", idx)
-		g.wl("%s = %s[%s+%d:]", str, str, idx, len(sep))
-		g.out()
-		g.wl("}")
-	}
+	g.emitLines(sep, in, line, emitBody)
 	g.wl("if !%s {", found)
 	g.in()
 	g.wl(`dmFail("%s of an empty list is undefined")`, extNode.Prim)
@@ -447,49 +429,14 @@ func (g *gen) emitFieldsMapSum(sep string, mapNode, sumNode *ir.Node, in string)
 		return "", unsupported(mapNode, "lambda: %v", err)
 	}
 	v := g.fresh("v")
-	ok := g.fresh("ok")
-	fields, s := g.fresh("fields"), g.fresh("s")
-	emitBody := func(line string) {
-		g.wl("if r, %s := dmParseFieldsIntInto(%s, %s); %s {", ok, line, buf, ok)
-		g.in()
-		g.wl("%s = r", buf)
-		g.out()
-		g.wl("} else {")
-		g.in()
-		g.wl("%s := strings.Fields(%s)", fields, line)
-		g.wl("%s = %s[:0]", buf, buf)
-		g.wl("for _, %s := range %s { %s = append(%s, dmParseIntSeg(%s)) }", s, fields, buf, buf, s)
-		g.out()
-		g.wl("}")
+	line := g.fresh("line")
+	emitBody := func() {
+		g.emitParseFieldsInto(line, buf)
 		g.wl("%s += %s", v, body)
 	}
 	g.wl("var %s %s", v, acc)
 	g.wl("var %s []int64", buf)
-	if sep == "" {
-		line := g.fresh("line")
-		g.wl("for _, %s := range %s {", line, in)
-		g.in()
-		emitBody(line)
-		g.out()
-		g.wl("}")
-		return v, nil
-	}
-	str, idx, line := g.fresh("str"), g.fresh("idx"), g.fresh("line")
-	g.wl("%s := %s", str, in)
-	g.wl("for {")
-	g.in()
-	if len(sep) == 1 {
-		g.wl("%s := strings.IndexByte(%s, %q)", idx, str, sep[0])
-	} else {
-		g.wl("%s := strings.Index(%s, %s)", idx, str, goStr(sep))
-	}
-	g.wl("%s := %s", line, str)
-	g.wl("if %s >= 0 { %s = %s[:%s] }", idx, line, str, idx)
-	emitBody(line)
-	g.wl("if %s < 0 { break }", idx)
-	g.wl("%s = %s[%s+%d:]", str, str, idx, len(sep))
-	g.out()
-	g.wl("}")
+	g.emitLines(sep, in, line, emitBody)
 	return v, nil
 }
 
@@ -610,6 +557,7 @@ func (g *gen) emitSplitIntsFold(sep byte, foldNode *ir.Node, in string) (string,
 	}
 	g.emitSplitScan(sep, in, func(seg string) {
 		g.wl("%s := dmParseIntSeg(%s)", e, seg)
+		g.keepElem(e, body)
 		g.wl("%s = %s", acc, body)
 	})
 	return acc, nil
@@ -759,6 +707,39 @@ func (g *gen) emitCountBy(n *ir.Node, in string) (string, error) {
 	return v, nil
 }
 
+// emitGroupReduce lowers the optimizer's Group By + per-bucket sum or length
+// (optimizer.fuseGroupReduce): one keyed accumulator, no bucket lists.
+func (g *gen) emitGroupReduce(n *ir.Node, in string) (string, error) {
+	lam, err := g.nodeLambda(n)
+	if err != nil {
+		return "", err
+	}
+	keyGo, err := g.goType(n.Out.Key)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	e := g.fresh("e")
+	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	if err != nil {
+		return "", unsupported(n, "lambda: %v", err)
+	}
+	delta := "1"
+	if reduce, _ := n.Meta["reduce"].(string); reduce == "sum" {
+		delta = e
+	}
+	g.helper("dmMap", declMap)
+	g.helper("dmBump", declMapBump)
+	v := g.fresh("v")
+	g.wl("%s := dmNewMap[%s, int64]()", v, keyGo)
+	g.wl("for _, %s := range %s {", e, in)
+	g.in()
+	g.keepElem(e, body+" "+delta)
+	g.wl("dmBump(&%s, %s, %s)", v, body, delta)
+	g.out()
+	g.wl("}")
+	return v, nil
+}
+
 // keyBeats renders "candidate k beats the best so far" for Min By / Max By
 // over any ordered key, reusing the same lessExpr the Sort By emitter does so
 // there is one lowering of the ordering rather than two that can drift. Both
@@ -851,6 +832,7 @@ func (g *gen) emitSortBy(n *ir.Node, in string) (string, error) {
 	g.wl("%s := make([]%s, len(%s))", pairs, kv, in)
 	g.wl("for %s, %s := range %s {", i, e, in)
 	g.in()
+	g.keepElem(e, body)
 	g.wl("%s[%s] = %s{%s, %s}", pairs, i, kv, body, i)
 	g.out()
 	g.wl("}")

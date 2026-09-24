@@ -378,8 +378,8 @@ var subgrid = &Primitive{
 						"crop (%d, %d) %dx%d does not fit a %dx%d grid", r0, c0, h, w, g.Rows, g.Cols)
 				}
 				out := ir.NewGridValue(int(h), int(w))
-				for r := int64(0); r < h; r++ {
-					for c := int64(0); c < w; c++ {
+				for r := range h {
+					for c := range w {
 						cell, _ := g.At(int(r0+r), int(c0+c))
 						out.SetAt(int(r), int(c), cell)
 					}

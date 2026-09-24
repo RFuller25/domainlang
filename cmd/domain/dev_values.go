@@ -207,9 +207,9 @@ func (m *devModel) stageStep(delta int) bool {
 		}
 		m.buf.gotoLine(lines[0]) // wrap: a pipeline is a loop to read round
 	default:
-		for i := len(lines) - 1; i >= 0; i-- {
-			if lines[i] < cur {
-				m.buf.gotoLine(lines[i])
+		for _, line := range slices.Backward(lines) {
+			if line < cur {
+				m.buf.gotoLine(line)
 				return true
 			}
 		}
@@ -228,13 +228,4 @@ func (m devModel) stageLines() []int {
 	}
 	slices.Sort(out)
 	return out
-}
-
-// stageSummary is what the status line says about a recording as a whole.
-func (m devModel) stageSummary() string {
-	if m.trace == nil {
-		return ""
-	}
-	n := len(m.stageLines())
-	return styDim.Render(fmt.Sprintf("%d stage(s) recorded", n))
 }

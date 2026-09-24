@@ -36,6 +36,42 @@ func combinatorialScan(n *ir.Node, prim string, k int) (mode string, lam *ast.La
 	return mode, lam, true
 }
 
+// lowerIntScan swaps n's interpreter for a substituted scan over List<Int>,
+// keeping its type signature: count answers Mode Count and find answers Mode
+// First. The caller sets the Display and Meta that describe the substitution.
+func lowerIntScan(n *ir.Node, prim, mode string, count func([]int64) int64, find func([]int64) ([]int64, bool)) {
+	pos := n.Pos
+	n.Prim = prim
+	ints := func(v ir.Value) ([]int64, error) {
+		xs, err := ir.AsIntSlice(v)
+		if err != nil {
+			return nil, &ir.RuntimeError{Prim: prim, Pos: pos, Msg: err.Error()}
+		}
+		return xs, nil
+	}
+	if mode == "Count" {
+		n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+			xs, err := ints(v)
+			if err != nil {
+				return nil, err
+			}
+			return count(xs), nil
+		}
+		return
+	}
+	n.Eval = func(_ *ir.Context, v ir.Value) (ir.Value, error) {
+		xs, err := ints(v)
+		if err != nil {
+			return nil, err
+		}
+		found, ok := find(xs)
+		if !ok {
+			return nil, &ir.RuntimeError{Prim: prim, Pos: pos, Msg: "no combination satisfied the predicate"}
+		}
+		return ir.IntsToValue(found), nil
+	}
+}
+
 // nodeLists returns every node list in the pipeline: the top-level list plus,
 // recursively, the sub-pipelines stashed in Meta["nodes"] (Channel bodies,
 // Simple Domain loop bodies). Passes that rewrite nodes *in place* (swapping
@@ -203,7 +239,9 @@ func effectful(l *ast.Lambda) bool {
 // the naive pipeline reports.
 func isTotal(e ast.Expr) bool {
 	switch x := e.(type) {
-	case *ast.IntLit, *ast.StringLit, *ast.BoolLit, *ast.Ident:
+	case *ast.IntLit, *ast.StringLit, *ast.BoolLit, *ast.Ident, *ast.GlobalRef:
+		// A global is declared before any stage runs, so reading one is as
+		// total as reading a parameter.
 		return true
 	case *ast.UnaryExpr:
 		return isTotal(x.X)
@@ -232,6 +270,14 @@ func isTotal(e ast.Expr) bool {
 			// are deliberately absent: each has a documented error case.
 			"slice", "indexof", "startswith", "endswith", "replace", "trim",
 			"upper", "lower", "chars", "textjoin", "tuple",
+			// Collection builders that cannot fail on a well-typed argument:
+			// every failure path in their evaluators is a type assertion the
+			// typechecker has already discharged. range and fill are absent
+			// (both refuse a size too large to build), and so is tomap, which
+			// checks each element's shape at run time.
+			"sort", "unique", "toset", "keys", "values", "entries", "tolist",
+			"flatten", "zip", "enumerate", "product", "words", "split",
+			"size", "haskey", "getor",
 			// Graph. Every reader answers empty/false/0 for a node that is not
 			// in the graph rather than failing, and every update is a functional
 			// copy that cannot reject its input. `weight` is deliberately absent
@@ -312,4 +358,24 @@ func linearForm(e ast.Expr, param string) (a, b int64, ok bool) {
 	default:
 		return 0, 0, false
 	}
+}
+
+// Elementwise classifies a one-parameter stage lambda for anything that runs
+// stages element by element instead of stage by stage — a fused loop applies
+// stage two to element one before stage one has seen element two.
+//
+// pure means that reordering cannot change what the lambda computes: it
+// writes nothing, reads no global something writes, and draws no randomness.
+// total means it can never fail, so it cannot change which failure a program
+// reports first either. An indented pipeline body is neither: it is emitted as
+// its own function and its effects are not analysed here.
+func Elementwise(l *ast.Lambda, param *ir.Type) (pure, total bool) {
+	if l == nil || len(l.Params) == 0 {
+		return false, false
+	}
+	if _, isBlock := l.Body.(*ast.BlockBody); isBlock {
+		return false, false
+	}
+	pure = !lambdaImpure(l) && !ast.HasNondeterminism(l.Body)
+	return pure, isTotalElementwise(l.Body, l.Params[0], param)
 }

@@ -37,7 +37,7 @@ func TestBFSUnreachableStaysMinusOne(t *testing.T) {
 	v, _ := runPipeline(t, src, ".#.\n###\n...")
 	g := v.(*ir.GridValue)
 	// The bottom row is cut off entirely.
-	for c := 0; c < 3; c++ {
+	for c := range 3 {
 		if cell, _ := g.At(2, c); cell.(int64) != -1 {
 			t.Fatalf("cell (2,%d) should be unreachable, got %v", c, cell)
 		}

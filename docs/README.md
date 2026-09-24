@@ -54,7 +54,7 @@ the buttons.
 | [diagnostics.md](diagnostics.md) | The error engine: rich diagnostics, "did you mean" suggestions, auto-fix, the linter, and the `domain expansion:` command family |
 | [tooling.md](tooling.md) | The REPL (`domain repl`) and the language server (`domain lsp`), with editor wiring |
 | [development.md](development.md) | `domain expansion: development`, the terminal editor: types and errors on screen, completion, running, the stepper, and the opening it offers for an input file |
-| [optimizer.md](optimizer.md) | The 32-pass catalog (algorithm substitution, dead code, fusion, expression simplification, linear accumulators), `--explain`, and the oracle-testing discipline |
+| [optimizer.md](optimizer.md) | The 36-pass catalog (algorithm substitution, dead code, fusion, expression simplification, linear accumulators), `--explain`, and the oracle-testing discipline |
 | [compiler.md](compiler.md) | The Go compiler backend: what it emits, its guarantees, and its documented deltas |
 | [mahoraga.md](mahoraga.md) | `domain expansion: mahoraga`: adapting one program to one input — the tiers, why it can't cheat, the eight turns, the recipe, and what a real benchmark suite found |
 | [aoc-gaps.md](aoc-gaps.md) | The other side of the toolbox: the AoC problems Domain still cannot express (or cannot express fast enough), each with a measurement and the smallest change that would close it |
@@ -62,7 +62,7 @@ the buttons.
 **Every example in the reference runs.** A block marked ```domain run carries
 the input it is given and the output it must print; both backends execute it
 in both optimizer modes and the printed answer is diffed, so nothing on these
-pages can drift from what the language does. 326 runnable examples at present,
+pages can drift from what the language does. 327 runnable examples at present,
 at least two for every primitive, language construct and builtin group.
 
 ## Quick orientation

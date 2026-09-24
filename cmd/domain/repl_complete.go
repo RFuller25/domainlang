@@ -51,8 +51,8 @@ func completeToken(line string, cursor int, baseDir string) (candidates []string
 	// Technique", "Sort By") intact instead of truncating to their last word.
 	trimmed := strings.TrimLeft(prefix, " \t")
 	word := trimmed
-	if i := strings.IndexByte(trimmed, ':'); i >= 0 {
-		word = strings.TrimLeft(trimmed[i+1:], " \t")
+	if _, after, ok := strings.Cut(trimmed, ":"); ok {
+		word = strings.TrimLeft(after, " \t")
 	}
 	tokenStart = cursor - len(word)
 	wordLower := strings.ToLower(word)

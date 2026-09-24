@@ -56,14 +56,6 @@ type document struct {
 	analysis *Analysis
 }
 
-// resolve returns the front-end result for the document's current text,
-// computing it on first use after each content change. The server is
-// single-threaded (one request at a time off one stdin), so no locking.
-func (d *document) resolve() (*ir.Pipeline, *ast.Program) {
-	a := d.analyze()
-	return a.Pipe, a.Prog
-}
-
 // analyze returns the shared analysis for the document's current text.
 func (d *document) analyze() *Analysis {
 	if !d.resolved {

@@ -1,5 +1,7 @@
 package ast
 
+import "slices"
+
 // HasUpdate reports whether e contains a `:=` anywhere inside it — that is,
 // whether evaluating it writes to a name as well as producing a value.
 //
@@ -25,12 +27,7 @@ func HasUpdate(e Expr) bool {
 	case *FieldAccess:
 		return HasUpdate(x.Target)
 	case *CallExpr:
-		for _, a := range x.Args {
-			if HasUpdate(a) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(x.Args, HasUpdate)
 	case *CondExpr:
 		return HasUpdate(x.Cond) || HasUpdate(x.Then) || HasUpdate(x.Else)
 	case *LetExpr:
@@ -39,12 +36,7 @@ func HasUpdate(e Expr) bool {
 		if HasUpdate(x.Body) {
 			return true
 		}
-		for _, c := range x.Clauses {
-			if HasUpdate(c) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(x.Clauses, HasUpdate)
 	default:
 		// Literals, identifiers, and the BlockBody standing in for a
 		// sub-pipeline — whose statements are not expressions and cannot carry
@@ -111,10 +103,8 @@ func HasInPlace(e Expr) bool {
 		if x.InPlace {
 			return true
 		}
-		for _, a := range x.Args {
-			if HasInPlace(a) {
-				return true
-			}
+		if slices.ContainsFunc(x.Args, HasInPlace) {
+			return true
 		}
 	case *UnaryExpr:
 		return HasInPlace(x.X)
@@ -132,10 +122,8 @@ func HasInPlace(e Expr) bool {
 		if HasInPlace(x.Body) {
 			return true
 		}
-		for _, c := range x.Clauses {
-			if HasInPlace(c) {
-				return true
-			}
+		if slices.ContainsFunc(x.Clauses, HasInPlace) {
+			return true
 		}
 	}
 	return false
@@ -175,10 +163,8 @@ func HasNondeterminism(e Expr) bool {
 		if id, ok := x.Fn.(*Ident); ok && nondeterministic[id.Name] {
 			return true
 		}
-		for _, a := range x.Args {
-			if HasNondeterminism(a) {
-				return true
-			}
+		if slices.ContainsFunc(x.Args, HasNondeterminism) {
+			return true
 		}
 	case *UnaryExpr:
 		return HasNondeterminism(x.X)
@@ -196,10 +182,8 @@ func HasNondeterminism(e Expr) bool {
 		if HasNondeterminism(x.Body) {
 			return true
 		}
-		for _, c := range x.Clauses {
-			if HasNondeterminism(c) {
-				return true
-			}
+		if slices.ContainsFunc(x.Clauses, HasNondeterminism) {
+			return true
 		}
 	}
 	// A record literal is sugar for a `record(...)` call, so the CallExpr case

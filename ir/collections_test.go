@@ -61,8 +61,8 @@ func TestSetValueDedupAndOps(t *testing.T) {
 
 func TestGridAccessAndNeighbors(t *testing.T) {
 	g := NewGridValue(3, 3)
-	for r := 0; r < 3; r++ {
-		for c := 0; c < 3; c++ {
+	for r := range 3 {
+		for c := range 3 {
 			g.SetAt(r, c, int64(r*3+c))
 		}
 	}

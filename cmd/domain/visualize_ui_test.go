@@ -153,7 +153,7 @@ func TestVisualJumpToStep(t *testing.T) {
 	if !m.jumping {
 		t.Fatal(": should start a step jump")
 	}
-	for _, r := range strings.Split(strconv.Itoa(want), "") {
+	for r := range strings.SplitSeq(strconv.Itoa(want), "") {
 		m = send(m, pressKey(r))
 	}
 	m = send(m, tea.KeyPressMsg{Code: tea.KeyEnter})
