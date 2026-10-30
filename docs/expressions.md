@@ -442,23 +442,15 @@ the one value that survives from one element to the next without a `Fold`.
 Writing to a **global** carries further still — out of the statement entirely,
 so a loop can leave a count behind for the stages after it.
 
-> **Known bug — writing to a `consider` local does not work.** The form below
-> is the intended one and is what this section describes, but every spelling of
-> it currently fails at run time with `"t" cannot be updated here`:
->
-> ```domain ignore
-> Using: (x) -> consider t as x * 2 in (t := t + 1) * 10
-> ```
->
-> The cause is that two different questions share one answer.
-> `ast.UpdatedNames` deliberately drops a `consider` local's own name, since a
-> write there is a write to the local rather than to any stage binding outside
-> it — correct for the question it was written for. But `programUpdates` in
-> `prims/prims.go` reuses it to decide whether to call `eval.EnableUpdates()`
-> at all, so a program whose only `:=` targets a local never turns updates on,
-> the local is stored as a bare value instead of a `*Cell`, and `assignTo`
-> reaches the branch its own comment calls unreachable. Use a stage binding
-> until it is fixed.
+A `consider` local can be written too, and the write stays inside the local:
+
+```domain ignore
+Using: (x) -> consider t as x * 2 in (t := t + 1) * 10
+```
+
+For `x = 3` that reads `t = 6`, writes `7`, and yields `70`. The write never
+reaches a stage binding of the same spelling outside it. Interpreter and
+compiled binary agree on this.
 
 ```domain run
 Cursed Energy: stdin

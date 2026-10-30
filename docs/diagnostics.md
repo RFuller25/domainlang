@@ -23,8 +23,12 @@ error[name]: unknown keyword "Cursed Tecnique"
 
 Three severities: **error** (the program cannot run), **warning** (it runs,
 but something looks wrong), **hint** (it is fine; here is how to make it
-better). The bracketed code classifies the finding: `syntax`, `name`, `type`,
-`resolve`, `style`, `dead-code`, `perf`. Output is colored when stdout is an
+better). The bracketed code classifies the finding: `lex` and `syntax` (the program
+does not read), `name`, `type` and `resolve` (it reads but does not mean
+anything), `style`, `clarity`, `loop-declaration` and `dead-code` (lint
+warnings and hints), `perf` (a cost the compiler found), and `internal` (the
+engine itself failed on this program — a bug worth reporting, never something
+your program caused). Output is colored when stdout is an
 interactive terminal (`NO_COLOR` and `TERM=dumb` are honored).
 
 ## How the engine finds more than one error

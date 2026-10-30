@@ -1429,6 +1429,24 @@ hit winning:
 A miss lists every directory searched. Imports are resolved at build time, so a
 compiled binary never needs its libraries again.
 
+## Environment variables
+
+| Variable | Read by | Effect |
+|---|---|---|
+| `DOMAIN_PATH` | `Inherited Technique:` | colon-separated library directories, searched after the importing file's own directory (see [Libraries](#libraries)) |
+| `AOC_SESSION` | the editor's Advent of Code integration | your adventofcode.com session cookie; otherwise read from `$XDG_CONFIG_HOME/domain/aoc-session` (`~/.config/domain/aoc-session`), then `~/.adventofcode.session` |
+| `AOC_CONTACT` | the same | an address added to the `User-Agent` of requests to the site |
+| `VISUAL`, `EDITOR` | `visualize` (`o`), the REPL's `:edit` | the editor to open, `VISUAL` first, then `EDITOR`, then `vi` |
+| `NO_COLOR`, `TERM=dumb` | diagnostics and the other styled reports | turn color off |
+| `XDG_STATE_HOME` | the REPL | where `domain/repl_history` lives (default `~/.local/state`) |
+| `GOOS`, `GOARCH` | `build` | cross-compile, as for `go build` |
+| `DOMAIN_BENCH`, `DOMAIN_BENCH_ANY_LOAD` | `go test ./bench` | opt in to the timing gate; measure on a machine that is not idle (see [bench/README.md](../bench/README.md)) |
+
+`DOMAIN_ALLOC_REPORT`, `DOMAIN_CONST_PROBE` and `DOMAIN_CPU_PROFILE` are an
+internal channel: `bench` and `mahoraga` set them on the binaries they build so
+the generated program can write a report to the named file. They have no
+effect on a program you run yourself, and you never need to set them.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -1445,7 +1463,7 @@ violations in a debug build).
 
 `domain build` writes a throwaway Go module to a temp directory and shells
 out to `go build -trimpath -ldflags "-s -w"` with `CGO_ENABLED=0`, producing
-a self-contained static binary (~1.5 MB). The Go toolchain must be on
+a self-contained static binary (under 2 MB). The Go toolchain must be on
 `PATH`; the Nix package wraps the binary so this is always true (see the
 [repository README](../README.md#install-with-nix)). Cross-compiling works
 the usual Go way: set `GOOS`/`GOARCH` before `domain build`.

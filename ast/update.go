@@ -45,6 +45,14 @@ func HasUpdate(e Expr) bool {
 	}
 }
 
+// LocalWriteMarker is the key UpdatedNames adds, alongside the real names, when
+// a `consider` local is written to. It is not a spelling any program can write,
+// so no lookup ever finds it; its only job is to make the set non-empty. That
+// matters because "does anything write" is what turns on the interpreter's
+// boxed bindings, and a program whose only `:=` targets a local still needs
+// its local boxed for the write to land.
+const LocalWriteMarker = "\x00local"
+
 // UpdatedNames collects the names e writes to, into names. The resolver uses
 // it to find the bindings a statement's expressions update *before* it decides
 // how to lower them, which is what lets an updated binding keep a cell instead
@@ -78,6 +86,9 @@ func UpdatedNames(e Expr, names map[string]bool) {
 		// rule is cheap to honor and the name is the whole question here.
 		inner := map[string]bool{}
 		UpdatedNames(x.Body, inner)
+		if inner[x.Name] {
+			names[LocalWriteMarker] = true
+		}
 		delete(inner, x.Name)
 		for n := range inner {
 			names[n] = true
