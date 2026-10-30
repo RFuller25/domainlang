@@ -527,6 +527,22 @@ and gained about 1.5%, which does not pay for the machinery, and a
 dependent-load microbenchmark showed the guarded helper indistinguishable from
 raw indexing (1.93 ms against 1.95 ms for 1M steps). So the dominated check
 stays: it is free, and in at least one common shape it is load-bearing.
+
+The general question — could *any* bounds-check work pay — has a measurement
+that bounds it, and it is kept as a test: `DOMAIN_BENCH_BCE=1 go test ./bench
+-run TestBoundsCheckUpperBound -v` builds every case's emitted Go twice, as
+shipped and with `-gcflags=-B` (every check deleted, safety included), and
+times both. Across all thirty-seven the mean difference is **+0.2%**; no case
+is above its noise except as an artefact. The apparent outlier,
+`fold_grid_writes`, swings between −8% and +34% between *rebuilds of the same
+source* (28 ms, 30 ms, 42 ms for identical code), which is binary layout rather
+than anything the checks do. The array-walk program from the tight-loop section
+(`bench/mahoraga/i05_jumps`) measures 9.6 ms checked and 9.8 ms unchecked. The
+reason is the one the dependent-load microbenchmark showed: `dmItem` is
+inlined, its test makes Go's own check redundant, and the one remaining branch
+is perfectly predicted. There is nothing here for a bounds-check pass to take.
+Re-run the test after a toolchain upgrade; the README's earlier 1.14× on that
+loop was measured with an older one.
 `join_output`'s `fmt`
 buffer was worth about 5% on its own; the builder reallocation was the rest.
 
