@@ -131,6 +131,18 @@ func dmParseIntSeg(s string) int64 {
 	return dmParseInt(s)
 }
 
+func dmParseFields(s, sep string) []int64 {
+	out := make([]int64, 0, strings.Count(s, sep)+1)
+	for {
+		i := strings.Index(s, sep)
+		if i < 0 {
+			return append(out, dmParseIntSeg(s))
+		}
+		out = append(out, dmParseIntSeg(s[:i]))
+		s = s[i+len(sep):]
+	}
+}
+
 func dmSelectNth(a []int64, n int) {
 	lo, hi := 0, len(a)-1
 	for lo < hi {
@@ -215,31 +227,32 @@ func main() {
 	defer dmAllocReport()
 	defer dmCPUProfile()()
 	v1 := dmReadSource("input.txt")
-	v2 := strings.Split(v1, "\n\n")
-	v3 := make([][]string, len(v2))
-	for i4, s5 := range v2 {
-		v3[i4] = strings.Split(s5, "\n")
-	}
-	v6 := make([][]int64, len(v3))
-	for i7, g8 := range v3 {
-		row11 := make([]int64, len(g8))
-		for j9, s10 := range g8 {
-			row11[j9] = dmParseIntSeg(s10)
+	v2 := make([][]int64, 0, strings.Count(v1, "\n\n")+1)
+	rest3 := v1
+	for {
+		idx4 := strings.Index(rest3, "\n\n")
+		line5 := rest3
+		if idx4 >= 0 {
+			line5 = rest3[:idx4]
 		}
-		v6[i7] = row11
-	}
-	v12 := make([]int64, len(v6))
-	for i13, g14 := range v6 {
-		var s15 int64
-		for _, x16 := range g14 {
-			s15 += x16
+		v2 = append(v2, dmParseFields(line5, "\n"))
+		if idx4 < 0 {
+			break
 		}
-		v12[i13] = s15
+		rest3 = rest3[idx4+2:]
 	}
-	top17 := dmTopK(v12, 3, true)
-	var v18 int64
-	for _, x19 := range top17 {
-		v18 += x19
+	v6 := make([]int64, len(v2))
+	for i7, g8 := range v2 {
+		var s9 int64
+		for _, x10 := range g8 {
+			s9 += x10
+		}
+		v6[i7] = s9
 	}
-	fmt.Println(v18)
+	top11 := dmTopK(v6, 3, true)
+	var v12 int64
+	for _, x13 := range top11 {
+		v12 += x13
+	}
+	fmt.Println(v12)
 }

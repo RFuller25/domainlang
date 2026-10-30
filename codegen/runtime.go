@@ -786,11 +786,14 @@ const declISqrt = `func dmISqrt(x int64) int64 {
 	if x < 2 {
 		return x
 	}
-	r := int64(math.Sqrt(float64(x)))
-	for r > x/r {
+	// 3037000499 is floor(sqrt(MaxInt64)): up to it r*r cannot overflow, so
+	// the two corrections multiply instead of dividing.
+	const top = 3037000499
+	r := min(int64(math.Sqrt(float64(x))), top)
+	for r*r > x {
 		r--
 	}
-	for r+1 <= x/(r+1) {
+	for r < top && (r+1)*(r+1) <= x {
 		r++
 	}
 	return r

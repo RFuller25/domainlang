@@ -323,8 +323,8 @@ Cursed Technique: Apply
 Reveal: stdout
 `
 	pipe := compilePipeline(t, src, true)
-	got := buildAndRun(t, pipe, []byte("0\n1\n2\n3\n4\n8\n9\n15\n16\n9223372036854775807"), codegen.Options{})
-	want := "0,1,1,1,2,2,3,3,4,3037000499 34386098449076 465428353255261088 39771905838016\n"
+	got := buildAndRun(t, pipe, []byte("0\n1\n2\n3\n4\n8\n9\n15\n16\n9223372036854775807\n9223372030926249000\n9223372030926249001\n9223372030926249002\n4503599761588224"), codegen.Options{})
+	want := "0,1,1,1,2,2,3,3,4,3037000499,3037000498,3037000499,3037000499,67108864 34386098449076 465428353255261088 39771905838016\n"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

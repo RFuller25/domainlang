@@ -251,6 +251,34 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 			return 2, out, true, nil
 		}
 	}
+	// Split(sep) + Split Each(sep) + Convert To Integers over rows, and the
+	// same without the leading Split: parse each field straight out of its
+	// line. The unfused path builds a []string of lines, a [][]string of fields
+	// and only then the [][]int64 — two of the three exist to be read once.
+	// Separators must be non-empty literals (an empty one splits into runes,
+	// which the rules above own), and parsing visits rows and fields in the
+	// order the unfused loops do, so the first bad field is the same one.
+	rowSep := func(n *ir.Node) (string, bool) {
+		sep, ok := n.Meta["sep"].(string)
+		return sep, ok && sep != "" && !hasMeasured(n, "sep")
+	}
+	nestedInts := func(n *ir.Node) bool {
+		return n.Prim == "Convert To Integers" && n.In != nil && n.In.Kind == ir.KList &&
+			n.In.Elem != nil && n.In.Elem.Kind == ir.KList && n.In.Elem.Elem != nil &&
+			n.In.Elem.Elem.Kind == ir.KText
+	}
+	if len(nodes) >= 3 && nodes[0].Prim == "Split" && nodes[1].Prim == "Split Each" && nestedInts(nodes[2]) {
+		if lsep, ok := rowSep(nodes[0]); ok {
+			if fsep, ok := rowSep(nodes[1]); ok {
+				return 3, g.emitSplitRowsInts(in, lsep, fsep), true, nil
+			}
+		}
+	}
+	if len(nodes) >= 2 && nodes[0].Prim == "Split Each" && nestedInts(nodes[1]) {
+		if fsep, ok := rowSep(nodes[0]); ok {
+			return 2, g.emitFieldRowsInts(in, fsep), true, nil
+		}
+	}
 	// Map Each(list literal) + Flatten + Count By: stream each input element's
 	// literal-list expansion straight into the count map, so neither the
 	// per-element list nor the flattened list is ever built. Count By is an
