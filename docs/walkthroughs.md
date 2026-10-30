@@ -490,8 +490,11 @@ summed.
 This is not a `Map Each` feature. A lambda `(x) -> e` and a sub-pipeline both
 turn one value into one value, so a body stands in **wherever a 1-parameter
 `Using:` is accepted** — `Filter`, `Sort By`, `Group By`, `Any`/`All`, the grid
-searches, and the rest. What it cannot do is stand in for a lambda that takes
-two parameters, and the stages that need one say so with the arity named.
+searches, and the rest. A lambda that takes two or more parameters (a `Fold`
+step, say) names the extra ones with a `Params:` line, and the body is then a
+pipeline over the last — see
+[expressions.md](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive).
+A stage that wants a body but cannot take one says so with the arity named.
 
 ---
 

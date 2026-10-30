@@ -6,7 +6,9 @@ One class of the [primitive reference](primitives.md).
 
 ### Sum — `List<Int> -> Int`
 
-Sum of all elements; `0` for the empty list.
+Sum of all elements; `0` for the empty list. Also accepts `List<Float>` and
+then gives a `Float` (added in list order — float addition is not associative,
+so the order is part of the answer).
 
 ```domain run
 Cursed Energy: stdin
@@ -97,6 +99,9 @@ Reveal: stdout
 
 Seeded with the first element; the empty list is a runtime error
 (`"Max of an empty list is undefined"`).
+
+All three also accept `List<Float>` and give a `Float`. `Select Top K`, `Sum By`
+and `Product By` stay `Int`-only: their key lambda must return an `Int`.
 
 ```domain run
 Cursed Energy: stdin

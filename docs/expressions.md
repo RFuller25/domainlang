@@ -196,7 +196,7 @@ body *of* — and `Params:` says what the rest are called:
 ```domain ignore
 Maximum Technique: Fold            # a fold whose step needs a primitive
     Seed: (xs) -> 0
-    Params: acc, row
+    Params: acc, line
     Domain Expansion: Sort
     Cursed Technique: Apply
         Using: (r) -> acc + first(r)

@@ -65,6 +65,8 @@ func expansionInvocation(args []string) (cmd []string, rest []string, ok bool) {
 		words = args[1:]
 	case strings.HasPrefix(head, "expansion:"): // quoted: "expansion: maximum compile"
 		words = append(strings.Fields(args[0][len("expansion:"):]), args[1:]...)
+	case strings.HasPrefix(head, "expansion "): // quoted, colon left off: "expansion maximum compile"
+		words = append(strings.Fields(args[0][len("expansion"):]), args[1:]...)
 	default:
 		return nil, nil, false
 	}

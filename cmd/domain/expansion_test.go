@@ -48,6 +48,7 @@ func TestExpansionInvocationParsing(t *testing.T) {
 		{"quoted form", []string{"expansion: maximum compile", "x.domain"}, "maximum compile", true},
 		{"documentation with port", []string{"expansion:", "documentation", "-p", "8080"}, "documentation", true},
 		{"no colon", []string{"expansion", "fix", "x.domain"}, "fix", true},
+		{"quoted, no colon", []string{"expansion maximum compile", "x.domain"}, "maximum compile", true},
 		{"case-insensitive", []string{"Expansion:", "Diagnosis", "x.domain"}, "diagnosis", true},
 		{"unknown command", []string{"expansion:", "summon", "x.domain"}, "", true},
 		{"not expansion at all", []string{"run", "x.domain"}, "", false},
