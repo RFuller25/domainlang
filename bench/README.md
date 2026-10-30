@@ -7,10 +7,8 @@ the hand-written Go with the **same** toolchain flags, checks the two agree
 byte for byte, and times them against each other.
 
 The question these numbers answer: **does `domain build` output stay within
-2× of what a competent Go programmer writes by hand?** On thirty-six of
-the thirty-seven cases it does, sixteen of them faster than the hand-written
-Go; the thirty-seventh is documented below with the measured cost of the fix
-it is waiting on.
+2× of what a competent Go programmer writes by hand?** On all thirty-seven
+cases it does, twenty-three of them faster than the hand-written Go.
 
 ## Running them
 
@@ -74,50 +72,47 @@ Best of five alternating runs each, Go 1.25, linux/amd64. Lower is better;
 
 | Case | Domain | Go | Ratio |
 |---|---:|---:|---:|
-| `read_length` | 12.1 ms | 56.4 ms | **0.21×** |
-| `pairs_increase` | 75.1 ms | 60.9 ms | 1.23× |
-| `scan_mod` | 66.9 ms | 64.2 ms | 1.04× |
-| `sliding_max` | 73.0 ms | 236.8 ms | **0.31×** |
-| `pipeline_body` | 107.1 ms | 76.0 ms | 1.41× |
-| `text_builtins` | 91.1 ms | 62.3 ms | 1.46× |
-| `fold_map_dp` | 136.0 ms | 120.4 ms | 1.13× |
-| `fold_grid_writes` | 29.6 ms | 43.5 ms | **0.68×** |
-| `count_by_entries` | 67.3 ms | 62.6 ms | 1.07× |
-| `partition_parts` | 76.7 ms | 63.0 ms | 1.22× |
-| `topk_sum` | 80.0 ms | 397.9 ms | **0.20×** |
-| `dijkstra_grid` | 88.0 ms | 124.2 ms | **0.71×** |
-| `match_pattern` | 41.3 ms | 90.8 ms | **0.46×** |
-| `toposort_words` | 340.6 ms | 183.9 ms | 1.85× |
-| `combinations3` | 917.2 ms | 914.7 ms | 1.00× |
-| `sort_by_key` | 270.4 ms | 660.7 ms | **0.41×** |
-| `merge_ranges` | 426.2 ms | 365.3 ms | 1.17× |
-| `group_map_values` | 141.4 ms | 84.3 ms | 1.68× |
-| `set_intersect` | 15.8 ms | 138.0 ms | **0.11×** |
-| `connected_components` | 43.8 ms | 25.0 ms | 1.75× |
-| `grid_bfs` | 113.3 ms | 72.1 ms | 1.57× |
-| `sparse_life` | 258.6 ms | 99.5 ms | 2.60× ⚠ |
-| `explore_states` | 821.1 ms | 576.9 ms | 1.42× |
-| `loop_repeat` | 43.0 ms | 26.5 ms | 1.62× |
-| `join_output` | 141.9 ms | 85.1 ms | 1.67× |
-| `channels_zip` | 109.6 ms | 264.5 ms | **0.41×** |
-| `shikigami_calls` | 82.9 ms | 64.4 ms | 1.29× |
-| `vows_hot` | 55.3 ms | 236.8 ms | **0.23×** |
-| `grid_transform` | 78.1 ms | 84.7 ms | **0.92×** |
-| `float_sum` | 154.7 ms | 120.5 ms | 1.28× |
-| `fold_tuple` | 50.3 ms | 77.2 ms | **0.65×** |
-| `iterate_unfold` | 40.6 ms | 26.6 ms | 1.52× |
-| `while_halve` | 123.2 ms | 158.9 ms | **0.78×** |
-| `fixed_point` | 96.9 ms | 178.3 ms | **0.54×** |
-| `list_shaping` | 71.3 ms | 232.1 ms | **0.31×** |
-| `for_loop` | 111.3 ms | 211.0 ms | **0.53×** |
-| `math_builtins` | 141.8 ms | 86.2 ms | 1.64× |
+| `read_length` | 10.5 ms | 54.6 ms | **0.19×** |
+| `pairs_increase` | 49.7 ms | 59.1 ms | **0.84×** |
+| `scan_mod` | 64.6 ms | 63.2 ms | 1.02× |
+| `sliding_max` | 74.9 ms | 235.2 ms | **0.32×** |
+| `pipeline_body` | 65.3 ms | 74.0 ms | **0.88×** |
+| `text_builtins` | 67.8 ms | 62.1 ms | 1.09× |
+| `fold_map_dp` | 108.4 ms | 103.1 ms | 1.05× |
+| `fold_grid_writes` | 32.3 ms | 32.9 ms | **0.98×** |
+| `count_by_entries` | 66.0 ms | 60.7 ms | 1.09× |
+| `partition_parts` | 70.3 ms | 66.6 ms | 1.06× |
+| `topk_sum` | 71.1 ms | 424.0 ms | **0.17×** |
+| `dijkstra_grid` | 83.2 ms | 115.6 ms | **0.72×** |
+| `match_pattern` | 41.6 ms | 88.1 ms | **0.47×** |
+| `toposort_words` | 204.4 ms | 200.0 ms | 1.02× |
+| `combinations3` | 931.8 ms | 930.3 ms | 1.00× |
+| `sort_by_key` | 267.3 ms | 647.4 ms | **0.41×** |
+| `merge_ranges` | 439.1 ms | 392.6 ms | 1.12× |
+| `group_map_values` | 64.1 ms | 80.8 ms | **0.79×** |
+| `set_intersect` | 16.1 ms | 135.8 ms | **0.12×** |
+| `connected_components` | 23.8 ms | 24.1 ms | **0.99×** |
+| `grid_bfs` | 70.9 ms | 70.8 ms | 1.00× |
+| `sparse_life` | 146.8 ms | 86.7 ms | 1.69× |
+| `explore_states` | 578.9 ms | 619.3 ms | **0.93×** |
+| `loop_repeat` | 25.2 ms | 24.9 ms | 1.01× |
+| `join_output` | 82.4 ms | 78.7 ms | 1.05× |
+| `channels_zip` | 97.4 ms | 298.5 ms | **0.33×** |
+| `shikigami_calls` | 53.4 ms | 63.7 ms | **0.84×** |
+| `vows_hot` | 52.7 ms | 211.5 ms | **0.25×** |
+| `grid_transform` | 74.2 ms | 82.0 ms | **0.90×** |
+| `float_sum` | 102.5 ms | 111.9 ms | **0.92×** |
+| `fold_tuple` | 47.1 ms | 61.9 ms | **0.76×** |
+| `iterate_unfold` | 26.2 ms | 22.4 ms | 1.17× |
+| `while_halve` | 109.9 ms | 156.6 ms | **0.70×** |
+| `fixed_point` | 94.3 ms | 168.1 ms | **0.56×** |
+| `list_shaping` | 69.7 ms | 214.4 ms | **0.32×** |
+| `for_loop` | 118.1 ms | 238.6 ms | **0.50×** |
+| `math_builtins` | 90.2 ms | 85.4 ms | 1.06× |
 
-Thirty-six of the thirty-seven are inside the 2× target and sixteen are
-faster than the hand-written Go. `sparse_life` is not, knowingly: it carries
-an explicit budget in the case table with the reason and the measured cost
-of the fix (see [below](#the-one-case-still-over-target-sparse_life)), so
-the gate stays meaningful for everything else and still fails if that case
-gets worse.
+All thirty-seven are inside the 2× target and twenty-three are faster than
+the hand-written Go. The worst is `sparse_life` at 1.69×; the history of how it
+got there from 4.50× is [below](#the-case-that-was-over-target-sparse_life).
 
 Where Domain wins it is usually not a codegen trick but a decision the
 compiler is in a position to make and a hand-written program usually is not:
@@ -264,11 +259,13 @@ finishes at **1.76×**.
 Together these took the four failing cases to 1.76×, 1.77×, 1.53× and
 3.53×.
 
-### The one case still over target: `sparse_life`
+### The case that was over target: `sparse_life`
 
-Eight generations of Life on the Sparse plane runs at **2.60×**, down from
-4.50× but still over. The reason is structural, so
-it is worth stating precisely.
+Eight generations of Life on the Sparse plane was the one case outside the 2×
+target through rounds one to three (4.50×, then 2.60×), and carried an explicit
+budget in the case table for it. Round four closed it, and the reason it had
+been over is worth keeping because it was a stack of small things rather than
+one big one.
 
 A pipeline stage produces a *value*, so each lap of the loop rebuilds every
 collection it touches: `Find Cells` materializes the live points, the fused
@@ -277,27 +274,27 @@ collection it touches: `Find Cells` materializes the live points, the fused
 plane back out into points, and `Convert To Sparse Grid` builds the next
 plane from those. The Go program keeps two plain maps and swaps them.
 
-Hand-editing the two conversions out of the emitted Go — filtering the score
-Map's keys straight into the next generation, and dropping the row-major sort
-that feeds an order-blind `Count By` — measures at **2.28×**, and that is
-what an optimizer pass could reach:
+Three changes, measured one at a time (ratio against the same hand-written Go):
 
 | | ratio |
 |---|---:|
-| as emitted today | 2.60× |
-| score Map filtered straight into the next lap | 2.42×* |
-| + the sort feeding an order-blind `Count By` dropped | 2.28×* |
-| hand-written Go | 1.00× |
+| as left by round three | 2.60–3.20× |
+| `dmMap` keeps its values in a slice beside the keys, so walking a map does not hash | 2.86× |
+| the plane keys cells by a packed `int64` instead of a two-field struct | 2.63× |
+| `Count By` → plane → `Find Cells` → marked plane fused into one walk of the map | 1.69× |
 
-<sub>* measured before the single-probe `Count By` below, which took the
-baseline of that experiment from 3.51× to 2.78×; the fusion is worth roughly
-the same again on top.</sub>
+The fusion is the one the table above predicted (2.28× by hand-editing); it was
+worth more than predicted because the two earlier changes had already made each
+remaining map operation cheaper. It is deliberately narrow — the predicate must
+be pure and total, because the fused walk visits cells in the map's insertion
+order where the unfused one visits them sorted, and a predicate that could fail
+would report a different cell first — and the sort it removes feeds a set,
+which has no order to lose.
 
-The remaining ~2.3× is the data model rather than the code generated for it:
-a `Map` that preserves insertion order carries a keys slice beside its map,
-and a `Sparse` plane tracks its bounding box on every `put`. Both are
-promises the language makes — rendering order and `Convert To Grid` — and
-neither is free.
+The remaining 1.7× is the data model: a `Map` that preserves insertion order
+carries a keys slice beside its index, and a `Sparse` plane tracks its bounding
+box on every `put`. Both are promises the language makes — rendering order and
+`Convert To Grid` — and neither is free.
 
 ## Round three: what the toolchain could not give us
 
@@ -489,6 +486,34 @@ output is a rule this repo enforces with differential tests.
 
 The measurements are recorded here so the next attempt starts from them rather
 than from the tuple-allocation hypothesis.
+
+## Round four: storage, fusion and what a mode actually needs
+
+Seven cases were above 1.1× after round three. Each change below was measured
+alone against the table, and the emitted Go of every program in `bench/`,
+`challenges/` and `examples/` was diffed before and after the one change that
+was meant to touch no output (the builtin registry), as a check that a refactor
+changed nothing a binary does.
+
+| Case | before | after | what changed |
+|---|---:|---:|---|
+| `sparse_life` | 3.20× | 1.69× | map storage, packed plane keys, the filter fusion (above) |
+| `pipeline_body` | 1.46× | 0.88× | `Split` + `Split Each` + `Convert To Integers` parse each field straight out of its line: no `[]string` of lines, no `[][]string` of fields |
+| `pairs_increase` | 1.26× | 0.84× | `Pairs` + `Count Matching` tests each pair as it is formed; the list of tuples (twice its source's size) is never built |
+| `join_output` | 1.62× | 1.05× | the fused `Join` reserved exactly the input's length, so a transform that appends one byte per line overflowed it and the builder reallocated and copied the whole answer; it now reserves a quarter more, and a large `Text` is written to stdout without `fmt`'s doubling buffer |
+| `explore_states` | 1.31× | 0.93× | `Mode: Count` is the size of the visited set, so the visit-order list is only built for the mode that returns it; depth per queued state only when `Distances` or `Until:` reads it; the visited set is tested and set with one map assignment |
+| `math_builtins` | 1.12× | 1.06× | `isqrt` corrects its float estimate by multiplying (safe up to `floor(sqrt(MaxInt64))`) instead of dividing twice |
+| `group_map_values`, `toposort_words`, `count_by_entries` | 1.68×, 1.85×, 1.07× | 0.79×, 1.02×, 1.09× | the map storage change; the first two had also been helped by earlier rounds, so the table above had drifted |
+
+**Three that did not need a change.** `dmMap`'s new layout (values in a slice,
+an index map beside it) was expected to help everything that builds a map and
+helped the ones that walk it; building is one probe either way.
+**Bounds checks** (the remaining idea from the tight-loop section) were
+measured again in isolation: in a dependent-load loop the guarded `dmItem` is
+indistinguishable from raw indexing (1.93 ms against 1.95 ms for 1M steps), so
+the guard is not what costs there, and proving an index in range remains the
+invariant analysis the section above declined on risk. `join_output`'s `fmt`
+buffer was worth about 5% on its own; the builder reallocation was the rest.
 
 ## Verifying the in-place widening against the AoC 2017 suite
 

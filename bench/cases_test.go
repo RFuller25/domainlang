@@ -88,8 +88,12 @@ func TestREADMEMatchesCases(t *testing.T) {
 	}
 
 	flat := strings.ToLower(strings.Join(strings.Fields(readme), " "))
+	inside := spell(len(cases)-over) + " of the " + spell(len(cases))
+	if over == 0 {
+		inside = "all " + spell(len(cases))
+	}
 	for _, want := range []string{
-		spell(len(cases)-over) + " of the " + spell(len(cases)),
+		inside,
 		spell(faster) + " of them faster",
 		spell(faster) + " are faster",
 	} {

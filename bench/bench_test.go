@@ -134,11 +134,6 @@ var cases = []benchCase{
 		name:    "sparse_life",
 		feature: "the Sparse plane — eight generations of Life over Find Cells + Count By",
 		gen:     genLife, size: 20_000, small: 200,
-		// Over target, knowingly. Each lap rebuilds two whole planes and an
-		// insertion-ordered Map where the Go program keeps two plain maps.
-		// Fusing Count By + Convert To Sparse Grid + Find Cells measures at
-		// 2.28x (see README); the rest is the data model, not the codegen.
-		budget: 3.2,
 	},
 	{
 		name:    "explore_states",

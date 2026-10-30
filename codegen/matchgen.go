@@ -251,6 +251,15 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 			return 2, out, true, nil
 		}
 	}
+	// Pairs + Count Matching: each pair is tupled, tested and dropped, so the
+	// list of tuples (twice the size of its source) is never built. Pairs has
+	// no effect of its own, and the predicate sees the pairs in the same order,
+	// so a pure predicate fails, if it fails, on the same pair.
+	if len(nodes) >= 2 && nodes[0].Prim == "Pairs" && nodes[1].Prim == "Count Matching" {
+		if out, ok, err := g.emitPairsCount(nodes[0], nodes[1], in); err != nil || ok {
+			return 2, out, ok, err
+		}
+	}
 	// Split(sep) + Split Each(sep) + Convert To Integers over rows, and the
 	// same without the leading Split: parse each field straight out of its
 	// line. The unfused path builds a []string of lines, a [][]string of fields

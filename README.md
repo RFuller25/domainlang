@@ -483,9 +483,8 @@ did, which is asserted rather than assumed.
 The benchmark that matters is against Go rather than against the
 interpreter: [`bench/`](bench/README.md) pairs each Domain program in it
 with a hand-written Go counterpart answering the same question about the
-same input, and requires byte-identical output from both. Thirty-six of
-thirty-seven cases are inside 2× of the hand-written Go (the last carries an
-explained budget) and sixteen are faster than it — a quickselect the
+same input, and requires byte-identical output from both. All
+thirty-seven cases are inside 2× of the hand-written Go and twenty-three are faster than it — a quickselect the
 Go program never asked for, a read sized before the first byte arrives, a
 `Match Pattern` scanner with the predicate inlined into the loop.
 

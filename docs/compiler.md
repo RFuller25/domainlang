@@ -206,9 +206,8 @@ Go as fast as Go you would have written?** — is
 [`bench/`](../bench/README.md): thirty-seven Domain programs, each with a
 hand-written Go counterpart answering the same question about the same
 input, built with the same flags and required to print the same bytes.
-Today thirty-six of them are inside 2× of the hand-written program and
-sixteen are faster than it; the thirty-seventh (`sparse_life`) carries an
-explicit, explained budget. `bench/README.md` carries the table, the
+Today all of them are inside 2× of the hand-written program and
+twenty-three are faster than it. `bench/README.md` carries the table, the
 methodology, and the measured payoff of the fusion passes that are not
 written yet.
 
