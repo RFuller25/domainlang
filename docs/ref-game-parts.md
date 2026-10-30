@@ -115,6 +115,11 @@ whose output is a picture. An unknown spec is refused at resolve time, by name.
 | `"text"` | a printable keystroke — what the player typed |
 | `"resize"` | the terminal changed size |
 
+The shape of a spec is checked, the key name inside `"key <name>"` is not: any
+name is accepted, because the set of keys depends on the terminal. `"key entr"`
+therefore resolves and simply never fires — check a new handler against a
+replay script (`key enter`, then `frame`) rather than trusting that it parsed.
+
 When several specs answer to one event they all run, **specific first**:
 `"key q"` and `"key"` are two different questions about one keystroke, and a
 program that writes both means both.

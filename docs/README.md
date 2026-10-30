@@ -41,7 +41,7 @@ the buttons.
 
 | Document | Covers |
 |---|---|
-| [walkthroughs.md](walkthroughs.md) | Whole programs, start to finish: bindings, all four loops, Channels, Parts, pipeline bodies, Shikigami, the optimizer |
+| [walkthroughs.md](walkthroughs.md) | Whole programs, start to finish: bindings, all five loops, Channels, Parts, pipeline bodies, Shikigami, the optimizer |
 | [scopes.md](scopes.md) | `Innate Domain`: what a scope decides, the two that exist, which tools work on each, and how a scope differs from importing a library |
 | [game-dev.md](game-dev.md) | Writing a game: the world, the events that change it, the frame drawn from it, and talking to a server — built up a step at a time. The [`Part` roles](ref-game-parts.md) have a reference page of their own |
 | [language.md](language.md) | Source structure: the two layers, keywords, statements, arguments, Channels, Shikigami, loops, vows |
@@ -57,6 +57,7 @@ the buttons.
 | [optimizer.md](optimizer.md) | The 36-pass catalog (algorithm substitution, dead code, fusion, expression simplification, linear accumulators), `--explain`, and the oracle-testing discipline |
 | [compiler.md](compiler.md) | The Go compiler backend: what it emits, its guarantees, and its documented deltas |
 | [mahoraga.md](mahoraga.md) | `domain expansion: mahoraga`: adapting one program to one input — the tiers, why it can't cheat, the eight turns, the recipe, and what a real benchmark suite found |
+| [../bench/README.md](../bench/README.md) | Domain against hand-written Go: thirty-seven paired programs, the 2× speed gate, the method, and what each round of measurement found and fixed |
 | [aoc-gaps.md](aoc-gaps.md) | The other side of the toolbox: the AoC problems Domain still cannot express (or cannot express fast enough), each with a measurement and the smallest change that would close it |
 
 **Every example in the reference runs.** A block marked ```domain run carries

@@ -1001,8 +1001,8 @@ domain expansion: coverage examples/ --min 40   # a CI gate
 ```
 examples/ — 28 program(s)
 
-  primitives   37 / 104  (36%)
-  builtins     53 / 208  (25%)
+  primitives   41 / 104  (39%)
+  builtins     55 / 208  (26%)
   keywords      8 /   9  (89%)
 
   Channeled Energy — 10 not exercised
