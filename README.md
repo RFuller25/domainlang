@@ -471,7 +471,7 @@ The interpreter is the correctness oracle: `codegen`'s tests compile every
 anchor program in both modes and require byte-identical stdout — and for a
 [`Game Dev`](docs/scopes.md) program, whose output is a picture, byte-identical
 *frames*. On a 1M-line AoC 2022 Day 4 input the compiled binary is ~7× faster
-than the interpreter; an ordinary binary is self-contained (~1.5 MB, stdlib
+than the interpreter; an ordinary binary is self-contained (under 2 MB, stdlib
 only). Two things qualify that, and both are scoped rather than general: a
 [foreign block](docs/ref-expansions.md#foreign-block--t---text-or-a-declared-in---out) embeds another
 language's source but not the runtime that runs it, and a `Game Dev` binary
@@ -483,9 +483,9 @@ did, which is asserted rather than assumed.
 The benchmark that matters is against Go rather than against the
 interpreter: [`bench/`](bench/README.md) pairs each Domain program in it
 with a hand-written Go counterpart answering the same question about the
-same input, and requires byte-identical output from both. Every case is
-inside
-2× of the hand-written Go and five are faster than it — a quickselect the
+same input, and requires byte-identical output from both. Thirty-six of
+thirty-seven cases are inside 2× of the hand-written Go (the last carries an
+explained budget) and sixteen are faster than it — a quickselect the
 Go program never asked for, a read sized before the first byte arrives, a
 `Match Pattern` scanner with the predicate inlined into the loop.
 

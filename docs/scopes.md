@@ -97,8 +97,9 @@ Inherited Technique: aoc        # a library of Shikigami to load
 ```
 
 An `Innate Domain:` naming something this build does not have is an error at
-that line, listing what it does have. If the name is a library on the search
-path, the error says so and names the keyword you meant.
+that line, listing what it does have. `domain expansion: diagnosis` goes
+further: if the name is a library on the search path, it says so, names the
+keyword you meant, and offers the one-word fix.
 
 ## Game Dev
 

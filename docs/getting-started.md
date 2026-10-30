@@ -129,7 +129,7 @@ and the tooling relies on them:
 | `Inherited Technique:` | import a library of Shikigami (this keyword is required) |
 | `Cursed Energy:` | where data comes from (a file name, or `stdin`) |
 | `Cursed Technique:` | 1:1 transforms — `Split`, `Map Each`, `Filter`, … |
-| `Channeled Energy:` | type coercions — `Convert To Integers`, `To Grid`, `To Set`, … |
+| `Channeled Energy:` | type coercions — `Convert To Integers`, `Convert To Grid`, `Convert To Set`, … |
 | `Maximum Technique:` | reductions — `Sum`, `Count`, `Fold`, `Group By`, … |
 | `Domain Expansion:` | **a named algorithm the optimizer may replace** |
 | `Reverse Cursed Technique:` | inversions — `Reverse` |
@@ -553,8 +553,9 @@ domain build prog.domain --run         # compile and run in one step
 The generated Go is fully typed — no `[]any` — and lambdas are inlined into
 the loops that consume them. The interpreter is the correctness oracle: the
 test suite requires byte-identical stdout from both backends for every
-example, challenge, and documentation program on this page. Expect roughly
-seven times the interpreter's speed.
+example, challenge, and documentation program on this page. Speedups vary with the
+program: about 2× on split-heavy work and about 7× on `Match Pattern`-heavy
+work (see [compiler.md](compiler.md#performance)).
 
 One behavioural difference to know: a compiled binary resolves
 `Cursed Energy:` file paths against the *working directory*, like any CLI

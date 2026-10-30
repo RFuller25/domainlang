@@ -233,10 +233,19 @@ in-place rewrites, algorithm substitution included, fire inside it (see
 
 ## Grammar
 
-Primary expressions: integer literals, double-quoted string literals,
-identifiers (lambda parameters), parenthesized expressions, **record literals**
+Primary expressions: integer literals, float literals (`3.25` — digits, a dot,
+and at least one digit after it), double-quoted string literals, identifiers
+(lambda parameters), parenthesized expressions, **record literals**
 (`{a: 1, b: x}`), field access (`expr.name`), and builtin calls
-(`name(args...)`). Unary minus negates an Int.
+(`name(args...)`). Unary minus negates an Int or a Float.
+
+**There is no `true` or `false` literal** in an expression: `(x) -> true` is
+an `unknown identifier "true"` error. A Bool comes from a comparison, `and`,
+`or`, `ikke`, or a builtin that answers a question (`contains`, `isprime`, …);
+when you need a constant one, `1 = 1` and `1 = 2` are the idiom. The one place
+the words are written is a `b: Bool` [Shikigami parameter's
+argument](language.md#parameters) (`b: true`), which is substituted into the
+body as a value.
 
 A record literal is written
 

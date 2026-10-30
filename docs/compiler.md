@@ -8,7 +8,7 @@ out to `go build -trimpath -ldflags "-s -w"` (CGO disabled).
 **How self-contained the result is depends on the program's
 [Innate Domain](scopes.md).** An `Advent of Code` program — which is every
 program written without a scope line — compiles to what it always did: a
-static binary around 1.5 MB, standard library only, needing nothing at
+static binary under 2 MB, standard library only, needing nothing at
 runtime and nothing at build time but the Go toolchain. That is not a
 default the game backend inherited by accident; it is asserted byte for byte
 (`codegen.moduleFiles`, `TestStdlibBuildInputsAreUnchanged`), because every
@@ -203,12 +203,14 @@ include process startup, which is what a user actually pays. Run them with
 
 Beating the interpreter is the easy half. The other half — **is the emitted
 Go as fast as Go you would have written?** — is
-[`bench/`](../bench/README.md): eleven Domain programs, each with a
+[`bench/`](../bench/README.md): thirty-seven Domain programs, each with a
 hand-written Go counterpart answering the same question about the same
 input, built with the same flags and required to print the same bytes.
-Today every one of them is inside 2× of the hand-written program and five
-are faster than it. `bench/README.md` carries the table, the methodology,
-and the measured payoff of the fusion passes that are not written yet.
+Today thirty-six of them are inside 2× of the hand-written program and
+sixteen are faster than it; the thirty-seventh (`sparse_life`) carries an
+explicit, explained budget. `bench/README.md` carries the table, the
+methodology, and the measured payoff of the fusion passes that are not
+written yet.
 
 ```sh
 go test ./bench                                          # the two must agree
@@ -310,14 +312,14 @@ The full AoC toolbox surface is compiled:
   vars as the interpreter (`prims.MaxPermutationInput` / `MaxSubsetInput`),
   both zero by default — so neither backend refuses a large input, and if a
   ceiling is set back both refuse identically.
-- **Expression builtins:** all 92 compile. Points lower to the interned
+- **Expression builtins:** all of them compile (the toolbox group included). Points lower to the interned
   `(Int, Int)` tuple struct; `padd`/`manhattan`/`rotl`/`rotr`/`dirs4`/
   `neighbors4`/`neighbors8`/`solve2x2` become concrete `dm*` helpers over
   that struct; the sparse group (`sparse`/`put`/`has`/`cells`/bounds and
   total `at`) compiles against `dmSparse[T]`.
 
 `TestCompiledToolboxMatchesInterpreter` pins interpreter/binary parity
-over 14 toolbox programs (including the shapes of examples 11–15),
-`TestCompiledSparseMatchesInterpreter` over 9 sparse programs, and
+over the toolbox programs (including the shapes of examples 11–15),
+`TestCompiledSparseMatchesInterpreter` over the sparse programs, and
 `TestCompiledChallengesMatchInterpreter` over all 13 challenge programs —
 each in both optimizer modes.
