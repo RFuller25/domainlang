@@ -421,11 +421,29 @@ ir/         typed pipeline graph, value/type model, runtime collections
 typecheck/  static expression typer (lambda output-type inference)
 eval/       dynamic expression evaluator (lambda bodies, runtime field access)
 prims/      primitive vocabulary + resolver/typechecker + Shikigami + prelude
-optimizer/  36 rewrite passes: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
+optimizer/  36 numbered rewrites: algorithm substitution, fusion, dead code, expression simplification, linear accumulators
 mahoraga/   input-adaptive codegen tunings: measure, search a catalogue, verify/replay
 interp/     tree-walking evaluator
 codegen/    Go compiler backend: optimized IR → typed Go source → `go build`
-cmd/domain/ CLI (bare file → interpret, extra args → compile; run/build, --help)
+cmd/domain/ CLI (bare file → interpret, extra args → compile; run/build, --help), REPL, visualizer, editor
+```
+
+Beside the compiler pipeline sit the packages that serve the tools around it:
+
+```
+diag/       diagnostics engine: positioned errors, fix-and-continue, lint, performance hints, auto-fixes
+format/     canonical source rendering behind `domain fmt` and the editor's reformatting
+lsp/        language-server knowledge (hover, completion, definitions, inlay hints) and the stdio server
+shape/      reads an input file and suggests the statements that would take it in
+game/       host for `Innate Domain: Game Dev` programs: play, replay, record
+langs/      how to run a program written in another language (foreign blocks, `battle`)
+runner/     measuring a run: allocations, per-node counts, process timing
+aoc/        Advent of Code client for the editor: puzzle text, your input, answer checks
+docs/       this documentation, its site renderer and the drift tests that keep it honest
+editors/    VS Code and Neovim support carried inside the binary
+bench/      Domain vs hand-written Go head-to-head benchmarks
+selfhost/   research notes: how far a Domain compiler written in Domain can go
+examples/ challenges/ testdata/   programs with checked answers (golden tests)
 flake.nix   Nix packaging: packages/apps/devShell/overlay, `nix run`-able
 ```
 
@@ -510,6 +528,11 @@ go test ./...
 Includes property tests that compare each optimization against its naive oracle
 over thousands of random inputs, plus a golden harness running every anchor
 program in both optimized and `--no-optimize` modes (the two must agree).
+The documentation is tested too: every code block that claims to run is run,
+and counts, flags, commands and quoted tool output are checked against the code
+(`go test ./docs`). `go test ./bench` checks that thirty-seven Domain programs
+match their hand-written Go twins; `DOMAIN_BENCH=1 go test ./bench` adds the
+2× speed gate ([bench/README.md](bench/README.md)).
 
 ## Known limitations
 
