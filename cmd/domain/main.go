@@ -254,6 +254,7 @@ Mahoraga flags (domain expansion: mahoraga <file.domain> <input> <expected>):
   --turns <n>    stop after n of the eight turns of the wheel
   --tier general|guarded|pinned   how far an adaptation may commit (default pinned)
   --seed <n>     make the search reproducible
+  --timeout <d>  per-run deadline for each measured run, e.g. 30s (default 60s)
   -o <binary>    the adapted binary (default <stem>-adapted)
   --recipe <f>   the recipe (default <stem>.mahoraga.json)
   --replay <f>   rebuild from a recipe instead of searching, re-verifying the output

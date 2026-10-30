@@ -401,7 +401,8 @@ The same guidelines are the reason for the shape of the rest of it:
 
 - **Inputs are fetched once, ever.** They cannot change, so the second fetch of
   a day makes no request at all. Everything is cached under
-  `~/.cache/domain/aoc/YEAR/DD/`, written `0600` because a puzzle input is a
+  `domain/aoc/YEAR/DD/` under the user cache directory (`$XDG_CACHE_HOME`, or
+  `~/.cache`, on Linux; `~/Library/Caches` on macOS), written `0600` because a puzzle input is a
   personal file.
 - **The puzzle page is re-read only when asked** — by `r`, or automatically
   after a correct answer, which is the one moment the page is known to have

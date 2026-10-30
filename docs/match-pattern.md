@@ -203,11 +203,9 @@ the input into lines first, then `Match Pattern, Mode: Each` to parse every
 line.
 
 **Neither `Try` nor `Scan` is inferred.** Each drops input the template did not
-describe, which is something a program has to ask for.
-
-**`Try` is never inferred.** Dropping input is something a program has to ask
-for; if `Try` were the default for a mismatch, a typo in a template would
-quietly parse nothing instead of failing. It is the answer to a file whose
+describe, which is something a program has to ask for: if `Try` were the
+default for a mismatch, a typo in a template would quietly parse nothing
+instead of failing. `Try` is the answer to a file whose
 lines are not all the same shape — one pass per shape, each keeping its own
 lines:
 

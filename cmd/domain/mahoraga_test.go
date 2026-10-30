@@ -424,7 +424,7 @@ func TestHelpListsOnlyFlagsMahoragaAccepts(t *testing.T) {
 
 	needsValue := map[string]string{
 		"--runs": "3", "--screen-runs": "2", "--min-effect": "0.05", "--turns": "4",
-		"--tier": "guarded", "--seed": "7", "-o": "bin", "--recipe": "r.json",
+		"--tier": "guarded", "--seed": "7", "--timeout": "30s", "-o": "bin", "--recipe": "r.json",
 		"--replay": "r.json", "--verify": "r.json",
 	}
 	seen := 0

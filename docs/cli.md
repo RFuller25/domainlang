@@ -1363,7 +1363,7 @@ input it was adapted to, and the refusal names the clause that binds it.
 
 | Flag | Meaning |
 |---|---|
-| `-o PATH` | the adapted binary (default `<stem>-adapted`) |
+| `-o PATH`, `--out PATH` | the adapted binary (default `<stem>-adapted`) |
 | `--recipe PATH` | the recipe (default `<stem>.mahoraga.json`) |
 | `--replay RECIPE` | rebuild from a recipe instead of searching, re-verifying the output |
 | `--verify RECIPE [input]` | check a recipe's contract against an input, without building |
@@ -1373,9 +1373,12 @@ input it was adapted to, and the refusal names the clause that binds it.
 | `--min-effect F` | the improvement worth recording, as a fraction (default 0.02) |
 | `--tier general\|guarded\|pinned` | how far an adaptation may commit (default pinned) |
 | `--seed N` | make the search reproducible |
+| `--timeout D` | per-run deadline for each measured run, a Go duration such as `30s` (default 60s) |
 | `-q`, `--quiet` | the verdict only, with no per-candidate progress |
 | `--plain` | one line per candidate, unstyled (no wheel) |
 | `--json` | write the recipe to stdout instead of a report |
+
+Every value flag also takes the `--flag=value` spelling.
 
 `--runs` is the one to raise on a machine that is not quiet. It sets both the
 baseline's run count and every confirmation's, so it is what the search's
@@ -1438,6 +1441,7 @@ compiled binary never needs its libraries again.
 | `AOC_CONTACT` | the same | an address added to the `User-Agent` of requests to the site |
 | `VISUAL`, `EDITOR` | `visualize` (`o`), the REPL's `:edit` | the editor to open, `VISUAL` first, then `EDITOR`, then `vi` |
 | `NO_COLOR`, `TERM=dumb` | diagnostics and the other styled reports | turn color off |
+| `XDG_CACHE_HOME` | the editor's Advent of Code integration | where `domain/aoc/` caches puzzle pages and inputs (default `~/.cache`; the platform cache directory elsewhere) |
 | `XDG_STATE_HOME` | the REPL | where `domain/repl_history` lives (default `~/.local/state`) |
 | `GOOS`, `GOARCH` | `build` | cross-compile, as for `go build` |
 | `DOMAIN_BENCH`, `DOMAIN_BENCH_ANY_LOAD` | `go test ./bench` | opt in to the timing gate; measure on a machine that is not idle (see [bench/README.md](../bench/README.md)) |

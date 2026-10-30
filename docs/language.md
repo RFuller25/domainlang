@@ -297,8 +297,7 @@ a;b;c
 3
 ```
 
-<!--MEASURED-->
-rather than on the source:
+A measured argument reads the data rather than the source:
 
 ```domain
 Cursed Technique: Window
@@ -909,7 +908,7 @@ Shikigami "Doubled"
 [2, 4, 6]
 ```
 
-each candidate directory. A miss lists every directory searched.
+A miss lists every directory searched.
 
 **Shadowing** runs weakest to strongest — prelude, then imports in import
 order, then the importing file's own definitions:
