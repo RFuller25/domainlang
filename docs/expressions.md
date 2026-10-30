@@ -748,9 +748,14 @@ printed output in both backends.
 
 ### Design rules for extending the table
 
-Keep it small and total where possible; every new builtin lands in **three**
-places (typecheck, eval, codegen) with unit tests in the first two and an
-interpreter-vs-binary oracle program in the third. A builtin implemented in
+Keep it small and total where possible. A new builtin is declared once, as a
+`Spec` in package `builtins` (name, argument count, typing rule, interpreter
+evaluator — see `builtins/text.go` for the shape), with its Go emitter attached
+from `codegen` (`codegen/textbuiltins.go`); `TestEveryRegisteredBuiltinHasAnEmitter`
+fails if the emitter is missing. The text builtins are the first group moved
+there; the rest are still arms of three `switch` statements (typecheck,
+eval, codegen) and land in **three** places, with unit tests in the first two
+and an interpreter-vs-binary oracle program in the third. A builtin implemented in
 eval but not codegen must fail compilation with a positioned error — never
 produce differing output. Partial builtins must use identical failure
 wording in both backends.

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"domain/ast"
+	"domain/builtins"
 	"domain/ir"
 	"domain/token"
 )
@@ -425,6 +426,12 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return nil, fmt.Errorf("%s needs a List argument, got %s", name, types[i])
 		}
 		return types[i].Elem, nil
+	}
+
+	// A builtin in the registry (package builtins) is emitted by the function
+	// codegen attached to it (textbuiltins.go); the rest are the arms below.
+	if spec := builtins.Lookup(name); spec != nil && spec.Emit != nil {
+		return spec.Emit(g, args, types)
 	}
 
 	switch name {
@@ -878,44 +885,6 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "dmModInv(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 
 	// -- text (fully compiled) --------------------------------------------------
-	case "toint":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmToInt", declToInt, "strconv", "strings")
-		return "dmToInt(" + args[0] + ")", ir.Int(), nil
-	case "totext":
-		if isFloatType(types[0]) {
-			g.helper("dmFmtFloat", declFmtFloat, "strconv")
-			return "dmFmtFloat(" + args[0] + ")", ir.Text(), nil
-		}
-		g.imp("strconv")
-		return "strconv.FormatInt(" + args[0] + ", 10)", ir.Text(), nil
-	case "occurrences":
-		g.imp("strings")
-		return "int64(strings.Count(" + args[0] + ", " + args[1] + "))", ir.Int(), nil
-	case "repeats":
-		g.helper("dmRepeats", declRepeats, "strings")
-		return "dmRepeats(" + args[0] + ")", ir.Bool(), nil
-	case "trim":
-		g.imp("strings")
-		return "strings.TrimSpace(" + args[0] + ")", ir.Text(), nil
-	case "upper":
-		g.imp("strings")
-		return "strings.ToUpper(" + args[0] + ")", ir.Text(), nil
-	case "lower":
-		g.imp("strings")
-		return "strings.ToLower(" + args[0] + ")", ir.Text(), nil
-	case "chars":
-		g.helper("dmChars", declChars)
-		return "dmChars(" + args[0] + ")", ir.List(ir.Text()), nil
-	case "startswith":
-		g.imp("strings")
-		return "strings.HasPrefix(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
-	case "endswith":
-		g.imp("strings")
-		return "strings.HasSuffix(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
-	case "replace":
-		g.imp("strings")
-		return "strings.ReplaceAll(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text(), nil
 	case "indexof":
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.helper("dmIndexOfText", declIndexOfText, "strings", "unicode/utf8")
@@ -926,16 +895,6 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		}
 		g.helper("dmIndexOf", declIndexOf)
 		return "dmIndexOf(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
-	case "charat":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmASCII", declASCII, "unicode/utf8")
-		g.helper("dmCharAt", declCharAt)
-		return "dmCharAt(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
-	case "withchar":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmASCII", declASCII, "unicode/utf8")
-		g.helper("dmWithChar", declWithChar)
-		return "dmWithChar(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text(), nil
 	case "slice":
 		g.helper("dmClampRange", declClampRange)
 		if types[0] != nil && types[0].Kind == ir.KText {
@@ -1724,42 +1683,6 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "dmFill[" + elem + "](" + args[0] + ", " + args[1] + ")", ir.List(types[1]), nil
 
 	// -- text --------------------------------------------------------------------
-	case "split":
-		g.imp("strings")
-		return "strings.Split(" + args[0] + ", " + args[1] + ")", ir.List(ir.Text()), nil
-	case "words":
-		g.imp("strings")
-		return "strings.Fields(" + args[0] + ")", ir.List(ir.Text()), nil
-	case "ord":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmOrd", declOrd, "unicode/utf8")
-		return "dmOrd(" + args[0] + ")", ir.Int(), nil
-	case "chr":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmChr", declChr)
-		return "dmChr(" + args[0] + ")", ir.Text(), nil
-	case "repeat":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmRepeatText", declRepeatText, "strings")
-		return "dmRepeatText(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
-	case "padleft", "padright":
-		g.helper("dmPadText", declPadText, "strings")
-		return "dmPadText(" + args[0] + ", " + args[1] + ", " + args[2] + ", " +
-			strconv.FormatBool(name == "padleft") + ")", ir.Text(), nil
-	case "trimprefix":
-		g.imp("strings")
-		return "strings.TrimPrefix(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
-	case "trimsuffix":
-		g.imp("strings")
-		return "strings.TrimSuffix(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
-	case "isdigit", "isalpha", "isupper", "islower":
-		g.helper("dmClassify", declClassify, "strings")
-		fn := map[string]string{
-			"isdigit": "dmIsDigit", "isalpha": "dmIsAlpha",
-			"isupper": "dmIsUpper", "islower": "dmIsLower",
-		}[name]
-		return fn + "(" + args[0] + ")", ir.Bool(), nil
-
 	// -- floats ------------------------------------------------------------------
 	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
 		g.helper("dmFail", declFail, "fmt", "os")

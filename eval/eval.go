@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"domain/ast"
+	"domain/builtins"
 	"domain/ir"
 	"domain/token"
 	"domain/typecheck"
@@ -201,6 +202,11 @@ func evalExprStep(e ast.Expr, env Env, types typecheck.Env) (ir.Value, error) {
 	}
 }
 
+// buildEnv lends the registry's evaluators the interpreter's current limit.
+type buildEnv struct{}
+
+func (buildEnv) BuildLimit() int64 { return buildLimit() }
+
 // evalCall runs an expression-layer builtin (see typecheck.Builtins for the
 // table; typecheck validated names, arity, and argument types at resolve
 // time, so the assertions here only guard against internal inconsistency).
@@ -230,6 +236,16 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 	}
 	fail := func(format string, fa ...any) (ir.Value, error) {
 		return nil, fmt.Errorf("%s: %s", x.Pos, fmt.Sprintf(format, fa...))
+	}
+
+	// A builtin in the registry (package builtins) is run from its Spec; the
+	// rest are the arms below.
+	if spec := builtins.Lookup(name); spec != nil {
+		v, err := spec.Eval(buildEnv{}, args)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return v, nil
 	}
 
 	switch name {
@@ -1041,75 +1057,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		return math.Sqrt(f), nil
 
 	// -- text ------------------------------------------------------------------
-	case "toint":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("toint: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-		if err != nil {
-			return fail("toint: %q is not an integer", s)
-		}
-		return n, nil
-	case "totext":
-		// Renders exactly as Reveal would: FormatInt for Int, the shortest
-		// round-trip 'g' form for Float.
-		switch n := args[0].(type) {
-		case int64:
-			return strconv.FormatInt(n, 10), nil
-		case float64:
-			return ir.FormatFloat(n), nil
-		}
-		return fail("totext: expected a number, got %s", ir.DescribeValue(args[0]))
-	case "occurrences":
-		s, ok1 := args[0].(string)
-		sub, ok2 := args[1].(string)
-		if !ok1 || !ok2 {
-			return fail("occurrences: expected Text arguments")
-		}
-		return int64(strings.Count(s, sub)), nil
-	case "repeats":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("repeats: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		return isRepeatedPattern(s), nil
-	case "trim":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("trim: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		return strings.TrimSpace(s), nil
-	case "upper", "lower":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
-		}
-		if name == "upper" {
-			return strings.ToUpper(s), nil
-		}
-		return strings.ToLower(s), nil
-	case "chars":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("chars: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		rs := []rune(s)
-		out := make([]ir.Value, len(rs))
-		for i, r := range rs {
-			out[i] = string(r)
-		}
-		return out, nil
-	case "startswith", "endswith":
-		s, ok1 := args[0].(string)
-		sub, ok2 := args[1].(string)
-		if !ok1 || !ok2 {
-			return fail("%s: expected Text arguments", name)
-		}
-		if name == "startswith" {
-			return strings.HasPrefix(s, sub), nil
-		}
-		return strings.HasSuffix(s, sub), nil
 	case "indexof":
 		// Over a List: element position. Over Text: substring position, in
 		// runes so it lines up with charat/slice. -1 when absent, either way.
@@ -1134,51 +1081,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			}
 		}
 		return int64(-1), nil
-	case "replace":
-		s, ok1 := args[0].(string)
-		old, ok2 := args[1].(string)
-		nw, ok3 := args[2].(string)
-		if !ok1 || !ok2 || !ok3 {
-			return fail("replace: expected Text arguments")
-		}
-		return strings.ReplaceAll(s, old, nw), nil
-	case "charat":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("charat: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		i, err := ir.AsInt(args[1])
-		if err != nil {
-			return fail("charat: %v", err)
-		}
-		rs := []rune(s)
-		if i < 0 || i >= int64(len(rs)) {
-			return fail("charat: index %d out of range (length %d)", i, len(rs))
-		}
-		return string(rs[i]), nil
-	case "withchar":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("withchar: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		i, err := ir.AsInt(args[1])
-		if err != nil {
-			return fail("withchar: %v", err)
-		}
-		ch, ok := args[2].(string)
-		if !ok {
-			return fail("withchar: expected Text, got %s", ir.DescribeValue(args[2]))
-		}
-		rs := []rune(s)
-		if i < 0 || i >= int64(len(rs)) {
-			return fail("withchar: index %d out of range (length %d)", i, len(rs))
-		}
-		crs := []rune(ch)
-		if len(crs) != 1 {
-			return fail("withchar: replacement must be exactly one character, got %d", len(crs))
-		}
-		rs[i] = crs[0]
-		return string(rs), nil
 	case "slice":
 		// Half-open and clamped, like take/drop: slice never errors on a
 		// range that runs off either end.
@@ -1923,87 +1825,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		return out, nil
 
 	// -- text --------------------------------------------------------------------
-	case "split":
-		s, sep, err := twoTexts(args, "split")
-		if err != nil {
-			return fail("%v", err)
-		}
-		return textList(strings.Split(s, sep)), nil
-	case "words":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("words: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		return textList(strings.Fields(s)), nil
-	case "ord":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("ord: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		if s == "" {
-			return fail("ord of the empty text is undefined")
-		}
-		r, _ := utf8.DecodeRuneInString(s)
-		return int64(r), nil
-	case "chr":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("chr: %v", err)
-		}
-		if n < 0 || n > utf8.MaxRune || (n >= 0xD800 && n <= 0xDFFF) {
-			return fail("chr: %d is not a character code", n)
-		}
-		return string(rune(n)), nil
-	case "repeat":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("repeat: expected Text, got %s", ir.DescribeValue(args[0]))
-		}
-		n, err := ir.AsInt(args[1])
-		if err != nil {
-			return fail("repeat: %v", err)
-		}
-		if n <= 0 || s == "" {
-			return "", nil
-		}
-		if n > buildLimit()/int64(len(s)) {
-			return fail("repeat: %d copies of a %d-byte text is more than can be built", n, len(s))
-		}
-		return strings.Repeat(s, int(n)), nil
-	case "padleft", "padright":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
-		}
-		width, err := ir.AsInt(args[1])
-		if err != nil {
-			return fail("%s: %v", name, err)
-		}
-		padding, ok := args[2].(string)
-		if !ok {
-			return fail("%s: pad must be Text, got %s", name, ir.DescribeValue(args[2]))
-		}
-		out, err := padText(s, width, padding, name == "padleft")
-		if err != nil {
-			return fail("%s: %v", name, err)
-		}
-		return out, nil
-	case "trimprefix", "trimsuffix":
-		s, p, err := twoTexts(args, name)
-		if err != nil {
-			return fail("%v", err)
-		}
-		if name == "trimprefix" {
-			return strings.TrimPrefix(s, p), nil
-		}
-		return strings.TrimSuffix(s, p), nil
-	case "isdigit", "isalpha", "isupper", "islower":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
-		}
-		return classify(name, s), nil
-
 	// -- floats ------------------------------------------------------------------
 	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
 		f, err := ir.AsFloat(args[0])
@@ -2439,17 +2260,6 @@ func solve2x2(a, b, c, d, e, f int64) (int64, int64, error) {
 		return 0, 0, fmt.Errorf("solve2x2: solution is not integral")
 	}
 	return xNum / det, yNum / det, nil
-}
-
-// isRepeatedPattern reports whether s is a shorter pattern repeated two or
-// more times ("abab", "aaa"), via the classic rotation trick: s is periodic
-// iff it occurs in (s+s) minus that string's first and last characters.
-func isRepeatedPattern(s string) bool {
-	if len(s) < 2 {
-		return false
-	}
-	doubled := (s + s)[1 : 2*len(s)-1]
-	return strings.Contains(doubled, s)
 }
 
 // assignTo writes v to the name x updates. The environment is searched first

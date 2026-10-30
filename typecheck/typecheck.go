@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"domain/ast"
+	"domain/builtins"
 	"domain/ir"
 	"domain/token"
 )
@@ -177,23 +178,24 @@ func condType(x *ast.CondExpr, env Env) (*ir.Type, error) {
 	return tt, nil
 }
 
-// Builtins is the fixed expression-layer function table.
-// Every entry is implemented in all three layers — here (typing), eval
-// (interpreter), and codegen (compiled) — with oracle tests pinning
-// interpreter/binary parity. Keep the layers in sync when extending the
-// table.
+// Builtins is the fixed expression-layer function table: the names below plus
+// every builtin in package builtins, appended by init. Every entry is
+// implemented in all three layers — typing (here), eval (interpreter) and
+// codegen (compiled) — with oracle tests pinning interpreter/binary parity. A
+// builtin in package builtins is one declaration for all three; the rest are
+// still switch arms in each layer and must be kept in sync by hand.
 var Builtins = []string{
 	"abs", "at", "band", "bor", "bxor", "ceil", "cells", "choose", "clamp",
 	"col", "cols", "concat", "contains", "dirs4", "divmod", "drop",
 	"factorial", "first", "floor", "frombin", "gcd", "get", "has", "inbounds",
 	"isqrt", "item", "last", "lcm", "length", "list", "manhattan", "max",
 	"maxcol", "maxrow", "min", "mincol", "minrow", "mod", "modinv", "modpow",
-	"neighbors4", "neighbors8", "occurrences", "padd", "pcol", "point", "pow",
-	"prow", "put", "repeats", "reverse", "rotl", "rotr", "round", "row",
+	"neighbors4", "neighbors8", "padd", "pcol", "point", "pow",
+	"prow", "put", "reverse", "rotl", "rotr", "round", "row",
 	"rows", "set", "shl", "shr", "sign", "solve2x2", "sparse", "sqrt", "sum",
-	"take", "textjoin", "tofloat", "toint", "totext", "trim", "tuple",
-	"upper", "lower", "slice", "charat", "withchar", "chars", "indexof", "startswith",
-	"endswith", "replace",
+	"take", "textjoin", "tofloat", "tuple",
+	"slice", "indexof",
+
 	"psub", "pscale", "chebyshev", "dirs8", "around4", "around8",
 	"nearby4", "nearby8",
 	"haskey", "getor", "keys", "values", "size", "tolist",
@@ -205,10 +207,6 @@ var Builtins = []string{
 	// v0.6: list generation. Every list used to have to arrive from outside
 	// the expression.
 	"range", "fill",
-	// v0.6: text splitting, codepoints, padding and classification.
-	"split", "words", "ord", "chr", "repeat",
-	"padleft", "padright", "trimprefix", "trimsuffix",
-	"isdigit", "isalpha", "isupper", "islower",
 	// v0.6: the float tower past sqrt.
 	"log", "log2", "log10", "exp", "sin", "cos", "tan", "atan2", "hypot", "trunc",
 	// v0.6: named-field construction and update.
@@ -283,11 +281,8 @@ var builtinArity = map[string]int{
 	"factorial": 1, "choose": 2,
 	// heterogeneous tuple construction
 	"tuple": -1, // variadic, >= 2
-	// text
-	"toint": 1, "occurrences": 2, "repeats": 1, "totext": 1,
-	"slice": 3, "charat": 2, "withchar": 3, "chars": 1, "indexof": 2,
-	"startswith": 2, "endswith": 2, "replace": 3, "trim": 1,
-	"upper": 1, "lower": 1, "textjoin": 2,
+	// text (the rest of the text builtins are in package builtins)
+	"slice": 3, "indexof": 2, "textjoin": 2,
 	// floats (H)
 	"tofloat": 1, "floor": 1, "ceil": 1, "round": 1, "sqrt": 1,
 	// points (tuples of (row, col)) and grid geometry
@@ -326,10 +321,6 @@ var builtinArity = map[string]int{
 	"and": 2, "or": 2, "xor": 2, "not": 1,
 	// list generation
 	"range": 2, "fill": 2,
-	// text
-	"split": 2, "words": 1, "ord": 1, "chr": 1, "repeat": 2,
-	"padleft": 3, "padright": 3, "trimprefix": 2, "trimsuffix": 2,
-	"isdigit": 1, "isalpha": 1, "isupper": 1, "islower": 1,
 	// floats
 	"log": 1, "log2": 1, "log10": 1, "exp": 1,
 	"sin": 1, "cos": 1, "tan": 1, "atan2": 2, "hypot": 2, "trunc": 1,
@@ -357,6 +348,13 @@ var variadicArity = map[string][2]int{
 	"insert": {2, 3}, "record": {2, -1},
 	// addedge weighs the arc 1 when no weight is given.
 	"addedge": {3, 4},
+}
+
+func init() {
+	for _, n := range builtins.Names() {
+		Builtins = append(Builtins, n)
+		builtinArity[n] = builtins.Lookup(n).Arity
+	}
 }
 
 // CheckArity reports whether the builtin name accepts n arguments, wording the
@@ -410,6 +408,16 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, err
 		}
 		args[i] = t
+	}
+
+	// A builtin in the registry (package builtins) types itself; the rest are
+	// the arms of the switch below.
+	if spec := builtins.Lookup(name); spec != nil {
+		t, err := spec.Type(args)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", x.Pos, err)
+		}
+		return t, nil
 	}
 
 	needList := func(i int) (*ir.Type, error) {
@@ -865,43 +873,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		return ir.Float(), nil
 
 	// -- text ------------------------------------------------------------------
-	case "toint":
-		if !args[0].Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: toint needs Text, got %s", x.Pos, args[0])
-		}
-		return ir.Int(), nil
-	case "totext":
-		if !numeric(args[0]) {
-			return nil, fmt.Errorf("%s: totext needs Int or Float, got %s", x.Pos, args[0])
-		}
-		return ir.Text(), nil
-	case "occurrences":
-		for i := range 2 {
-			if !args[i].Equal(ir.Text()) {
-				return nil, fmt.Errorf("%s: occurrences argument %d must be Text, got %s", x.Pos, i+1, args[i])
-			}
-		}
-		return ir.Int(), nil
-	case "repeats":
-		if !args[0].Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: repeats needs Text, got %s", x.Pos, args[0])
-		}
-		return ir.Bool(), nil
-	case "trim", "upper", "lower", "chars":
-		if !args[0].Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: %s needs Text, got %s", x.Pos, name, args[0])
-		}
-		if name == "chars" {
-			return ir.List(ir.Text()), nil
-		}
-		return ir.Text(), nil
-	case "startswith", "endswith":
-		for i := range 2 {
-			if !args[i].Equal(ir.Text()) {
-				return nil, fmt.Errorf("%s: %s argument %d must be Text, got %s", x.Pos, name, i+1, args[i])
-			}
-		}
-		return ir.Bool(), nil
 	case "indexof":
 		// Over a List this is "position of an element"; over Text, "position
 		// of a substring". Both answer -1 when absent, like Find Index.
@@ -920,32 +891,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			}
 		}
 		return ir.Int(), nil
-	case "replace":
-		for i := range 3 {
-			if !args[i].Equal(ir.Text()) {
-				return nil, fmt.Errorf("%s: replace argument %d must be Text, got %s", x.Pos, i+1, args[i])
-			}
-		}
-		return ir.Text(), nil
-	case "charat":
-		if !args[0].Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: charat needs Text, got %s", x.Pos, args[0])
-		}
-		if err := needInt(1); err != nil {
-			return nil, err
-		}
-		return ir.Text(), nil
-	case "withchar":
-		if !args[0].Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: withchar needs Text, got %s", x.Pos, args[0])
-		}
-		if err := needInt(1); err != nil {
-			return nil, err
-		}
-		if !args[2].Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: withchar replacement must be Text, got %s", x.Pos, args[2])
-		}
-		return ir.Text(), nil
 	case "slice":
 		// Also slices a List, so the two collection kinds stay symmetric.
 		if args[0] != nil && args[0].Kind == ir.KList {
@@ -1539,56 +1484,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		return ir.List(args[1]), nil
 
 	// -- text --------------------------------------------------------------------
-	case "split", "trimprefix", "trimsuffix":
-		for i := range 2 {
-			if err := needText(x, name, args, i); err != nil {
-				return nil, err
-			}
-		}
-		if name == "split" {
-			return ir.List(ir.Text()), nil
-		}
-		return ir.Text(), nil
-	case "words":
-		if err := needText(x, name, args, 0); err != nil {
-			return nil, err
-		}
-		return ir.List(ir.Text()), nil
-	case "ord":
-		if err := needText(x, name, args, 0); err != nil {
-			return nil, err
-		}
-		return ir.Int(), nil
-	case "chr":
-		if err := needInt(0); err != nil {
-			return nil, err
-		}
-		return ir.Text(), nil
-	case "repeat":
-		if err := needText(x, name, args, 0); err != nil {
-			return nil, err
-		}
-		if err := needInt(1); err != nil {
-			return nil, err
-		}
-		return ir.Text(), nil
-	case "padleft", "padright":
-		if err := needText(x, name, args, 0); err != nil {
-			return nil, err
-		}
-		if err := needInt(1); err != nil {
-			return nil, err
-		}
-		if err := needText(x, name, args, 2); err != nil {
-			return nil, err
-		}
-		return ir.Text(), nil
-	case "isdigit", "isalpha", "isupper", "islower":
-		if err := needText(x, name, args, 0); err != nil {
-			return nil, err
-		}
-		return ir.Bool(), nil
-
 	// -- floats ------------------------------------------------------------------
 	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
 		if !numeric(args[0]) {
