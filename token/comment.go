@@ -49,10 +49,10 @@ func CommentMarker(src string, i int) int {
 	if i+n > len(src) || !strings.EqualFold(src[i:i+n], CommentWord) {
 		return 0
 	}
-	if i > 0 && isWordByte(src[i-1]) {
+	if i > 0 && IsIdentByte(src[i-1]) {
 		return 0 // the tail of a longer name
 	}
-	if i+n < len(src) && isWordByte(src[i+n]) {
+	if i+n < len(src) && IsIdentByte(src[i+n]) {
 		return 0 // the head of one
 	}
 	return n
@@ -92,10 +92,10 @@ func IsCommentLine(line string) bool {
 	return t != "" && CommentMarker(t, 0) > 0
 }
 
-// isWordByte reports whether c can appear in an identifier, which is what
+// IsIdentByte reports whether c can appear in an identifier, which is what
 // decides where the word marker's boundaries are. Domain identifiers are ASCII
 // letters, digits and underscores — the same set lexIdent accepts — so a rune
 // outside that set is a boundary like any other punctuation.
-func isWordByte(c byte) bool {
+func IsIdentByte(c byte) bool {
 	return c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 }

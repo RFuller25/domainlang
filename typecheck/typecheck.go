@@ -1320,7 +1320,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Graph(args[0]), nil
 	case "addnode":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1329,7 +1329,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return g, nil
 	case "addedge":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1345,7 +1345,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return g, nil
 	case "deledge":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1356,19 +1356,19 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return g, nil
 	case "nodes":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
 		return ir.List(g.Elem), nil
 	case "edges":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
 		return ir.List(ir.Tuple(g.Elem, g.Elem, ir.Int())), nil
 	case "neighbors":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1377,7 +1377,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.List(g.Elem), nil
 	case "edgesof":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1386,7 +1386,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.List(ir.Tuple(g.Elem, ir.Int())), nil
 	case "hasedge":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1399,7 +1399,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	case "weight", "weightor":
 		// weight is the partial one — it errors on a missing arc — and weightor
 		// is its total twin, exactly as get/getor pair over a Map.
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1415,7 +1415,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.Int(), nil
 	case "degree":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1426,7 +1426,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	case "weightof":
 		// degree with the weights counted rather than the arcs, and total for
 		// the same reason: a node that is not in the graph weighs 0.
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1439,7 +1439,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		// exactly one root" is a fact about the data that a caller has to
 		// hear about, and a total twin would have to invent a node to answer
 		// with. Filtering nodes(g) is the way to ask the total question.
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1448,7 +1448,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		// Degree's mirror. It walks the adjacency rather than keeping a reverse
 		// index, which is still cheaper than the flipedges the vocabulary made
 		// people write to ask it.
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1459,13 +1459,13 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 	case "roots", "leaves":
 		// roots is root's total twin, the way weightor is weight's: the same
 		// question, answered with however many there are.
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
 		return ir.List(g.Elem), nil
 	case "reachable":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1474,7 +1474,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.List(g.Elem), nil
 	case "delnode":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1483,23 +1483,23 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return g, nil
 	case "hascycle":
-		if _, err := needGraph(x, name, args, 0); err != nil {
+		if _, err := needGraph(x, name, args); err != nil {
 			return nil, err
 		}
 		return ir.Bool(), nil
 	case "weightsum":
-		if _, err := needGraph(x, name, args, 0); err != nil {
+		if _, err := needGraph(x, name, args); err != nil {
 			return nil, err
 		}
 		return ir.Int(), nil
 	case "undirected":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
 		return g, nil
 	case "mergegraphs":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1509,13 +1509,13 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return g, nil
 	case "flipedges":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
 		return g, nil
 	case "subgraph":
-		g, err := needGraph(x, name, args, 0)
+		g, err := needGraph(x, name, args)
 		if err != nil {
 			return nil, err
 		}
@@ -1728,13 +1728,13 @@ func recordType(x *ast.CallExpr, args []*ir.Type) (*ir.Type, error) {
 	return ir.Record(fields...), nil
 }
 
-// needGraph requires argument i to be a Graph, returning its type so the
-// caller can reach the node type through Elem.
-func needGraph(x *ast.CallExpr, name string, args []*ir.Type, i int) (*ir.Type, error) {
-	if args[i] == nil || args[i].Kind != ir.KGraph {
-		return nil, fmt.Errorf("%s: %s needs a Graph argument, got %s", x.Pos, name, args[i])
+// needGraph requires the first argument to be a Graph, returning its type so
+// the caller can reach the node type through Elem.
+func needGraph(x *ast.CallExpr, name string, args []*ir.Type) (*ir.Type, error) {
+	if args[0] == nil || args[0].Kind != ir.KGraph {
+		return nil, fmt.Errorf("%s: %s needs a Graph argument, got %s", x.Pos, name, args[0])
 	}
-	return args[i], nil
+	return args[0], nil
 }
 
 // graphEdgeListNode types `graph(edges)`: the argument is a list of (from, to)

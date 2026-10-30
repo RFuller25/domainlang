@@ -53,93 +53,62 @@ type mahoragaOptions struct {
 func parseMahoragaArgs(args []string) (prog, input, expected string, opts mahoragaOptions, err error) {
 	opts.Tier = mahoraga.Pinned
 	var files []string
+	args = splitValueFlags(args)
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		next := func(flag string) (string, error) {
+		var e error
+		val := func() string {
 			if i+1 >= len(args) {
-				return "", fmt.Errorf("%s needs a value", flag)
+				e = fmt.Errorf("%s needs a value", a)
+				return ""
 			}
 			i++
-			return args[i], nil
+			return args[i]
 		}
-		var e error
-		switch {
-		case a == "-o" || a == "--out":
-			opts.Out, e = next(a)
-		case strings.HasPrefix(a, "--out="):
-			opts.Out = strings.TrimPrefix(a, "--out=")
-		case a == "--recipe":
-			opts.Recipe, e = next(a)
-		case strings.HasPrefix(a, "--recipe="):
-			opts.Recipe = strings.TrimPrefix(a, "--recipe=")
-		case a == "--turns":
-			var s string
-			if s, e = next(a); e == nil {
-				opts.Turns, e = strconv.Atoi(s)
+		count := func(dst *int) {
+			if s := val(); e == nil {
+				*dst, e = strconv.Atoi(s)
 			}
-		case strings.HasPrefix(a, "--turns="):
-			opts.Turns, e = strconv.Atoi(strings.TrimPrefix(a, "--turns="))
-		case a == "--runs":
-			var s string
-			if s, e = next(a); e == nil {
-				opts.BaselineRuns, e = strconv.Atoi(s)
-			}
-		case strings.HasPrefix(a, "--runs="):
-			opts.BaselineRuns, e = strconv.Atoi(strings.TrimPrefix(a, "--runs="))
-		case a == "--screen-runs":
-			var s string
-			if s, e = next(a); e == nil {
-				opts.ScreenRuns, e = strconv.Atoi(s)
-			}
-		case strings.HasPrefix(a, "--screen-runs="):
-			opts.ScreenRuns, e = strconv.Atoi(strings.TrimPrefix(a, "--screen-runs="))
-		case a == "--min-effect":
-			var s string
-			if s, e = next(a); e == nil {
+		}
+		switch a {
+		case "-o", "--out":
+			opts.Out = val()
+		case "--recipe":
+			opts.Recipe = val()
+		case "--turns":
+			count(&opts.Turns)
+		case "--runs":
+			count(&opts.BaselineRuns)
+		case "--screen-runs":
+			count(&opts.ScreenRuns)
+		case "--min-effect":
+			if s := val(); e == nil {
 				opts.MinEffect, e = strconv.ParseFloat(s, 64)
 			}
-		case strings.HasPrefix(a, "--min-effect="):
-			opts.MinEffect, e = strconv.ParseFloat(strings.TrimPrefix(a, "--min-effect="), 64)
-		case a == "--tier":
-			var s string
-			if s, e = next(a); e == nil {
+		case "--tier":
+			if s := val(); e == nil {
 				var ok bool
 				if opts.Tier, ok = mahoraga.ParseTier(s); !ok {
 					e = fmt.Errorf("--tier takes general, guarded or pinned (got %q)", s)
 				}
 			}
-		case strings.HasPrefix(a, "--tier="):
-			var ok bool
-			if opts.Tier, ok = mahoraga.ParseTier(strings.TrimPrefix(a, "--tier=")); !ok {
-				e = fmt.Errorf("--tier takes general, guarded or pinned")
-			}
-		case a == "--timeout":
-			var s string
-			if s, e = next(a); e == nil {
+		case "--timeout":
+			if s := val(); e == nil {
 				opts.Timeout, e = time.ParseDuration(s)
 			}
-		case strings.HasPrefix(a, "--timeout="):
-			opts.Timeout, e = time.ParseDuration(strings.TrimPrefix(a, "--timeout="))
-		case a == "--seed":
-			var s string
-			if s, e = next(a); e == nil {
+		case "--seed":
+			if s := val(); e == nil {
 				opts.Seed, e = strconv.ParseInt(s, 10, 64)
 			}
-		case strings.HasPrefix(a, "--seed="):
-			opts.Seed, e = strconv.ParseInt(strings.TrimPrefix(a, "--seed="), 10, 64)
-		case a == "--replay":
-			opts.Replay, e = next(a)
-		case strings.HasPrefix(a, "--replay="):
-			opts.Replay = strings.TrimPrefix(a, "--replay=")
-		case a == "--verify":
-			opts.Verify, e = next(a)
-		case strings.HasPrefix(a, "--verify="):
-			opts.Verify = strings.TrimPrefix(a, "--verify=")
-		case a == "--json":
+		case "--replay":
+			opts.Replay = val()
+		case "--verify":
+			opts.Verify = val()
+		case "--json":
 			opts.JSON = true
-		case a == "--plain":
+		case "--plain":
 			opts.Plain = true
-		case a == "--quiet" || a == "-q":
+		case "--quiet", "-q":
 			opts.Quiet = true
 		default:
 			if strings.HasPrefix(a, "-") {
@@ -510,4 +479,26 @@ func mahoragaOut(prog string, opts mahoragaOptions) string {
 
 func mahoragaRecipePath(prog string, opts mahoragaOptions) string {
 	return orDefault(opts.Recipe, mahoraga.DefaultRecipe(prog))
+}
+
+// mahoragaValueFlags are the flags that take a value, which may be written
+// `--flag value` or `--flag=value`.
+var mahoragaValueFlags = map[string]bool{
+	"--out": true, "--recipe": true, "--turns": true, "--runs": true,
+	"--screen-runs": true, "--min-effect": true, "--tier": true,
+	"--timeout": true, "--seed": true, "--replay": true, "--verify": true,
+}
+
+// splitValueFlags rewrites `--flag=value` as `--flag`, `value`, so the parser
+// above only has one spelling to understand.
+func splitValueFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		if flag, value, ok := strings.Cut(a, "="); ok && mahoragaValueFlags[flag] {
+			out = append(out, flag, value)
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }

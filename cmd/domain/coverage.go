@@ -148,7 +148,7 @@ func Coverage(root string, opts coverageOptions, stdout, stderr io.Writer) int {
 	rep := &coverageReport{Root: root, Dynamic: opts.Dynamic, Total: len(progs)}
 	rep.collect(progs)
 	if opts.JSON {
-		if err := writeJSON(stdout, rep.jsonShape(opts)); err != nil {
+		if err := writeJSON(stdout, rep.jsonShape()); err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 1
 		}
@@ -315,9 +315,9 @@ func (r *coverageReport) write(w io.Writer, opts coverageOptions) {
 	fmt.Fprintln(w)
 
 	if opts.Used {
-		r.writeUsed(w, opts, show)
+		r.writeUsed(w, show)
 	} else {
-		r.writeMissing(w, opts, show, missPrims, missBuiltins, missKeywords)
+		r.writeMissing(w, show, missPrims, missBuiltins, missKeywords)
 	}
 
 	if len(r.Skipped) > 0 {
@@ -328,7 +328,7 @@ func (r *coverageReport) write(w io.Writer, opts coverageOptions) {
 	}
 }
 
-func (r *coverageReport) writeMissing(w io.Writer, opts coverageOptions, show func(string) bool, missPrims, missBuiltins, missKeywords []string) {
+func (r *coverageReport) writeMissing(w io.Writer, show func(string) bool, missPrims, missBuiltins, missKeywords []string) {
 	if show("prims") && len(missPrims) > 0 {
 		// Grouped by the keyword class each primitive lives under, which is
 		// how the reference is organized and so how a reader will go looking.
@@ -376,7 +376,7 @@ func (r *coverageReport) writeMissing(w io.Writer, opts coverageOptions, show fu
 	fmt.Fprintf(w, "  `domain expansion: documentation` and search a name to see what it does\n")
 }
 
-func (r *coverageReport) writeUsed(w io.Writer, opts coverageOptions, show func(string) bool) {
+func (r *coverageReport) writeUsed(w io.Writer, show func(string) bool) {
 	if show("prims") {
 		fmt.Fprintf(w, "  primitives used (%d), most first:\n", len(r.Static.Prims))
 		for _, e := range byCount(r.Static.Prims) {
@@ -479,7 +479,7 @@ type skippedJSON struct {
 	Reason string `json:"reason"`
 }
 
-func (r *coverageReport) jsonShape(opts coverageOptions) coverageJSON {
+func (r *coverageReport) jsonShape() coverageJSON {
 	mk := func(all []string, used map[string]int) coverageKind {
 		miss, n := missing(all, used)
 		if miss == nil {

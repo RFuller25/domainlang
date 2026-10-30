@@ -286,17 +286,17 @@ func (a *Analysis) WordAt(line, col int) (string, bool) {
 	}
 	// A cursor sitting just past a word — where it lands after typing one — is
 	// on that word.
-	if (col == len(src) || !isNameByte(src[col])) && col > 0 && isNameByte(src[col-1]) {
+	if (col == len(src) || !token.IsIdentByte(src[col])) && col > 0 && token.IsIdentByte(src[col-1]) {
 		col--
 	}
-	if col >= len(src) || !isNameByte(src[col]) {
+	if col >= len(src) || !token.IsIdentByte(src[col]) {
 		return "", false
 	}
 	start, end := col, col
-	for start > 0 && isNameByte(src[start-1]) {
+	for start > 0 && token.IsIdentByte(src[start-1]) {
 		start--
 	}
-	for end < len(src) && isNameByte(src[end]) {
+	for end < len(src) && token.IsIdentByte(src[end]) {
 		end++
 	}
 	word := src[start:end]
@@ -314,10 +314,6 @@ func (a *Analysis) WordAt(line, col int) (string, bool) {
 		return "", false // inside a string, a comment, or a foreign block
 	}
 	return word, true
-}
-
-func isNameByte(c byte) bool {
-	return c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 }
 
 // lineStartOffset is the byte offset of the start of a 1-based line.

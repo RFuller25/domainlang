@@ -404,7 +404,7 @@ func parseDiag(pe *parser.Error, src string) Diagnostic {
 	}
 	switch {
 	case reMissingColon.MatchString(pe.Msg):
-		enrichMissingColon(&d, src, reMissingColon.FindStringSubmatch(pe.Msg)[1])
+		enrichMissingColon(&d, reMissingColon.FindStringSubmatch(pe.Msg)[1])
 
 	case strings.Contains(pe.Msg, "expected a keyword"):
 		d.Help = "every pipeline line starts with a themed keyword, e.g. `Cursed Technique: Split Text by \"\\n\"`"
@@ -431,7 +431,7 @@ func parseDiag(pe *parser.Error, src string) Diagnostic {
 // enrichMissingColon handles the classic `Reveal stdout` mistake. The parser
 // swallowed every word into the keyword; if a known keyword is a prefix of
 // those words, the colon belongs right after that prefix.
-func enrichMissingColon(d *Diagnostic, src string, keyword string) {
+func enrichMissingColon(d *Diagnostic, keyword string) {
 	words := strings.Fields(keyword)
 	var match string
 	for _, k := range knownKeywords() {
@@ -490,7 +490,7 @@ func resolveDiags(err error, prog *ast.Program, path, src string) []Diagnostic {
 	switch {
 	case reUnknownKeyword.MatchString(msg):
 		d.Code = "name"
-		enrichUnknownKeyword(&d, src, reUnknownKeyword.FindStringSubmatch(msg)[1])
+		enrichUnknownKeyword(&d, reUnknownKeyword.FindStringSubmatch(msg)[1])
 
 	case reUnknownOp.MatchString(msg):
 		d.Code = "name"
@@ -582,7 +582,7 @@ func resolveDiags(err error, prog *ast.Program, path, src string) []Diagnostic {
 	return []Diagnostic{d}
 }
 
-func enrichUnknownKeyword(d *Diagnostic, src string, got string) {
+func enrichUnknownKeyword(d *Diagnostic, got string) {
 	d.Msg = fmt.Sprintf("unknown keyword %q", got)
 	s, confident := suggestKeyword(got)
 	if s == "" {
@@ -752,7 +752,7 @@ func spanOfLeadingWords(src string, offset, n int) (int, int, bool) {
 			i++
 		}
 		start := i
-		for i < len(src) && isIdentByte(src[i]) {
+		for i < len(src) && token.IsIdentByte(src[i]) {
 			i++
 		}
 		if i == start {
@@ -761,10 +761,6 @@ func spanOfLeadingWords(src string, offset, n int) (int, int, bool) {
 		end = i
 	}
 	return offset, end, true
-}
-
-func isIdentByte(c byte) bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_'
 }
 
 // replaceWordInLine builds a fix replacing the first whole-word occurrence of
@@ -812,8 +808,8 @@ func wordIndex(text, s string) int {
 			return -1
 		}
 		i += at
-		beforeOK := i == 0 || !isIdentByte(text[i-1])
-		afterOK := i+len(s) >= len(text) || !isIdentByte(text[i+len(s)])
+		beforeOK := i == 0 || !token.IsIdentByte(text[i-1])
+		afterOK := i+len(s) >= len(text) || !token.IsIdentByte(text[i+len(s)])
 		if beforeOK && afterOK {
 			return i
 		}

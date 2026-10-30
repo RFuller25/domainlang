@@ -2081,6 +2081,9 @@ func (g *gen) emitPart(n *ir.Node, in string) (string, error) {
 // unusedRangeVar matches a loop that binds an element the body may not read.
 var unusedRangeVar = regexp.MustCompile(`for _, ([a-z]+[0-9]+) := range `)
 
+// wordRun is one identifier-shaped run, as Go's \b sees it.
+var wordRun = regexp.MustCompile(`\w+`)
+
 // dropUnusedRangeVars rewrites `for _, x := range xs` to `for range xs` when
 // nothing reads x.
 //
@@ -2098,10 +2101,20 @@ var unusedRangeVar = regexp.MustCompile(`for _, ([a-z]+[0-9]+) := range `)
 // and nothing else. The word boundary matters: without it `e6` would be found
 // inside `e60`.
 func dropUnusedRangeVars(src string) string {
-	for _, m := range unusedRangeVar.FindAllStringSubmatch(src, -1) {
+	matches := unusedRangeVar.FindAllStringSubmatch(src, -1)
+	if len(matches) == 0 {
+		return src
+	}
+	// One pass counts every word, instead of a regexp compiled and run over
+	// the whole source per candidate. \b\w+\b and a \w+ token are the same
+	// thing, so a name's count here is exactly its word-bounded occurrences.
+	uses := map[string]int{}
+	for _, w := range wordRun.FindAllString(src, -1) {
+		uses[w]++
+	}
+	for _, m := range matches {
 		name := m[1]
-		uses := regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`).FindAllStringIndex(src, -1)
-		if len(uses) != 1 {
+		if uses[name] != 1 {
 			continue
 		}
 		src = strings.Replace(src, "for _, "+name+" := range ", "for range ", 1)

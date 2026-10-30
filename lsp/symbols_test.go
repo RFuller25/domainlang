@@ -3,6 +3,8 @@ package lsp
 import (
 	"strings"
 	"testing"
+
+	"domain/token"
 )
 
 // One program with every shape that introduces a name: a global and the
@@ -30,10 +32,10 @@ func col(t *testing.T, src string, line int, word string) int {
 		if text[i:i+len(word)] != word {
 			continue
 		}
-		if i > 0 && isNameByte(text[i-1]) {
+		if i > 0 && token.IsIdentByte(text[i-1]) {
 			continue
 		}
-		if i+len(word) < len(text) && isNameByte(text[i+len(word)]) {
+		if i+len(word) < len(text) && token.IsIdentByte(text[i+len(word)]) {
 			continue
 		}
 		return i

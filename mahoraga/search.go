@@ -520,9 +520,9 @@ const maxSecondLook = 6
 // champion has to beat the current one on the clock to be kept, so a stale
 // configuration loses the race it deserves to lose rather than being reasoned
 // about.
-func (s *Search) secondLook() error {
+func (s *Search) secondLook() {
 	if len(s.unclear) == 0 || s.stopping() {
-		return nil
+		return
 	}
 	pending := s.secondLookQueue()
 	s.emit(Event{Kind: TurnStart, Turn: secondLookTurn, TurnName: secondLookName})
@@ -544,7 +544,6 @@ func (s *Search) secondLook() error {
 		s.decide(u.turn, secondLookName, u.cand, u.bin, base, champ, m)
 	}
 	s.emit(Event{Kind: TurnEnd, Turn: secondLookTurn, TurnName: secondLookName})
-	return nil
 }
 
 // secondLookQueue is the unresolved candidates in the order they are re-raced:
@@ -631,9 +630,7 @@ func (s *Search) Run() (*Recipe, error) {
 		}
 		s.emit(Event{Kind: TurnEnd, Turn: t.n, TurnName: t.name})
 	}
-	if err := s.secondLook(); err != nil {
-		return nil, err
-	}
+	s.secondLook()
 	if err := s.finish(); err != nil {
 		return nil, err
 	}
