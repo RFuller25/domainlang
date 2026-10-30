@@ -40,6 +40,9 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// one does not, which is the whole behaviour those two modes exist to
 	// replace. Standing the fusion down leaves the ordinary per-node path,
 	// which honours them.
+	if consumed, out, ok, err := g.fuseSparseFilter(nodes, in); err != nil || ok {
+		return consumed, out, ok, err
+	}
 	matchEach := func(n *ir.Node) bool {
 		if n.Prim != "Match Pattern" {
 			return false

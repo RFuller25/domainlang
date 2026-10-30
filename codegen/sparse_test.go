@@ -105,6 +105,58 @@ Reveal: stdout
 			input: "0,0\n2,3",
 		},
 		{
+			// The counting-automaton tail: Count By -> plane -> Find Cells ->
+			// marked plane. A total predicate fuses it into one walk; a
+			// fallible one must not, and both must agree with the interpreter.
+			name: "sparse count-by filter to marked plane",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{int},{int}"
+    Mode: Each
+Cursed Technique: Map Each
+    Using: (p) -> list(point(item(p, 0), item(p, 1)), point(item(p, 0), item(p, 1)), point(item(p, 0) + 1, item(p, 1)))
+Cursed Technique: Flatten
+Maximum Technique: Count By
+    Using: (q) -> q
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+Cursed Technique: Find Cells
+    Using: (score) -> score >= 2
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+    Mark: 1
+Reveal: stdout
+Cursed Technique: Apply
+    Using: (g) -> list(cells(g), minrow(g), maxrow(g))
+Reveal: stdout
+`,
+			input: "0,0\n0,0\n3,4\n-1,2",
+		},
+		{
+			name: "sparse count-by filter with a fallible predicate",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{int},{int}"
+    Mode: Each
+Cursed Technique: Map Each
+    Using: (p) -> list(point(item(p, 0), item(p, 1)), point(item(p, 0), item(p, 1)))
+Cursed Technique: Flatten
+Maximum Technique: Count By
+    Using: (q) -> q
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+Cursed Technique: Find Cells
+    Using: (score) -> 12 / score > 3
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+    Mark: 1
+Reveal: stdout
+`,
+			input: "0,0\n0,0\n3,4",
+		},
+		{
 			// Coordinates past 32 bits cannot use the packed key; they must
 			// still be stored, found, counted, sorted and bounded exactly.
 			name: "sparse far coordinates beside near ones",
