@@ -13,6 +13,7 @@
 //	domain expansion: maximum compile <file>  fix → lint → optimize → compile → run
 //	domain expansion: documentation [-p PORT] serve the docs website (default port 4444)
 //	domain expansion: development [file]      edit a program in a terminal editor
+//	domain expansion: year of fortune <year>  scaffold a folder of every puzzle of an Advent of Code year
 //	domain expansion: vscode [--dir PATH]     install the VS Code extension this binary carries
 //
 // Both the shell-split form (`domain expansion: lint prog.domain`) and the
@@ -25,6 +26,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"domain/diag"
 	"domain/optimizer"
@@ -34,6 +36,7 @@ import (
 // "maximum compile" wins over any future one-word prefix of it.
 var expansionCommands = [][]string{
 	{"maximum", "compile"},
+	{"year", "of", "fortune"},
 	{"documentation"},
 	{"development"},
 	{"vscode"},
@@ -94,7 +97,7 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		} else {
 			fmt.Fprintf(stderr, "domain: unknown expansion command %q\n", strings.Join(rest, " "))
 		}
-		fmt.Fprintln(stderr, "known: maximum compile, documentation, development, vscode, visualize, bench, coverage, stats, battle, mahoraga, lint, optimize, fix, diagnosis")
+		fmt.Fprintln(stderr, "known: maximum compile, year of fortune, documentation, development, vscode, visualize, bench, coverage, stats, battle, mahoraga, lint, optimize, fix, diagnosis")
 		return 2
 	}
 
@@ -126,6 +129,16 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 			return 2
 		}
 		return Development(path, opts, stdin, stdout, stderr)
+
+	// `year of fortune` takes a year, not a program: it writes a folder.
+	case "year of fortune":
+		year, opts, err := parseYearArgs(rest, time.Now())
+		if err != nil {
+			fmt.Fprintf(stderr, "domain: %v\n", err)
+			return 2
+		}
+		fmt.Fprint(stdout, expansionBanner("year of fortune", isColorTerminal(stdout)))
+		return YearOfFortune(year, opts, stdout, stderr)
 
 	case "visualize":
 		path, opts, err := parseVisualizeArgs(rest)

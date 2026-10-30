@@ -251,6 +251,14 @@ func statusError(code int, body string) error {
 // FirstYear is the first Advent of Code.
 const FirstYear = 2015
 
+// Days is how many puzzles an event has: 25 until 2025, when it was cut to 12.
+func Days(year int) int {
+	if year >= 2025 {
+		return 12
+	}
+	return 25
+}
+
 // Validate reports whether a year and day are a puzzle that exists yet.
 //
 // This is a courtesy to the server and to the reader in equal measure: a
@@ -260,6 +268,9 @@ const FirstYear = 2015
 func Validate(year, day int, now time.Time) error {
 	if day < 1 || day > 25 {
 		return fmt.Errorf("day %d — Advent of Code runs from day 1 to day 25", day)
+	}
+	if day > Days(year) {
+		return fmt.Errorf("day %d — %d had only %d days", day, year, Days(year))
 	}
 	if year < FirstYear {
 		return fmt.Errorf("year %d — the first Advent of Code was %d", year, FirstYear)

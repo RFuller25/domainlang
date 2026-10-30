@@ -72,6 +72,7 @@ var expansionTechniques = map[string]technique{
 	"fix":             {"反転術式", "REVERSE CURSED TECHNIQUE", "negative turned positive — wounds close.", jjkGreen},
 	"optimize":        {"黒閃", "BLACK FLASH", "struck within 0.000001 seconds of convergence.", jjkWhite},
 	"maximum compile": {"領域展開", "DOMAIN EXPANSION", "guaranteed hit.", jjkCrimson},
+	"year of fortune": {"坐殺博徒", "IDLE DEATH GAMBLE", "a whole year, dealt out before you play it.", jjkYellow},
 	"documentation":   {"呪術高専", "JUJUTSU HIGH ARCHIVES", "everything a sorcerer needs to know.", jjkPurple},
 	"vscode":          {"式神召喚", "SHIKIGAMI SUMMONING", "bound to your editor, ready to serve.", jjkBlue},
 	"bench":           {"呪力測定", "CURSED ENERGY MEASUREMENT", "four ways to fight; one is fastest.", jjkYellow},

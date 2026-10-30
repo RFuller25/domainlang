@@ -32,6 +32,8 @@ domain expansion: stats <folder>          per-program runtime, LOC and optimizer
 domain expansion: battle <a> [--lang L] <b>  race a Domain program against one in another language
 domain expansion: mahoraga <f> <in> <exp>    adapt one program to one input; writes a binary and a recipe
 
+domain expansion: year of fortune <year>  scaffold a folder holding every puzzle of an Advent of Code year
+
 domain expansion: visualize <file>        step through a run in a terminal UI (see below)
 domain expansion: development [file]      write a program in a terminal editor (see below)
 domain expansion: documentation [-p PORT] serve this documentation as a local website (default port 4444)
@@ -55,6 +57,30 @@ of the language, itself a build artifact — see
 [docs/wasm/README.md](wasm/README.md). Building the `domain` binary with
 `make build` at the repo root picks it up automatically; a plain
 `go build ./cmd/domain` does not.
+
+### `domain expansion: year of fortune`
+
+```sh
+domain expansion: year of fortune 2017            # writes ./2017/
+domain expansion: year of fortune 2017 --dir aoc  # writes ./aoc/
+```
+
+Lays out a whole Advent of Code year so every day can be coded against offline:
+
+```
+2017/
+  d1.md        the puzzle text
+  i1           your puzzle input
+  o1           accepted answers, one `Part N: x` per line (only once solved)
+  d1.domain    starter program, already reading i1
+  d2.md ...
+```
+
+It uses the same session cookie, cache and etiquette as the editor's `alt+c`
+([development.md](development.md#advent-of-code)): days not yet unlocked are
+skipped, uncached days are fetched one second apart, and files that already
+exist are never overwritten, so rerunning it picks up new days and newly
+accepted answers without touching your programs. Years from 2025 have 12 days.
 
 ### `domain expansion: development`
 

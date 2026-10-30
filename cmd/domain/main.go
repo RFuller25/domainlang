@@ -216,6 +216,7 @@ Expansion commands (the diagnostics engine):
   domain expansion: stats <folder>          per-program runtime, LOC and optimizer passes, ranked
   domain expansion: battle <a> [--lang L] <b>  race a Domain program against one in another language
   domain expansion: mahoraga <f> <in> <exp>    adapt one program to one input; writes a binary and a recipe
+  domain expansion: year of fortune <year>     scaffold d/i/o/.domain files for every AoC day of a year (--dir PATH)
   domain expansion: development [file]      write a program in a terminal editor that knows the language
   domain expansion: documentation [-p PORT] serve the browsable docs website locally (default port 4444)
   domain expansion: vscode [--dir PATH]     install the VS Code extension carried inside this binary
