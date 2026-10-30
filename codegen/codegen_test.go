@@ -1748,6 +1748,34 @@ func TestCompiledToolboxMatchesInterpreter(t *testing.T) {
 		input string
 	}{
 		{
+			// Rows of integers parsed straight out of their text: padded
+			// fields (the parse trims), a multi-byte row separator, and a
+			// single-field row.
+			name: "split rows and fields fused into integer rows",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n\n"
+Cursed Technique: Split Each by " ,"
+Channeled Energy: Convert Each List to Integers
+Cursed Technique: Map Each
+    Maximum Technique: Sum By
+        Using: (x) -> x * x
+Reveal: stdout
+`,
+			input: "1 ,2 , 3\n\n 7\n\n4 ,-5",
+		},
+		{
+			name: "split each on lines already in hand fused into integer rows",
+			src: `Cursed Energy: stdin
+Shikigami: Lines
+Cursed Technique: Split Each by " "
+Channeled Energy: Convert Each List to Integers
+Cursed Technique: Map Each
+    Maximum Technique: Max
+Reveal: stdout
+`,
+			input: "3 9 2\n10\n-4 -8",
+		},
+		{
 			name: "extract integers and merge ranges (int pairs)",
 			src: `Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"
