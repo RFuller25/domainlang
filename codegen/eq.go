@@ -152,11 +152,12 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 			return "", err
 		}
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
-	if !%s || len(a.cells) != len(b.cells) {
+	if !%s || a.count() != b.count() {
 		return false
 	}
-	for k, av := range a.cells {
-		bv, ok := b.cells[k]
+	for _, k := range a.allPts() {
+		av := a.val(k)
+		bv, ok := b.get(k.r, k.c)
 		if !ok || !%s {
 			return false
 		}

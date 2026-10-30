@@ -105,6 +105,27 @@ Reveal: stdout
 			input: "0,0\n2,3",
 		},
 		{
+			// Coordinates past 32 bits cannot use the packed key; they must
+			// still be stored, found, counted, sorted and bounded exactly.
+			name: "sparse far coordinates beside near ones",
+			src: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Match Pattern
+    Using: "{int},{int}"
+    Mode: Each
+Channeled Energy: Convert To Sparse Grid
+    Default: 0
+    Mark: 1
+Cursed Technique: Apply
+    Using: (g) -> put(put(g, 4294967296, 0 - 4294967297, 7), 2147483647, 2147483648, 9)
+Reveal: stdout
+Cursed Technique: Apply
+    Using: (g) -> list(cells(g), at(g, 4294967296, 0 - 4294967297), at(g, 2147483647, 2147483648), at(g, 1, 1), minrow(g), maxrow(g), mincol(g), maxcol(g), length(cellpoints(g)))
+Reveal: stdout
+`,
+			input: "1,1\n-3,5\n-2147483648,2147483647",
+		},
+		{
 			name: "sparse find cells sorted row-major",
 			src: `Cursed Energy: stdin
 Cursed Technique: Split Text by "\n"

@@ -379,7 +379,7 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	case ir.KSparse:
 		// Mirrors ir.FormatValue: a map-style listing of the set cells in
 		// sorted row-major order, keys rendered as points ([r, c]).
-		cellFmt, err := g.scalarFmt("v.cells[p]", t.Elem)
+		cellFmt, err := g.scalarFmt("v.val(p)", t.Elem)
 		if err != nil {
 			return "", err
 		}

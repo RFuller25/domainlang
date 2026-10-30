@@ -767,7 +767,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if types[0] == nil || types[0].Kind != ir.KSparse {
 			return "", nil, fmt.Errorf("cells needs a Sparse argument, got %s", types[0])
 		}
-		return "int64(len((" + args[0] + ").cells))", ir.Int(), nil
+		return "int64((" + args[0] + ").count())", ir.Int(), nil
 	case "minrow", "maxrow", "mincol", "maxcol":
 		if types[0] == nil || types[0].Kind != ir.KSparse {
 			return "", nil, fmt.Errorf("%s needs a Sparse argument, got %s", name, types[0])
