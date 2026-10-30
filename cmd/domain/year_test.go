@@ -18,10 +18,11 @@ const fortuneSolved = `<html><body><main>
 <p>Sum the digits.</p>
 <pre><code>1122
 </code></pre>
+<p>The example sums to <code><em>3</em></code>, via <code><em>1</em></code> and then <code><em>3</em></code>.</p>
 <ul><li>one</li></ul>
 </article>
 <p>Your puzzle answer was <code>1034</code>.</p>
-<article class="day-desc"><h2>--- Part Two ---</h2><p>Halfway round.</p></article>
+<article class="day-desc"><h2>--- Part Two ---</h2><p>Halfway round: <code><em>4</em></code>.</p></article>
 <p>Your puzzle answer was <code>1356</code>.</p>
 </main></body></html>`
 
@@ -78,8 +79,11 @@ func TestYearOfFortuneLaysOutTheYear(t *testing.T) {
 	if got := read("i1"); got != "1122\n" {
 		t.Errorf("i1 = %q", got)
 	}
-	if got := read("o1"); got != "Part 1: 1034\nPart 2: 1356\n" {
+	if got := read("o1"); got != "Part 1: 3\nPart 2: 4\n" {
 		t.Errorf("o1 = %q", got)
+	}
+	if got := read("a2"); got != "5 1 9\n7 5 3\n" {
+		t.Errorf("a2 = %q", got)
 	}
 	md := read("d1.md")
 	for _, want := range []string{"# Day 1: Inverse Captcha", "## Part Two", "```\n1122\n```", "- one"} {
@@ -90,9 +94,11 @@ func TestYearOfFortuneLaysOutTheYear(t *testing.T) {
 	if st := read("d1.domain"); !strings.Contains(st, "Cursed Energy: i1") || !strings.Contains(st, `Part "2":`) {
 		t.Errorf("d1.domain = %q", st)
 	}
-	// Day 2 is unsolved: no expected output rather than an empty one.
-	if _, err := os.Stat(filepath.Join(dir, "o2")); err == nil {
-		t.Error("o2 written for an unsolved day")
+	// Day 2's text has no example or answer for it: no i/o rather than empty ones.
+	for _, name := range []string{"i2", "o2"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Errorf("%s written with nothing to put in it", name)
+		}
 	}
 	// Day 3 is not out; nothing for it.
 	if _, err := os.Stat(filepath.Join(dir, "d3.md")); err == nil {

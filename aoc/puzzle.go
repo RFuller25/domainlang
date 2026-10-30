@@ -31,6 +31,11 @@ type Puzzle struct {
 	// Example is the worked example from part one — the small input the prose
 	// walks through, which is the one to get a program working on first.
 	Example string
+	// ExampleAnswers is, per unlocked part, the answer the prose gives for the
+	// worked example ("" where none could be found). The site emphasises it as
+	// <code><em>…</em></code>, and the last such span in a part is the best
+	// guess: earlier ones are usually intermediate values. A guess, like Example.
+	ExampleAnswers []string
 	// Answers are the answers the site has already accepted, in order. Its
 	// length is how many stars the day has: 0, 1 or 2.
 	Answers []string
@@ -108,6 +113,7 @@ var (
 	titleRe   = regexp.MustCompile(`---\s*Day\s+\d+:\s*(.*?)\s*---`)
 	tagRe     = regexp.MustCompile(`<[^>]*>`)
 	spaceRe   = regexp.MustCompile(`\s+`)
+	emCodeRe  = regexp.MustCompile(`(?s)<code><em>(.*?)</em></code>`)
 )
 
 // parsePuzzle reads a fetched page.
@@ -119,6 +125,7 @@ func parsePuzzle(year, day int, page string) *Puzzle {
 	p := &Puzzle{Year: year, Day: day}
 	for _, m := range articleRe.FindAllStringSubmatch(page, -1) {
 		p.Parts = append(p.Parts, renderBlocks(m[1]))
+		p.ExampleAnswers = append(p.ExampleAnswers, lastEmphasised(m[1]))
 	}
 	for _, m := range answerRe.FindAllStringSubmatch(page, -1) {
 		p.Answers = append(p.Answers, html.UnescapeString(m[1]))
@@ -128,6 +135,15 @@ func parsePuzzle(year, day int, page string) *Puzzle {
 	}
 	p.Example = exampleFrom(p.Part(1))
 	return p
+}
+
+// lastEmphasised is the text of the last <code><em>…</em></code> in an article.
+func lastEmphasised(article string) string {
+	ms := emCodeRe.FindAllStringSubmatch(article, -1)
+	if len(ms) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(html.UnescapeString(tagRe.ReplaceAllString(ms[len(ms)-1][1], "")))
 }
 
 // exampleFrom picks the worked example out of part one.

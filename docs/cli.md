@@ -70,17 +70,21 @@ Lays out a whole Advent of Code year so every day can be coded against offline:
 ```
 2017/
   d1.md        the puzzle text
-  i1           your puzzle input
-  o1           accepted answers, one `Part N: x` per line (only once solved)
-  d1.domain    starter program, already reading i1
+  i1           the worked example from the puzzle text
+  o1           what the text says the example answers, one `Part N: x` per line
+  a1           your real puzzle input
+  d1.domain    starter program, already reading i1 (point it at a1 for the real run)
   d2.md ...
 ```
 
 It uses the same session cookie, cache and etiquette as the editor's `alt+c`
 ([development.md](development.md#advent-of-code)): days not yet unlocked are
 skipped, uncached days are fetched one second apart, and files that already
-exist are never overwritten, so rerunning it picks up new days and newly
-accepted answers without touching your programs. Years from 2025 have 12 days.
+exist are never overwritten, so rerunning it picks up new days and a part two that has since
+unlocked without touching your programs. The example and its answer are read
+from the page (the last emphasised value in each part), so they are a guess:
+glance at them before trusting `o<n>`; when none is found, `i<n>`/`o<n>` are
+skipped. Years from 2025 have 12 days.
 
 ### `domain expansion: development`
 

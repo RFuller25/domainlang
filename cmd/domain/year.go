@@ -7,8 +7,9 @@
 //
 //	2017/
 //	  d1.md        the puzzle text, as markdown
-//	  i1           your puzzle input
-//	  o1           the answers the site has accepted from you, one `Part N: x` per line
+//	  i1           the worked example from the puzzle text
+//	  o1           what the text says the example answers, one `Part N: x` per line
+//	  a1           your real puzzle input
 //	  d1.domain    a starter program, already reading i1
 //
 // Everything with a URL in it is package aoc, so the rules about being a good
@@ -151,8 +152,9 @@ func YearOfFortune(year int, opts yearOptions, stdout, stderr io.Writer) int {
 }
 
 // writeFortuneDay writes one day's four files, leaving any that exist alone.
-// o<n> is written only once the site has accepted an answer: an empty
-// expected-output file would read as "the answer is nothing".
+// i<n> and o<n> are written only when the page yielded an example and an
+// answer for it: an empty expected-output file would read as "the answer is
+// nothing".
 func writeFortuneDay(dir string, p *aoc.Puzzle) (written, kept int, err error) {
 	files := []struct {
 		name string
@@ -160,8 +162,9 @@ func writeFortuneDay(dir string, p *aoc.Puzzle) (written, kept int, err error) {
 		perm os.FileMode
 	}{
 		{fmt.Sprintf("d%d.md", p.Day), fortuneMarkdown(p), 0o644},
-		{fmt.Sprintf("i%d", p.Day), p.Input, 0o600},
-		{fmt.Sprintf("o%d", p.Day), fortuneAnswers(p), 0o600},
+		{fmt.Sprintf("i%d", p.Day), p.Example, 0o644},
+		{fmt.Sprintf("o%d", p.Day), fortuneExpected(p), 0o644},
+		{fmt.Sprintf("a%d", p.Day), p.Input, 0o600},
 		{fmt.Sprintf("d%d.domain", p.Day), fortuneStarter(p), 0o644},
 	}
 	for _, f := range files {
@@ -184,24 +187,29 @@ func writeFortuneDay(dir string, p *aoc.Puzzle) (written, kept int, err error) {
 	return written, kept, nil
 }
 
-// fortuneAnswers is the expected output: the shape `Part "N":` prints, so the
-// file can be diffed against a run as it stands.
-func fortuneAnswers(p *aoc.Puzzle) string {
+// fortuneExpected is the example's expected output: the shape `Part "N":`
+// prints, so the file can be diffed against a run as it stands. Parts are
+// listed up to the first one whose example answer could not be found, so the
+// file never claims a part-two answer it has no part-one line for.
+func fortuneExpected(p *aoc.Puzzle) string {
 	var b strings.Builder
-	for i, a := range p.Answers {
+	for i, a := range p.ExampleAnswers {
+		if a == "" {
+			break
+		}
 		fmt.Fprintf(&b, "Part %d: %s\n", i+1, a)
 	}
 	return b.String()
 }
 
 // fortuneStarter is a program that parses nothing and answers nothing yet, but
-// loads and runs: it reads the day's input and has a Part block per part.
+// loads and runs: it reads the day's example and has a Part block per part.
 func fortuneStarter(p *aoc.Puzzle) string {
 	return fmt.Sprintf(`# %d day %d: %s
 #
 #   puzzle:   d%[2]d.md
-#   input:    i%[2]d
-#   expected: o%[2]d
+#   example:  i%[2]d -> o%[2]d
+#   real:     a%[2]d (swap it in below)
 Cursed Energy: i%[2]d
 
 Part "1":
