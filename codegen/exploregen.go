@@ -47,10 +47,23 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	steps, dist := g.fresh("steps"), g.fresh("dist")
 	nxt, d := g.fresh("nx"), g.fresh("d")
 
+	// What the search must remember depends on what it is asked for. Every state
+	// ever seen is in `seen`, so a Count is its size and needs no list; the
+	// visit order is kept only for the mode that returns it; and a depth per
+	// queued state is kept only when something reads it (Distances, or an
+	// Until: that records the step it was reached on).
+	untilLam, _ := n.Meta["until"].(*ast.Lambda)
+	hasUntilNode := untilLam != nil
+	needOrder := mode != "Count" && mode != "Steps" && mode != "Distances"
+	needDepth := mode == "Distances" || hasUntilNode
 	g.wl("%s := map[%s]bool{%s: true}", seen, stateGo, in)
-	g.wl("%s := []%s{%s}", order, stateGo, in)
+	if needOrder {
+		g.wl("%s := []%s{%s}", order, stateGo, in)
+	}
 	g.wl("%s := []%s{%s}", q, stateGo, in)
-	g.wl("%s := []int64{0}", depth)
+	if needDepth {
+		g.wl("%s := []int64{0}", depth)
+	}
 	g.wl("%s := 0", head)
 	// -1 is the "never reached" sentinel, matching Find Index. Only Mode: Steps
 	// returns it, so it is blanked for the other modes rather than omitted —
@@ -84,14 +97,20 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	g.wl("for !%s && %s < len(%s) {", done, head, q)
 	g.in()
 	g.wl("%s := %s[%s]", cur, q, head)
-	g.wl("%s := %s[%s]", d, depth, head)
-	g.wl("_ = %s", d)
+	if needDepth {
+		g.wl("%s := %s[%s]", d, depth, head)
+	}
 	g.wl("%s++", head)
 	g.wl("for _, %s := range %s {", nxt, succ)
 	g.in()
-	g.wl("if %s[%s] { continue }", seen, nxt)
+	// One probe: inserting an existing key leaves the size alone.
+	sz := g.fresh("sz")
+	g.wl("%s := len(%s)", sz, seen)
 	g.wl("%s[%s] = true", seen, nxt)
-	g.wl("%s = append(%s, %s)", order, order, nxt)
+	g.wl("if len(%s) == %s { continue }", seen, sz)
+	if needOrder {
+		g.wl("%s = append(%s, %s)", order, order, nxt)
+	}
 	if needDist {
 		g.wl("%s.put(%s, %s+1)", dist, nxt, d)
 	}
@@ -114,7 +133,9 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 	}
 	g.wl("%s = append(%s, %s)", q, q, nxt)
-	g.wl("%s = append(%s, %s+1)", depth, depth, d)
+	if needDepth {
+		g.wl("%s = append(%s, %s+1)", depth, depth, d)
+	}
 	g.out()
 	g.wl("}")
 	g.out()
@@ -123,7 +144,7 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	switch mode {
 	case "Count":
 		v := g.fresh("v")
-		g.wl("%s := int64(len(%s))", v, order)
+		g.wl("%s := int64(len(%s))", v, seen)
 		return v, nil
 	case "Steps":
 		return steps, nil
