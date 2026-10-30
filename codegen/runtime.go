@@ -1241,6 +1241,17 @@ const declGridAt = `func dmGridAt[T any](g dmGrid[T], r, c int64) T {
 // declMap and declSet mirror ir.MapValue / ir.SetValue: a Go map for lookup
 // paired with an order slice, because the interpreter renders (and therefore
 // the oracle tests compare) collections in insertion order.
+// declPrintText is Reveal for a Text. Small values keep fmt.Println; a large one
+// is written directly, with the newline as a second write.
+const declPrintText = `func dmPrintText(s string) {
+	if len(s) < 1<<16 {
+		fmt.Println(s)
+		return
+	}
+	os.Stdout.WriteString(s)
+	os.Stdout.WriteString("\n")
+}`
+
 const declMap = `type dmMap[K comparable, V any] struct {
 	keys []K
 	vs   []V       // vs[i] belongs to keys[i]: iteration is a scan, with no hashing

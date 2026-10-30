@@ -1992,7 +1992,18 @@ func (g *gen) emitEmit(n *ir.Node, in string) (string, error) {
 		printRaw, printFmt = "fmt.Fprintln(os.Stderr, %s)", "fmt.Fprintln(os.Stderr, %s(%s))"
 	}
 	switch n.In.Kind {
-	case ir.KInt, ir.KText, ir.KBool:
+	case ir.KText:
+		if target, _ := n.Meta["target"].(string); target != "stderr" {
+			// fmt.Println copies its argument into a buffer that grows by
+			// doubling, which for a multi-megabyte Join is several copies of
+			// the answer; a large Text goes straight to the file instead.
+			g.imp("os")
+			g.helper("dmPrintText", declPrintText)
+			g.wl("dmPrintText(%s)", in)
+			break
+		}
+		g.wl(printRaw, in)
+	case ir.KInt, ir.KBool:
 		g.wl(printRaw, in)
 	case ir.KFloat:
 		// fmt's %v for float64 is exactly strconv.FormatFloat('g', -1), the

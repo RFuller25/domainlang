@@ -275,9 +275,13 @@ func (g *gen) emitStreamRun(sep string, fromSplit bool, in string, first *ir.Nod
 		// strings.Join sizes its buffer once; a builder left to grow copies
 		// the answer about twice over, which measured slower than the lists
 		// fusion saves. From a Split, the text being split is the natural
-		// estimate — a per-line transform rarely changes the total much.
+		// estimate — but a per-line transform that appends even one byte to
+		// every line overflows an exact one, and the builder then reallocates
+		// and copies the whole answer (measured: 103 ms against 71 ms on a
+		// 12 MB `upper(s) + "!"`). A quarter of headroom costs nothing it does
+		// not use — untouched capacity is never faulted in — and covers it.
 		if fromSplit {
-			g.wl("%s.Grow(len(%s))", b, in)
+			g.wl("%s.Grow(len(%s) + len(%s)/4 + 64)", b, in, in)
 		}
 		// The separator goes before every element but the first. Counting
 		// elements rather than testing the builder's length matters: the
