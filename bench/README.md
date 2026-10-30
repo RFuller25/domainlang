@@ -505,14 +505,28 @@ changed nothing a binary does.
 | `math_builtins` | 1.12× | 1.06× | `isqrt` corrects its float estimate by multiplying (safe up to `floor(sqrt(MaxInt64))`) instead of dividing twice |
 | `group_map_values`, `toposort_words`, `count_by_entries` | 1.68×, 1.85×, 1.07× | 0.79×, 1.02×, 1.09× | the map storage change; the first two had also been helped by earlier rounds, so the table above had drifted |
 
-**Three that did not need a change.** `dmMap`'s new layout (values in a slice,
+**Three notes.** `dmMap`'s new layout (values in a slice,
 an index map beside it) was expected to help everything that builds a map and
 helped the ones that walk it; building is one probe either way.
 **Bounds checks** (the remaining idea from the tight-loop section) were
-measured again in isolation: in a dependent-load loop the guarded `dmItem` is
-indistinguishable from raw indexing (1.93 ms against 1.95 ms for 1M steps), so
-the guard is not what costs there, and proving an index in range remains the
-invariant analysis the section above declined on risk. `join_output`'s `fmt`
+implemented and then taken out again, which is worth recording because the
+reason is not the one the section above expected. The sound, narrow form is
+guard-dominated indexing: when an expression has just proved the index in range
+(`j >= 0 and j < length(all) and item(all, j) > x`, or the same in an `if`), the
+`item` is emitted as a plain index. It worked — the checked helper disappeared
+from the emitted Go and the Go compiler reported no bounds check left in the
+loop — and it made the program **slower**: 60 ms became 74 ms on a count of
+elements exceeding a looked-up value, and the same 20–25% on four other
+data-dependent predicates. Disassembly shows why: with the redundant check
+present Go compiled the final comparison to a branchless `SETG`; without it,
+to a conditional jump on a value that is unpredictable by construction. The
+check was not the cost, and removing it changed the code layout for the
+worse. Pairing the plain index with a branchless counter recovered the loss
+and gained about 1.5%, which does not pay for the machinery, and a
+dependent-load microbenchmark showed the guarded helper indistinguishable from
+raw indexing (1.93 ms against 1.95 ms for 1M steps). So the dominated check
+stays: it is free, and in at least one common shape it is load-bearing.
+`join_output`'s `fmt`
 buffer was worth about 5% on its own; the builder reallocation was the rest.
 
 ## Verifying the in-place widening against the AoC 2017 suite
