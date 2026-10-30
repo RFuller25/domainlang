@@ -242,8 +242,9 @@ func TestParity(t *testing.T) {
 }
 
 // BenchmarkHeadToHead times each pair on the same input. Both sides are
-// subprocesses, so both pay process startup and both read the input over a
-// pipe — whatever that costs, it costs them equally.
+// subprocesses, so both pay process startup and both read the input as a
+// redirected regular file (see execBin) — whatever that costs, it costs them
+// equally.
 func BenchmarkHeadToHead(b *testing.B) {
 	requireGo(b)
 	for _, c := range cases {

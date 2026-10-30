@@ -22,9 +22,18 @@ import (
 // at most once, however many benchmarks and tests ask for it.
 var (
 	binDir   string
-	buildMu  sync.Mutex
-	binCache = map[string]string{}
+	buildMu  sync.Mutex // guards binCache only; never held across a build
+	binCache = map[string]*builtBinary{}
 )
+
+// builtBinary is one program's build, shared by everyone who asks for it. The
+// Once is per program, so the parallel parity subtests build different
+// programs side by side instead of queueing behind a single lock.
+type builtBinary struct {
+	once sync.Once
+	path string
+	err  error
+}
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "domain-bench-*")
@@ -94,20 +103,28 @@ func build(tb testing.TB, key string, source func() (string, error)) string {
 	tb.Helper()
 	requireGo(tb)
 	buildMu.Lock()
-	defer buildMu.Unlock()
-	if bin, ok := binCache[key]; ok {
-		return bin
+	b, ok := binCache[key]
+	if !ok {
+		b = &builtBinary{}
+		binCache[key] = b
 	}
-	src, err := source()
-	if err != nil {
-		tb.Fatalf("%s: %v", key, err)
+	buildMu.Unlock()
+
+	b.once.Do(func() {
+		src, err := source()
+		if err != nil {
+			b.err = err
+			return
+		}
+		b.path = filepath.Join(binDir, key)
+		if err := codegen.BuildBinary(src, b.path); err != nil {
+			b.err = fmt.Errorf("building: %w", err)
+		}
+	})
+	if b.err != nil {
+		tb.Fatalf("%s: %v", key, b.err)
 	}
-	bin := filepath.Join(binDir, key)
-	if err := codegen.BuildBinary(src, bin); err != nil {
-		tb.Fatalf("building %s: %v", key, err)
-	}
-	binCache[key] = bin
-	return bin
+	return b.path
 }
 
 // inputFile materializes an input on disk, once per process, and hands back
@@ -135,7 +152,7 @@ func inputFile(tb testing.TB, key string, data []byte) string {
 	return path
 }
 
-// exec runs a built binary with the input file redirected onto its stdin.
+// execBin runs a built binary with the input file redirected onto its stdin.
 func execBin(tb testing.TB, bin, input string, stdout io.Writer) {
 	tb.Helper()
 	f, err := os.Open(input)

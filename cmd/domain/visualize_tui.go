@@ -1001,11 +1001,9 @@ func (m *visualModel) View() tea.View {
 	if m.detailTop > m.detailBottom() {
 		m.detailTop = m.detailBottom()
 	}
-	right := full
+	var right []string
 	if m.detailTop < len(full) {
 		right = full[m.detailTop:]
-	} else {
-		right = nil
 	}
 
 	var b strings.Builder

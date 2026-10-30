@@ -8,7 +8,7 @@ byte for byte, and times them against each other.
 
 The question these numbers answer: **does `domain build` output stay within
 2× of what a competent Go programmer writes by hand?** On thirty-six of
-the thirty-seven cases it does, nineteen of them faster than the hand-written
+the thirty-seven cases it does, sixteen of them faster than the hand-written
 Go; the thirty-seventh is documented below with the measured cost of the fix
 it is waiting on.
 
@@ -112,7 +112,7 @@ Best of five alternating runs each, Go 1.25, linux/amd64. Lower is better;
 | `for_loop` | 111.3 ms | 211.0 ms | **0.53×** |
 | `math_builtins` | 141.8 ms | 86.2 ms | 1.64× |
 
-Thirty-six of the thirty-seven are inside the 2× target and nineteen are
+Thirty-six of the thirty-seven are inside the 2× target and sixteen are
 faster than the hand-written Go. `sparse_life` is not, knowingly: it carries
 an explicit budget in the case table with the reason and the measured cost
 of the fix (see [below](#the-one-case-still-over-target-sparse_life)), so
