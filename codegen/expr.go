@@ -1058,7 +1058,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "dmAround8(" + args[0] + ")", ir.List(irPoint()), nil
 	case "haskey":
 		g.helper("dmMap", declMap)
-		return "func() bool { _, ok := (" + args[0] + ").vals[" + args[1] + "]; return ok }()", ir.Bool(), nil
+		return "func() bool { _, ok := (" + args[0] + ").idx[" + args[1] + "]; return ok }()", ir.Bool(), nil
 	case "getor":
 		// The total lookup: `get` errors on a missing key and there was no way
 		// to guard it, which made a Count By map unreadable.
@@ -1067,8 +1067,8 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		return "func() " + valGo + " { if v, ok := (" + args[0] + ").vals[" + args[1] +
-			"]; ok { return v }; return " + args[2] + " }()", types[0].Elem, nil
+		return "func() " + valGo + " { if v, ok := (" + args[0] + ").get(" + args[1] +
+			"); ok { return v }; return " + args[2] + " }()", types[0].Elem, nil
 	case "keys":
 		g.helper("dmMap", declMap)
 		return "(" + args[0] + ").keys", ir.List(types[0].Key), nil
@@ -1081,7 +1081,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmPluck", `func dmPluck[K comparable, V any](m dmMap[K, V], ks []K) []V {
 	out := make([]V, len(ks))
 	for i, k := range ks {
-		v, ok := m.vals[k]
+		v, ok := m.get(k)
 		if !ok {
 			dmFail("pluck: no entry for %v", k)
 		}
@@ -1102,11 +1102,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "", nil, err
 		}
 		g.helper("dmMapValues", `func dmMapValues[K comparable, V any](m dmMap[K, V]) []V {
-	out := make([]V, 0, len(m.keys))
-	for _, k := range m.keys {
-		out = append(out, m.vals[k])
-	}
-	return out
+	return append([]V(nil), m.vs...)
 }`)
 		return "dmMapValues(" + args[0] + ")", ir.List(types[0].Elem), nil
 	case "tolist":
@@ -1334,10 +1330,8 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		g.helper("dmMap", declMap)
 		// Parameterized rather than closed over, so the argument expression is
 		// evaluated exactly once however big it is.
-		return "func(ps []" + pairGo + ") " + mapGo + " { m := " + mapGo +
-			"{keys: make([]" + mustGo(g, elem.Elems[0]) + ", 0, len(ps)), vals: make(map[" +
-			mustGo(g, elem.Elems[0]) + "]" + mustGo(g, elem.Elems[1]) +
-			", len(ps))}; for _, p := range ps { m.put(p.f0, p.f1) }; return m }(" +
+		return "func(ps []" + pairGo + ") " + mapGo + " { m := dmNewMapCap[" + mustGo(g, elem.Elems[0]) + ", " + mustGo(g, elem.Elems[1]) +
+			"](len(ps)); for _, p := range ps { m.put(p.f0, p.f1) }; return m }(" +
 			args[0] + ")", mapT, nil
 	case "entries":
 		if types[0] == nil || types[0].Kind != ir.KMap {
@@ -1354,8 +1348,8 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		}
 		g.helper("dmMap", declMap)
 		return "func(m " + mapGo + ") []" + pairGo + " { out := make([]" + pairGo +
-				", 0, len(m.keys)); for _, k := range m.keys { out = append(out, " + pairGo +
-				"{f0: k, f1: m.vals[k]}) }; return out }(" + args[0] + ")",
+				", 0, len(m.keys)); for i, k := range m.keys { out = append(out, " + pairGo +
+				"{f0: k, f1: m.vs[i]}) }; return out }(" + args[0] + ")",
 			ir.List(pairT), nil
 	case "insert":
 		// x.InPlace is the optimizer's proof that nothing reads the

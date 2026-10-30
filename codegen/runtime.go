@@ -1089,7 +1089,7 @@ const declGridCol = `func dmGridCol[T any](g dmGrid[T], c int64) []T {
 }`
 
 const declMapGet = `func dmMapGet[K comparable, V any](m dmMap[K, V], k K) V {
-	v, ok := m.vals[k]
+	v, ok := m.get(k)
 	if !ok {
 		dmFail("get: map has no key %v", k)
 	}
@@ -1193,18 +1193,34 @@ const declGridAt = `func dmGridAt[T any](g dmGrid[T], r, c int64) T {
 // the oracle tests compare) collections in insertion order.
 const declMap = `type dmMap[K comparable, V any] struct {
 	keys []K
-	vals map[K]V
+	vs   []V       // vs[i] belongs to keys[i]: iteration is a scan, with no hashing
+	idx  map[K]int // key -> position in keys/vs
 }
 
 func dmNewMap[K comparable, V any]() dmMap[K, V] {
-	return dmMap[K, V]{vals: map[K]V{}}
+	return dmMap[K, V]{idx: map[K]int{}}
+}
+
+func dmNewMapCap[K comparable, V any](n int) dmMap[K, V] {
+	return dmMap[K, V]{keys: make([]K, 0, n), vs: make([]V, 0, n), idx: make(map[K]int, n)}
+}
+
+func (m *dmMap[K, V]) get(k K) (V, bool) {
+	if i, ok := m.idx[k]; ok {
+		return m.vs[i], true
+	}
+	var zero V
+	return zero, false
 }
 
 func (m *dmMap[K, V]) put(k K, v V) {
-	if _, ok := m.vals[k]; !ok {
-		m.keys = append(m.keys, k)
+	if i, ok := m.idx[k]; ok {
+		m.vs[i] = v
+		return
 	}
-	m.vals[k] = v
+	m.idx[k] = len(m.keys)
+	m.keys = append(m.keys, k)
+	m.vs = append(m.vs, v)
 }`
 
 // declMapBump is the counting path, and counting is the hottest thing anyone
@@ -1213,22 +1229,25 @@ func (m *dmMap[K, V]) put(k K, v V) {
 // the zero value, so it needs no membership test, and the length delta says
 // whether the key was new without asking the map again.
 const declMapBump = `func dmBump[K comparable](m *dmMap[K, int64], k K, d int64) {
-	n := len(m.vals)
-	m.vals[k] += d
-	if len(m.vals) != n {
-		m.keys = append(m.keys, k)
+	if i, ok := m.idx[k]; ok {
+		m.vs[i] += d
+		return
 	}
+	m.idx[k] = len(m.keys)
+	m.keys = append(m.keys, k)
+	m.vs = append(m.vs, d)
 }`
 
 // declMapAppend is declMapBump's sibling for a Map whose values are lists:
-// put(k, append(vals[k], v)) reads, probes and stores where two probes do.
+// put(k, append(vals[k], v)) reads, probes and stores where one probe does.
 const declMapAppend = `func dmAppend[K comparable, V any](m *dmMap[K, []V], k K, v V) {
-	if cur, ok := m.vals[k]; ok {
-		m.vals[k] = append(cur, v)
+	if i, ok := m.idx[k]; ok {
+		m.vs[i] = append(m.vs[i], v)
 		return
 	}
+	m.idx[k] = len(m.keys)
 	m.keys = append(m.keys, k)
-	m.vals[k] = []V{v}
+	m.vs = append(m.vs, []V{v})
 }`
 
 // declGraph mirrors ir.GraphValue: a directed, Int-weighted adjacency over
@@ -1840,10 +1859,11 @@ func (s dmSet[T]) items() []T { return s.elems }`
 // rather than a growth sequence.
 
 const declMapClone = `func dmMapClone[K comparable, V any](m dmMap[K, V]) dmMap[K, V] {
-	out := dmMap[K, V]{keys: make([]K, len(m.keys)), vals: make(map[K]V, len(m.vals))}
+	out := dmMap[K, V]{keys: make([]K, len(m.keys)), vs: make([]V, len(m.vs)), idx: make(map[K]int, len(m.idx))}
 	copy(out.keys, m.keys)
-	for k, v := range m.vals {
-		out.vals[k] = v
+	copy(out.vs, m.vs)
+	for k, i := range m.idx {
+		out.idx[k] = i
 	}
 	return out
 }`
@@ -1855,14 +1875,15 @@ const declMapWith = `func dmMapWith[K comparable, V any](m dmMap[K, V], k K, v V
 }`
 
 const declMapWithout = `func dmMapWithout[K comparable, V any](m dmMap[K, V], k K) dmMap[K, V] {
-	if _, ok := m.vals[k]; !ok {
+	if _, ok := m.idx[k]; !ok {
 		return dmMapClone(m)
 	}
-	out := dmMap[K, V]{keys: make([]K, 0, len(m.keys)-1), vals: make(map[K]V, len(m.vals)-1)}
-	for _, key := range m.keys {
+	out := dmNewMapCap[K, V](len(m.keys) - 1)
+	for i, key := range m.keys {
 		if key != k {
+			out.idx[key] = len(out.keys)
 			out.keys = append(out.keys, key)
-			out.vals[key] = m.vals[key]
+			out.vs = append(out.vs, m.vs[i])
 		}
 	}
 	return out

@@ -314,7 +314,7 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		valFmt, err := g.scalarFmt("v.vals[k]", t.Elem)
+		valFmt, err := g.scalarFmt("v.vs[i]", t.Elem)
 		if err != nil {
 			return "", err
 		}

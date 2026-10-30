@@ -58,10 +58,10 @@ func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 	case "map":
-		k := g.fresh("k")
-		g.wl("for _, %s := range %s.keys {", k, in)
+		k, ix := g.fresh("k"), g.fresh("i")
+		g.wl("for %s, %s := range %s.keys {", ix, k, in)
 		g.in()
-		g.wl("%s.put(%s.f0, %s.f1, %s.vals[%s])", v, k, k, in, k)
+		g.wl("%s.put(%s.f0, %s.f1, %s.vs[%s])", v, k, k, in, ix)
 		g.out()
 		g.wl("}")
 	case "points":

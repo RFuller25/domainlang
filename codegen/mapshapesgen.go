@@ -62,10 +62,11 @@ func (g *gen) emitMapKeys(n *ir.Node, in string) (string, error) {
 	}
 	g.helper("dmMap", declMap)
 	g.wl("%s := dmNewMap[%s, %s]()", out, keyGo, valGo)
-	g.wl("for _, %s := range %s.keys {", k, in)
+	ix := g.fresh("i")
+	g.wl("for %s, %s := range %s.keys {", ix, k, in)
 	g.in()
 	// put() overwrites, so two keys mapping to one keep the later value.
-	g.wl("%s.put(%s, %s.vals[%s])", out, body, in, k)
+	g.wl("%s.put(%s, %s.vs[%s])", out, body, in, ix)
 	g.out()
 	g.wl("}")
 	return out, nil

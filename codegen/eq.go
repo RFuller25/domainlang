@@ -114,7 +114,7 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 	return true
 }`, name, goT, cellEq)
 	case ir.KMap:
-		valEq, err := g.eqExpr("a.vals[k]", "bv", t.Elem)
+		valEq, err := g.eqExpr("a.vs[i]", "bv", t.Elem)
 		if err != nil {
 			return "", err
 		}
@@ -122,8 +122,8 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 	if len(a.keys) != len(b.keys) {
 		return false
 	}
-	for _, k := range a.keys {
-		bv, ok := b.vals[k]
+	for i, k := range a.keys {
+		bv, ok := b.get(k)
 		if !ok || !%s {
 			return false
 		}

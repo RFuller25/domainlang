@@ -404,8 +404,8 @@ const declTopoSort = `func dmTopoSort[K comparable](m dmMap[K, []K], render func
 	for _, k := range m.keys {
 		t.id(k)
 	}
-	for from, k := range m.keys {
-		for _, s := range m.vals[k] {
+	for from := range m.keys {
+		for _, s := range m.vs[from] {
 			t.edge(from, t.id(s))
 		}
 	}

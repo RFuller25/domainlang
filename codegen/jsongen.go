@@ -109,10 +109,10 @@ func (g *gen) jsonBody(t *ir.Type, expr string) (string, error) {
 		g.imp("sort")
 		return fmt.Sprintf(`	names := make([]string, 0, len(%[1]s.keys))
 	byName := map[string]string{}
-	for _, k := range %[1]s.keys {
+	for i, k := range %[1]s.keys {
 		name := %[2]s
 		names = append(names, name)
-		byName[name] = %[3]s(%[1]s.vals[k])
+		byName[name] = %[3]s(%[1]s.vs[i])
 	}
 	sort.Strings(names)
 	sb.WriteByte('{')

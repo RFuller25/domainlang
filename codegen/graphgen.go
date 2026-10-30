@@ -178,11 +178,11 @@ func (g *gen) emitConvertToGraph(n *ir.Node, in string) (string, error) {
 	switch {
 	case fromMap:
 		g.helper("dmMap", declMap)
-		k, s := g.fresh("k"), g.fresh("s")
-		g.wl("for _, %s := range %s.keys {", k, in)
+		k, s, ix := g.fresh("k"), g.fresh("s"), g.fresh("i")
+		g.wl("for %s, %s := range %s.keys {", ix, k, in)
 		g.in()
 		g.wl("%s.addNode(%s)", out, k)
-		g.wl("for _, %s := range %s.vals[%s] {", s, in, k)
+		g.wl("for _, %s := range %s.vs[%s] {", s, in, ix)
 		g.in()
 		add(k, s, "1")
 		g.out()
