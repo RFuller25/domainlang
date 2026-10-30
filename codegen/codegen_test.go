@@ -1764,6 +1764,33 @@ Reveal: stdout
 			input: "1 ,2 , 3\n\n 7\n\n4 ,-5",
 		},
 		{
+			// Partition + Take Item 0/1 collects only the half that is read;
+			// both halves, an empty half and an all-one-sided input.
+			name: "partition then take one half",
+			src: `Cursed Energy: stdin
+Shikigami: Ints
+
+Part "yes":
+    Cursed Technique: Partition
+        Using: (x) -> x % 3 = 0
+    Cursed Technique: Take Item 0
+    Reveal: stdout
+
+Part "no":
+    Cursed Technique: Partition
+        Using: (x) -> x % 3 = 0
+    Cursed Technique: Take Item 1
+    Reveal: stdout
+
+Part "none":
+    Cursed Technique: Partition
+        Using: (x) -> x > 1000
+    Cursed Technique: Take Item 0
+    Reveal: stdout
+`,
+			input: "3\n4\n9\n10\n-6\n7",
+		},
+		{
 			name: "split each on lines already in hand fused into integer rows",
 			src: `Cursed Energy: stdin
 Shikigami: Lines

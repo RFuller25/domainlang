@@ -251,6 +251,18 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 			return 2, out, true, nil
 		}
 	}
+	// Partition + Take Item 0/1 with a literal index: collect only the half
+	// that is read.
+	if len(nodes) >= 2 && nodes[0].Prim == "Partition" && nodes[1].Prim == "Take Item" &&
+		!hasMeasured(nodes[0], "sep") && !hasMeasured(nodes[1], "index") {
+		if idx, ok := nodes[1].Meta["index"].(int); ok && (idx == 0 || idx == 1) {
+			out, err := g.emitPartitionHalf(nodes[0], in, idx == 0)
+			if err != nil {
+				return 0, "", false, err
+			}
+			return 2, out, true, nil
+		}
+	}
 	// Pairs + Count Matching: each pair is tupled, tested and dropped, so the
 	// list of tuples (twice the size of its source) is never built. Pairs has
 	// no effect of its own, and the predicate sees the pairs in the same order,

@@ -207,7 +207,7 @@ Go as fast as Go you would have written?** — is
 hand-written Go counterpart answering the same question about the same
 input, built with the same flags and required to print the same bytes.
 Today all of them are inside 2× of the hand-written program and
-twenty-three are faster than it. `bench/README.md` carries the table, the
+twenty-four are faster than it. `bench/README.md` carries the table, the
 methodology, and the measured payoff of the fusion passes that are not
 written yet.
 

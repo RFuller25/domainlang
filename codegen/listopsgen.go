@@ -138,6 +138,42 @@ func (g *gen) emitPartition(n *ir.Node, in string) (string, error) {
 	return v, nil
 }
 
+// emitPartitionHalf lowers Partition + Take Item 0/1: the half that is asked
+// for is collected and the other is never built. The predicate still runs on
+// every element, in order, so a predicate that fails fails on the same one.
+func (g *gen) emitPartitionHalf(part *ir.Node, in string, keep bool) (string, error) {
+	lam, err := g.nodeLambda(part)
+	if err != nil {
+		return "", err
+	}
+	elemGo, err := g.goType(part.In.Elem)
+	if err != nil {
+		return "", unsupported(part, "%v", err)
+	}
+	out, i := g.fresh("v"), g.fresh("i")
+	body, _, err := g.compileExpr(lam.Body, exprEnv{
+		lam.Params[0]: {expr: in + "[" + i + "]", typ: part.In.Elem},
+	})
+	if err != nil {
+		return "", unsupported(part, "lambda: %v", err)
+	}
+	g.wl("%s := make([]%s, 0, len(%s))", out, elemGo, in)
+	g.wl("for %s := 0; %s < len(%s); %s++ {", i, i, in, i)
+	g.in()
+	if keep {
+		g.wl("if %s {", body)
+	} else {
+		g.wl("if !%s {", body)
+	}
+	g.in()
+	g.wl("%s = append(%s, %s[%s])", out, out, in, i)
+	g.out()
+	g.wl("}")
+	g.out()
+	g.wl("}")
+	return out, nil
+}
+
 func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
 	lam, err := g.nodeLambda(n)
 	if err != nil {
