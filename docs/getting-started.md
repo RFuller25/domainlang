@@ -74,11 +74,11 @@ go build -o domain ./cmd/domain
 nix run github:RFuller25/domainlang -- --help
 ```
 
-The CLI picks its mode from the arguments:
+The subcommand picks the mode, and a bare file interprets:
 
 ```sh
 domain prog.domain < input.txt    # a bare file → interpret it
-domain prog.domain -o prog        # an extra argument → compile to ./prog
+domain build prog.domain -o prog  # compile to ./prog
 domain check prog.domain          # typecheck only, run nothing
 domain repl                       # build a pipeline line by line
 ```
@@ -179,7 +179,7 @@ get a position, not a crash halfway through your input:
 ```
 
 `domain check prog.domain` does that without running anything. When the
-problem is a name rather than a type, `domain expansion: diagnosis` goes
+problem is a name rather than a type, `domain expansion: lint` goes
 further:
 
 ```
@@ -191,7 +191,7 @@ error[name]: unknown operation "Sumb" under "Maximum Technique"
   fix: auto-fixable — run `domain expansion: fix`
 ```
 
-That family — `diagnosis`, `lint`, `fix`, `optimize` — is worth knowing early;
+That family — `lint`, `fix`, `optimize` — is worth knowing early;
 see [diagnostics.md](diagnostics.md).
 
 ## 5. The second layer: lambdas
@@ -543,7 +543,7 @@ Every program that runs also compiles to a standalone native binary, from the
 same optimized IR, with no interpreter inside:
 
 ```sh
-domain build prog.domain -o prog       # or: domain prog.domain -o prog
+domain build prog.domain -o prog
 ./prog < input.txt
 
 domain build prog.domain --emit-go -   # inspect the generated Go

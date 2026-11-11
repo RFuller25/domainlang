@@ -85,7 +85,7 @@ Run it, or compile it to a native binary:
 
 ```sh
 domain prog.domain < input.txt      # interpret
-domain prog.domain -o prog          # compile (same optimized IR)
+domain build prog.domain -o prog    # compile (same optimized IR)
 domain run prog.domain --explain    # see what the optimizer substituted
 ```
 

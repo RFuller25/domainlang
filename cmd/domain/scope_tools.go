@@ -1,10 +1,9 @@
 // Which tools a scope's programs can be pointed at.
 //
 // Most of the toolbelt does not care what kind of program it is handed. `fmt`
-// and `check` never run anything; `lint`, `diagnosis` and `fix` read the
-// resolved program; `battle`, `stats`, `coverage` and `mahoraga` run it
-// through its own host and compare what came out, which for a game is its
-// frames.
+// and `check` never run anything; `lint` and `fix` read the
+// resolved program; `bench`, `oracle` and `mahoraga` run it through its own
+// host and compare what came out, which for a game is its frames.
 //
 // Two tools do care, and for one reason: they are built on *one value moving
 // through one chain of stages*. The stepper shows that value at each stage;

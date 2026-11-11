@@ -92,9 +92,9 @@ func TestEveryCLICommandIsDocumented(t *testing.T) {
 		}
 		// …and in the two summary blocks the page opens with, which are what a
 		// reader scans to learn what the binary can do. Being documented in a
-		// section further down is not the same thing: `bench`, `coverage`,
-		// `stats`, `battle` and `mahoraga` each had a section of their own
-		// while the opening list named none of them.
+		// section further down is not the same thing: `bench` and `mahoraga`
+		// each had a section of their own while the opening list named
+		// neither.
 		if !strings.Contains(summary, "domain "+cmd) {
 			t.Errorf("the command list at the top of docs/cli.md omits `domain %s`", cmd)
 		}
@@ -193,46 +193,6 @@ func TestQuotedToolOutputStillExists(t *testing.T) {
 			t.Errorf("docs/%s quotes %q as tool output (%s), but no Go source produces that text",
 				tc.page, tc.phrase, tc.produced)
 		})
-	}
-}
-
-// The counts inside cli.md's sample output.
-//
-// Those blocks show what a command prints, numbers included, and the numbers
-// are real ones the tool derives from the repository — so they go stale the
-// moment a program is added. The sample said "20 program(s)" against
-// twenty-two, alongside a primitive and builtin count that had drifted too.
-//
-// Only the counts are pinned, never the timings or the percentages: those
-// differ per machine and per run, and a sample that had to be regenerated on
-// every laptop would be deleted rather than maintained.
-func TestCLISampleOutputCountsAreCurrent(t *testing.T) {
-	ref := docFile(t, "cli.md")
-	// The coverage and stats commands walk the folder, so a library under a
-	// subdirectory counts — which is why this is a walk and not a glob.
-	countDomain := func(dir string) int {
-		n := 0
-		err := filepath.Walk(filepath.Join("..", dir), func(p string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && strings.HasSuffix(p, ".domain") {
-				n++
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return n
-	}
-	for _, dir := range []string{"examples", "challenges"} {
-		re := regexp.MustCompile(regexp.QuoteMeta(dir+"/ — ") + `(\d+) program\(s\)`)
-		m := re.FindStringSubmatch(ref)
-		if m == nil {
-			continue // the page no longer shows a sample for this folder
-		}
-		if got, want := m[1], countDomain(dir); got != strconv.Itoa(want) {
-			t.Errorf("docs/cli.md sample says %q, but %s/ holds %d .domain files",
-				m[0], dir, want)
-		}
 	}
 }
 

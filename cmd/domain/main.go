@@ -1,17 +1,16 @@
 // Command domain is the CLI for the Domain language.
 //
 //	domain <file.domain>                 # interpret (bare file, no other args)
-//	domain <file.domain> <args...>       # compile (any extra args select the compiler)
 //	domain run <file.domain> [flags]     # interpret, explicitly (flags allowed)
 //	domain build <file.domain> [flags]   # compile, explicitly
 //	domain check <file.domain>           # typecheck only, run nothing
+//	domain doc <name>                    # look up a primitive or a builtin
 //
 // A bare program file interprets it: lex -> parse -> lower/typecheck ->
 // optimize -> interpret, printing the program's Reveal output to stdout.
-// Any additional argument switches to the compiler backend, which hands the
-// optimized IR to codegen and produces a standalone optimized binary. The
-// explicit `run` and `build` subcommands remain for flagged interpretation
-// (e.g. `domain run prog.domain --explain`) and scripts.
+// `domain build` hands the optimized IR to codegen instead and produces a
+// standalone optimized binary. Flags belong to a subcommand: `domain run
+// prog.domain --explain` interprets with them, and a bare file takes none.
 package main
 
 import (
@@ -58,6 +57,9 @@ type Options struct {
 	// a Game Dev program — to stderr as it happens: what ran, and what it
 	// produced. See cmd/domain/gametrace.go.
 	Trace bool
+	// Watch runs the program again whenever it or a file it reads changes.
+	// See cmd/domain/run_watch.go.
+	Watch bool
 }
 
 // BuildOptions controls a single build.
@@ -96,6 +98,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
 			os.Exit(2)
 		}
+		if opts.Watch {
+			os.Exit(RunWatch(path, withoutWatchFlag(os.Args[2:], path), os.Stdin, os.Stdout, os.Stderr))
+		}
 		err = Execute(path, opts, os.Stdin, os.Stdout, os.Stderr)
 		// The interpreter half of the allocation-measurement protocol. It
 		// covers the whole process — front end included — which is the right
@@ -133,6 +138,13 @@ func main() {
 			os.Exit(2)
 		}
 		os.Exit(Fmt(paths, opts, os.Stdin, os.Stdout, os.Stderr))
+	case "doc":
+		query, opts, err := parseDocArgs(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
+			os.Exit(2)
+		}
+		os.Exit(Doc(query, opts, os.Stdout, os.Stderr))
 	case "repl":
 		os.Exit(Repl(os.Stdin, os.Stdout))
 	case "lsp":
@@ -145,26 +157,27 @@ func main() {
 		if cmd, rest, ok := expansionInvocation(os.Args[1:]); ok {
 			os.Exit(Expansion(cmd, rest, os.Stdin, os.Stdout, os.Stderr))
 		}
-		// No subcommand: a bare program file interprets it; any extra
-		// argument means the compiler is wanted.
+		// No subcommand: a bare program file interprets it, and that is the
+		// only thing a subcommand-less invocation means. Anything more has to
+		// say what it wants — `run` to pass flags, `build` to compile — so an
+		// extra argument can never silently change which backend runs.
 		args := os.Args[1:]
-		if isImplicitRun(args) {
-			err := Execute(args[0], Options{Optimize: true, Opinions: true}, os.Stdin, os.Stdout, os.Stderr)
-			runner.WriteReport()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "domain: %v\n", err)
-				os.Exit(1)
-			}
-			return
-		}
-		path, opts, err := parseBuildArgs(args)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
+		if strings.HasPrefix(args[0], "-") {
+			fmt.Fprintf(os.Stderr, "domain: unknown flag %q\n", args[0])
 			usage(os.Stderr)
 			os.Exit(2)
 		}
-		if err := Build(path, opts, os.Stdin, os.Stdout, os.Stderr); err != nil {
-			exitBuildErr(err)
+		if !isImplicitRun(args) {
+			fmt.Fprintf(os.Stderr, "domain: unexpected argument after %q — "+
+				"use `domain run %s [flags]` to interpret with flags, or `domain build %s [flags]` to compile\n",
+				args[0], args[0], args[0])
+			os.Exit(2)
+		}
+		err := Execute(args[0], Options{Optimize: true, Opinions: true}, os.Stdin, os.Stdout, os.Stderr)
+		runner.WriteReport()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
+			os.Exit(1)
 		}
 	}
 }
@@ -181,10 +194,9 @@ func exitBuildErr(err error) {
 	os.Exit(1)
 }
 
-// isImplicitRun reports whether a subcommand-less invocation selects the
-// interpreter: exactly one argument, and it is a program path rather than a
-// flag. Anything more (an output path, --emit-go, any flag) selects the
-// compiler.
+// isImplicitRun reports whether a subcommand-less invocation is the one form
+// that exists: exactly one argument, and it is a program path rather than a
+// flag. Anything more is a usage error that names `run` and `build`.
 func isImplicitRun(args []string) bool {
 	return len(args) == 1 && !strings.HasPrefix(args[0], "-")
 }
@@ -195,26 +207,23 @@ func usage(w io.Writer) {
 
 Usage:
   domain <file.domain>                interpret the program (bare file, no other args)
-  domain <file.domain> <args...>      compile it (any extra argument selects the compiler)
   domain run <file.domain> [flags]    interpret, explicitly (accepts the shared flags)
-  domain build <file.domain> [flags]  compile, explicitly
+  domain build <file.domain> [flags]  compile to a standalone binary
   domain check <file.domain>          typecheck only: report the first error, run nothing
   domain fmt <file.domain>... [-w]    canonical whitespace (-w in place, --check for CI)
+  domain doc <name>                   look up a primitive or a builtin: signature, summary, example
   domain repl                         interactive pipeline builder (replay-on-each-line)
   domain lsp                          language server over stdio (diagnostics, hover, defs, fixes)
   domain help | -h | --help           show this help
 
 Expansion commands (the diagnostics engine):
-  domain expansion: diagnosis <file>        full error list with fix suggestions (read-only)
-  domain expansion: lint <file>             errors + style warnings + performance hints (read-only)
+  domain expansion: lint <file>             errors with fix suggestions, style warnings, performance hints (read-only)
   domain expansion: fix <file>              apply unambiguous fixes in place (original kept as .bak)
   domain expansion: optimize <file>         optimization report; rewrites the source where possible (.bak)
-  domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
   domain expansion: visualize <file>        step through a run and watch the data change shape
+  domain expansion: explain <file>          what each line does, in plain English, and what the optimizer made of it
+  domain expansion: oracle <file>           check that both backends agree, optimized and not; says which half is wrong
   domain expansion: bench <file>            time and measure interpret/compile x naive/optimized
-  domain expansion: coverage <folder>       which builtins and primitives a folder never exercises
-  domain expansion: stats <folder>          per-program runtime, LOC and optimizer passes, ranked
-  domain expansion: battle <a> [--lang L] <b>  race a Domain program against one in another language
   domain expansion: mahoraga <f> <in> <exp>    adapt one program to one input; writes a binary and a recipe
   domain expansion: year of fortune <year>     scaffold d/i/o/a/.domain files for every AoC day of a year (--dir PATH)
   domain expansion: development [file]      write a program in a terminal editor that knows the language
@@ -235,6 +244,9 @@ Run flags:
                     script — one line per key, tick, reply and frame, in the
                     order they happened. Does nothing for a program that
                     replays instead of playing.
+  --watch, -w      run again whenever the program or a file it reads changes;
+                    a run still going when a change lands is stopped. Piped
+                    input is replayed to every run. Not combinable with --record.
   --trace          one line per Part body run, to stderr, as a Game Dev
                     program replays: what ran and what it produced. Not
                     combinable with --stats (one tracer per run).
@@ -265,7 +277,7 @@ Mahoraga flags (domain expansion: mahoraga <file.domain> <input> <expected>):
 
 Examples:
   domain day1.domain < input.txt      interpret day1.domain
-  domain day1.domain -o day1          compile to ./day1
+  domain build day1.domain -o day1    compile to ./day1
   domain run day1.domain --explain    interpret, showing optimizer rewrites
   domain expansion: mahoraga day1.domain input.txt want.txt --runs 20 --quiet
 `)
@@ -291,6 +303,8 @@ func parseRunArgs(args []string) (string, Options, error) {
 			opts.Verbose = true
 		case "--trace":
 			opts.Trace = true
+		case "--watch", "-w":
+			opts.Watch = true
 		case "--record":
 			i++
 			if i >= len(args) {
@@ -310,7 +324,24 @@ func parseRunArgs(args []string) (string, Options, error) {
 	if path == "" {
 		return "", opts, fmt.Errorf("missing <file.domain>")
 	}
+	if opts.Watch && opts.Record != "" {
+		return "", opts, fmt.Errorf("--watch and --record cannot be combined: " +
+			"a recording is one played session, and --watch runs the program again and again")
+	}
 	return path, opts, nil
+}
+
+// withoutWatchFlag is a run's arguments as each watched run should receive
+// them: the flags only, with --watch itself and the program path removed.
+func withoutWatchFlag(args []string, path string) []string {
+	var out []string
+	for _, a := range args {
+		if a == "--watch" || a == "-w" || a == path {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // parseCheckArgs accepts exactly one program path; check has no flags — it

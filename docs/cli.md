@@ -1,35 +1,38 @@
 # The `domain` CLI
 
-One binary contains both backends. The mode is picked from the arguments:
+One binary contains both backends, and the subcommand picks one:
 
 ```
 domain <file.domain>                 interpret (bare file, no other args)
-domain <file.domain> <args...>       compile (any extra argument selects the compiler)
 domain run <file.domain> [flags]     interpret, explicitly (accepts the shared flags)
-domain build <file.domain> [flags]   compile, explicitly
+domain build <file.domain> [flags]   compile to a standalone binary
 domain check <file.domain>           typecheck only: report the first error, run nothing
 domain fmt <file.domain>... [flags]  canonical whitespace (see below)
+domain doc <name>                    look up a primitive or a builtin (see below)
 domain repl                          interactive pipeline builder (docs/tooling.md)
 domain lsp                           language server over stdio (docs/tooling.md)
 domain help | -h | --help            print the full usage text
 ```
 
-Plus the expansion commands. The first five are the diagnostics family (full
-reference in [diagnostics.md](diagnostics.md)); the next five run your program
-to answer their question ([below](#measurement-and-exploration)); the last four
-hand you something the binary carries.
+A bare file is the only thing that works without a subcommand, and it takes
+no other arguments: `domain day1.domain -o day1` is a usage error that names
+`run` and `build`, so an extra argument can never silently change which
+backend runs.
+
+Plus the expansion commands. The first three are the diagnostics family (full
+reference in [diagnostics.md](diagnostics.md)), and [`explain`](#domain-expansion-explain)
+reads a program back to you; the next three run your program to answer their
+question ([below](#measurement-and-exploration)); the last four hand you
+something the binary carries.
 
 ```
-domain expansion: diagnosis <file>        error list with fix suggestions (read-only)
-domain expansion: lint <file>             errors + style warnings + perf hints (read-only)
+domain expansion: lint <file>             errors with fix suggestions, style warnings, perf hints (read-only)
 domain expansion: fix <file>              apply unambiguous fixes in place (original → .bak)
 domain expansion: optimize <file>         optimization report; rewrites the source where possible (.bak)
-domain expansion: maximum compile <file>  fix, lint, optimize, then compile and run with stdin
+domain expansion: explain <file>          what each line does, in plain English, and what the optimizer made of it
 
+domain expansion: oracle <file>           check that all four backend × optimizer cells agree
 domain expansion: bench <file>            time all four backend × optimizer cells
-domain expansion: coverage <folder>       which builtins and primitives a folder never exercises
-domain expansion: stats <folder>          per-program runtime, LOC and optimizer passes, ranked
-domain expansion: battle <a> [--lang L] <b>  race a Domain program against one in another language
 domain expansion: mahoraga <f> <in> <exp>    adapt one program to one input; writes a binary and a recipe
 
 domain expansion: year of fortune <year>  scaffold a folder holding every puzzle of an Advent of Code year
@@ -187,6 +190,7 @@ Shared by `run` and `build`:
 | `--stats` | per-stage counts and timings on stderr, after the program's output |
 | `--verbose` | with `--stats`, also list the nested steps inside loop, Channel and Part bodies |
 | `--record <path>` | playing a `Game Dev` program, write the session as a replay script — see below |
+| `--watch`, `-w` | run again whenever the program or a file it reads changes — see below. Not combinable with `--record` |
 | `--trace` | one line per Part body run, to stderr, as a `Game Dev` program replays — see below. Not combinable with `--stats` |
 
 ```
@@ -210,6 +214,44 @@ Two honest limits. `--stats` measures the **tree-walking interpreter**, which
 is why the header says so — do not benchmark the language with it. And it is
 `run` only: instrumenting a compiled binary would need generated
 instrumentation and its own oracle tests, so `build` does not accept it.
+
+### `--watch`, the answer is always the current one
+
+```sh
+domain run day7.domain --watch
+```
+
+Runs the program, then runs it again every time it is saved — it, or any file
+a `Cursed Energy:` line in it names. Edit the program in one window, or paste
+the real input over the example in another, and the answer in this one follows.
+After each run a line on stderr says how it ended, how long it took, and which
+files a change to would run it again:
+
+```
+45000
+[watch] ok in 4ms · watching day7.domain, input.txt — ctrl+c stops
+```
+
+The other flags apply to every run, so `--watch --stats` is a profile that
+refreshes on save. On a terminal the screen is cleared before each run; piped
+or redirected, the runs follow one another, which is what a log wants.
+
+Three things it is careful about:
+
+- **A run still going when a change lands is stopped.** A loop that does not
+  terminate is the ordinary state of a program being written, and its answer is
+  about a file that no longer exists. Each run is a separate process for
+  exactly this reason, and is exactly `domain run`.
+- **Piped input is replayed.** `domain run p.domain --watch < input.txt` reads
+  the pipe once and hands every run the same bytes; a pipe can only be drained
+  once, and the second run would otherwise see nothing.
+- **A program that fails is watched on.** A typo is reported the way `run`
+  reports it, with `[watch] exit 1` under it, and fixing the file runs it again.
+  A program that does not resolve watches only itself, since that is the file
+  that has to change.
+
+It does not follow `Inherited Technique:` libraries: editing one needs a save
+of the program that imports it before it shows.
 
 ### `--record`, a played session becomes a golden test
 
@@ -300,6 +342,97 @@ below. Errors inside Shikigami bodies carry an inlining trace
 (`in Shikigami "X" (body at L:C): …`), and errors inside the embedded
 prelude are labeled `prelude source L:C` so they are never mistaken for
 positions in your file.
+
+## `domain doc`
+
+The reference, one entry at a time:
+
+```sh
+domain doc Split Each      # a primitive: signature, summary, a worked example
+domain doc length          # an expression builtin: its row of the builtin tables
+domain doc grid            # not a name: everything that mentions it, one line each
+domain doc --list          # every primitive and builtin
+```
+
+```
+$ domain doc Sum Each Group
+Maximum Technique: Sum Each Group  (primitive)
+  List<List<Int>> → List<Int>
+  Per-group sums, preserving order.
+
+  example
+    Cursed Energy: stdin
+    Cursed Technique: Split Text by "\n\n"
+    …
+```
+
+The name is the rest of the line, so a two-word primitive needs no quotes, and
+case does not matter. A whole statement head (`Cursed Technique: Split Each`)
+or a call (`length(xs)`) is reduced to the name. A word that names both a
+primitive and a builtin — `sum` — prints both.
+
+A name nothing matches exactly falls back to a shortlist: names that start
+with it, then names that contain it, then entries whose summary mentions it. A
+name nothing contains gets a "did you mean" from the nearest spellings and exit
+code 1.
+
+Nothing here is a second copy of the documentation. Primitives come from the
+catalog the language server hovers with, and examples and builtins are read out
+of the reference pages embedded in the binary — the same ones
+`domain expansion: documentation` serves — so an entry cannot disagree with the
+site. The REPL's `:doc` is the same lookup from inside a session.
+
+| Flag | Effect |
+|---|---|
+| `--list`, `-l` | one line per entry instead of the full text; with no name, every entry |
+| `--json` | the matching entries as data |
+
+## `domain expansion: explain`
+
+A program, read back in plain English:
+
+```sh
+domain expansion: explain day1.domain
+```
+
+```
+   7 Domain Expansion: Quicksort, Descending
+       Sorts ascending (Descending flips it); the optimizer may substitute the algorithm.
+       List<Int> → List<Int>
+       optimizer: runs as Cursed Quickselect: Top 3, Sum
+
+   8 Maximum Technique: Select Top 3, Sum
+       Takes the first K (literal or measured Count:) of the ordered list; a literal fuses with Sort into a quickselect.
+       List<Int> → Int
+       optimizer: absorbed into another stage
+```
+
+One entry per stage, in source order: the line as written (with the `Using:`
+and other argument lines that belong to it), the reference's sentence for what
+that operation does, and the type flowing in and out. The stages of a loop,
+`Channel` or `Part` body are indented under the statement that owns them, and
+those statements — which are language constructs rather than catalogued
+primitives — get a sentence of their own.
+
+The `optimizer:` line is what `--explain` alone cannot give. A rewrite message
+says a substitution happened somewhere in the program; here it lands on the
+lines it happened to. A stage either *runs as* something else or was *absorbed
+into another stage*; a stage with no such line runs as written. The rewrite
+messages themselves are listed at the end.
+
+A `Shikigami:` call leaves no stage of its own — its body is inlined — so the
+call gets a heading and the body is listed under it. Stages inlined from the
+prelude or a library show where they came from instead of a line number, since
+the number would be a coordinate in a file you are not looking at.
+
+It reads the program and runs nothing, so it needs no input. A program that
+does not resolve cannot be explained; the error says so and points at
+`lint`.
+
+| Flag | Effect |
+|---|---|
+| `--json` | the stages and rewrites as data |
+| `--plain` | unstyled |
 
 ## `domain fmt`
 
@@ -919,8 +1052,8 @@ indented text instead, which is also how it is tested.
 
 ## Measurement and exploration
 
-The five commands below answer their question by *running* a program rather
-than reading it. All five share one execution layer (`runner`), so they agree
+The three commands below answer their question by *running* a program rather
+than reading it. All three share one execution layer (`runner`), so they agree
 about what "how long does this take" means: every timed run is a subprocess,
 the input is a redirected regular file rather than a pipe, and the reported
 figure is the best of N runs interleaved between configurations so drift lands
@@ -930,11 +1063,69 @@ applied to your own programs.
 
 | Command | Asks |
 |---|---|
+| [`oracle`](#domain-expansion-oracle) | do both backends give the same answer, optimized and not — and if not, which half is wrong? |
 | [`bench`](#domain-expansion-bench) | how long does this program take, in each of the four backend × optimizer cells? |
-| [`coverage`](#domain-expansion-coverage) | what does this folder of programs never exercise? |
-| [`stats`](#domain-expansion-stats) | how do a folder's programs compare, ranked? |
-| [`battle`](#domain-expansion-battle) | is this faster than the same answer written in another language? |
 | [`mahoraga`](#domain-expansion-mahoraga) | what schedule of passes suits *this* program on *this* input? |
+
+### `domain expansion: oracle`
+
+The differential check: one run in each of the four cells, compared.
+
+```sh
+domain expansion: oracle day15.domain                       # the sibling input, as bench finds it
+domain expansion: oracle day15.domain -i example.txt -i input.txt   # several inputs
+domain expansion: oracle day15.domain --input-text "1,2,3"
+```
+
+```
+day15.domain · input: input.txt
+
+  cell                   outcome    output
+  ──────────────────────────────────────────────────────────
+  interpret / naive      ok           45000
+  interpret / optimized  ok           45000
+  compile / naive        ok           45000
+  compile / optimized    ok           45000
+
+  ✓ all 4 cells agree on the output
+```
+
+The four cells must agree: the naive pipeline is the optimizer's oracle and
+the interpreter is the compiler's. `bench` makes the same comparison as a side
+effect of timing; this is the command for when correctness is the question —
+it runs each cell once rather than five times, takes any number of inputs, and
+exits 1 on any disagreement, which makes it the form to put in CI.
+
+It also says **which half of the compiler is wrong**. The grid is two
+independent axes, so a disagreement has a direction:
+
+| The cells that differ | What it means |
+|---|---|
+| naive against optimized, on the same backend | an optimizer pass is unsound on this program |
+| interpret against compile, on the same pipeline | a codegen case does not match its primitive |
+| both | no single component explains it, and the report says that rather than guessing |
+
+The cells are lettered into groups that agree with each other, and the report
+shows the first line where each group parts from the reference — the naive
+interpreter, the configuration everything else is defined against.
+
+Two cells that succeed agree when their output is identical, byte for byte.
+Two cells that *fail* agree when they fail the same way (the same exit status,
+or both timing out): the backends word a runtime error differently, and that is
+not a disagreement about the program. So a program whose Binding Vow is
+violated in all four cells passes, and one that crashes only when compiled does
+not. A cell that could not be built is no evidence either way, and a run that
+left fewer than two cells to compare exits 1 — nothing was cross-checked, and
+that must not read as a pass.
+
+| Flag | Effect |
+|---|---|
+| `--input F` / `-i F` | an input to check; repeat it for several (default: the sibling input) |
+| `--input-text T` | the input, inline |
+| `--timeout D` | per-run deadline (default 60s) |
+| `--cells LIST` | a subset of at least two, e.g. `interpret/naive,interpret/optimized` to check the optimizer without waiting for a build |
+| `--release` | check with Binding Vows shed |
+| `--json`, `--plain` | machine-readable, or unstyled |
 
 ### `domain expansion: bench`
 
@@ -986,189 +1177,6 @@ untimed run, because reading the runtime's memory stats stops the world.
 | `--cells LIST` | a subset, e.g. `compile/optimized`; interpreting the naive pipeline is often the cell nobody wants to wait for |
 | `--release` | measure with Binding Vows shed |
 | `--json`, `--markdown`, `--plain` | machine-readable, pasteable, or unstyled |
-
-### `domain expansion: coverage`
-
-What a folder of programs has never exercised, against the catalog:
-
-```sh
-domain expansion: coverage examples/
-domain expansion: coverage aoc2024/ --dynamic   # also run each one
-domain expansion: coverage aoc2024/ --used      # invert: what you do use
-domain expansion: coverage examples/ --min 40   # a CI gate
-```
-
-```
-examples/ — 28 program(s)
-
-  primitives   41 / 104  (39%)
-  builtins     55 / 208  (26%)
-  keywords      8 /   9  (89%)
-
-  Channeled Energy — 10 not exercised
-    Convert From JSON      Text → T                      ref-coercions.md#convert-from-json
-    Convert To Adjacency   Graph<K> → Map<K, List<K>>    ref-coercions.md#convert-to-adjacency
-    Convert To Edges       Graph<K> → List<(K, K, Int)>  ref-coercions.md#convert-to-edges
-    …
-```
-
-Two things it is careful about, because a coverage number is easy to make
-meaningless:
-
-- **It measures the unoptimized pipeline.** `fuseMapMap` turns two `Map Each`
-  nodes into one and `elideRedundantSort` deletes a `Sort` outright, so
-  counting the optimized IR would report that a program which visibly uses
-  `Sort` does not.
-- **Builtins are counted from the source, primitives can also be traced.** A
-  builtin is not a node — `gcd` is evaluated inside the expression layer and
-  never reaches the trace hook — so it is counted where it is written, and a
-  builtin inside a branch that never runs still counts. `--dynamic` runs each
-  program against its input and additionally reports primitives that were
-  *written but never evaluated*, which is the stronger finding. The header
-  always says which mode produced the numbers.
-
-A program that does not resolve, or has no input to run against, is listed as
-skipped with the reason rather than silently dropped.
-
-| Flag | Meaning |
-|---|---|
-| `--dynamic` | also run each program against its input, and report what was written but never evaluated |
-| `--used` | invert the report: what the folder does use, most first |
-| `--only prims\|builtins\|keywords` | one section rather than all three |
-| `--exclude GLOB` | skip programs by basename |
-| `--min PCT` | exit 1 when primitive coverage is below this, for CI |
-| `--json`, `--plain` | machine-readable, or unstyled |
-
-### `domain expansion: stats`
-
-A whole folder at a glance — the portfolio command:
-
-```sh
-domain expansion: stats aoc2024/
-domain expansion: stats aoc2024/ --sort time --top 10
-domain expansion: stats aoc2024/ --markdown        # paste into a README
-```
-
-```
-challenges/ — 13 program(s), compile / optimized, best of 3
-
-  program                  LOC  stages    runtime  passes fired                 ✓
-  ───────────────────────────────────────────────────────────────────────────────
-  01_fizzbuzz               10       6     2.74ms  —                            ✓
-  02_two_sum                 6       5     2.85ms  ×1 fuseAllPairsSum           ✓
-  …
-  ───────────────────────────────────────────────────────────────────────────────
-  13 programs              139      94    34.16ms  3 rewrites                   13/13
-
-  slowest         05_window_max (3.06ms) · 04_collatz (3.02ms)
-  most rewritten  02_two_sum (1) · 05_window_max (1)
-
-  vocabulary      23 / 104 primitives · 18 / 208 builtins
-```
-
-`bench` is for one program studied properly; `stats` runs one configuration
-(compiled and optimized, unless `--interpret`) over a folder and ranks the
-results. **LOC** is non-blank, non-comment lines — what a reader would count.
-**stages** is top-level nodes in the *unoptimized* pipeline, so the column
-measures what was written rather than what survived. **✓** compares the output
-against the `.expected` sibling; a folder without them drops the column rather
-than filling it with dashes. A program that fails keeps its row, with the
-reason in place of a time, and makes the command exit nonzero — dropping it
-would quietly shrink the folder and make every total wrong.
-
-| Flag | Meaning |
-|---|---|
-| `--sort name\|time\|loc\|passes` | ranking (default `name`, which is day order for AoC naming) |
-| `--top N` | keep the first N rows |
-| `--runs N` | repetitions per program (default 3) |
-| `--interpret` | measure the interpreter instead of a compiled binary |
-| `--exclude GLOB` | skip programs by basename |
-| `--json`, `--markdown`, `--plain` | machine-readable, pasteable, or unstyled |
-
-### `domain expansion: battle`
-
-Two programs, one input, one required answer:
-
-```sh
-domain expansion: battle day15.domain day15.py            # language inferred from .py
-domain expansion: battle day15.domain --lang weave rival  # or name it
-domain expansion: battle sum.domain sum.weave --runs 9
-```
-
-```
-input: sum.input · best of 3
-
-  sum.domain (Domain, compiled)
-    run     8.37ms
-    build   132.48ms
-    first   140.85ms  (build + run — what you wait for the first time)
-    peak    16.3 MB
-
-  sum.weave (Weave)
-    run     116.93ms
-    peak    94.9 MB
-
-  output ✓ identical (149966320234)
-
-  SUM.DOMAIN (DOMAIN, COMPILED) WINS — 14.0× faster on the run
-  sum.weave (Weave) wins to first answer — 1.2× (the build is the difference)
-```
-
-**Correctness gates the race.** Both programs run once and their output is
-compared before any timing is reported. If they disagree the command prints
-`NO CONTEST`, shows the first differing line, declares no winner, and exits 1 —
-a faster program that prints the wrong answer has not come out on top. It
-reports no timings at all in that case, because the race never ran and printing
-the check's single run under a "best of N" header would be inventing a
-measurement.
-
-**Both clocks are reported**, because they can disagree and showing only one
-would be taking a position. `run` is the compute. `first answer` adds the
-build, which the compiled Domain side pays and an interpreted challenger does
-not — which is exactly how the example above splits.
-
-The verdict ends with the rules the numbers rest on, so the result can be
-argued with rather than merely believed: both sides are subprocesses reading
-the input as a redirected regular file, best of N alternating so drift lands on
-both, the Domain side compiled and optimized (`--interpret` races the
-interpreter instead, and the report says so), and the challenger run as its own
-runtime runs it with no flags the user did not ask for.
-
-The challenger's language comes from the [table](#foreign-languages) below.
-A missing runtime is a setup problem rather than a failed race: the command
-names it, says where to get it, and exits 2 without racing anything.
-
-| Flag | Meaning |
-|---|---|
-| `--lang L` | the challenger's language; inferred from its extension when omitted |
-| `--input F` / `--input-text T` | what both programs read (default: the sibling input) |
-| `--runs N` | repetitions per side (default 5) |
-| `--timeout D` | per-run deadline |
-| `--interpret` | race `domain run` rather than a compiled binary |
-| `--challenger-args A` | extra arguments for the challenger, shown in the verdict |
-| `--json`, `--plain` | machine-readable, or unstyled |
-
-#### Foreign languages
-
-The same table backs `battle` and the `Domain Expansion: <language>` foreign
-block, so a language works in both or neither:
-
-| Language | Runs as | Override | Extensions |
-|---|---|---|---|
-| Python | `python3 program.py` | `DOMAIN_PYTHON` | `.py` |
-| Go | `go run .` | `DOMAIN_GO` | `.go` |
-| rask | `rask program.rask` | `DOMAIN_RASK` | `.rask` |
-| cRust | `crust program.crust` | `DOMAIN_CRUST` | `.crust` |
-| Weave | `weave run program.weave` | `DOMAIN_WEAVE` | `.weave`, `.wv` |
-
-Each override may name a command with arguments (`DOMAIN_PYTHON="uv run
-python"`), which is what makes these usable where a runtime is not on PATH
-under its usual name.
-
-[Weave](https://github.com/malleum/weavelang) fits the wire format without an
-adapter: `weave run file.weave` feeds stdin to `Source`, and a program's final
-bare expression is what it prints — a value in, a value out, which is the
-contract every foreign block is built on.
 
 ### `domain expansion: mahoraga`
 
@@ -1486,7 +1494,7 @@ still gets the bare `go.mod` and the flags above, which is
 
 ```sh
 domain day1.domain < input.txt                 # interpret
-domain day1.domain -o day1                     # compile → ./day1
+domain build day1.domain -o day1               # compile → ./day1
 ./day1 < input.txt                             # run the binary
 domain run day1.domain --explain < input.txt   # see optimizer rewrites
 domain run day1.domain --no-optimize           # the naive oracle path

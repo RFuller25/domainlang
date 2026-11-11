@@ -67,18 +67,15 @@ type technique struct {
 // expansionTechniques maps each expansion command to the JJK technique that
 // best matches what it does.
 var expansionTechniques = map[string]technique{
-	"diagnosis":       {"六眼", "SIX EYES", "nothing escapes perception.", jjkCyan},
-	"lint":            {"呪力感知", "CURSED ENERGY SENSING", "even the faintest flaw radiates.", jjkYellow},
+	"lint":            {"六眼", "SIX EYES", "nothing escapes perception.", jjkCyan},
 	"fix":             {"反転術式", "REVERSE CURSED TECHNIQUE", "negative turned positive — wounds close.", jjkGreen},
 	"optimize":        {"黒閃", "BLACK FLASH", "struck within 0.000001 seconds of convergence.", jjkWhite},
-	"maximum compile": {"領域展開", "DOMAIN EXPANSION", "guaranteed hit.", jjkCrimson},
 	"year of fortune": {"坐殺博徒", "IDLE DEATH GAMBLE", "a whole year, dealt out before you play it.", jjkYellow},
 	"documentation":   {"呪術高専", "JUJUTSU HIGH ARCHIVES", "everything a sorcerer needs to know.", jjkPurple},
 	"vscode":          {"式神召喚", "SHIKIGAMI SUMMONING", "bound to your editor, ready to serve.", jjkBlue},
+	"explain":         {"術式開示", "REVEALING ONE'S HAND", "a technique explained is a technique strengthened.", jjkBlue},
+	"oracle":          {"天元結界", "TENGEN'S BARRIER", "four cells, one answer — or the barrier is broken.", jjkCyan},
 	"bench":           {"呪力測定", "CURSED ENERGY MEASUREMENT", "four ways to fight; one is fastest.", jjkYellow},
-	"coverage":        {"術式目録", "TECHNIQUE INVENTORY", "you have not thrown every technique you know.", jjkGreen},
-	"stats":           {"等級査定", "GRADE ASSESSMENT", "the record, laid out.", jjkPurple},
-	"battle":          {"領域展開・対決", "DOMAIN CLASH", "two domains, one survives.", jjkCrimson},
 	"mahoraga":        {"八握剣異戒神将魔虚羅", "MAHORAGA", "the wheel turns; it adapts.", jjkCrimson},
 }
 

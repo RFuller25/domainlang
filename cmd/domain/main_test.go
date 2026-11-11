@@ -583,7 +583,8 @@ func TestReleaseModeVows(t *testing.T) {
 }
 
 // TestImplicitModeSelection pins the subcommand-less dispatch rule: a bare
-// program file interprets, anything more compiles.
+// program file interprets, and nothing else is accepted without a subcommand —
+// an extra argument used to select the compiler silently.
 func TestImplicitModeSelection(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -593,7 +594,7 @@ func TestImplicitModeSelection(t *testing.T) {
 		{[]string{"day1.domain", "-o", "day1"}, false},
 		{[]string{"day1.domain", "--release"}, false},
 		{[]string{"-o", "day1", "day1.domain"}, false},
-		{[]string{"--explain"}, false}, // lone flag: build path reports the missing file
+		{[]string{"--explain"}, false}, // a lone flag is a usage error
 	}
 	for _, c := range cases {
 		if got := isImplicitRun(c.args); got != c.run {

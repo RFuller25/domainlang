@@ -97,7 +97,7 @@ Inherited Technique: aoc        # a library of Shikigami to load
 ```
 
 An `Innate Domain:` naming something this build does not have is an error at
-that line, listing what it does have. `domain expansion: diagnosis` goes
+that line, listing what it does have. `domain expansion: lint` goes
 further: if the name is a library on the search path, it says so, names the
 keyword you meant, and offers the one-word fix.
 
@@ -212,9 +212,8 @@ Most of the toolbelt does not care what kind of program it is handed.
 |---|---|
 | `run`, `build` | play with a terminal on both ends, replay otherwise |
 | `fmt`, `check` | work — neither runs anything |
-| `expansion: lint`, `diagnosis`, `fix`, `optimize` | work — they read the resolved program |
-| `expansion: battle` | works — a replayed game has a stdout to compare, so a game can race a Python one |
-| `expansion: stats`, `coverage`, `mahoraga` | work — each runs the program through its own host |
+| `expansion: lint`, `fix`, `optimize`, `explain` | work — they read the resolved program |
+| `expansion: bench`, `oracle`, `mahoraga` | work — each runs the program through its own host |
 | `lsp`, `expansion: development` | work, and offer this scope's `Part` roles |
 | `expansion: visualize` | **refuses** |
 | `repl` | **refuses** |

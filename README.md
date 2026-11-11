@@ -60,12 +60,12 @@ an Oregon Trail, a tower defence, and two that talk to a server) live in
 [`examples/games/`](examples/games/README.md). Tests keep every one of them
 green in both backends — the games by diffing their frames.
 
-The CLI picks its mode from the arguments: a bare program file interprets it,
-any extra argument compiles it, and `domain --help` lists everything:
+A bare program file interprets it, `domain build` compiles it, and
+`domain --help` lists everything:
 
 ```sh
-domain day1.domain < input.txt   # interpreter
-domain day1.domain -o day1       # compiler → ./day1
+domain day1.domain < input.txt     # interpreter
+domain build day1.domain -o day1   # compiler → ./day1
 ```
 
 The diagnostics engine ships as the `expansion:` command family — rich
@@ -74,9 +74,12 @@ source-level optimization rewrites (see
 [docs/diagnostics.md](docs/diagnostics.md)):
 
 ```sh
-domain expansion: diagnosis day1.domain          # every error + how to fix it
+domain expansion: lint day1.domain               # every error + how to fix it, plus warnings and hints
 domain expansion: fix day1.domain                # apply the unambiguous fixes (.bak kept)
-domain expansion: maximum compile day1.domain < input.txt   # fix → lint → optimize → compile → run
+domain expansion: explain day1.domain            # every line in plain English, with what the optimizer made of it
+domain expansion: oracle day1.domain             # do both backends agree, optimized and not?
+domain run day1.domain --watch                   # run again on every save
+domain doc Split Each                            # look up a primitive or builtin from the shell
 domain expansion: visualize day1.domain          # step through the run, watching the data change shape
 domain expansion: visualize day1.domain --expressions   # …down to what each Using: expression computed
 domain expansion: development day1.domain        # write it in a terminal editor that knows the language
@@ -85,11 +88,9 @@ domain expansion: vscode                         # install the VS Code extension
 domain expansion: mahoraga day1.domain input.txt expected.txt   # adapt a binary to this input, with a recipe
 ```
 
-The rest of the family — `lint`, `optimize`, `bench`, `coverage`, `stats`,
-`battle` — round out linting, optimizer reports, cross-backend benchmarking,
-builtin/primitive coverage over a folder, per-program stats, and racing a
-Domain program against a hand-written one in another language; see
-[docs/cli.md](docs/cli.md) for the full list.
+The rest of the family — `optimize` and `bench` — round out optimizer reports
+and cross-backend benchmarking; see [docs/cli.md](docs/cli.md) for the full
+list.
 
 The documentation site includes a browser playground compiled to WebAssembly.
 `go build ./cmd/domain` alone won't have it — build with `make build` instead
@@ -131,7 +132,7 @@ The repo is a flake. `nix run` it directly, or add it to a system:
 
 ```sh
 nix run github:RFuller25/domainlang -- day1.domain < input.txt   # interpret
-nix run github:RFuller25/domainlang -- day1.domain -o day1       # compile
+nix run github:RFuller25/domainlang -- build day1.domain -o day1 # compile
 nix profile install github:RFuller25/domainlang                  # put `domain` on PATH
 nix develop                                                   # hacking shell (go, gopls)
 ```
@@ -436,7 +437,7 @@ format/     canonical source rendering behind `domain fmt` and the editor's refo
 lsp/        language-server knowledge (hover, completion, definitions, inlay hints) and the stdio server
 shape/      reads an input file and suggests the statements that would take it in
 game/       host for `Innate Domain: Game Dev` programs: play, replay, record
-langs/      how to run a program written in another language (foreign blocks, `battle`)
+langs/      how to run a program written in another language (foreign blocks)
 runner/     measuring a run: allocations, per-node counts, process timing
 aoc/        Advent of Code client for the editor: puzzle text, your input, answer checks
 docs/       this documentation, its site renderer and the drift tests that keep it honest

@@ -38,11 +38,10 @@ The lexer and the resolver stop at their first error, and that is correct for
 engine sees further with a **fix-and-continue loop**: whenever a diagnostic
 carries a *confident* fix, the engine applies it to a private in-memory copy
 of the source and re-runs the front end, surfacing whatever error was hiding
-behind the one it just repaired. One `diagnosis` run can therefore walk
+behind the one it just repaired. One `lint` run can therefore walk
 through a chain of typos, a missing colon, and a type error in a single pass.
-Analysis never writes to your file — only `expansion: fix`, `expansion:
-optimize`, and the fix stage of `maximum compile` write, and each saves the
-original as `<file>.bak` first.
+Analysis never writes to your file — only `expansion: fix` and `expansion:
+optimize` write, and each saves the original as `<file>.bak` first.
 
 ## What the engine recognizes
 
@@ -186,22 +185,18 @@ choice the program made, and a program built on globals has dozens of them.
 ## The commands
 
 ```
-domain expansion: diagnosis <file>        read-only: every error, with suggestions and fix availability
-domain expansion: lint <file>             read-only: errors + warnings + hints, compact
+domain expansion: lint <file>             read-only: every error with its suggestion, plus warnings and hints
 domain expansion: fix <file>              apply every confident fix in place (original → <file>.bak)
 domain expansion: optimize <file>         optimization report + source rewrites (original → <file>.bak)
-domain expansion: maximum compile <file>  fix → lint → optimize → compile → run with stdin
 ```
 
 Both the shell-split form (`domain expansion: lint prog.domain`) and the
 quoted form (`domain "expansion: lint" prog.domain`) work, with or without
 the colon, case-insensitively.
 
-**diagnosis** never writes. It prints every finding with full notes and ends
-with a tally plus how many errors `fix` could repair automatically.
-
-**lint** never writes. Exit code is 1 only for errors — warnings and hints
-exit 0, so it is CI-friendly.
+**lint** never writes. It prints every finding with full notes and ends with a
+tally plus how many errors `fix` could repair automatically. Exit code is 1
+only for errors — warnings and hints exit 0, so it is CI-friendly.
 
 **fix** applies exactly the *confident* subset: repairs the engine would bet
 on (typo corrections within tight edit distance, case fixes, colon insertion,
@@ -220,12 +215,6 @@ the file is touched.
 2. *The IR report* — everything the 36-pass optimizer will substitute on
    every run/build of the (possibly rewritten) program, in the same wording
    as `--explain`.
-
-**maximum compile** is the whole ritual: apply confident fixes (backing up
-first), stop with a full report if unfixable errors remain, print lint
-warnings and hints, then compile with the optimizer narrating its rewrites to
-stderr and run the binary immediately with the current stdin, propagating its
-exit code.
 
 ## Exit codes
 

@@ -1,16 +1,13 @@
 // The `domain expansion:` command family — the CLI face of the diagnostics
 // engine (package diag):
 //
-//	domain expansion: diagnosis <file>        error list + fix suggestions, read-only
-//	domain expansion: lint <file>             errors + style warnings + perf hints, read-only
+//	domain expansion: lint <file>             errors with fix suggestions, style warnings, perf hints; read-only
 //	domain expansion: fix <file>              apply confident fixes in place (.bak backup)
 //	domain expansion: optimize <file>         optimization report + source rewrites (.bak backup)
+//	domain expansion: explain <file>          each line in plain English, with what the optimizer made of it
+//	domain expansion: oracle <file>           do the four backend × optimizer cells agree, and if not, which half is wrong
 //	domain expansion: bench <file>            four-cell timing and allocation report
-//	domain expansion: coverage <folder>       what of the catalog a folder never exercises
-//	domain expansion: stats <folder>          per-program runtime, LOC and passes, as a leaderboard
-//	domain expansion: battle <a> <b>          race a Domain program against one in another language
 //	domain expansion: mahoraga <f> <in> <out> adapt one program to one input, and record how
-//	domain expansion: maximum compile <file>  fix → lint → optimize → compile → run
 //	domain expansion: documentation [-p PORT] serve the docs website (default port 4444)
 //	domain expansion: development [file]      edit a program in a terminal editor
 //	domain expansion: year of fortune <year>  scaffold a folder of every puzzle of an Advent of Code year
@@ -21,7 +18,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,21 +28,18 @@ import (
 	"domain/optimizer"
 )
 
-// expansionCommands are the recognized command phrases, longest first so
-// "maximum compile" wins over any future one-word prefix of it.
+// expansionCommands are the recognized command phrases, longest first so a
+// multi-word phrase wins over any one-word prefix of it.
 var expansionCommands = [][]string{
-	{"maximum", "compile"},
 	{"year", "of", "fortune"},
 	{"documentation"},
 	{"development"},
 	{"vscode"},
 	{"visualize"},
+	{"explain"},
+	{"oracle"},
 	{"bench"},
-	{"coverage"},
-	{"stats"},
-	{"battle"},
 	{"mahoraga"},
-	{"diagnosis"},
 	{"lint"},
 	{"optimize"},
 	{"fix"},
@@ -63,7 +56,7 @@ func expansionInvocation(args []string) (cmd []string, rest []string, ok bool) {
 	switch {
 	case head == "expansion:" || head == "expansion":
 		words = args[1:]
-	case strings.HasPrefix(head, "expansion:"): // quoted: "expansion: maximum compile"
+	case strings.HasPrefix(head, "expansion:"): // quoted: "expansion: year of fortune"
 		words = append(strings.Fields(args[0][len("expansion:"):]), args[1:]...)
 	case strings.HasPrefix(head, "expansion "): // quoted, colon left off: "expansion maximum compile"
 		words = append(strings.Fields(args[0][len("expansion"):]), args[1:]...)
@@ -99,7 +92,7 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		} else {
 			fmt.Fprintf(stderr, "domain: unknown expansion command %q\n", strings.Join(rest, " "))
 		}
-		fmt.Fprintln(stderr, "known: maximum compile, year of fortune, documentation, development, vscode, visualize, bench, coverage, stats, battle, mahoraga, lint, optimize, fix, diagnosis")
+		fmt.Fprintln(stderr, "known: year of fortune, documentation, development, vscode, visualize, explain, oracle, bench, mahoraga, lint, optimize, fix")
 		return 2
 	}
 
@@ -165,38 +158,27 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 		}
 		return Bench(path, opts, stdout, stderr)
 
-	case "coverage":
-		path, opts, err := parseCoverageArgs(rest)
+	case "oracle":
+		path, opts, err := parseOracleArgs(rest)
 		if err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 2
 		}
 		if !opts.JSON {
-			fmt.Fprint(stdout, expansionBanner("coverage", isColorTerminal(stdout) && !opts.Plain))
+			fmt.Fprint(stdout, expansionBanner("oracle", isColorTerminal(stdout) && !opts.Plain))
 		}
-		return Coverage(path, opts, stdout, stderr)
+		return Oracle(path, opts, stdout, stderr)
 
-	case "stats":
-		path, opts, err := parseStatsArgs(rest)
-		if err != nil {
-			fmt.Fprintf(stderr, "domain: %v\n", err)
-			return 2
-		}
-		if !opts.JSON && !opts.Markdown {
-			fmt.Fprint(stdout, expansionBanner("stats", isColorTerminal(stdout) && !opts.Plain))
-		}
-		return Stats(path, opts, stdout, stderr)
-
-	case "battle":
-		a, b, opts, err := parseBattleArgs(rest)
+	case "explain":
+		path, opts, err := parseExplainArgs(rest)
 		if err != nil {
 			fmt.Fprintf(stderr, "domain: %v\n", err)
 			return 2
 		}
 		if !opts.JSON {
-			fmt.Fprint(stdout, expansionBanner("battle", isColorTerminal(stdout) && !opts.Plain))
+			fmt.Fprint(stdout, expansionBanner("explain", isColorTerminal(stdout) && !opts.Plain))
 		}
-		return Battle(a, b, opts, stdout, stderr)
+		return Explain(path, opts, stdout, stderr)
 
 	case "mahoraga":
 		prog, input, expected, opts, err := parseMahoragaArgs(rest)
@@ -235,16 +217,12 @@ func Expansion(cmd, rest []string, stdin io.Reader, stdout, stderr io.Writer) in
 	fmt.Fprint(stdout, expansionBanner(name, color))
 
 	switch name {
-	case "diagnosis":
-		return cmdDiagnosis(path, string(src), stdout, color)
 	case "lint":
 		return cmdLint(path, string(src), stdout, color)
 	case "fix":
 		return cmdFix(path, string(src), stdout, stderr, color)
 	case "optimize":
 		return cmdOptimize(path, string(src), stdout, stderr, color)
-	case "maximum compile":
-		return cmdMaximumCompile(path, string(src), stdin, stdout, stderr, color)
 	}
 	return 2
 }
@@ -256,35 +234,8 @@ func renderDiag(w io.Writer, d *diag.Diagnostic, path string, color bool) {
 	fmt.Fprintln(w)
 }
 
-// cmdDiagnosis reads the program and reports every error with suggestions —
-// the read-only deep dive.
-func cmdDiagnosis(path, src string, w io.Writer, color bool) int {
-	rep := diag.Analyze(path, src)
-	errs, warns, hints := rep.Counts()
-
-	fmt.Fprintf(w, "Domain Expansion: Diagnosis — %s\n\n", path)
-	if errs == 0 {
-		fmt.Fprintln(w, "no errors found. The domain is stable.")
-	}
-	fixable := 0
-	for i := range rep.Diags {
-		d := &rep.Diags[i]
-		renderDiag(w, d, path, color)
-		if d.Severity == diag.Error && d.HasConfidentFix() {
-			fixable++
-		}
-	}
-	fmt.Fprintf(w, "%d error(s), %d warning(s), %d hint(s)\n", errs, warns, hints)
-	if fixable > 0 {
-		fmt.Fprintf(w, "%d error(s) are auto-fixable — run `domain expansion: fix %s`\n", fixable, path)
-	}
-	if errs > 0 {
-		return 1
-	}
-	return 0
-}
-
-// cmdLint reports everything the analyzer and linter found, compactly.
+// cmdLint reports everything the analyzer and linter found: every error with
+// its suggestion, every warning and hint, and how many errors `fix` would repair.
 func cmdLint(path, src string, w io.Writer, color bool) int {
 	rep := diag.Analyze(path, src)
 	for i := range rep.Diags {
@@ -295,6 +246,17 @@ func cmdLint(path, src string, w io.Writer, color bool) int {
 		fmt.Fprintf(w, "%s: clean — no errors, warnings, or hints\n", path)
 	} else {
 		fmt.Fprintf(w, "%d error(s), %d warning(s), %d hint(s)\n", errs, warns, hints)
+	}
+	// Say when the next command would do the work: an error with an
+	// unambiguous repair does not need a human.
+	fixable := 0
+	for i := range rep.Diags {
+		if d := &rep.Diags[i]; d.Severity == diag.Error && d.HasConfidentFix() {
+			fixable++
+		}
+	}
+	if fixable > 0 {
+		fmt.Fprintf(w, "%d error(s) are auto-fixable — run `domain expansion: fix %s`\n", fixable, path)
 	}
 	if errs > 0 {
 		return 1
@@ -419,61 +381,6 @@ func declinedSummary(reason string) string {
 		return "the loop's state cannot be copied on entry"
 	}
 	return reason
-}
-
-// cmdMaximumCompile is the whole ritual: fix what can be fixed, report what
-// the linter sees, then compile with full optimization and run immediately.
-func cmdMaximumCompile(path, src string, stdin io.Reader, w, stderr io.Writer, color bool) int {
-	fmt.Fprintf(w, "Domain Expansion: Maximum Compile — %s\n", path)
-
-	// Stage 1: fix.
-	res := diag.FixSrc(path, src)
-	working := src
-	if len(res.Applied) > 0 {
-		if err := backupAndWrite(path, src, res.Fixed); err != nil {
-			fmt.Fprintf(stderr, "domain: %v\n", err)
-			return 1
-		}
-		working = res.Fixed
-		fmt.Fprintf(w, "[fix] applied %d fix(es) (original saved as %s.bak)\n", len(res.Applied), path)
-		for i := range res.Applied {
-			fmt.Fprintf(w, "  line %d: %s\n", res.Applied[i].Pos.Line, res.Applied[i].Msg)
-		}
-	}
-	if len(res.Remaining) > 0 {
-		fmt.Fprintf(w, "[fix] %d error(s) could not be fixed automatically:\n\n", len(res.Remaining))
-		for i := range res.Remaining {
-			renderDiag(w, &res.Remaining[i], path, color)
-		}
-		return 1
-	}
-
-	// Stage 2: lint the (possibly fixed) source.
-	rep := diag.Analyze(path, working)
-	warned := false
-	for i := range rep.Diags {
-		if rep.Diags[i].Severity == diag.Error {
-			continue // cannot happen when fix left nothing remaining, but stay safe
-		}
-		if !warned {
-			fmt.Fprintln(w, "[lint]")
-			warned = true
-		}
-		renderDiag(w, &rep.Diags[i], path, color)
-	}
-
-	// Stage 3+4: compile with the optimizer narrating, then run.
-	fmt.Fprintln(w, "[compile]")
-	err := Build(path, BuildOptions{Optimize: true, Explain: true, Run: true}, stdin, w, stderr)
-	if err != nil {
-		var xe *exitError
-		if errors.As(err, &xe) {
-			return xe.code
-		}
-		fmt.Fprintf(stderr, "domain: %v\n", err)
-		return 1
-	}
-	return 0
 }
 
 // backupAndWrite saves the original source as <path>.bak, then writes the new

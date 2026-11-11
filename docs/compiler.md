@@ -1,6 +1,6 @@
 # The Go compiler backend
 
-`domain build` (or any subcommand-less invocation with extra arguments)
+`domain build`
 hands the **post-optimizer** IR — the same pipeline the interpreter runs —
 to the `codegen` package, which emits one fully typed Go `main.go` and shells
 out to `go build -trimpath -ldflags "-s -w"` (CGO disabled).
