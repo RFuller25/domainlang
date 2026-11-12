@@ -102,9 +102,9 @@ func breakdownOf(s *interp.Step) (*exprBreakdown, error) {
 // below have something to be values *of*.
 func applicationHeader(a *interp.Application) string {
 	binds := make([]string, 0, len(a.Lambda.Params))
-	for i, p := range a.Lambda.Params {
+	for i := range a.Lambda.Params {
 		if i < len(a.Args) {
-			binds = append(binds, fmt.Sprintf("%s = %s", p, ir.FormatShort(a.Args[i])))
+			binds = append(binds, fmt.Sprintf("%s = %s", a.Lambda.ParamLabel(i), ir.FormatShort(a.Args[i])))
 		}
 	}
 	if len(binds) == 0 {

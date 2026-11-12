@@ -470,9 +470,25 @@ abracadabra
 [a, 5]
 ```
 
-### Convert To Map — `List<(K, V)> -> Map<K,V>` (K keyable)
+### Convert To Map — `List<(K, V)> -> Map<K,V>` (K keyable, or a List of keyables)
 
-The inverse. Duplicate keys: last write wins.
+The inverse. Duplicate keys: last write wins. A key may be a List of keyables,
+the same rule as `Convert To Set`:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Cursed Technique: Map Each
+    Using: (w) -> tuple(sort(split(w, "")), w)
+Channeled Energy: Convert To Map
+Reveal: stdout
+```
+```input
+tea,eat,ate,tan
+```
+```output
+{[a, e, t]: ate, [a, n, t]: tan}
+```
 
 ```domain run
 Cursed Energy: stdin
@@ -512,13 +528,33 @@ a=9
 ```
 
 
-### Convert To Set — `List<T> -> Set<T>` (T keyable)
+### Convert To Set — `List<T> -> Set<T>` (T keyable, or a List of keyables)
 
 ```domain
 Channeled Energy: Convert To Set
 ```
 
-Deduplicates a list into a Set, preserving first-seen order.
+Deduplicates a list into a Set, preserving first-seen order. An element may
+itself be a List (of Ints, Texts, or Lists/Tuples/Records of them): `[1, 23]`
+and `[12, 3]` are different elements, as are `["a,b"]` and `["a", "b"]`. Lists
+of Floats are not keyable.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Split Each by ","
+Channeled Energy: Convert To Set
+Reveal: stdout
+```
+```input
+a,b
+c
+a,b
+b,a
+```
+```output
+{[a, b], [c], [b, a]}
+```
 
 **A Set is accepted wherever a list-shaped primitive takes a List** — `Map
 Each`, `Filter`, `Count Matching`, `Count By`, `Group By`, `Fold`, `Reduce`,

@@ -85,9 +85,9 @@ var convertToGraph = &Primitive{
 						"adjacency Map<K, List<K>>, got %s", in)}
 			}
 		}
-		if !ir.Keyable(node) {
+		if !ir.ListKeyable(node) {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Convert To Graph: nodes must be keyable (Int, Text, or a tuple/record of them), got %s", node)}
+				"Convert To Graph: nodes must be keyable (Int, Text, or Lists/Tuples/Records of them), got %s", node)}
 		}
 
 		out := ir.Graph(node)

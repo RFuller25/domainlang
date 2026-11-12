@@ -186,10 +186,34 @@ four rules:
 - **A repeated edge re-weights**, in place, rather than adding a parallel one —
   which is what keeps `weight(g, a, b)` a question with one answer.
 
-Nodes must be keyable (`Int`, `Text`, or a tuple/record of them), the same rule
-`Set` elements and `Explore`'s state follow: the visited set is what makes a
+Nodes must be keyable (`Int`, `Text`, or Lists/Tuples/Records of them), the same
+rule `Set` elements and `Explore`'s state follow: the visited set is what makes a
 traversal terminate. A `Graph` is not itself keyable or ordered, so it cannot
-be a `Map` key, a `Set` element, or sorted.
+be a `Map` key, a `Set` element, or sorted. A node may therefore be a whole
+`List`, and two lists are the same node when they have the same elements in
+the same order (`[1, 23]` and `[12, 3]` are two nodes); a list of `Float`s is
+still not a node.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Chunk 2
+Cursed Technique: Map Each
+    Using: (p) -> tuple(list(item(p, 0)), list(item(p, 1)))
+Channeled Energy: Convert To Graph
+Cursed Technique: Apply
+    Using: (g) -> tuple(size(g), neighbors(g, list(1)), reachable(g, list(2)))
+Reveal: stdout
+```
+```input
+1 2 2 3 1 3
+```
+```output
+[3, [[2], [3]], [[2], [3]]]
+```
+
+Here every node is a one-element list; `Convert To Graph`, the readers
+(`neighbors`, `reachable`, `weight`, …) and every graph primitive accept them.
 
 | Builtin | Type | Behavior |
 |---|---|---|
@@ -328,10 +352,10 @@ an in-place update would let the second application see the first one's work.
 
 | Builtin | Type | Behavior |
 |---|---|---|
-| `toset(xs)` | `List<T> -> Set<T>` (T keyable) | Deduplicates, keeping first-seen order — `Convert To Set` inside a lambda. |
-| `emptyset(v)` | `T -> Set<T>` | The empty set. `v` is a **type witness**, never stored: an absence cannot say what it is an absence of, which is the same reason `sparse(d)` takes a default. |
-| `tomap(ps)` | `List<(K,V)> -> Map<K,V>` (K keyable) | Builds from key/value pairs; last write wins. |
-| `emptymap(k, v)` | `K × V -> Map<K,V>` | The empty map; both arguments are type witnesses. |
+| `toset(xs)` | `List<T> -> Set<T>` (T keyable, a List of keyables included) | Deduplicates, keeping first-seen order — `Convert To Set` inside a lambda. |
+| `emptyset(v)` | `T -> Set<T>` (T keyable, a List of keyables included) | The empty set. `v` is a **type witness**, never stored: an absence cannot say what it is an absence of, which is the same reason `sparse(d)` takes a default. |
+| `tomap(ps)` | `List<(K,V)> -> Map<K,V>` (K keyable, a List of keyables included) | Builds from key/value pairs; last write wins. |
+| `emptymap(k, v)` | `K × V -> Map<K,V>` (K keyable, a List of keyables included) | The empty map; both arguments are type witnesses. |
 | `entries(m)` | `Map<K,V> -> List<(K,V)>` | Pairs in insertion order — the inverse of `tomap`. |
 | `insert(s, v)` | `Set<T> × T -> Set<T>` | A copy with `v` added. |
 | `insert(m, k, v)` | `Map<K,V> × K × V -> Map<K,V>` | A copy with `k` bound to `v`. |
@@ -344,3 +368,42 @@ an in-place update would let the second application see the first one's work.
 | `cellpoints(g)` | `Sparse<T> -> List<(Int, Int)>` | The set cells' coordinates in sorted row-major order. `cells` counts them; this is what walks them. |
 
 So a fold can now carry real state:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Chunk 2
+Maximum Technique: Fold
+    Seed: (xs) -> emptyset(list(0))
+    Using: (seen, c) -> insert(seen, sort(c))
+Cursed Technique: Apply
+    Using: (seen) -> tuple(size(seen), contains(seen, list(1, 2)), contains(seen, list(2, 1)))
+Reveal: stdout
+```
+```input
+2 1 1 2 3 4 4 3
+```
+```output
+[2, true, false]
+```
+
+A `List` of keyables may be a Set element, so a seen-set of whole states
+works: here each chunk is sorted and inserted, so the chunks `2 1` and `1 2` land on
+one element and `[2, 1]` is never a member.
+
+A `Map` may be keyed by a List the same way — a tally over whole states:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Maximum Technique: Fold
+    Seed: (xs) -> emptymap(list(0), 0)
+    Using: (m, x) -> insert(m, list(x % 2, x % 3), getor(m, list(x % 2, x % 3), 0) + 1)
+Reveal: stdout
+```
+```input
+1 2 3 4 5 6 7 8
+```
+```output
+{[1, 1]: 2, [0, 2]: 2, [1, 0]: 1, [0, 1]: 1, [1, 2]: 1, [0, 0]: 1}
+```

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -210,6 +211,41 @@ var cases = []benchCase{
 		feature: "the number-theory builtins — gcd, isqrt and modpow in a hot lambda",
 		gen:     genInts, size: 1_000_000, small: 1_000,
 	},
+	{
+		name:    "sort_gaps",
+		feature: "the plain integer sort, needed for its order — the specialised pdqsort the compiler emits",
+		gen:     genInts, size: 2_000_000, small: 2_000,
+	},
+	{
+		name:    "fold_idioms",
+		feature: "idiom recognition — a hand-written conditional-sum Fold becomes Sum By and streams",
+		gen:     genInts, size: 2_000_000, small: 2_000,
+	},
+	{
+		name:    "dead_sort",
+		feature: "a sort whose order never reaches the result — dropped across Filter and Map Each",
+		gen:     genInts, size: 2_000_000, small: 2_000,
+	},
+	{
+		name:    "range_stream",
+		feature: "Range as a stream source — a counting loop, the list of N integers never built",
+		gen:     genSeed, size: 30_000_000, small: 3_000,
+	},
+	{
+		name:    "distinct_count",
+		feature: "Unique + Count as a distinct count — the set is counted, the list never built",
+		gen:     genInts, size: 2_000_000, small: 2_000,
+	},
+	{
+		name:    "part_bodies",
+		feature: "rewrites inside Part bodies — a sort for a top-3 and a sort before a sum, each in its own Part",
+		gen:     genInts, size: 2_000_000, small: 2_000,
+	},
+	{
+		name:    "any_from_count",
+		feature: "Filter + Count compared with zero — rewritten to Any, which stops at the first match",
+		gen:     genInts, size: 2_000_000, small: 2_000,
+	},
 }
 
 // TestParity is the precondition for every number below: the two programs must
@@ -275,8 +311,20 @@ func TestSpeedRatio(t *testing.T) {
 	const reps = 5
 	const target = 2.0
 
+	// DOMAIN_BENCH_ONLY=a,b narrows the run to the named cases — for measuring
+	// one change without waiting on forty programs it did not touch.
+	only := map[string]bool{}
+	for _, name := range strings.Split(os.Getenv("DOMAIN_BENCH_ONLY"), ",") {
+		if name != "" {
+			only[name] = true
+		}
+	}
+
 	t.Logf("%-22s %12s %12s %8s", "case", "domain", "go", "ratio")
 	for _, c := range cases {
+		if len(only) > 0 && !only[c.name] {
+			continue
+		}
 		input := inputFile(t, c.name, c.gen(c.size))
 		dbin, gbin := domainBinary(t, c.name), goBinary(t, c.name)
 		// Warm both binaries' pages before either is timed.

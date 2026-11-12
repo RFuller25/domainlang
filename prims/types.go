@@ -110,24 +110,24 @@ func lowerTypeExpr(te *ast.TypeExpr, pos token.Position) (*ir.Type, error) {
 	case "Sparse":
 		return ir.Sparse(args[0]), nil
 	case "Set":
-		if !ir.Keyable(args[0]) {
+		if !ir.ListKeyable(args[0]) {
 			return nil, &ResolveError{Pos: at, Msg: fmt.Sprintf(
-				"Set elements must be keyable (Int, Text, or a tuple of them), got %s", args[0])}
+				"Set elements must be keyable (Int, Text, or Lists/Tuples/Records of them), got %s", args[0])}
 		}
 		return ir.Set(args[0]), nil
 	case "Graph":
 		// Same rule as a Set element and as Explore's state: the visited set is
 		// what makes a traversal terminate, and an unkeyable node could not be
 		// recognized on a second visit.
-		if !ir.Keyable(args[0]) {
+		if !ir.ListKeyable(args[0]) {
 			return nil, &ResolveError{Pos: at, Msg: fmt.Sprintf(
-				"Graph nodes must be keyable (Int, Text, or a tuple/record of them), got %s", args[0])}
+				"Graph nodes must be keyable (Int, Text, or Lists/Tuples/Records of them), got %s", args[0])}
 		}
 		return ir.Graph(args[0]), nil
 	case "Map":
-		if !ir.Keyable(args[0]) {
+		if !ir.ListKeyable(args[0]) {
 			return nil, &ResolveError{Pos: at, Msg: fmt.Sprintf(
-				"Map keys must be keyable (Int, Text, or a tuple of them), got %s", args[0])}
+				"Map keys must be keyable (Int, Text, or Lists/Tuples/Records of them), got %s", args[0])}
 		}
 		return ir.Map(args[0], args[1]), nil
 	}

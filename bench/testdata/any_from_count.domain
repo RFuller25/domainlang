@@ -1,0 +1,12 @@
+# "Is there one?" asked by counting them all: Filter, Count, then a
+# comparison with zero. The compiler turns the count into Any, which stops at
+# the first match.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Filter
+    Using: (x) -> x % 1000 = 777
+Maximum Technique: Count
+Cursed Technique: Apply
+    Using: (c) -> c > 0
+Reveal: stdout

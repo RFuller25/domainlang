@@ -475,7 +475,7 @@
     "id": "Find Cycle",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e → (Int, Int)",
-    "summary": "Where a trajectory first repeats and its period — what turns a billion iterations into arithmetic.",
+    "summary": "Where a trajectory first repeats and its period — what turns a billion iterations into arithmetic. With a Using: step it runs from a start state until one repeats (Key:, Limit: optional).",
     "anchor": "find-cycle",
     "page": "ref-reductions.md"
   },
@@ -491,7 +491,7 @@
     "id": "Fold",
     "keyword": "Maximum Technique",
     "signature": "List\u003cT\u003e × Seed × (Acc, T → Acc) → Acc",
-    "summary": "Left fold from a Seed accumulator; also a channel consumer with From:.",
+    "summary": "Left fold from a Seed accumulator; also a channel consumer with From:. An optional Then: lambda computes a final expression over the finished accumulator.",
     "anchor": "fold",
     "page": "ref-reductions.md"
   },

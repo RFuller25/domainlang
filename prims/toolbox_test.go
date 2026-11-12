@@ -106,12 +106,12 @@ func TestConvertToSetAndContains(t *testing.T) {
 func TestConvertToSetRequiresKeyable(t *testing.T) {
 	src := "Cursed Energy: stdin\n" +
 		"Cursed Technique: Split Text by \"\\n\"\n" +
-		"Cursed Technique: Split Each by \",\"\n" +
+		"Cursed Technique: Map Each\n    Using: (x) -> list(tofloat(1))\n" +
 		"Channeled Energy: Convert To Set\n"
 	_, err := runErr(t, src, "a,b\nc,d")
-	// List<Text> elements stay unkeyable even with composite keys (M25):
-	// lists lower to Go slices, which cannot be map keys.
-	if err == nil || !strings.Contains(err.Error(), "keyable keys/elements") {
+	// A Float is not keyable, so neither is a list of them. (Lists of keyable
+	// elements are: see TestSetOfLists.)
+	if err == nil || !strings.Contains(err.Error(), "keyable") {
 		t.Fatalf("expected a keyable-element error, got %v", err)
 	}
 }

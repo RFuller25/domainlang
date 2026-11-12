@@ -48,19 +48,19 @@ func (g *gen) zeroExpr(t *ir.Type) (string, error) {
 		if eerr != nil {
 			return "", eerr
 		}
-		return fmt.Sprintf("dmNewMap[%s, %s]()", key, elem), nil
+		return g.newMapExpr(t.Key, key, elem, "")
 	case ir.KSet:
 		elem, eerr := g.goType(t.Elem)
 		if eerr != nil {
 			return "", eerr
 		}
-		return fmt.Sprintf("dmNewSet[%s]()", elem), nil
+		return g.newSetExpr(t.Elem, elem)
 	case ir.KGraph:
 		elem, eerr := g.goType(t.Elem)
 		if eerr != nil {
 			return "", eerr
 		}
-		return fmt.Sprintf("dmNewGraph[%s]()", elem), nil
+		return g.newGraphExpr(t.Elem, elem)
 	case ir.KSparse:
 		elem, eerr := g.goType(t.Elem)
 		if eerr != nil {

@@ -1,0 +1,11 @@
+# The plain integer sort, asked for by name and then actually needed: the gaps
+# between neighbours of the sorted list. Nothing here can be substituted away,
+# so this is the cost of the sort the compiler emits.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Quicksort, Descending
+Cursed Technique: Pairs
+Maximum Technique: Count Matching
+    Using: (p) -> item(p, 0) - item(p, 1) = 0
+Reveal: stdout

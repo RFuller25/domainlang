@@ -6,6 +6,7 @@ import (
 	"domain/ast"
 	"domain/eval"
 	"domain/ir"
+	"domain/typecheck"
 )
 
 // streamMaxIterations mirrors prims.maxLoopIterations' default (unexported,
@@ -134,25 +135,16 @@ func isElementwiseSafe(n *ir.Node) bool {
 	return isTotalElementwise(lam.Body, lam.Params[0], n.In.Elem)
 }
 
-// isTotalElementwise extends isTotal with the one idiom day 15 actually
-// needs: `item(param, k)` on the lambda's own parameter, where the
-// parameter's static type is a Tuple and k is a literal in bounds. isTotal
-// treats every `item` call as partial because it cannot see element types —
-// but a fixed-arity Tuple's arity is known here, in the optimizer, so an
-// in-bounds literal index on the parameter itself can never fail.
+// isTotalElementwise is isTotal for a one-parameter stage lambda whose
+// parameter type the stage states. It began as the one idiom day 15 needed —
+// a body that *is* `item(param, k)` on a Tuple — and is now the typed analysis
+// in full (isTotalIn): a tuple projection is total anywhere in the body,
+// including on a `consider` binding and on a projection of a projection.
 func isTotalElementwise(body ast.Expr, param string, paramType *ir.Type) bool {
-	if call, ok := body.(*ast.CallExpr); ok {
-		if id, ok := call.Fn.(*ast.Ident); ok && id.Name == "item" && len(call.Args) == 2 {
-			if p, ok := call.Args[0].(*ast.Ident); ok && p.Name == param {
-				if lit, ok := call.Args[1].(*ast.IntLit); ok &&
-					paramType != nil && paramType.Kind == ir.KTuple &&
-					lit.Value >= 0 && int(lit.Value) < len(paramType.Elems) {
-					return true
-				}
-			}
-		}
+	if paramType == nil {
+		return isTotal(body)
 	}
-	return isTotal(body)
+	return isTotalIn(body, typecheck.Env{param: paramType})
 }
 
 // takeApply recognizes `Apply Using: (x) -> take(x, N)` — the shape day 15

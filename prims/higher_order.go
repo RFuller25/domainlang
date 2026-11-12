@@ -107,6 +107,17 @@ func requireKeyable(t *ir.Type, prim string, pos token.Position) error {
 	return nil
 }
 
+// requireListKeyable is requireKeyable for a primitive that only hashes the
+// value internally (Unique): a List of keyable elements is fine there. See
+// ir.ListKeyable for why a Map key or Set element is not.
+func requireListKeyable(t *ir.Type, prim string, pos token.Position) error {
+	if !ir.ListKeyable(t) {
+		return &ResolveError{Pos: pos,
+			Msg: fmt.Sprintf("%s needs keyable elements (Int, Text, or Lists/Tuples/Records of them), got %s", prim, t)}
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Cursed Technique: Map Each — List<T> x (T -> U) -> List<U>.
 // ---------------------------------------------------------------------------
@@ -218,7 +229,7 @@ var unique = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if err := requireKeyable(elem, "Unique", pos); err != nil {
+		if err := requireListKeyable(elem, "Unique", pos); err != nil {
 			return nil, err
 		}
 		return &ir.Node{
@@ -486,7 +497,7 @@ var groupBy = &Primitive{
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Group By: " + err.Error()}
 		}
-		if err := requireKeyable(keyType, "Group By", pos); err != nil {
+		if err := requireListKeyable(keyType, "Group By", pos); err != nil {
 			return nil, err
 		}
 		return &ir.Node{
@@ -544,7 +555,7 @@ func setReducePrim(id string, match func(*ast.Operation) bool, combine func(a, b
 					Msg: fmt.Sprintf("%s expects a List of lists (groups), got %s", id, in)}
 			}
 			elem := in.Elem.Elem
-			if err := requireKeyable(elem, id, pos); err != nil {
+			if err := requireListKeyable(elem, id, pos); err != nil {
 				return nil, err
 			}
 			return &ir.Node{

@@ -3,8 +3,56 @@ package codegen
 import (
 	"domain/ast"
 	"domain/ir"
+	"domain/optimizer"
 	"fmt"
+	"strings"
 )
+
+// emitWindowPositions lowers the optimizer's WindowPositions (see
+// optimizer/windowpos.go): the same start indexes Window walks, but each
+// iteration builds only the tuple of elements the consumer reads — or the bare
+// element when there is one — instead of copying the whole window. Size and
+// step are read in Window's order, so a measured one fails the same way.
+func (g *gen) emitWindowPositions(n *ir.Node, in string) (string, error) {
+	slots, _ := n.Meta["slots"].([]int64)
+	if len(slots) == 0 {
+		return "", unsupported(n, "missing slots metadata")
+	}
+	outGo, err := g.goType(n.Out.Elem)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	size, err := g.measuredOperand(n, in, "size", "Size", 1)
+	if err != nil {
+		return "", err
+	}
+	step, err := g.measuredOperand(n, in, "step", "Step", 1)
+	if err != nil {
+		return "", err
+	}
+	v, i := g.fresh("v"), g.fresh("i")
+	read := func(s int64) string {
+		if s < 0 {
+			return fmt.Sprintf("%s[%s+%s-1]", in, i, size)
+		}
+		return fmt.Sprintf("%s[%s+%d]", in, i, s)
+	}
+	g.wl("%s := []%s{}", v, outGo)
+	g.wl("for %s := int64(0); %s+%s <= int64(len(%s)); %s += %s {", i, i, size, in, i, step)
+	g.in()
+	if len(slots) == 1 {
+		g.wl("%s = append(%s, %s)", v, v, read(slots[0]))
+	} else {
+		parts := make([]string, len(slots))
+		for j, s := range slots {
+			parts[j] = read(s)
+		}
+		g.wl("%s = append(%s, %s{%s})", v, v, outGo, strings.Join(parts, ", "))
+	}
+	g.out()
+	g.wl("}")
+	return v, nil
+}
 
 // Lowerings for the section-D remainder: Window, Flatten, Enumerate, the
 // key-lambda reductions (Count By, Min By, Max By, Sort By), the standalone
@@ -111,27 +159,49 @@ func (g *gen) emitFlatMapCountBy(mapNode, countNode *ir.Node, listArgs []ast.Exp
 		return "", unsupported(countNode, "%v", err)
 	}
 	elemT := countNode.In.Elem
-	g.helper("dmMap", declMap)
-	g.helper("dmBump", declMapBump)
+	g.chelper(countNode.Out.Key, "dmMap", declMap)
+	g.chelper(countNode.Out.Key, "dmBump", declMapBump)
 	v, e := g.fresh("v"), g.fresh("e")
-	g.wl("%s := dmNewMap[%s, int64]()", v, keyGo)
+	if err := g.wnewMap(v, countNode.Out.Key, keyGo, "int64"); err != nil {
+		return "", unsupported(countNode, "%v", err)
+	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	mapEnv := exprEnv{mapLam.Params[0]: {expr: e, typ: mapNode.In.Elem}}
+	// A list literal that repeats an element — `list(a, b, p, p, p, p)`, the
+	// way a weight is written when there is no weight argument — counts the
+	// same key several times in a row. When both lambdas are pure the repeats
+	// are the same value, so the run is one bump by its length: the first
+	// evaluation fails exactly where the run's first would, and a map's key
+	// order is decided by the first sighting of a key either way. Only a run of
+	// *consecutive* equals collapses, which keeps every other key's order.
+	pure := optimizer.PureLambda(mapLam) && optimizer.PureLambda(countLam)
+	type bump struct {
+		nbExpr, key string
+		n           int
+	}
+	var bumps []bump
 	for _, arg := range listArgs {
 		nbExpr, _, err := g.compileExpr(arg, mapEnv)
 		if err != nil {
 			return "", unsupported(mapNode, "lambda: %v", err)
 		}
+		if last := len(bumps) - 1; pure && last >= 0 && bumps[last].nbExpr == nbExpr {
+			bumps[last].n++
+			continue
+		}
+		bumps = append(bumps, bump{nbExpr: nbExpr, n: 1})
+	}
+	for _, b := range bumps {
 		nb := g.fresh("nb")
-		g.wl("%s := %s", nb, nbExpr)
+		g.wl("%s := %s", nb, b.nbExpr)
 		kBody, _, err := g.compileExpr(countLam.Body, exprEnv{countLam.Params[0]: {expr: nb, typ: elemT}})
 		if err != nil {
 			return "", unsupported(countNode, "lambda: %v", err)
 		}
 		k := g.fresh("k")
 		g.wl("%s := %s", k, kBody)
-		g.wl("dmBump(&%s, %s, 1)", v, k)
+		g.wl("%s(&%s, %s, %d)", cname(countNode.Out.Key, "dmBump"), v, k, b.n)
 	}
 	g.out()
 	g.wl("}")
@@ -694,14 +764,16 @@ func (g *gen) emitCountBy(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmMap", declMap)
-	g.helper("dmBump", declMapBump)
+	g.chelper(n.Out.Key, "dmMap", declMap)
+	g.chelper(n.Out.Key, "dmBump", declMapBump)
 	v, k := g.fresh("v"), g.fresh("k")
-	g.wl("%s := dmNewMap[%s, int64]()", v, keyGo)
+	if err := g.wnewMap(v, n.Out.Key, keyGo, "int64"); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.wl("%s := %s", k, body)
-	g.wl("dmBump(&%s, %s, 1)", v, k)
+	g.wl("%s(&%s, %s, 1)", cname(n.Out.Key, "dmBump"), v, k)
 	g.out()
 	g.wl("}")
 	return v, nil
@@ -727,14 +799,16 @@ func (g *gen) emitGroupReduce(n *ir.Node, in string) (string, error) {
 	if reduce, _ := n.Meta["reduce"].(string); reduce == "sum" {
 		delta = e
 	}
-	g.helper("dmMap", declMap)
-	g.helper("dmBump", declMapBump)
+	g.chelper(n.Out.Key, "dmMap", declMap)
+	g.chelper(n.Out.Key, "dmBump", declMapBump)
 	v := g.fresh("v")
-	g.wl("%s := dmNewMap[%s, int64]()", v, keyGo)
+	if err := g.wnewMap(v, n.Out.Key, keyGo, "int64"); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.keepElem(e, body+" "+delta)
-	g.wl("dmBump(&%s, %s, %s)", v, body, delta)
+	g.wl("%s(&%s, %s, %s)", cname(n.Out.Key, "dmBump"), v, body, delta)
 	g.out()
 	g.wl("}")
 	return v, nil
@@ -875,10 +949,13 @@ func (g *gen) emitDifferenceAll(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmSet", declSet)
 	v, rest := g.fresh("v"), g.fresh("rest")
-	g.wl("%s := dmNewSet[%s]()", v, elemGo)
-	g.wl("%s := dmNewSet[%s]()", rest, elemGo)
+	if err := g.wnewSet(v, n.Out.Elem, elemGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	if err := g.wnewSet(rest, n.Out.Elem, elemGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("if len(%s) > 0 {", in)
 	g.in()
 	grp, e := g.fresh("grp"), g.fresh("e")

@@ -13,7 +13,7 @@ func (g *gen) emitConvertToEntries(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmMap", declMap)
+	g.chelper(n.In.Key, "dmMap", declMap)
 	v, k, ix := g.fresh("v"), g.fresh("k"), g.fresh("i")
 	g.wl("%s := make([]%s, 0, len(%s.keys))", v, pairGo, in)
 	g.wl("for %s, %s := range %s.keys {", ix, k, in)
@@ -33,9 +33,10 @@ func (g *gen) emitConvertToMap(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmMap", declMap)
 	m, e := g.fresh("m"), g.fresh("e")
-	g.wl("%s := dmNewMap[%s, %s]()", m, keyGo, valGo)
+	if err := g.wnewMap(m, n.Out.Key, keyGo, valGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	// Last write wins, matching the interpreter.
@@ -63,8 +64,9 @@ func (g *gen) emitMapValues(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmMap", declMap)
-	g.wl("%s := dmNewMap[%s, %s]()", m, keyGo, valGo)
+	if err := g.wnewMap(m, n.Out.Key, keyGo, valGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	ix := g.fresh("i")
 	g.wl("for %s, %s := range %s.keys {", ix, k, in)
 	g.in()
@@ -96,8 +98,9 @@ func (g *gen) emitFilterEntries(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "predicate: %v", err)
 	}
-	g.helper("dmMap", declMap)
-	g.wl("%s := dmNewMap[%s, %s]()", m, keyGo, valGo)
+	if err := g.wnewMap(m, n.In.Key, keyGo, valGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	ix := g.fresh("i")
 	g.wl("for %s, %s := range %s.keys {", ix, k, in)
 	g.in()
@@ -122,7 +125,7 @@ func (g *gen) mapEntries(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmMap", declMap)
+	g.chelper(n.In.Key, "dmMap", declMap)
 	v, k, ix := g.fresh("v"), g.fresh("k"), g.fresh("i")
 	g.wl("%s := make([]%s, 0, len(%s.keys))", v, pairGo, in)
 	g.wl("for %s, %s := range %s.keys {", ix, k, in)

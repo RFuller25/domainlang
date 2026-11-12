@@ -454,9 +454,25 @@ func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
 			i += consumed - 1
 			continue
 		}
+		// Every node of a streamed run is in the one loop it compiles to, and
+		// each still does its work there — so each gets that loop as its span,
+		// not only the first. A caller asking "does this Filter emit code"
+		// (mahoraga's idle-stage reconnaissance) must hear yes for a Filter in
+		// the middle of a run, or a parse streamed into it would hide it.
+		var endRun []func()
+		if g.annotate {
+			if pl, ok := planStream(nodes[i:], cur); ok {
+				for _, n := range nodes[i+1 : i+pl.consumed] {
+					endRun = append(endRun, g.markNode(n))
+				}
+			}
+		}
 		if consumed, v, ok, err := g.tryStream(nodes[i:], cur); err != nil {
 			return "", err
 		} else if ok {
+			for k := len(endRun) - 1; k >= 0; k-- {
+				endRun[k]()
+			}
 			endMark()
 			cur = v
 			i += consumed - 1
@@ -551,7 +567,7 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 	if n.In != nil && seqConsumers[n.Prim] {
 		switch n.In.Kind {
 		case ir.KSet:
-			g.helper("dmSet", declSet)
+			g.chelper(n.In.Elem, "dmSet", declSet)
 			in += ".elems"
 		case ir.KMap:
 			entries, err := g.mapEntries(n, in)
@@ -631,6 +647,8 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitApply(n, in)
 	case "Unique":
 		return g.emitUnique(n, in)
+	case "CountDistinct":
+		return g.emitCountDistinct(n, in)
 	case "Reverse":
 		return g.emitReverse(n, in)
 	case "Take Item":
@@ -647,6 +665,8 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 		return g.emitReduce(n, in)
 	case "Scan":
 		return g.emitScan(n, in)
+	case "WindowPositions":
+		return g.emitWindowPositions(n, in)
 	case "Pairs":
 		return g.emitPairs(n, in)
 	case "Take While", "Drop While":
@@ -827,7 +847,7 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 func (g *gen) emitReadSource(n *ir.Node) (string, error) {
 	target, _ := n.Meta["target"].(string)
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmReadSource", declReadSource, "io", "os", "strings")
+	g.helper("dmReadSource", declReadSource, "io", "os", "strings", "unsafe")
 	v := g.fresh("v")
 	g.wl("%s := dmReadSource(%s)", v, goStr(target))
 	return v, nil
@@ -1019,9 +1039,24 @@ func (g *gen) emitSort(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.imp("sort")
 	v := g.fresh("v")
 	g.wl("%s := append([]%s(nil), %s...)", v, elem, in)
+	// Two equal Ints (or Texts) are the same value, so no program can tell a
+	// stable sort of them from an unstable one — and slices.Sort is a pdqsort
+	// specialised to the element type, with no comparison closure and no
+	// reflective swapper: a third of the time of sort.SliceStable on two
+	// million integers. Descending is the ascending order read backwards,
+	// for the same reason. Float stays on the stable path below: NaN compares
+	// false both ways, and where it lands is part of the interpreter's answer.
+	if k := n.In.Elem.Kind; k == ir.KInt || k == ir.KText {
+		g.imp("slices")
+		g.wl("slices.Sort(%s)", v)
+		if desc {
+			g.wl("slices.Reverse(%s)", v)
+		}
+		return v, nil
+	}
+	g.imp("sort")
 	// Int, Float and Text lower to Go's own <, which is already the order the
 	// interpreter uses. A tuple element needs the lexicographic chain.
 	lo, hi := v+"[i]", v+"[j]"
@@ -1180,6 +1215,10 @@ func (g *gen) emitCombinations(n *ir.Node, in string) (string, error) {
 		g.wl("var %s []%s", v, elemGo)
 		g.wl("%s := false", found)
 		g.wl("%s:", label)
+	case "Any", "All":
+		label = g.fresh("scan")
+		g.wl("%s := %t", v, mode == "All")
+		g.wl("%s:", label)
 	case "Map":
 		outElemGo, err := g.goType(n.Out.Elem)
 		if err != nil {
@@ -1219,6 +1258,20 @@ func (g *gen) emitCombinations(n *ir.Node, in string) (string, error) {
 		g.in()
 		g.wl("%s = %s", v, combo)
 		g.wl("%s = true", found)
+		g.wl("break %s", label)
+		g.out()
+		g.wl("}")
+	case "Any":
+		g.wl("if %s {", body)
+		g.in()
+		g.wl("%s = true", v)
+		g.wl("break %s", label)
+		g.out()
+		g.wl("}")
+	case "All":
+		g.wl("if !(%s) {", body)
+		g.in()
+		g.wl("%s = false", v)
 		g.wl("break %s", label)
 		g.out()
 		g.wl("}")
@@ -1783,18 +1836,45 @@ func (g *gen) emitUnique(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	v, seen, e := g.fresh("v"), g.fresh("seen"), g.fresh("e")
+	key, keyGo, err := g.hashKey(n.In.Elem, e, elemGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("%s := make([]%s, 0, len(%s))", v, elemGo, in)
-	g.wl("%s := make(map[%s]struct{}, len(%s))", seen, elemGo, in)
+	g.wl("%s := make(map[%s]struct{}, len(%s))", seen, keyGo, in)
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
-	g.wl("if _, ok := %s[%s]; !ok {", seen, e)
+	g.wl("if _, ok := %s[%s]; !ok {", seen, key)
 	g.in()
-	g.wl("%s[%s] = struct{}{}", seen, e)
+	g.wl("%s[%s] = struct{}{}", seen, key)
 	g.wl("%s = append(%s, %s)", v, v, e)
 	g.out()
 	g.wl("}")
 	g.out()
 	g.wl("}")
+	return v, nil
+}
+
+// emitCountDistinct lowers the optimizer's Unique + Count fusion: the set
+// Unique would have built to find the distinct elements, sized the same way,
+// and nothing else — its length is the answer.
+func (g *gen) emitCountDistinct(n *ir.Node, in string) (string, error) {
+	elemGo, err := g.goType(n.In.Elem)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	v, seen, e := g.fresh("v"), g.fresh("seen"), g.fresh("e")
+	key, keyGo, err := g.hashKey(n.In.Elem, e, elemGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.wl("%s := make(map[%s]struct{}, len(%s))", seen, keyGo, in)
+	g.wl("for _, %s := range %s {", e, in)
+	g.in()
+	g.wl("%s[%s] = struct{}{}", seen, key)
+	g.out()
+	g.wl("}")
+	g.wl("%s := int64(len(%s))", v, seen)
 	return v, nil
 }
 

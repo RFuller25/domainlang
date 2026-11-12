@@ -99,12 +99,22 @@ quicksort or pair loop — the thesis survives compilation intact.
   makes `n + (n := x) + n` mean the same thing in both backends. Nothing is
   wrapped in a program that never writes: those compile to exactly the Go they
   compiled to before the operator existed.
-- **Elementwise chains compile to one loop.** A source (a list in hand, or a
-  `Split` by a literal separator), any run of `Map Each`, `Filter` and
-  `Convert To Integers`, and a sink (`Sum`, `Count`, `Count Matching`, a
-  literal `Join`, or the surviving elements) become a single loop in which
-  each element passes through every stage before the next is read — no
-  stage's output list is built:
+- **Elementwise chains compile to one loop.** A source (a list in hand, a
+  `Split` by a literal separator, or a `Range`), any run of stages — `Map Each`,
+  `Filter`, `Convert To Integers` / `Floats`, `Split Each` by a literal,
+  `Convert Each List to Integers`, `Match Pattern` over lines — and a sink
+  (`Sum`, `Count`, `Count Matching`, `Sum By`, `Product By`, `Max`, `Min`,
+  `Product`, `Any`, `All`, `Fold`, `Count By`, `Group By`, the optimizer's
+  `CountDistinct` and `Group Reduce`, a literal `Join`, or the surviving
+  elements) become a single loop in which each element passes through every
+  stage before the next is read — no stage's output list is built. A `Range` at
+  the head is then a counting loop and never a list at all, and `Any`/`All`
+  leave the loop at the element that decides them (which skips stage
+  evaluations, so they are sinks only when no stage in the run can fail). A
+  `Fold` is a sink when its lambda is pure and its seed is a literal or a
+  measured lambda that does not read the list (the list no longer exists) and
+  cannot fail (it now runs before the first element rather than after the
+  last stage):
 
   ```go
   var b3 strings.Builder

@@ -1,0 +1,19 @@
+# Two Parts, each asking for more than it needs: a full sort to read the top
+# three, and a sort in front of a sum. Rewrites used to stop at the Part
+# boundary; now a Part reads its body from the optimizer the way the top level
+# does, so both become what a programmer who noticed would write.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Part "top":
+    Domain Expansion: Quicksort, Descending
+    Maximum Technique: Select Top 3, Sum
+    Reveal: stdout
+Part "sum":
+    Domain Expansion: Quicksort
+    Cursed Technique: Filter
+        Using: (x) -> x % 2 = 1
+    Cursed Technique: Map Each
+        Using: (x) -> x * 3 + 1
+    Maximum Technique: Sum
+    Reveal: stdout

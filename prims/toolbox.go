@@ -295,7 +295,7 @@ var convertToSet = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if err := requireKeyable(elem, "Convert To Set", pos); err != nil {
+		if err := requireListKeyable(elem, "Convert To Set", pos); err != nil {
 			return nil, err
 		}
 		return &ir.Node{

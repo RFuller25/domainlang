@@ -26,9 +26,8 @@ func (g *gen) eqExpr(a, b string, t *ir.Type) (string, error) {
 		if _, err := g.goType(t); err != nil {
 			return "", err
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphEq", declGraphEq)
-		return "dmGraphEq(" + a + ", " + b + ")", nil
+		g.chelper(t.Elem, "dmGraph", declGraph)
+		return g.chelper(t.Elem, "dmGraphEq", declGraphEq) + "(" + a + ", " + b + ")", nil
 	default:
 		fn, err := g.eqFunc(t)
 		if err != nil {
@@ -131,6 +130,20 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 	return true
 }`, name, goT, valEq)
 	case ir.KSet:
+		if lKeyed(t.Elem) {
+			fmt.Fprintf(&sb, `func %s(a, b %s) bool {
+	if len(a.elems) != len(b.elems) {
+		return false
+	}
+	for _, e := range a.elems {
+		if !b.contains(e) {
+			return false
+		}
+	}
+	return true
+}`, name, goT)
+			break
+		}
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
 	if len(a.elems) != len(b.elems) {
 		return false

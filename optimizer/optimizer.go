@@ -6,8 +6,10 @@ package optimizer
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
+	"domain/ast"
 	"domain/ir"
 )
 
@@ -83,7 +85,12 @@ type pass struct {
 var passes = []pass{
 	// expression layer
 	{"simplifyLambdaBodies", simplifyLambdaBodies},
+	// whole-list builtins named as primitives, ahead of everything keyed on them
+	{"normalizeListBuiltins", normalizeListBuiltins},
 	// algorithm substitutions
+	// Ahead of the Sort fusions and of fuseFilterFirst, so that Sort + Filter +
+	// Take Item 0 becomes Filter + a selection, not a full sort + an early exit.
+	{"hoistFilterBeforeSort", hoistFilterBeforeSort},
 	{"fuseSortThenTopK", fuseSortThenTopK},
 	{"fuseSortTakeItem", fuseSortTakeItem},
 	{"fuseAllPairsSum", fuseAllPairsSum},
@@ -95,18 +102,33 @@ var passes = []pass{
 	{"fuseSearchTarget", fuseSearchTarget},
 	{"fuseFilterFirst", fuseFilterFirst},
 	{"fuseUnfoldStream", fuseUnfoldStream},
+	// idioms: the long way round to something the vocabulary already names
+	{"fuseFoldIdioms", fuseFoldIdioms},
+	{"fuseCountCompare", fuseCountCompare},
+	{"hoistTakeItemBeforeMap", hoistTakeItemBeforeMap},
+	{"pushTakeBack", pushTakeBack},
+	// the long way round, as written against real puzzles (longway.go)
+	{"canonicalizeWindowPairs", canonicalizeWindowPairs},
+	{"fuseWindowPositions", fuseWindowPositions},
+	{"fuseDuplicateCheck", fuseDuplicateCheck},
+	{"fuseCountByIf", fuseCountByIf},
+	{"elideFilterBeforeFlatten", elideFilterBeforeFlatten},
+	{"stopIterateAtRepeat", stopIterateAtRepeat},
 	// reordering dead code
 	{"fuseSortReverse", fuseSortReverse},
 	{"elideRedundantSort", elideRedundantSort},
 	{"hoistUniqueBeforeSort", hoistUniqueBeforeSort},
 	{"elideReorderBeforeReduce", elideReorderBeforeReduce},
+	{"elideReorderAcrossStages", elideReorderAcrossStages},
 	{"cancelReversePairs", cancelReversePairs},
 	{"elideRedundantUnique", elideRedundantUnique},
 	{"elideUniqueBeforeExtremum", elideUniqueBeforeExtremum},
+	{"fuseUniqueCount", fuseUniqueCount},
 	// map/filter dead code and fusion
 	{"elideIdentityMap", elideIdentityMap},
 	{"elideMapBeforeCount", elideMapBeforeCount},
 	{"fuseMapMap", fuseMapMap},
+	{"mergeEachBodies", mergeEachBodies},
 	{"fuseFilterFilter", fuseFilterFilter},
 	{"fuseFilterCount", fuseFilterCount},
 	{"fuseFoldSum", fuseFoldSum},
@@ -249,6 +271,7 @@ func OptimizeWith(p *ir.Pipeline, s Schedule) []Rewrite {
 		applied := 0
 		for _, ps := range sel {
 			rs := stamp(ps.name, ps.run(p))
+			rs = append(rs, stamp(ps.name, runInBodies(ps, p))...)
 			rewrites = append(rewrites, rs...)
 			applied += len(rs)
 		}
@@ -274,6 +297,98 @@ func OptimizeWith(p *ir.Pipeline, s Schedule) []Rewrite {
 		rewrites = append(rewrites, stamp(LinearPassName, markLinearAccumulators(p))...)
 	}
 	return rewrites
+}
+
+// runInBodies runs one pass over every body that reads its node list when it
+// runs — Channel, Part and the Simple Domain loops (Meta["nodes"]), and a
+// `Using:` written as an indented pipeline (the lambda's BlockBody) — as though
+// that body were a pipeline of its own.
+//
+// This is what lets a length-changing rewrite (a fusion, an elision, a swap)
+// reach inside them: the rewrite stores the new slice where both backends read
+// it from (prims.bodyOf and the codegen read Meta["nodes"]; RunBlock and
+// emitBlockCall read the block pipeline). A body held by a closure that does
+// not re-read — a Consider's `Of`, a global's — is still out of reach.
+//
+// The `Using:` bodies matter more than their late arrival here suggests. A
+// program written by hand reaches for `Map Each` + an indented body the moment
+// its data is a list of lists, so the body is where its Sort + Window + Any, or
+// its Map Each + Sum, actually is — and a pass that cannot enter it optimizes
+// the examples and not the programs.
+//
+// The in-place passes run again here over lists they have already visited via
+// nodeLists. That is not a cost worth avoiding: every pass runs on every list
+// every round until nothing applies, so each is idempotent on a list it has
+// already rewritten.
+func runInBodies(ps pass, p *ir.Pipeline) []Rewrite {
+	var out []Rewrite
+	for _, b := range bodies(p) {
+		sub := &ir.Pipeline{Nodes: b.get(), Scope: p.Scope, Globals: p.Globals}
+		rs := ps.run(sub)
+		if len(rs) == 0 {
+			continue
+		}
+		b.set(sub.Nodes)
+		out = append(out, rs...)
+	}
+	return out
+}
+
+// body is one rewritable sub-pipeline: where to read its node list from and
+// where to store a rewritten one.
+type body struct {
+	get func() []*ir.Node
+	set func([]*ir.Node)
+}
+
+// blockSetter is the half of a block pipeline (prims.blockPipeline) that
+// accepts a rewritten body. It is asked for by assertion rather than added to
+// ast.BlockPipeline, so a block pipeline that cannot take one is simply not a
+// body the length-changing passes enter.
+type blockSetter interface {
+	BlockNodes() []*ir.Node
+	SetBlockNodes([]*ir.Node)
+}
+
+// bodies lists every rewritable body, outermost first, recursing into the
+// bodies it finds.
+func bodies(p *ir.Pipeline) []body {
+	var out []body
+	seen := map[blockSetter]bool{}
+	var walk func(list []*ir.Node)
+	walk = func(list []*ir.Node) {
+		for _, n := range list {
+			if sub, ok := n.Meta["nodes"].([]*ir.Node); ok {
+				owner := n
+				out = append(out, body{
+					get: func() []*ir.Node { l, _ := owner.Meta["nodes"].([]*ir.Node); return l },
+					set: func(l []*ir.Node) { owner.Meta["nodes"] = l },
+				})
+				walk(sub)
+			}
+			// Sorted, so a node with two bodies reports its rewrites in the
+			// same order every run.
+			for _, key := range slices.Sorted(maps.Keys(n.Meta)) {
+				lam, ok := n.Meta[key].(*ast.Lambda)
+				if !ok || lam == nil {
+					continue
+				}
+				bb, ok := lam.Body.(*ast.BlockBody)
+				if !ok || bb.Pipe == nil {
+					continue
+				}
+				pipe, ok := bb.Pipe.(blockSetter)
+				if !ok || seen[pipe] || pipe.BlockNodes() == nil {
+					continue
+				}
+				seen[pipe] = true
+				out = append(out, body{get: pipe.BlockNodes, set: pipe.SetBlockNodes})
+				walk(pipe.BlockNodes())
+			}
+		}
+	}
+	walk(p.Nodes)
+	return out
 }
 
 // fuseSortThenTopK finds a Sort node immediately followed by a SelectTopK node

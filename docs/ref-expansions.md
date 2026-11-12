@@ -109,7 +109,7 @@ apple
 
 ```domain
 Domain Expansion: All Pairs          # k = 2
-    Mode: First                      # Filter | Count | First | Map
+    Mode: First                      # Filter | Count | First | Map | Any | All
     Using: (a, b) -> a + b = 2020
 
 Domain Expansion: Combinations 3
@@ -126,6 +126,12 @@ order). The lambda takes k parameters. Modes:
 | `Count` | Bool | `Int` — how many satisfy |
 | `First` | Bool | `List<T>` — the first satisfying combo; **error if none** |
 | `Map` | U | `List<U>` — the lambda applied to every combo |
+| `Any` | Bool | `Bool` — does some combo satisfy it? stops at the first that does |
+| `All` | Bool | `Bool` — does every combo? stops at the first that does not |
+
+`Any` and `All` answer the yes/no question directly, without visiting every
+combination the way `Count` plus a comparison does. A list too short to have a
+combination (fewer than k elements) gives `Any` false and `All` true.
 
 The lambda's parameters are elements of the **current value**. Over a
 `List<List<T>>` that means whole inner lists, not the values inside them —
@@ -180,6 +186,45 @@ Reveal: stdout
 ```output
 1
 ```
+
+Is there any pair that is equal — a duplicate check — and does every pair
+differ:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Domain Expansion: All Pairs
+    Mode: Any
+    Using: (a, b) -> a = b
+Reveal: stdout
+```
+```input
+3,1,4,1,5
+```
+```output
+true
+```
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Domain Expansion: All Pairs
+    Mode: All
+    Using: (a, b) -> a + b < 100
+Reveal: stdout
+```
+```input
+3,1,4,1,5
+```
+```output
+true
+```
+
+`All Pairs` with `Mode: Any` / `Mode: All` and the comparison written
+directly (`(a, b) -> a = b`, or its negation) is rewritten to one hash pass,
+like the `Map` + `Any` spelling of the same question.
 
 ### Sliding Reduce — `List<Int> -> List<Int>`
 
@@ -328,7 +373,7 @@ a,b,c,d
 16
 ```
 
-### Explore — `S × (S -> List<S>) -> List<S> | Int | Map<S,Int> | V` (S keyable)
+### Explore — `S × (S -> List<S>) -> List<S> | Int | Map<S,Int> | V` (S keyable: Int, Text, or Lists/Tuples/Records of them)
 
 ```domain
 Domain Expansion: Explore
@@ -395,6 +440,32 @@ Reveal: stdout
 ```output
 5
 ```
+
+A state may itself be a **List** (or a tuple or record holding one), which is
+how a whole configuration is searched at once. Here a four-element arrangement
+is the state, and two moves (rotate left, swap the front pair) are tried until
+it reads `1 2 3 4`:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Domain Expansion: Explore
+    Mode: Steps
+    Until: (s) -> s = list(1, 2, 3, 4)
+    Using: (s) -> list(concat(drop(s, 1), take(s, 1)), concat(reverse(take(s, 2)), drop(s, 2)))
+Reveal: stdout
+```
+```input
+3 1 4 2
+```
+```output
+3
+```
+
+Every mode accepts a list state, including the weighted ones and `Tally`; two
+lists are the same state when they have the same elements in the same order
+(`[1, 23]` and `[12, 3]` are different states). A list of `Float`s is still not
+a state.
 
 #### `Cost:` — the weighted search
 
@@ -465,8 +536,8 @@ states them directly. It is also the non-grid half of graph search: the four
 primitives below all take a `Grid`, while Explore takes a *state*, so the
 graph can be nodes named in a text file or tuples of position and facing.
 
-The state must be keyable, which is what makes termination possible; build a
-compound one with `tuple(...)`.
+The state must be keyable (Int, Text, or Lists/Tuples/Records of them), which is
+what makes termination possible; build a compound one with `tuple(...)`.
 
 ### Topological Sort — `Graph<K> | Map<K, List<K>> | List<(K, K)> -> List<K>` (K keyable)
 
@@ -479,6 +550,26 @@ Domain Expansion: Topological Sort
 
 A dependency order over an *explicit* graph — the other standard question
 about one, beside Explore's reachability.
+
+K is keyable (Int, Text, or Lists/Tuples/Records of them), so a node may be a whole
+configuration held in a List:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Chunk 2
+Cursed Technique: Map Each
+    Using: (p) -> tuple(list(item(p, 0)), list(item(p, 1)))
+Channeled Energy: Convert To Graph
+Domain Expansion: Topological Sort
+Reveal: stdout
+```
+```input
+1 2 2 3 1 3
+```
+```output
+[[1], [2], [3]]
+```
 
 Two input shapes, like `Merge Ranges`: an adjacency `Map<K, List<K>>` (a node
 mapped to its successors), or an **edge list** — `List<(K, K)>` or a

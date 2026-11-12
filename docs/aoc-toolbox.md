@@ -176,7 +176,7 @@ optimizer is allowed to substitute.
 | Classic helper | In Domain |
 |---|---|
 | `Memo[K, V].Get(key, compute)` | runtime `ir.Memo` — compute-once keyed caching for primitive implementers (codegen uses it to intern generated struct declarations). |
-| memoized recursion / DP | `Domain Expansion: Explore` — Domain has no recursion, and a search over keyable states is what the visited set memoizes. |
+| memoized recursion / DP | `Domain Expansion: Explore` — Domain has no recursion, and a search over keyable states (a state may hold a List) is what the visited set memoizes. |
 | "how many ways" over a DAG | `Domain Expansion: Explore` `Mode: Tally` + `Value:`/`Combine:` — each state folded once however many paths reach it |
 | linear DP over a sorted list | `Maximum Technique: Fold` with a `Map` accumulator (`insert`/`getor`) — linear, not quadratic, since [linear accumulators](optimizer.md#linear-accumulators--the-pass-that-runs-last) |
 

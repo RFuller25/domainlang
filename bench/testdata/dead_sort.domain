@@ -1,0 +1,14 @@
+# A sort nobody reads: the list is sorted, then every later stage works one
+# element at a time on its way into a sum. The ordering never reaches the
+# result, so the compiler drops the sort — the hand-written Go on the other
+# side is the single loop a programmer who noticed would write.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Domain Expansion: Quicksort, Descending
+Cursed Technique: Filter
+    Using: (x) -> x % 2 = 1
+Cursed Technique: Map Each
+    Using: (x) -> x * 3 + 1
+Maximum Technique: Sum
+Reveal: stdout

@@ -124,6 +124,13 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 
 	label := stmt.PartName
 	isolate := role.Globals == GlobalsIsolated
+	partMeta := map[string]any{
+		"label": label, "nodes": subNodes,
+		"role": stmt.PartRole, "bodyType": subType,
+		"number": partNumber(stmt),
+		// What the host must put in scope before running this body.
+		"binds": binds,
+	}
 	return &ir.Node{
 		Prim:    "Part",
 		In:      cur,
@@ -140,14 +147,8 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 		// than walking them in order: it has to know which body is which, and
 		// what each one produces. "number" carries a numeric argument — the
 		// period of a timer — for the same reason.
-		Meta: map[string]any{
-			"label": label, "nodes": subNodes,
-			"role": stmt.PartRole, "bodyType": subType,
-			"number": partNumber(stmt),
-			// What the host must put in scope before running this body.
-			"binds": binds,
-		},
-		Pos: stmt.Pos,
+		Meta: partMeta,
+		Pos:  stmt.Pos,
 		Eval: func(ctx *ir.Context, in ir.Value) (ir.Value, error) {
 			// Save and restore rather than clear, so the label of an enclosing
 			// scope survives if Parts are ever allowed to nest.
@@ -179,7 +180,7 @@ func (r *resolver) resolvePart(stmt *ast.Statement, cur *ir.Type) (*ir.Node, err
 			ctx.PushFrame(stmt.PartDescription(), subType)
 			defer func() { ctx.PopFrame(body) }()
 
-			v, err := runBody(ctx, subNodes, in)
+			v, err := runBody(ctx, bodyOf(partMeta, subNodes), in)
 			if err != nil {
 				return nil, err
 			}

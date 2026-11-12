@@ -77,9 +77,9 @@ func TestTypeGrammarErrors(t *testing.T) {
 		{"unkeyable map key", "Map<Float, Int>", "Map keys must be keyable"},
 		{"unkeyable set element", "Set<Float>", "Set elements must be keyable"},
 		{"unkeyable graph node", "Graph<Float>", "Graph nodes must be keyable"},
-		{"graph node is a list", "Graph<List<Int>>", "Graph nodes must be keyable"},
+		{"graph node is a float list", "Graph<List<Float>>", "Graph nodes must be keyable"},
 		{"graph arity", "Graph<Int, Int>", "takes 1 type argument(s), got 2"},
-		{"unkeyable nested key", "Map<List<Int>, Int>", "Map keys must be keyable"},
+		{"unkeyable nested key", "Map<List<Float>, Int>", "Map keys must be keyable"},
 		{"lambda as a pipeline type", "((Int) -> Bool)", "only valid as a Shikigami parameter"},
 	}
 	for _, c := range cases {
@@ -241,8 +241,11 @@ func TestRecordTypeKeyability(t *testing.T) {
 	if _, err := parseType(t, "Set<{a: Int, b: Text}>"); err != nil {
 		t.Errorf("a record of keyable fields should be a valid Set element: %v", err)
 	}
-	if _, err := parseType(t, "Set<{a: List<Int>}>"); err == nil {
-		t.Error("a record holding a List is not keyable and should have been refused")
+	if _, err := parseType(t, "Set<{a: List<Int>}>"); err != nil {
+		t.Errorf("a record holding a List of Ints is a valid Set element: %v", err)
+	}
+	if _, err := parseType(t, "Set<{a: List<Float>}>"); err == nil {
+		t.Error("a record holding a List of Floats is not keyable and should have been refused")
 	}
 }
 

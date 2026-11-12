@@ -171,7 +171,7 @@ The warnings, today:
 - **A sort or a reversal to read one element.** `first(sort(xs))` and
   `item(sort(xs), 0)` are `min(xs)`; `last(sort(xs))` is `max(xs)`;
   `first(reverse(xs))` is `last(xs)`. The compiler does not swap them itself
-  because on an empty list the two report different errors.
+  because on an empty list the two report different errors — though when the list is a plain name the optimizer makes the swap itself behind an empty-list guard, so the original still fails in its own words.
 - **A pair or triple scan left quadratic.** `All Pairs` / `Combinations 3`
   whose predicate is a sum of its parameters equal to something that is not
   an integer literal: the O(n) and O(n²) hash scans are specialised on the
@@ -212,7 +212,7 @@ the file is touched.
    statements after the final `Reveal`, and deleting unused Channels. Each
    rewrite is applied one at a time and the program is re-resolved after
    each; a rewrite that would break the program is rolled back.
-2. *The IR report* — everything the 36-pass optimizer will substitute on
+2. *The IR report* — everything the 51-pass optimizer will substitute on
    every run/build of the (possibly rewritten) program, in the same wording
    as `--explain`.
 

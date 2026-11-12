@@ -431,13 +431,11 @@ func (g *gen) ownValueExpr(expr string, t *ir.Type, path string, owned map[strin
 	// loop writing through to whatever the caller still holds. Every clone is
 	// one already declared for the functional path.
 	case ir.KMap:
-		g.helper("dmMap", declMap)
-		g.helper("dmMapClone", declMapClone)
-		return "dmMapClone(" + expr + ")", nil
+		g.chelper(t.Key, "dmMap", declMap)
+		return g.chelper(t.Key, "dmMapClone", declMapClone) + "(" + expr + ")", nil
 	case ir.KSet:
-		g.helper("dmSet", declSet)
-		g.helper("dmSetClone", declSetClone)
-		return "dmSetClone(" + expr + ")", nil
+		g.chelper(t.Elem, "dmSet", declSet)
+		return g.chelper(t.Elem, "dmSetClone", declSetClone) + "(" + expr + ")", nil
 	case ir.KGrid:
 		g.helper("dmGrid", declGrid)
 		g.helper("dmGridClone", declGridClone)
@@ -450,7 +448,7 @@ func (g *gen) ownValueExpr(expr string, t *ir.Type, path string, owned map[strin
 		// dmGraph carries its own clone method — the one the functional
 		// addnode/addedge call before mutating — so there is no free function
 		// to declare here.
-		g.helper("dmGraph", declGraph)
+		g.chelper(t.Elem, "dmGraph", declGraph)
 		return "(" + expr + ").clone()", nil
 	}
 	return expr, nil

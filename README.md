@@ -16,8 +16,9 @@ across both: parsing (`Match Pattern`), dense and sparse grids,
 pairs/combinations, sets/maps, higher-order lambda operations (with a `Using:`
 that may be an [indented pipeline](docs/expressions.md) rather than an
 expression), named dataflow `Channel`s, loops, measured arguments,
-user-defined `Shikigami` + a prelude, and a **36-pass optimizer** (algorithm
-substitution, fusion, dead-code elimination, expression simplification).
+user-defined `Shikigami` + a prelude, and a **51-pass optimizer** (algorithm
+substitution, fusion, dead-code elimination, expression simplification, idiom
+recognition).
 `domain build` compiles that same IR into a standalone, aggressively typed Go
 binary — every primitive and all 208 expression builtins have a codegen case,
 each pinned by an interpreter-vs-binary oracle test.
@@ -345,7 +346,7 @@ Every keyword below is optional except where the row says otherwise — see
   `solve2x2`, `manhattan`/`neighbors4`/`rotr`, `occurrences`/`repeats`).
   The full map from the canonical Go helper library lives in
   [`docs/aoc-toolbox.md`](docs/aoc-toolbox.md).
-- **A 36-pass optimizer** that fires even through Shikigami abstraction (below).
+- **A 51-pass optimizer** that fires even through Shikigami abstraction (below).
 - **`mahoraga`** — where the optimizer asks what is true of every program,
   `domain expansion: mahoraga <file> <input> <expected>` asks what is true of
   *this* program on *this* input: it measures the input, searches a catalogue
@@ -370,7 +371,7 @@ method. Run with `--explain` to see it; run with `--no-optimize` to use the
 naive path (which is also the correctness oracle the optimizer is
 property-tested against).
 
-The other passes follow the same idea, in four families (see
+The other passes follow the same idea, in five families (see
 [`docs/optimizer.md`](docs/optimizer.md) for the full catalog):
 
 - **Algorithm substitution** — `All Pairs` with a sum- or
@@ -391,6 +392,14 @@ The other passes follow the same idea, in four families (see
 - **Expression simplification** — constant folding, algebraic identities,
   and boolean short-circuits inside lambda bodies, cascading into the
   structural passes (an always-false predicate eliminates its whole scan).
+
+- **Idioms** — the long way round to something the vocabulary already
+  names: a `Fold` that counts or sums by hand becomes `Count` / `Sum By` /
+  `Count Matching`; a `Sort` whose order never reaches the result (every
+  stage after it works one element at a time, into a sum) is dropped; a
+  `Filter` moves ahead of a `Sort`; `Unique + Count` counts the set without
+  building the list; a count compared with zero becomes an `Any` that stops
+  at the first match.
 
 Rewrites cascade until a fixpoint: `Quicksort + Reverse + Select Top 3`
 first flips into one descending sort, which then fuses into a quickselect.

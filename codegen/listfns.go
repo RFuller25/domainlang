@@ -44,11 +44,20 @@ func (g *gen) sortFn(elem *ir.Type) (string, error) {
 		return "", err
 	}
 	return g.listFn("sort:"+canonicalKey(elem), "Sort", func(name string) (string, error) {
+		g.imp("slices")
+		// Equal Ints and equal Texts are indistinguishable, so the stable sort
+		// buys nothing there and the type-specialised pdqsort is ~3x faster.
+		if elem.Kind == ir.KInt || elem.Kind == ir.KText {
+			return fmt.Sprintf(`func %s(xs []%s) []%s {
+	out := append([]%s(nil), xs...)
+	slices.Sort(out)
+	return out
+}`, name, elemGo, elemGo, elemGo), nil
+		}
 		cmp, err := g.cmpExpr("a", "b", elem)
 		if err != nil {
 			return "", err
 		}
-		g.imp("slices")
 		return fmt.Sprintf(`func %s(xs []%s) []%s {
 	out := append([]%s(nil), xs...)
 	slices.SortStableFunc(out, func(a, b %s) int { return %s })
@@ -137,6 +146,23 @@ const declUniqueList = `func dmUniqueList[T comparable](xs []T) []T {
 			continue
 		}
 		seen[x] = struct{}{}
+		out = append(out, x)
+	}
+	return out
+}`
+
+// declUniqueBy is dmUniqueList for an element Go cannot compare (one holding a
+// List): the same first-occurrence-wins scan, keyed by the element's byte
+// encoding (codegen/keyfn.go).
+const declUniqueBy = `func dmUniqueBy[T any](xs []T, key func(T) string) []T {
+	seen := make(map[string]struct{}, len(xs))
+	out := make([]T, 0, len(xs))
+	for _, x := range xs {
+		k := key(x)
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
 		out = append(out, x)
 	}
 	return out

@@ -185,13 +185,20 @@ var findCycle = &Primitive{
 	Keyword: "Maximum Technique",
 	Match:   func(op *ast.Operation) bool { return hasWord(op, "Find") && hasWord(op, "Cycle") },
 	Build: func(op *ast.Operation, args ArgSet, in *ir.Type, pos token.Position) (*ir.Node, error) {
+		if args.Has("Using") || args.hasBlock() {
+			return buildFindCycleState(op, args, in, pos)
+		}
+		if args.Has("Key") || args.Has("Limit") {
+			return nil, &ResolveError{Pos: pos, Msg: "Find Cycle: Key: and Limit: belong to the step form, " +
+				"`Find Cycle` with a Using: step (without one it reads a list)"}
+		}
 		elem, err := listElem(in, "Find Cycle", pos)
 		if err != nil {
 			return nil, err
 		}
-		if !ir.Keyable(elem) {
+		if !ir.ListKeyable(elem) {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Find Cycle needs keyable elements (Int, Text, or a Tuple/Record of them), got %s", elem)}
+				"Find Cycle needs keyable elements (Int, Text, or a List/Tuple/Record of them), got %s", elem)}
 		}
 		return &ir.Node{
 			Prim: "Find Cycle", In: in, Out: ir.Tuple(ir.Int(), ir.Int()),

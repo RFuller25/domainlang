@@ -113,7 +113,7 @@ func fuseFilterFirst(p *ir.Pipeline) []Rewrite {
 			return nil, "", false
 		}
 		lam := nodeLambda(a)
-		if lam == nil || len(lam.Params) != 1 || !isTotal(lam.Body) {
+		if lam == nil || len(lam.Params) != 1 || !isTotalElementwise(lam.Body, lam.Params[0], elemType(a.In)) {
 			return nil, "", false
 		}
 		elem := a.In.Elem

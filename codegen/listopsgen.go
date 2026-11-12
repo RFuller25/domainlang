@@ -3,6 +3,7 @@ package codegen
 import (
 	"domain/ast"
 	"domain/ir"
+	"domain/optimizer"
 )
 
 // Go lowerings for the list-shaping and generating primitives in
@@ -191,6 +192,44 @@ func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
 	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: n.In}})
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
+	}
+	if stop, _ := n.Meta[optimizer.MetaUntilRepeat].(bool); stop {
+		// optimizer.stopIterateAtRepeat: the trajectory is only searched for
+		// its first repeat, so it ends at the first state equal to an earlier
+		// one. Brent's cycle detection, the loop newIterateUntilRepeat runs:
+		// one comparison per step against a mark that jumps forward at powers
+		// of two.
+		mark, gap, power := g.fresh("mark"), g.fresh("gap"), g.fresh("power")
+		same, err := g.eqExpr(v+"["+mark+"]", cur, n.In)
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		g.wl("%s := make([]%s, 0, min(%s, 1024))", v, elemGo, steps)
+		g.wl("%s := %s", cur, in)
+		g.wl("%s, %s, %s := int64(0), int64(0), int64(1)", mark, gap, power)
+		g.wl("for %s := int64(0); %s < %s; %s++ {", i, i, steps, i)
+		g.in()
+		g.wl("%s = %s", cur, body)
+		g.wl("%s = append(%s, %s)", v, v, cur)
+		g.wl("if %s == 0 {", i)
+		g.in()
+		g.wl("continue")
+		g.out()
+		g.wl("}")
+		g.wl("%s++", gap)
+		g.wl("if %s {", same)
+		g.in()
+		g.wl("break")
+		g.out()
+		g.wl("}")
+		g.wl("if %s == %s {", gap, power)
+		g.in()
+		g.wl("%s, %s, %s = %s, 0, %s*2", mark, gap, power, i, power)
+		g.out()
+		g.wl("}")
+		g.out()
+		g.wl("}")
+		return v, nil
 	}
 	g.wl("%s := make([]%s, %s)", v, elemGo, steps)
 	g.wl("%s := %s", cur, in)

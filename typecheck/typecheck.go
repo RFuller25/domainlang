@@ -144,6 +144,23 @@ func alsoType(x *ast.AlsoExpr, env Env) (*ir.Type, error) {
 // environment extended with n. The binding shadows an outer name of the same
 // spelling and is restored afterwards, so sibling expressions are unaffected.
 func letType(x *ast.LetExpr, env Env) (*ir.Type, error) {
+	if x.PatternLen > 0 {
+		// A binding a destructuring lambda parameter desugared to: name the
+		// pattern, not the synthesized `item` call, when the parameter does
+		// not have the shape the pattern was written for.
+		if c, ok := x.Value.(*ast.CallExpr); ok && len(c.Args) == 2 {
+			pt, err := ExprType(c.Args[0], env)
+			if err != nil {
+				return nil, err
+			}
+			if pt == nil || pt.Kind != ir.KTuple {
+				return nil, fmt.Errorf("%s: the pattern %s destructures a Tuple, but this parameter is %s", x.Pos, x.Pattern, pt)
+			}
+			if len(pt.Elems) != x.PatternLen {
+				return nil, fmt.Errorf("%s: the pattern %s has %d fields, but this parameter is %s with %d", x.Pos, x.Pattern, x.PatternLen, pt, len(pt.Elems))
+			}
+		}
+	}
 	vt, err := ExprType(x.Value, env)
 	if err != nil {
 		return nil, err
@@ -605,9 +622,9 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !ir.Keyable(elem) {
+		if !ir.ListKeyable(elem) {
 			return nil, fmt.Errorf("%s: unique needs keyable elements "+
-				"(Int, Text, or Tuples/Records of them), got %s", x.Pos, elem)
+				"(Int, Text, or Lists/Tuples/Records of them), got %s", x.Pos, elem)
 		}
 		return args[0], nil
 	case "flatten", "transpose":
@@ -729,8 +746,8 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return nil, fmt.Errorf("%s: contains needs a Text, List, Set or Graph argument, got %s", x.Pos, args[0])
 		}
 		elem := args[0].Elem
-		if !ir.Keyable(elem) {
-			return nil, fmt.Errorf("%s: contains needs keyable elements (Int, Text, or Tuples/Records of them), got %s", x.Pos, elem)
+		if err := needListKeyable(x, "contains", elem); err != nil {
+			return nil, err
 		}
 		if !args[1].Equal(elem) {
 			return nil, fmt.Errorf("%s: contains value must be %s, got %s", x.Pos, elem, args[1])
@@ -877,8 +894,8 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		// Over a List this is "position of an element"; over Text, "position
 		// of a substring". Both answer -1 when absent, like Find Index.
 		if args[0] != nil && args[0].Kind == ir.KList {
-			if !ir.Keyable(args[0].Elem) {
-				return nil, fmt.Errorf("%s: indexof needs keyable elements, got %s", x.Pos, args[0].Elem)
+			if !ir.ListKeyable(args[0].Elem) {
+				return nil, fmt.Errorf("%s: indexof needs keyable elements (Int, Text, or Lists/Tuples/Records of them), got %s", x.Pos, args[0].Elem)
 			}
 			if !args[1].Equal(args[0].Elem) {
 				return nil, fmt.Errorf("%s: indexof value must be %s, got %s", x.Pos, args[0].Elem, args[1])
@@ -1132,7 +1149,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := needKeyable(x, name, elem); err != nil {
+		if err := needListKeyable(x, name, elem); err != nil {
 			return nil, err
 		}
 		return ir.Set(elem), nil
@@ -1140,7 +1157,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		// The argument is a *type witness*, never stored — the same trick
 		// `sparse(d)` plays with its default, since a collection's element type
 		// cannot be inferred from an absence.
-		if err := needKeyable(x, name, args[0]); err != nil {
+		if err := needListKeyable(x, name, args[0]); err != nil {
 			return nil, err
 		}
 		return ir.Set(args[0]), nil
@@ -1151,7 +1168,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		// expression is fixed at resolve time.
 		return ir.List(args[0]), nil
 	case "emptymap":
-		if err := needKeyable(x, name, args[0]); err != nil {
+		if err := needListKeyable(x, name, args[0]); err != nil {
 			return nil, err
 		}
 		return ir.Map(args[0], args[1]), nil
@@ -1163,7 +1180,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		if elem == nil || elem.Kind != ir.KTuple || len(elem.Elems) != 2 {
 			return nil, fmt.Errorf("%s: tomap needs a List of (key, value) pairs, got List<%s>", x.Pos, elem)
 		}
-		if err := needKeyable(x, name, elem.Elems[0]); err != nil {
+		if err := needListKeyable(x, name, elem.Elems[0]); err != nil {
 			return nil, err
 		}
 		return ir.Map(elem.Elems[0], elem.Elems[1]), nil
@@ -1260,7 +1277,7 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		// Witness form, like emptyset: the argument is a value of the node type,
 		// evaluated but unused, because the result type has to come from
 		// somewhere.
-		if err := needKeyable(x, name, args[0]); err != nil {
+		if err := needListKeyable(x, name, args[0]); err != nil {
 			return nil, err
 		}
 		return ir.Graph(args[0]), nil
@@ -1660,7 +1677,7 @@ func graphEdgeListNode(x *ast.CallExpr, t *ir.Type) (*ir.Type, error) {
 		if len(e.Elems) == 3 && !e.Elems[2].Equal(ir.Int()) {
 			return nil, fmt.Errorf("%s: graph's edge weight must be Int, got %s", x.Pos, e.Elems[2])
 		}
-		if err := needKeyable(x, "graph", e.Elems[0]); err != nil {
+		if err := needListKeyable(x, "graph", e.Elems[0]); err != nil {
 			return nil, err
 		}
 		return e.Elems[0], nil
@@ -1668,7 +1685,7 @@ func graphEdgeListNode(x *ast.CallExpr, t *ir.Type) (*ir.Type, error) {
 		// The ragged form: the length is only known at run time, so the weight
 		// cannot be typed here. An unweighted edge list is what this shape is
 		// for, and every arc gets weight 1.
-		if err := needKeyable(x, "graph", e.Elem); err != nil {
+		if err := needListKeyable(x, "graph", e.Elem); err != nil {
 			return nil, err
 		}
 		return e.Elem, nil
@@ -1676,10 +1693,11 @@ func graphEdgeListNode(x *ast.CallExpr, t *ir.Type) (*ir.Type, error) {
 	return bad()
 }
 
-// needKeyable requires a type that can be a Map key or Set element.
-func needKeyable(x *ast.CallExpr, name string, t *ir.Type) error {
-	if !ir.Keyable(t) {
-		return fmt.Errorf("%s: %s needs keyable elements (Int, Text, or Tuples/Records of them), got %s",
+// needListKeyable requires a type that can be a Map key, Set element or Graph
+// node: Int, Text, or Lists/Tuples/Records of them (ir.ListKeyable).
+func needListKeyable(x *ast.CallExpr, name string, t *ir.Type) error {
+	if !ir.ListKeyable(t) {
+		return fmt.Errorf("%s: %s needs keyable elements (Int, Text, or Lists/Tuples/Records of them), got %s",
 			x.Pos, name, t)
 	}
 	return nil

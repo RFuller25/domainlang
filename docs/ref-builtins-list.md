@@ -52,7 +52,7 @@ a,b,c
 | `sum(xs)` | `List<N> -> N` (N = Int or Float) | Total; `0` for the empty list. |
 | `min(xs)` | `List<N> -> N` (N = Int or Float) | **Error** on the empty list. |
 | `max(xs)` | `List<N> -> N` (N = Int or Float) | **Error** on the empty list. |
-| `contains(xs, v)` | `List<T> \| Set<T> × T -> Bool` (T keyable) | Membership over a list or a set. Element type must be keyable (Int, Text, or Tuples/Records of them) — so a set of points works. |
+| `contains(xs, v)` | `List<T> \| Set<T> × T -> Bool` (T keyable) | Membership over a list or a set. Element type must be keyable (Int, Text, or Lists/Tuples/Records of them) — so a set of points, or a list of lists, works. A Graph's nodes stay Int, Text, or Tuples/Records. |
 | `get(m, k)` | `Map<K,V> × K -> V` | Lookup. **Error** if the key is absent. |
 | `at(g, r, c)` | `Grid<T> \| Sparse<T> × Int × Int -> T` | 0-based `(row, col)` cell. Dense: **error** out of bounds. Sparse: total — unset cells read the default. |
 | `inbounds(g, r, c)` | `Grid<T> × Int × Int -> Bool` | Whether `(r, c)` is a legal cell. Pairs with `at` under short-circuit `and`. |
@@ -63,7 +63,7 @@ a,b,c
 | `col(g, c)` | `Grid<T> × Int -> List<T>` | Column `c` as a list. **Error** out of range. |
 | `rows(g)` / `cols(g)` | `Grid<T> -> Int` | The grid's dimensions. |
 | `slice(xs, lo, hi)` | `List<T> × Int × Int -> List<T>` | Half-open `[lo, hi)`. Total: bounds clamp like `take`/`drop`, and an inverted range gives the empty list. |
-| `indexof(xs, v)` | `List<T> × T -> Int` (T keyable) | Position of the first equal element, or `-1` — the sentinel `Find Index` uses. |
+| `indexof(xs, v)` | `List<T> × T -> Int` (T keyable, a List of keyables included) | Position of the first equal element, or `-1` — the sentinel `Find Index` uses. |
 | `tuple(a, b, …)` | `T1 × T2 × … -> (T1, T2, …)` (≥ 2 args) | Build a **heterogeneous** tuple. Unlike `list`, the elements need not share a type — this is how a mixed `Group By` key or a `Sort By` tiebreak is written. |
 | `range(lo, hi)` | `Int × Int -> List<Int>` | The half-open `[lo, hi)`, matching the `Range` primitive. Empty when `hi <= lo`. |
 | `fill(n, v)` | `Int × T -> List<T>` | `n` copies of `v`. Total: a negative count is the empty list, like `take`. |
@@ -120,7 +120,7 @@ have to answer the same question the same way.
 | Builtin | Type | Behavior |
 |---|---|---|
 | `sort(xs)` | `List<T> -> List<T>` (T ordered) | Ascending, stable, over the ordering [`Sort`](ref-expansions.md#sort--quicksort--listt---listt-t-ordered) and `<` share. |
-| `unique(xs)` | `List<T> -> List<T>` (T keyable) | Deduplicated, keeping first-seen order — `Unique`, inside a lambda. |
+| `unique(xs)` | `List<T> -> List<T>` (T keyable, or a List of keyables) | Deduplicated, keeping first-seen order — `Unique`, inside a lambda. |
 | `flatten(xss)` | `List<List<T>> -> List<T>` | One level, left to right. |
 | `product(xs)` | `List<N> -> N` (N = Int or Float) | The product; `1` for the empty list, as `sum` is `0`. |
 | `zip(a, b)` | `List<A> × List<B> -> List<(A, B)>` | Element-wise pairs, truncated to the shorter — the `Zip` consumer without the channels. |
@@ -131,3 +131,21 @@ have to answer the same question the same way.
 
 A `Set` or a `Map` reaches these through `tolist` and `entries`, which is the
 same bridge the rest of the table uses.
+
+`contains` and `indexof` compare a list element by value, so the elements may
+themselves be lists:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Chunk 2
+Cursed Technique: Apply
+    Using: (cs) -> tuple(indexof(cs, list(3, 4)), contains(cs, list(4, 3)))
+Reveal: stdout
+```
+```input
+1 2 3 4 5 6
+```
+```output
+[1, false]
+```

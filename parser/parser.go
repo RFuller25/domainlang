@@ -73,6 +73,8 @@ type parser struct {
 	toks  []token.Token
 	pos   int
 	depth int // live recursion depth; see enter
+
+	patternSeq int // numbers the synthesized names of destructuring lambda parameters
 }
 
 // maxNestDepth bounds how deeply expressions, blocks and types may nest. Every
@@ -977,18 +979,46 @@ func (p *parser) parseLambda() (*ast.Lambda, error) {
 		return nil, err
 	}
 	var params []string
+	var patterns []*ast.Pattern
+	anyPattern := false
 	if p.cur().Kind != token.RPAREN {
 		seen := map[string]bool{}
+		declare := func(name string, pos token.Position) error {
+			if name == "_" {
+				return nil
+			}
+			if seen[name] {
+				return &Error{Pos: pos, Msg: fmt.Sprintf("duplicate lambda parameter %q", name)}
+			}
+			seen[name] = true
+			return nil
+		}
 		for {
-			id, err := p.expect(token.IDENT)
-			if err != nil {
-				return nil, err
+			if p.cur().Kind == token.LPAREN {
+				pat, err := p.parsePattern()
+				if err != nil {
+					return nil, err
+				}
+				for _, n := range pat.Names(nil) {
+					if err := declare(n, pat.Pos); err != nil {
+						return nil, err
+					}
+				}
+				params = append(params, fmt.Sprintf("$p%d", p.patternSeq))
+				p.patternSeq++
+				patterns = append(patterns, pat)
+				anyPattern = true
+			} else {
+				id, err := p.expect(token.IDENT)
+				if err != nil {
+					return nil, err
+				}
+				if err := declare(id.Literal, id.Pos); err != nil {
+					return nil, err
+				}
+				params = append(params, id.Literal)
+				patterns = append(patterns, nil)
 			}
-			if seen[id.Literal] {
-				return nil, &Error{Pos: id.Pos, Msg: fmt.Sprintf("duplicate lambda parameter %q", id.Literal)}
-			}
-			seen[id.Literal] = true
-			params = append(params, id.Literal)
 			if p.cur().Kind == token.COMMA {
 				p.advance()
 				continue
@@ -1012,9 +1042,14 @@ func (p *parser) parseLambda() (*ast.Lambda, error) {
 	// is a few characters to the left of the body writing to it — and because
 	// the question is entirely syntactic: `ast.UpdatedNames` already discounts
 	// a write to a `consider` local that shadows the parameter's name.
+	// A name bound by a pattern is a parameter too, however it is implemented.
 	written := map[string]bool{}
 	ast.UpdatedNames(body, written)
-	for _, prm := range params {
+	lam := &ast.Lambda{Params: params, Body: body, Pos: startPos}
+	if anyPattern {
+		lam.Patterns = patterns
+	}
+	for _, prm := range lam.BoundNames() {
 		if written[prm] {
 			return nil, &Error{Pos: startPos, Msg: fmt.Sprintf(
 				"%q is a lambda parameter, so `%s :=` has nothing to write to. "+
@@ -1023,7 +1058,82 @@ func (p *parser) parseLambda() (*ast.Lambda, error) {
 					"outlive this element", prm, prm, prm, prm)}
 		}
 	}
-	return &ast.Lambda{Params: params, Body: body, Pos: startPos}, nil
+	// Desugar after the check above, which reads the body as written. The
+	// last pattern is wrapped first so the first ends up outermost.
+	for i := len(patterns) - 1; i >= 0; i-- {
+		if patterns[i] != nil {
+			lam.Body = desugarPattern(lam.Body, params[i], patterns[i])
+		}
+	}
+	return lam, nil
+}
+
+// parsePattern parses a tuple pattern, `(a, (b, c), _)`: two or more fields,
+// each a name, `_` (ignore this field) or a nested pattern. `_` is an ordinary
+// identifier everywhere else; here it is only ever a placeholder, so nothing
+// written before this syntax existed changes meaning.
+func (p *parser) parsePattern() (*ast.Pattern, error) {
+	open, err := p.expect(token.LPAREN)
+	if err != nil {
+		return nil, err
+	}
+	pat := &ast.Pattern{Pos: open.Pos}
+	for {
+		switch p.cur().Kind {
+		case token.LPAREN:
+			sub, err := p.parsePattern()
+			if err != nil {
+				return nil, err
+			}
+			pat.Fields = append(pat.Fields, ast.PatField{Sub: sub, Pos: sub.Pos})
+		case token.IDENT:
+			id := p.advance()
+			pat.Fields = append(pat.Fields, ast.PatField{Name: id.Literal, Pos: id.Pos})
+		default:
+			return nil, p.errf("expected a name, `_` or a nested pattern in a tuple pattern, got %s", p.peek())
+		}
+		if p.cur().Kind == token.COMMA {
+			p.advance()
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(token.RPAREN); err != nil {
+		return nil, err
+	}
+	if len(pat.Fields) < 2 {
+		return nil, &Error{Pos: open.Pos, Msg: "a tuple pattern needs at least two fields; write a plain parameter name to take a value whole"}
+	}
+	if len(pat.Names(nil)) == 0 {
+		return nil, &Error{Pos: open.Pos, Msg: fmt.Sprintf("the pattern %s binds no names; write a plain parameter instead", pat)}
+	}
+	return pat, nil
+}
+
+// desugarPattern wraps body in one `consider NAME as item(param, k) in` per
+// name the pattern binds, nesting through a synthesized parameter for each
+// sub-pattern. Everything after the parser sees ordinary lets over `item`,
+// which is also what the optimizer's totality reasoning already understands:
+// a literal-index projection of a tuple cannot fail.
+func desugarPattern(body ast.Expr, param string, pat *ast.Pattern) ast.Expr {
+	label := pat.String()
+	for i := len(pat.Fields) - 1; i >= 0; i-- {
+		f := pat.Fields[i]
+		proj := &ast.CallExpr{
+			Fn:   &ast.Ident{Name: "item", Pos: f.Pos},
+			Args: []ast.Expr{&ast.Ident{Name: param, Pos: pat.Pos}, &ast.IntLit{Value: int64(i), Pos: f.Pos}},
+			Pos:  f.Pos,
+		}
+		switch {
+		case f.Sub != nil:
+			sub := fmt.Sprintf("%s_%d", param, i)
+			body = desugarPattern(body, sub, f.Sub)
+			body = &ast.LetExpr{Name: sub, Value: proj, Body: body, Pos: pat.Pos, Pattern: label, PatternLen: len(pat.Fields)}
+		case f.Name != "_":
+			body = &ast.LetExpr{Name: f.Name, Value: proj, Body: body, Pos: pat.Pos, Pattern: label, PatternLen: len(pat.Fields)}
+		}
+	}
+	return body
 }
 
 func parseInt(t token.Token) (int64, error) {

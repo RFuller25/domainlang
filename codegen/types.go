@@ -50,15 +50,13 @@ func (g *gen) goType(t *ir.Type) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		g.helper("dmMap", declMap)
-		return "dmMap[" + key + ", " + val + "]", nil
+		return g.chelper(t.Key, "dmMap", declMap) + "[" + key + ", " + val + "]", nil
 	case ir.KSet:
 		elem, err := g.goType(t.Elem)
 		if err != nil {
 			return "", err
 		}
-		g.helper("dmSet", declSet)
-		return "dmSet[" + elem + "]", nil
+		return g.chelper(t.Elem, "dmSet", declSet) + "[" + elem + "]", nil
 	case ir.KSparse:
 		elem, err := g.goType(t.Elem)
 		if err != nil {
@@ -71,8 +69,7 @@ func (g *gen) goType(t *ir.Type) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		g.helper("dmGraph", declGraph)
-		return "dmGraph[" + node + "]", nil
+		return g.chelper(t.Elem, "dmGraph", declGraph) + "[" + node + "]", nil
 	case ir.KView:
 		g.helper("dmView", declView, "strings", "unicode/utf8")
 		return "dmView", nil

@@ -1,0 +1,10 @@
+# Range as a source: the numbers below N, filtered and summed. Fused, the
+# Range is a counting loop — the list of N integers is never built.
+Cursed Energy: stdin
+Cursed Technique: Range
+    High: (s) -> toint(s)
+Cursed Technique: Filter
+    Using: (x) -> x % 3 = 0 or x % 5 = 0
+Maximum Technique: Sum By
+    Using: (x) -> x % 1000
+Reveal: stdout

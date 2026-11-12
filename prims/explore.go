@@ -64,10 +64,10 @@ var explore = &Primitive{
 		// The seed is the current pipeline value, so a state is whatever the
 		// pipeline already carries. It must be keyable: the visited set is
 		// what makes the search terminate, and an unkeyable state could not
-		// be recognized on a second visit.
-		if !ir.Keyable(in) {
+		// be recognized on a second visit. A List of keyables is one.
+		if !ir.ListKeyable(in) {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Explore needs a keyable state (Int, Text, or a Tuple/Record of them), got %s — "+
+				"Explore needs a keyable state (Int, Text, or Lists/Tuples/Records of them), got %s — "+
 					"build a compound state with tuple(...)", in)}
 		}
 		lam, err := requireLambda(args, 1, "Explore", pos)

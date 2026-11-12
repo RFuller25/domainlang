@@ -56,7 +56,15 @@ func TestEmptyTuningChangesNothing(t *testing.T) {
 // The fused split-and-parse loop reserves len(input)/2+1 — an over-reservation
 // by the width of the numbers. A measured element count replaces it.
 func TestListCapacityReplacesTheGuess(t *testing.T) {
-	plain, tuned := emitTuned(t, tuneSumProgram, codegen.Tuning{ListCapacity: 1000})
+	// The list has to be wanted for there to be a capacity to tune: a parse
+	// that flows straight into a reduction builds no list at all.
+	const listProgram = `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert To Integers
+Reverse Cursed Technique: Reverse
+Reveal: stdout
+`
+	plain, tuned := emitTuned(t, listProgram, codegen.Tuning{ListCapacity: 1000})
 	if !strings.Contains(plain, "/2+1") {
 		t.Fatalf("the untuned build no longer carries the guess this entry replaces:\n%s", plain)
 	}

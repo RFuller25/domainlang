@@ -69,9 +69,9 @@ var convertToMap = &Primitive{
 				Msg: fmt.Sprintf("Convert To Map expects List<(K, V)> — the shape Convert To Entries produces — got %s", in)}
 		}
 		key, val := in.Elem.Elems[0], in.Elem.Elems[1]
-		if !ir.Keyable(key) {
+		if !ir.ListKeyable(key) {
 			return nil, &ResolveError{Pos: pos,
-				Msg: fmt.Sprintf("Convert To Map needs a keyable key type, got %s", key)}
+				Msg: fmt.Sprintf("Convert To Map needs a keyable key type (Int, Text, or Lists/Tuples/Records of them), got %s", key)}
 		}
 		return &ir.Node{
 			Prim: "Convert To Map", In: in, Out: ir.Map(key, val),

@@ -19,7 +19,9 @@ import (
 // within int64).
 func fuseWindowReduce(p *ir.Pipeline) []Rewrite {
 	return rewritePairs(p, func(a, b *ir.Node) ([]*ir.Node, string, bool) {
-		if a.Prim != "Window" || b.Prim != "Map Each" {
+		// `Sum Each Group` is the named spelling of Map Each (w) -> sum(w), and
+		// the one a program written with the vocabulary reaches for first.
+		if a.Prim != "Window" || (b.Prim != "Map Each" && b.Prim != "Sum Each Group") {
 			return nil, "", false
 		}
 		if a.In == nil || !a.In.Equal(ir.List(ir.Int())) {
@@ -37,13 +39,17 @@ func fuseWindowReduce(p *ir.Pipeline) []Rewrite {
 		if !size.measured() && size.lit < 1 || !step.measured() && step.lit < 1 {
 			return nil, "", false
 		}
-		lam := nodeLambda(b)
-		if lam == nil {
-			return nil, "", false
-		}
-		op, ok := matchWindowReduce(lam)
-		if !ok {
-			return nil, "", false
+		op, consumer := "sum", "Sum Each"
+		if b.Prim == "Map Each" {
+			lam := nodeLambda(b)
+			if lam == nil {
+				return nil, "", false
+			}
+			var ok bool
+			if op, ok = matchWindowReduce(lam); !ok {
+				return nil, "", false
+			}
+			consumer = "Map Each (" + op + ")"
 		}
 
 		opName := map[string]string{"sum": "Sum", "max": "Max", "min": "Min"}[op]
@@ -81,8 +87,8 @@ func fuseWindowReduce(p *ir.Pipeline) []Rewrite {
 			},
 		}
 		return []*ir.Node{fused},
-			fmt.Sprintf("Domain rewrote Window %s + Map Each (%s) → Cursed Sliding-Window %s (one pass, no window lists). Guaranteed hit.",
-				size.describe(), op, opName),
+			fmt.Sprintf("Domain rewrote Window %s + %s → Cursed Sliding-Window %s (one pass, no window lists). Guaranteed hit.",
+				size.describe(), consumer, opName),
 			true
 	})
 }

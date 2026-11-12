@@ -504,3 +504,67 @@ const OwnedFields = "inplace_owned_fields"
 // OwnsEverything is the path naming the accumulator itself, which asks the
 // backends to copy the whole state.
 const OwnsEverything = ""
+
+// ListKeyable reports whether t can be a *transient* key — the hash key a
+// primitive builds internally to recognise a value it has already seen: Keyable
+// types, plus Lists, Tuples and Records built from them to any depth. Find
+// Cycle, Unique and the Explore family accept these. A Map key or Set element
+// is still Keyable only: those are values the program holds and renders, and
+// the compiled collections index by a Go map key, which a slice cannot be (the
+// compiler hashes a list through an injective byte encoding wherever the key
+// stays inside the primitive — codegen/keyfn.go — and has no representation
+// for a list that has to be handed back out of a collection).
+//
+// Float lists stay out: a Float is not Keyable, so neither is a List<Float>.
+// The runtime side is the same KeyOf the Keyable types use; its encoding
+// length-prefixes every list, so [1,2] and [[1,2]] and (1,2) cannot collide.
+func ListKeyable(t *Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case KInt, KText:
+		return true
+	case KList:
+		return ListKeyable(t.Elem)
+	case KTuple:
+		for _, e := range t.Elems {
+			if !ListKeyable(e) {
+				return false
+			}
+		}
+		return true
+	case KRecord:
+		for _, f := range t.Fields {
+			if !ListKeyable(f.Type) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// ContainsList reports whether a List occurs anywhere in t's structure.
+func ContainsList(t *Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case KList:
+		return true
+	case KTuple:
+		for _, e := range t.Elems {
+			if ContainsList(e) {
+				return true
+			}
+		}
+	case KRecord:
+		for _, f := range t.Fields {
+			if ContainsList(f.Type) {
+				return true
+			}
+		}
+	}
+	return false
+}

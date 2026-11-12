@@ -1,6 +1,7 @@
 package prims
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -88,5 +89,60 @@ func TestPairsResolveErrors(t *testing.T) {
 		if !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%s: error %q does not contain %q", c.name, err.Error(), c.want)
 		}
+	}
+}
+
+func TestAllPairsAnyAll(t *testing.T) {
+	cases := []struct {
+		name, mode, lam, input, want string
+	}{
+		{"any hit", "Any", "a + b = 5", "1,2,3,4", "true"},
+		{"any miss", "Any", "a + b = 99", "1,2,3,4", "false"},
+		{"all hold", "All", "a < b", "1,2,3,4", "true"},
+		{"all fail", "All", "a + b < 6", "1,2,3,4", "false"},
+		{"any, one element", "Any", "a = a", "7", "false"},
+		{"all, one element", "All", "a = 99", "7", "true"},
+	}
+	for _, c := range cases {
+		src := ints + "Domain Expansion: All Pairs\n    Mode: " + c.mode + "\n    Using: (a, b) -> " + c.lam + "\n"
+		v, _ := runPipeline(t, src, c.input)
+		if got := fmt.Sprint(v); got != c.want {
+			t.Errorf("%s: got %v want %s", c.name, v, c.want)
+		}
+	}
+	// Combinations k: too few elements for a combination.
+	v, _ := runPipeline(t, ints+"Domain Expansion: Combinations 3\n    Mode: Any\n    Using: (a, b, c) -> a = a\n", "1,2")
+	if v != false {
+		t.Errorf("Combinations 3 Any over 2 elements: got %v", v)
+	}
+	v, _ = runPipeline(t, ints+"Domain Expansion: Combinations 3\n    Mode: All\n    Using: (a, b, c) -> a = 99\n", "1,2")
+	if v != true {
+		t.Errorf("Combinations 3 All over 2 elements: got %v", v)
+	}
+}
+
+// Any and All stop early: a predicate that would fail on a later combination
+// is never asked about it.
+func TestAllPairsAnyAllShortCircuit(t *testing.T) {
+	v, _ := runPipeline(t, ints+"Domain Expansion: All Pairs\n    Mode: Any\n    Using: (a, b) -> a = 1 or 10 / (a - 3) > 0\n", "1,2,3")
+	if v != true {
+		t.Errorf("Any: got %v", v)
+	}
+	v, _ = runPipeline(t, ints+"Domain Expansion: All Pairs\n    Mode: All\n    Using: (a, b) -> a = 2 and 10 / (a - 3) > 0\n", "1,2,3")
+	if v != false {
+		t.Errorf("All: got %v", v)
+	}
+}
+
+func TestAllPairsAnyAllErrors(t *testing.T) {
+	for _, mode := range []string{"Any", "All"} {
+		_, err := resolveSrc(t, ints+"Domain Expansion: All Pairs\n    Mode: "+mode+"\n    Using: (a, b) -> a + b\n")
+		if err == nil || !strings.Contains(err.Error(), "predicate must return Bool") {
+			t.Errorf("%s with a non-Bool lambda: got %v", mode, err)
+		}
+	}
+	_, err := resolveSrc(t, ints+"Domain Expansion: All Pairs\n    Mode: Some\n    Using: (a, b) -> a = b\n")
+	if err == nil || !strings.Contains(err.Error(), "Filter, Count, First, Map, Any, or All") {
+		t.Errorf("bad mode message: got %v", err)
 	}
 }

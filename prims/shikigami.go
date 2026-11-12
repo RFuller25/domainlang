@@ -576,7 +576,7 @@ func substExpr(e ast.Expr, env map[string]paramVal, shadowed map[string]bool) as
 			Name:  x.Name,
 			Value: substExpr(x.Value, env, shadowed),
 			Body:  substExpr(x.Body, env, inner),
-			Pos:   x.Pos,
+			Pos:   x.Pos, Pattern: x.Pattern, PatternLen: x.PatternLen,
 		}
 	case *ast.AssignExpr:
 		// The name being written is left alone — a parameter cannot be one

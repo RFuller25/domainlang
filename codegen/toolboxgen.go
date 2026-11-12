@@ -158,9 +158,10 @@ func (g *gen) emitConvertToSet(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmSet", declSet)
 	v, e := g.fresh("v"), g.fresh("e")
-	g.wl("%s := dmNewSet[%s]()", v, elemGo)
+	if err := g.wnewSet(v, n.Out.Elem, elemGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.wl("%s.add(%s)", v, e)

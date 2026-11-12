@@ -74,8 +74,18 @@ and `Grid` neighbor walks.
 
 - **Map keys** are any *keyable* type: `Int`, `Text`, or Tuples/Records
   built from keyable types — so a `Map<(Int, Int), V>` keyed by points models a
-  sparse grid directly. Lists stay unkeyable (their compiled representation is
-  a Go slice, which cannot be a map key). At runtime `ir.KeyOf` gives every
+  sparse grid directly. A List of keyable elements
+  (`ir.ListKeyable`) is a legal key too, wherever the compiler has a
+  list-keyed form of the collection. A Go slice cannot be a Go map key, so a
+  `Set` or `Map` whose key holds a List compiles to `dmLSet`/`dmLMap`
+  (`codegen/lkeyruntime.go`): the same fields and the same insertion order as
+  `dmSet`/`dmMap`, indexed by the injective byte encoding of
+  `codegen/keyfn.go`, with the original keys kept beside it. Sets of lists
+  are enabled (`Convert To Set`, `toset`, `emptyset`, `insert`, `contains`,
+  `del`, `union`/`intersect`/`difference`, `Intersect`/`Union`/`Difference`,
+  `Map Elements`), and so are Maps (`Group By`, `Count By`, `Convert To Map`,
+  `tomap`, `emptymap`, `Map Keys`, `get`/`getor`/`haskey`/`del`/`pluck`);
+  Graphs and `Explore` still refuse a list. At runtime `ir.KeyOf` gives every
   keyable value a canonical comparable key that agrees with `ir.DeepEqual`
   (records key by sorted field name, matching `DeepEqual`'s order-insensitive
   comparison); in compiled binaries tuples/records are comparable Go structs,

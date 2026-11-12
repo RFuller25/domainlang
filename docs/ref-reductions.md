@@ -365,6 +365,38 @@ Reveal: stdout
 [15, 3]
 ```
 
+**`Then:` — one last expression over the finished accumulator.** A fold often
+needs a final step (`depth * distance`), and the only way to write it used to be
+to append a sentinel element so the last lambda call could compute it. `Then:
+(acc) -> expr` is that step: the stage's result is `Then(final accumulator)`
+and its type is the lambda's, so it may differ from the accumulator's. On an
+empty list `Then` applies to the seed. It also reads any `Consider` stage
+binding the body updated with `:=`, at its final value — so a fold whose real
+state lives in bindings can end by combining them:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Maximum Technique: Fold
+    Consider depth As 0
+    Consider dist As 0
+    Seed: 0
+    Using: (acc, x) -> if x > 0 then (dist := dist + x) else (depth := depth - x)
+    Then: (acc) -> depth * dist
+Reveal: stdout
+```
+```input
+5,-3,2,-4
+```
+```output
+49
+```
+
+`Then:` is resolved as the Fold followed by an `Apply` of the lambda, so every
+optimizer pass and the compiler treat it as the two stages it is. It works on
+`Fold` and `Fold From:`; `Reduce` has no seed and keeps its single form.
+
 **Fold as a channel consumer.** With `From:` naming one channel, Fold runs
 over the *channel's* list and the **current pipeline value is the seed** —
 how a composite state built upstream threads through a list parsed
@@ -542,7 +574,7 @@ Reveal: stdout
 -1
 ```
 
-### Find Cycle — `List<T> -> (Int, Int)` (T keyable)
+### Find Cycle — `List<T> -> (Int, Int)` (T keyable, or a List of keyables)
 
 ```domain
 Cursed Technique: Iterate 200
@@ -555,6 +587,10 @@ trajectory precisely so a program can ask "have I been here before?", but the
 asking had no primitive — `Find Index` needs a predicate over one element, not
 a seen-set over the prefix. The answer is what turns "run this a billion
 times" into arithmetic.
+
+The elements may themselves be Lists (of Int, Text, or Tuples/Records/Lists of
+them), so a trajectory of `List<Int>` states needs no stringifying to be
+searched. Lists of Floats are not keyable.
 
 A trajectory with no repeat gives `(-1, 0)` — the sentinel `Find Index`
 already uses — rather than an error, since that is a legitimate result.
@@ -592,6 +628,83 @@ Reveal: stdout
 ```
 ```output
 [-1, 0]
+```
+
+#### Find Cycle with a step: until the state repeats
+
+```domain
+Maximum Technique: Find Cycle
+    Using: (s) -> step(s)         # the current value is the start state
+    Limit: 1000000                # optional; (-1, 0) if no repeat by then
+    Key: (s) -> key(s)            # optional; compare states by this instead
+```
+
+When the statement has a `Using:` step, the current value is the *start state*
+(not a list): the step is applied until a state repeats, with no guessed
+`Iterate` count. The answer is exactly what `Iterate n` + `Find Cycle` gives
+for any `n` large enough, so the indexing is the same: the start state itself
+is not part of the trajectory, and index `i` is the state after `i + 1` steps.
+`(start, period)` therefore means "the state after `start + 1` steps is the
+first one that comes round again, every `period` steps".
+
+States are compared by value, so they must be keyable (Int, Text, or a
+Tuple/Record of them). For any other state give `Key:`, a lambda from a state
+to something keyable; two states count as the same when their keys are equal.
+`Limit:` (a literal, or a lambda over the start state like any measured
+argument) caps the number of steps; no repeat within it answers `(-1, 0)`. Without
+`Limit:` a step that never repeats is stopped by the same ceiling `Unfold`
+has (one billion steps) and fails with an error.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> toint(t)
+Maximum Technique: Find Cycle
+    Using: (x) -> mod(x * 3, 7)
+Reveal: stdout
+```
+```input
+1
+```
+```output
+[0, 6]
+```
+
+A step that never repeats, bounded by `Limit:`:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> toint(t)
+Maximum Technique: Find Cycle
+    Using: (x) -> x + 1
+    Limit: 100
+Reveal: stdout
+```
+```input
+1
+```
+```output
+[-1, 0]
+```
+
+`Key:` for a state that is more than its identity — here the state carries a
+step counter that must not make every state distinct:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> tuple(toint(t), 0)
+Maximum Technique: Find Cycle
+    Using: (p) -> tuple(mod(item(p, 0) * 3, 7), item(p, 1) + 1)
+    Key: (p) -> item(p, 0)
+Reveal: stdout
+```
+```input
+1
+```
+```output
+[0, 6]
 ```
 
 ### Sum By / Product By — `List<T> × (T -> Int) -> Int`
@@ -681,7 +794,7 @@ three
 one, two, three
 ```
 
-### Group By — `List<T> × (T -> K) -> Map<K, List<T>>` (K keyable)
+### Group By — `List<T> × (T -> K) -> Map<K, List<T>>` (K keyable, or a List of keyables)
 
 ```domain
 Maximum Technique: Group By
@@ -728,6 +841,26 @@ xyz
 {2: [ab, cd], 3: [xyz]}
 ```
 
+A List of keyables is a key too, which is the anagram grouping: sort the
+characters of each word and group on the sorted list.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Maximum Technique: Group By
+    Using: (w) -> sort(split(w, ""))
+Reveal: stdout
+```
+```input
+listen
+silent
+abc
+cab
+```
+```output
+{[e, i, l, n, s, t]: [listen, silent], [a, b, c]: [abc, cab]}
+```
+
 Any keyable expression will do, and a tuple is keyable — which is how a
 grouping on two things at once is spelled, with no nested `Group By`:
 
@@ -748,14 +881,29 @@ abc
 {[2, a]: [ax, ay], [2, b]: [bz], [3, a]: [abc]}
 ```
 
-### Count By — `List<T> × (T -> K) -> Map<K, Int>` (K keyable)
+### Count By — `List<T> × (T -> K) -> Map<K, Int>` (K keyable, or a List of keyables)
 
 ```domain
 Maximum Technique: Count By
     Using: (n) -> n / 10
 ```
 
-Frequency map of the lambda's key, keys in first-seen order.
+Frequency map of the lambda's key, keys in first-seen order. The key may be a
+List of keyables:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Maximum Technique: Count By
+    Using: (w) -> sort(split(w, ""))
+Reveal: stdout
+```
+```input
+tea,eat,ate,tan,nat,bat
+```
+```output
+{[a, e, t]: 3, [a, n, t]: 2, [a, b, t]: 1}
+```
 
 ```domain run
 Cursed Energy: stdin
@@ -858,7 +1006,7 @@ cat
 fig
 ```
 
-### Intersect / Union / Difference — `List<List<T>> -> Set<T>` (T keyable)
+### Intersect / Union / Difference — `List<List<T>> -> Set<T>` (T keyable, or a List of keyables)
 
 ```domain run
 Cursed Energy: stdin
@@ -893,6 +1041,24 @@ bcd
 4
 ```
 
+
+The elements may themselves be lists, so the groups are lists of lists of lists:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Chunk 4
+Cursed Technique: Map Each
+    Using: (c) -> list(take(c, 2), drop(c, 2))
+Maximum Technique: Intersect
+Reveal: stdout
+```
+```input
+1 2 3 4 3 4 1 2
+```
+```output
+{[1, 2], [3, 4]}
+```
 
 Set reduction over the groups, seeded with the first group. `Intersect`
 keeps the accumulator's element order; `Union` appends left-to-right,

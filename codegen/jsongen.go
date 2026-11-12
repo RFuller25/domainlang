@@ -328,6 +328,9 @@ func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
 		sb.WriteString("\treturn out, nil")
 		return sb.String(), nil
 	case ir.KMap:
+		if lKeyed(t.Key) {
+			return "", fmt.Errorf("a Map keyed by a List cannot be read from JSON")
+		}
 		elem, err := g.jsonInFunc(t.Elem)
 		if err != nil {
 			return "", err

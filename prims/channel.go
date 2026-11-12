@@ -374,7 +374,7 @@ func buildDifference(froms []string, types []*ir.Type, cur *ir.Type, pos token.P
 		return nil, &ResolveError{Pos: pos,
 			Msg: fmt.Sprintf("Difference needs matching element types, got %s and %s", elemA, elemB)}
 	}
-	if err := requireKeyable(elemA, "Difference", pos); err != nil {
+	if err := requireListKeyable(elemA, "Difference", pos); err != nil {
 		return nil, err
 	}
 	a, b := froms[0], froms[1]

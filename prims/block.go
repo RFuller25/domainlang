@@ -117,6 +117,14 @@ func (b *blockPipeline) RunBlock(v ir.Value) (ir.Value, error) {
 // BlockNodes is the resolved body, for the optimizer and the compiler.
 func (b *blockPipeline) BlockNodes() []*ir.Node { return b.nodes }
 
+// SetBlockNodes replaces the resolved body with a rewritten one. RunBlock and
+// the compiler both read the body through this struct each time they need it,
+// so a rewrite that changes the body's *length* — a fusion, an elision — is
+// seen by both backends as long as it is stored here. The optimizer is the
+// only caller, and it keeps the body's input and result types (b.bound, b.out)
+// exactly as they were: every pass preserves the signature of what it rewrites.
+func (b *blockPipeline) SetBlockNodes(nodes []*ir.Node) { b.nodes = nodes }
+
 // blockLambda synthesizes the lambda a nested body stands in for. The
 // parameters are named rather than positional because typecheck and eval bind
 // lambda parameters by name; nothing else ever reads these names, so they are

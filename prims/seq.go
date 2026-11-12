@@ -200,7 +200,7 @@ var countBy = &Primitive{
 		if err != nil {
 			return nil, &ResolveError{Pos: pos, Msg: "Count By: " + err.Error()}
 		}
-		if err := requireKeyable(keyType, "Count By", pos); err != nil {
+		if err := requireListKeyable(keyType, "Count By", pos); err != nil {
 			return nil, err
 		}
 		return &ir.Node{
@@ -427,7 +427,7 @@ var differenceAll = &Primitive{
 				Msg: fmt.Sprintf("Difference expects List<List<T>>, got %s", in)}
 		}
 		elem := in.Elem.Elem
-		if err := requireKeyable(elem, "Difference", pos); err != nil {
+		if err := requireListKeyable(elem, "Difference", pos); err != nil {
 			return nil, err
 		}
 		return &ir.Node{

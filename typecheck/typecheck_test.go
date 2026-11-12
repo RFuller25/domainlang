@@ -210,7 +210,7 @@ func TestBuiltinCallErrors(t *testing.T) {
 		{"(x) -> length(x)", ir.Int(), "needs a List"},
 		{"(xs) -> item(xs, \"a\")", ints, "must be Int"},
 		{"(xs) -> sum(xs)", ir.List(ir.Text()), "needs List<Int>"},
-		{"(xs) -> contains(xs, 1)", ir.List(ir.List(ir.Int())), "keyable elements"},
+		{"(xs) -> contains(xs, 1)", ir.List(ir.List(ir.Float())), "keyable elements"},
 		{"(xs) -> contains(xs, \"a\")", ints, "value must be Int"},
 		{"(xs) -> concat(xs, 1)", ints, "same type"},
 		{"(m) -> get(m, \"a\")", ir.Map(ir.Int(), ints), "key must be Int"},

@@ -129,13 +129,11 @@ func (g *gen) ownAccumulator(lam *ast.Lambda, accT *ir.Type, seed string) string
 	}
 	switch accT.Kind {
 	case ir.KMap:
-		g.helper("dmMap", declMap)
-		g.helper("dmMapClone", declMapClone)
-		return "dmMapClone(" + seed + ")"
+		g.chelper(accT.Key, "dmMap", declMap)
+		return g.chelper(accT.Key, "dmMapClone", declMapClone) + "(" + seed + ")"
 	case ir.KSet:
-		g.helper("dmSet", declSet)
-		g.helper("dmSetClone", declSetClone)
-		return "dmSetClone(" + seed + ")"
+		g.chelper(accT.Elem, "dmSet", declSet)
+		return g.chelper(accT.Elem, "dmSetClone", declSetClone) + "(" + seed + ")"
 	case ir.KGrid:
 		g.helper("dmGrid", declGrid)
 		g.helper("dmGridClone", declGridClone)

@@ -81,7 +81,7 @@ func topoInputShape(in *ir.Type, pos token.Position) (*ir.Type, bool, error) {
 		if in.Elem == nil || in.Elem.Kind != ir.KList || !in.Elem.Elem.Equal(in.Key) {
 			return bad()
 		}
-		if !ir.Keyable(in.Key) {
+		if !ir.ListKeyable(in.Key) {
 			return bad()
 		}
 		return in.Key, false, nil
@@ -91,10 +91,10 @@ func topoInputShape(in *ir.Type, pos token.Position) (*ir.Type, bool, error) {
 			return bad()
 		}
 		if e.Kind == ir.KTuple && len(e.Elems) == 2 && e.Elems[0].Equal(e.Elems[1]) &&
-			ir.Keyable(e.Elems[0]) {
+			ir.ListKeyable(e.Elems[0]) {
 			return e.Elems[0], true, nil
 		}
-		if e.Kind == ir.KList && ir.Keyable(e.Elem) {
+		if e.Kind == ir.KList && ir.ListKeyable(e.Elem) {
 			// Row length is checked at runtime: the type says List<List<K>>
 			// but not how long each row is.
 			return e.Elem, true, nil

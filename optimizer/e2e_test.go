@@ -319,6 +319,172 @@ func diffCases() []diffCase {
 			src:         p("Maximum Technique: All\n    Using: (x) -> 3 < 3\n"),
 			explain:     "All (constant predicate) → an emptiness test",
 			extraInputs: []string{""}},
+		// --- idioms: the long way round to a named reduction ---
+		{name: "fold that counts becomes count",
+			src:         p("Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> acc + 1\n"),
+			explain:     "counting by hand) → Count",
+			extraInputs: []string{"", "7"}},
+		{name: "fold that counts, literal first",
+			src:         p("Maximum Technique: Fold\n    Seed: 0\n    Using: (n, x) -> 1 + n\n"),
+			explain:     "counting by hand) → Count",
+			extraInputs: []string{""}},
+		{name: "fold summing a mapped value becomes sum by",
+			src:         p("Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> acc + x * x\n"),
+			explain:     "a running sum of a mapped value) → Sum By",
+			extraInputs: []string{"", "-3\n4"}},
+		{name: "fold counting conditionally becomes count matching",
+			src:         p("Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> if x % 2 = 0 then acc + 1 else acc\n"),
+			explain:     "a conditional count) → Count Matching",
+			extraInputs: []string{"", "1\n3", "2\n-4\n5"}},
+		{name: "fold summing conditionally becomes a guarded sum by",
+			src:         p("Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> if x > 2 then x * 3 + acc else acc\n"),
+			explain:     "a conditional running sum) → Sum By",
+			extraInputs: []string{"", "1\n2", "3\n-4\n5"}},
+		{name: "fold with a nonzero seed is left alone",
+			src:           p("Maximum Technique: Fold\n    Seed: 5\n    Using: (acc, x) -> acc + 1\n"),
+			explainAbsent: "→ Count",
+			extraInputs:   []string{"", "1\n2"}},
+		{name: "fold whose term can fail is left alone",
+			src:           p("Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> acc + 10 / x\n"),
+			explainAbsent: "→ Sum By",
+			extraInputs:   []string{"5\n0\n2", "5\n1"}},
+		{name: "fold whose term reads the accumulator is left alone",
+			src:           p("Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> acc + acc * x\n"),
+			explainAbsent: "→ Sum By",
+			extraInputs:   []string{"5\n3\n2"}},
+		{name: "fold whose else arm is not the accumulator is left alone",
+			src:           p("Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> if x > 2 then acc + 1 else 0\n"),
+			explainAbsent: "→ Count Matching",
+			extraInputs:   []string{"5\n1\n7\n8"}},
+		{name: "fold idiom inside a Part body is rewritten in place",
+			src: listHeader + "Part \"1\":\n    Maximum Technique: Fold\n        Seed: 0\n" +
+				"        Using: (acc, x) -> acc + x * 2\n    Reveal: stdout\n",
+			explain:     "→ Sum By",
+			extraInputs: []string{"", "4\n5"}},
+		{name: "map then a hand-written counting fold collapses to count",
+			src: p("Cursed Technique: Map Each\n    Using: (x) -> x * 3\n" +
+				"Maximum Technique: Fold\n    Seed: 0\n    Using: (acc, x) -> acc + 1\n"),
+			explain:     "mapping preserves length",
+			extraInputs: []string{""}},
+		// --- a reordering that never reaches the result ---
+		{name: "sort dies across a map into a sum",
+			src: p("Domain Expansion: Quicksort\nCursed Technique: Map Each\n    Using: (x) -> x * x\n" +
+				"Maximum Technique: Sum\n"),
+			explain:     "its ordering never reaches the result",
+			extraInputs: []string{"", "3\n-1\n2"}},
+		{name: "reverse dies across a filter and a map into a max",
+			src: p("Reverse Cursed Technique: Reverse\nCursed Technique: Filter\n    Using: (x) -> x > 0\n" +
+				"Cursed Technique: Map Each\n    Using: (x) -> 100 - x\nMaximum Technique: Max\n"),
+			explain:     "its ordering never reaches the result",
+			extraInputs: []string{"", "-1\n-2", "3\n-1\n2"}}, // empty after the filter: both must error
+		{name: "sort dies before count matching",
+			src:         p("Domain Expansion: Quicksort, Descending\nMaximum Technique: Count Matching\n    Using: (x) -> x > 2\n"),
+			explain:     "its ordering never reaches the result",
+			extraInputs: []string{"", "3\n1\n5"}},
+		{name: "sort dies before any",
+			src:         p("Domain Expansion: Quicksort\nMaximum Technique: Any\n    Using: (x) -> x > 2\n"),
+			explain:     "its ordering never reaches the result",
+			extraInputs: []string{"", "3\n1\n5", "1\n0"}},
+		{name: "sort survives a stage that can fail",
+			// Which element fails first is exactly what the sort decides.
+			src: p("Domain Expansion: Quicksort\nCursed Technique: Map Each\n    Using: (x) -> 10 / x\n" +
+				"Maximum Technique: Sum\n"),
+			explainAbsent: "its ordering never reaches the result",
+			extraInputs:   []string{"5\n0\n2", "5\n1"}},
+		{name: "sort survives before an order-sensitive stage",
+			src: p("Domain Expansion: Quicksort\nCursed Technique: Map Each\n    Using: (x) -> x * 2\n" +
+				"Cursed Technique: Take Item 0\n"),
+			explainAbsent: "its ordering never reaches the result",
+			extraInputs:   []string{"5\n0\n2", ""}},
+		{name: "filter moves ahead of a sort",
+			src:         p("Domain Expansion: Quicksort, Descending\nCursed Technique: Filter\n    Using: (x) -> x % 2 = 0\n"),
+			explain:     "filter first, sort only the survivors",
+			extraInputs: []string{"", "3\n4\n2\n8\n1", "1\n3"}},
+		{name: "a filter that can fail stays behind the sort",
+			src:           p("Domain Expansion: Quicksort\nCursed Technique: Filter\n    Using: (x) -> 10 / x > 1\n"),
+			explainAbsent: "filter first",
+			extraInputs:   []string{"5\n0\n2", "5\n1"}},
+		{name: "sort then filter then first is a selection of the survivors",
+			src: p("Domain Expansion: Quicksort\nCursed Technique: Filter\n    Using: (x) -> x > 2\n" +
+				"Cursed Technique: Take Item 0\n"),
+			explain:     "kth order statistic",
+			extraInputs: []string{"", "1\n2", "9\n4\n3\n1"}},
+		// --- a list built to be measured ---
+		{name: "unique then count is a distinct count",
+			src:         p("Cursed Technique: Unique\nMaximum Technique: Count\n"),
+			explain:     "→ Count Distinct",
+			extraInputs: []string{"", "1\n1\n1", "3\n1\n3\n2"}},
+		{name: "sort unique count cascades to a distinct count",
+			src:         p("Domain Expansion: Quicksort\nCursed Technique: Unique\nMaximum Technique: Count\n"),
+			explain:     "→ Count Distinct",
+			extraInputs: []string{"", "3\n1\n3\n2"}},
+		{name: "a count compared with zero becomes any",
+			src: p("Maximum Technique: Count Matching\n    Using: (x) -> x > 4\n" +
+				"Cursed Technique: Apply\n    Using: (c) -> c > 0\n"),
+			explain:     "(count > 0) → Any",
+			extraInputs: []string{"", "1\n2", "1\n9\n2"}},
+		{name: "filter count at least one becomes any",
+			src: p("Cursed Technique: Filter\n    Using: (x) -> x > 4\nMaximum Technique: Count\n" +
+				"Cursed Technique: Apply\n    Using: (c) -> 1 <= c\n"),
+			explain:     "(count > 0) → Any",
+			extraInputs: []string{"", "1\n2", "1\n9\n2"}},
+		{name: "a count equal to zero becomes all-not",
+			src: p("Maximum Technique: Count Matching\n    Using: (x) -> x > 4\n" +
+				"Cursed Technique: Apply\n    Using: (c) -> c = 0\n"),
+			explain:     "(count = 0) → All",
+			extraInputs: []string{"", "1\n2", "1\n9\n2"}},
+		{name: "a filtered list tested for emptiness becomes any",
+			src: p("Cursed Technique: Filter\n    Using: (x) -> x > 4\n" +
+				"Cursed Technique: Apply\n    Using: (xs) -> length(xs) > 0\n"),
+			explain:     "Filter + Apply (count > 0) → Any",
+			extraInputs: []string{"", "1\n2", "1\n9\n2"}},
+		{name: "a filtered list tested for no survivors becomes all-not",
+			src: p("Cursed Technique: Filter\n    Using: (x) -> x > 4\n" +
+				"Cursed Technique: Apply\n    Using: (xs) -> 0 = length(xs)\n"),
+			explain:     "Filter + Apply (count = 0) → All",
+			extraInputs: []string{"", "1\n2", "1\n9\n2"}},
+		{name: "a count compared with another number keeps counting",
+			src: p("Maximum Technique: Count Matching\n    Using: (x) -> x > 4\n" +
+				"Cursed Technique: Apply\n    Using: (c) -> c > 1\n"),
+			explainAbsent: "→ Any",
+			extraInputs:   []string{"", "9\n8", "1\n9\n2"}},
+		{name: "a count whose predicate can fail keeps counting",
+			// Stopping at the first match would skip the 0 that the count fails on.
+			src: p("Maximum Technique: Count Matching\n    Using: (x) -> 10 / x > 1\n" +
+				"Cursed Technique: Apply\n    Using: (c) -> c > 0\n"),
+			explainAbsent: "→ Any",
+			extraInputs:   []string{"5\n0\n2", "5\n1"}},
+		// --- a whole list mapped to read one element ---
+		{name: "take item moves ahead of a map",
+			src:         p("Cursed Technique: Map Each\n    Using: (x) -> x * x + 1\nCursed Technique: Take Item 1\n"),
+			explain:     "the lambda runs once",
+			extraInputs: []string{"", "4", "4\n-5\n6"}}, // out of range: both must error alike
+		{name: "take item stays behind a map that can fail",
+			src:           p("Cursed Technique: Map Each\n    Using: (x) -> 10 / x\nCursed Technique: Take Item 0\n"),
+			explainAbsent: "the lambda runs once",
+			extraInputs:   []string{"5\n0\n2", "5\n1"}},
+		{name: "membership in a sorted copy is membership",
+			src:         p("Cursed Technique: Apply\n    Using: (xs) -> contains(sort(xs), 3) and contains(unique(xs), 1)\n"),
+			explain:     "cheaper equivalent builtin",
+			extraInputs: []string{"", "3\n1", "1\n2"}},
+		// --- typed expression rules: an element type makes order unobservable ---
+		{name: "sum of a sorted list in a lambda",
+			src:         p("Cursed Technique: Apply\n    Using: (xs) -> sum(sort(xs)) + max(reverse(xs)) - min(sort(xs))\n"),
+			explain:     "cheaper equivalent builtin",
+			extraInputs: []string{"7", "3\n-1\n4", ""}}, // empty: max/min must fail in the same words
+		{name: "first of a sorted list is a guarded minimum",
+			src:         p("Cursed Technique: Apply\n    Using: (xs) -> first(sort(xs)) * 100 + last(sort(xs))\n"),
+			explain:     "cheaper equivalent builtin",
+			extraInputs: []string{"5", "3\n-1\n4", ""}}, // empty: first must fail in its own words
+		{name: "first of a sorted list over floats is left alone",
+			src: listHeader + "Channeled Energy: Convert List to Floats\n" +
+				"Cursed Technique: Apply\n    Using: (xs) -> first(sort(xs))\nReveal: stdout\n",
+			explainAbsent: "cheaper equivalent builtin",
+			extraInputs:   []string{"3\n1"}},
+		{name: "item zero of a sorted list and the ends of a reversed one",
+			src:         p("Cursed Technique: Apply\n    Using: (xs) -> item(sort(xs), 0) * 10000 + first(reverse(xs)) * 100 + last(reverse(xs))\n"),
+			explain:     "cheaper equivalent builtin",
+			extraInputs: []string{"5", "3\n9\n4", ""}},
 		// --- the new primitives run unrewritten through the oracle too ---
 		{name: "sliding reduce matches window plus map",
 			src:         p("Domain Expansion: Sliding Reduce 3\n    Mode: Max\n"),
@@ -347,14 +513,20 @@ func diffCases() []diffCase {
 				"        Using: (y) -> y > 1 and 1 = 1\n    Reveal: stdout\n",
 			explain:     "simplified the Using: lambda",
 			extraInputs: []string{"", "3\n-1\n4"}},
-		{name: "length-changing fusion does not fire inside a Part body",
+		{name: "length-changing fusion fires inside a Part body",
 			src: listHeader + "Part \"1\":\n    Domain Expansion: Quicksort, Descending\n" +
 				"    Maximum Technique: Select Top 2, Sum\n    Reveal: stdout\n",
-			// Nested node lists are captured by their parent's Eval closure, so
-			// re-slicing one would diverge from what the interpreter runs. The
-			// naive pair must therefore survive — and still be correct.
-			explainAbsent: "Cursed Quickselect",
-			extraInputs:   []string{"1", "9\n4\n6\n1\n7"}},
+			// A Part reads its body from Meta at run time, so a fusion that
+			// shortens the list is what both backends run.
+			explain:     "Cursed Quickselect",
+			extraInputs: []string{"1", "9\n4\n6\n1\n7"}},
+		{name: "length-changing passes fire in both Parts and in a loop body",
+			src: listHeader + "Part \"1\":\n    Cursed Technique: Map Each\n        Using: (x) -> x * 2\n" +
+				"    Maximum Technique: Fold\n        Seed: 0\n        Using: (acc, x) -> acc + 1\n    Reveal: stdout\n" +
+				"Part \"2\":\n    Domain Expansion: Quicksort\n    Cursed Technique: Filter\n        Using: (x) -> x > 2\n    Reveal: stdout\n" +
+				"Simple Domain: Repeat 2\n    Domain Expansion: Quicksort\n    Reverse Cursed Technique: Reverse\n",
+			explain:     "filter first",
+			extraInputs: []string{"", "5\n1\n9\n3"}},
 
 		// --- linear accumulators ---
 		// The naive pipeline copies on every update, so it is the oracle for
@@ -466,7 +638,9 @@ func diffCases() []diffCase {
 			src: p("Cursed Technique: Filter\n" +
 				"    Consider all Of Itself\n" +
 				"    Using: (x) -> contains(sort(all), x + 1)\n"),
-			explain: "made `sort(all)` a set"},
+			// The sort is dropped first (membership does not need it), so the
+			// set is built from the list itself.
+			explain: "made `all` a set"},
 		{name: "Scan keeps every accumulator, so it still copies",
 			src: listHeader + "Cursed Technique: Scan\n" +
 				"    Seed: (xs) -> emptyset(0)\n" +

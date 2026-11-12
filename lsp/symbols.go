@@ -219,7 +219,7 @@ func lambdaParams(l *ast.Lambda) []string {
 	if l == nil {
 		return nil
 	}
-	return l.Params
+	return l.BoundNames()
 }
 
 // pick chooses the declaration of name that governs line: the innermost one,

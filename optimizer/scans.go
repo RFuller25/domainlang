@@ -49,7 +49,9 @@ func fuseSortTakeItem(p *ir.Pipeline) []Rewrite {
 					return nil, &ir.RuntimeError{Prim: "QuickselectItem", Pos: pos, Msg: err.Error()}
 				}
 				if idx < 0 || idx >= len(xs) {
-					return nil, &ir.RuntimeError{Prim: "QuickselectItem", Pos: pos,
+					// The failure the naive pair reports is Take Item's, at Take
+					// Item's position.
+					return nil, &ir.RuntimeError{Prim: "Take Item", Pos: b.Pos,
 						Msg: fmt.Sprintf("index %d out of range (length %d)", idx, len(xs))}
 				}
 				return KthOrderStatistic(xs, idx, desc), nil

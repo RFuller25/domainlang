@@ -56,7 +56,11 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	hasUntilNode := untilLam != nil
 	needOrder := mode != "Count" && mode != "Steps" && mode != "Distances"
 	needDepth := mode == "Distances" || hasUntilNode
-	g.wl("%s := map[%s]bool{%s: true}", seen, stateGo, in)
+	hk, keyGo, err := g.exploreKeys(stateT, stateGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.wl("%s := map[%s]bool{%s: true}", seen, keyGo, hk(in))
 	if needOrder {
 		g.wl("%s := []%s{%s}", order, stateGo, in)
 	}
@@ -72,8 +76,11 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	g.wl("_ = %s", steps)
 	needDist := mode == "Distances"
 	if needDist {
-		g.helper("dmMap", declMap)
-		g.wl("%s := dmNewMap[%s, int64]()", dist, stateGo)
+		de, err := g.newMapExpr(stateT, stateGo, "int64", "")
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		g.wl("%s := %s", dist, de)
 		g.wl("%s.put(%s, 0)", dist, in)
 	}
 
@@ -106,7 +113,7 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	// One probe: inserting an existing key leaves the size alone.
 	sz := g.fresh("sz")
 	g.wl("%s := len(%s)", sz, seen)
-	g.wl("%s[%s] = true", seen, nxt)
+	g.wl("%s[%s] = true", seen, hk(nxt))
 	g.wl("if len(%s) == %s { continue }", seen, sz)
 	if needOrder {
 		g.wl("%s = append(%s, %s)", order, order, nxt)
@@ -154,6 +161,22 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	return order, nil
 }
 
+// exploreKeys returns how the search keys its state-keyed maps: hk wraps a Go
+// expression of the state type into the map key (the state itself when Go can
+// compare it, its injective byte encoding when it holds a List), and keyGo is
+// that key's Go type.
+func (g *gen) exploreKeys(stateT *ir.Type, stateGo string) (hk func(string) string, keyGo string, err error) {
+	_, keyGo, err = g.hashKey(stateT, "x", stateGo)
+	if err != nil {
+		return nil, "", err
+	}
+	hk = func(v string) string {
+		k, _, _ := g.hashKey(stateT, v, stateGo)
+		return k
+	}
+	return hk, keyGo, nil
+}
+
 // exploreUntil compiles the Until: predicate against the given state
 // expression. It returns ok=false when the node has no Until:.
 func (g *gen) exploreUntil(n *ir.Node, state string, stateT *ir.Type) (bool, string, error) {
@@ -189,9 +212,13 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 	nxt, w, nc, prev, ok := g.fresh("nx"), g.fresh("w"), g.fresh("nc"), g.fresh("prev"), g.fresh("ok")
 	done := g.fresh("done")
 
+	hk, keyGo, err := g.exploreKeys(stateT, stateGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.helper("dmPQ", declPQ)
-	g.wl("%s := map[%s]bool{}", settled, stateGo)
-	g.wl("%s := map[%s]int64{%s: 0}", best, stateGo, in)
+	g.wl("%s := map[%s]bool{}", settled, keyGo)
+	g.wl("%s := map[%s]int64{%s: 0}", best, keyGo, hk(in))
 	g.wl("var %s dmPQ[%s]", q, stateGo)
 	g.wl("%s.push(%s, 0)", q, in)
 	needCosts := mode == "Costs"
@@ -200,16 +227,19 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 		g.wl("%s := int64(-1)", out)
 	}
 	if needCosts {
-		g.helper("dmMap", declMap)
-		g.wl("%s := dmNewMap[%s, int64]()", costs, stateGo)
+		ce, err := g.newMapExpr(stateT, stateGo, "int64", "")
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		g.wl("%s := %s", costs, ce)
 	}
 	g.wl("%s := false", done)
 	g.wl("for !%s {", done)
 	g.in()
 	g.wl("%s, %s, %s := %s.pop()", cur, c, ok, q)
 	g.wl("if !%s { break }", ok)
-	g.wl("if %s[%s] { continue }", settled, cur)
-	g.wl("%s[%s] = true", settled, cur)
+	g.wl("if %s[%s] { continue }", settled, hk(cur))
+	g.wl("%s[%s] = true", settled, hk(cur))
 	if needCosts {
 		g.wl("%s.put(%s, %s)", costs, cur, c)
 	}
@@ -233,7 +263,7 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 	}
 	g.wl("for _, %s := range %s {", nxt, succ)
 	g.in()
-	g.wl("if %s[%s] { continue }", settled, nxt)
+	g.wl("if %s[%s] { continue }", settled, hk(nxt))
 	cost, err := g.exploreCost(n, cur, nxt, stateT)
 	if err != nil {
 		return "", err
@@ -248,8 +278,8 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 	g.out()
 	g.wl("}")
 	g.wl("%s := %s + %s", nc, c, w)
-	g.wl("if %s, %s := %s[%s]; %s && %s <= %s { continue }", prev, ok, best, nxt, ok, prev, nc)
-	g.wl("%s[%s] = %s", best, nxt, nc)
+	g.wl("if %s, %s := %s[%s]; %s && %s <= %s { continue }", prev, ok, best, hk(nxt), ok, prev, nc)
+	g.wl("%s[%s] = %s", best, hk(nxt), nc)
 	g.wl("%s.push(%s, %s)", q, nxt, nc)
 	g.out()
 	g.wl("}")
@@ -333,9 +363,13 @@ func (g *gen) emitExploreTally(n *ir.Node, in string, lam *ast.Lambda,
 		return "", unsupported(n, "%v", err)
 	}
 	g.wl("type %s struct { v %s; expanded bool }", frame, stateGo)
-	g.wl("%s := map[%s]%s{}", memo, stateGo, valGo)
-	g.wl("%s := map[%s][]%s{}", kids, stateGo, stateGo)
-	g.wl("%s := map[%s]bool{}", onStack, stateGo)
+	hk, keyGo, err := g.exploreKeys(stateT, stateGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.wl("%s := map[%s]%s{}", memo, keyGo, valGo)
+	g.wl("%s := map[%s][]%s{}", kids, keyGo, stateGo)
+	g.wl("%s := map[%s]bool{}", onStack, keyGo)
 	g.wl("%s := []%s{{v: %s}}", stack, frame, in)
 	g.wl("for len(%s) > 0 {", stack)
 	g.in()
@@ -343,14 +377,14 @@ func (g *gen) emitExploreTally(n *ir.Node, in string, lam *ast.Lambda,
 	g.wl("%s := %s.v", cur, f)
 	g.wl("if !%s.expanded {", f)
 	g.in()
-	g.wl("if _, %s := %s[%s]; %s { %s = %s[:len(%s)-1]; continue }", ok, memo, cur, ok, stack, stack, stack)
-	g.wl("if %s[%s] {", onStack, cur)
+	g.wl("if _, %s := %s[%s]; %s { %s = %s[:len(%s)-1]; continue }", ok, memo, hk(cur), ok, stack, stack, stack)
+	g.wl("if %s[%s] {", onStack, hk(cur))
 	g.in()
 	g.wl(`dmFail("Mode: Tally needs an acyclic search, but %%s is reachable from itself", %s)`,
 		stateFmt)
 	g.out()
 	g.wl("}")
-	g.wl("%s[%s] = true", onStack, cur)
+	g.wl("%s[%s] = true", onStack, hk(cur))
 	g.wl("%s[len(%s)-1].expanded = true", stack, stack)
 	// Until: marks a leaf: a satisfying state is never expanded, so it
 	// contributes its Value: and stops.
@@ -364,7 +398,7 @@ func (g *gen) emitExploreTally(n *ir.Node, in string, lam *ast.Lambda,
 	} else {
 		g.wl("%s = %s", k, succ)
 	}
-	g.wl("%s[%s] = %s", kids, cur, k)
+	g.wl("%s[%s] = %s", kids, hk(cur), k)
 	g.wl("for %s := len(%s) - 1; %s >= 0; %s-- {", i, k, i, i)
 	g.in()
 	g.wl("%s = append(%s, %s{v: %s[%s]})", stack, stack, frame, k, i)
@@ -374,26 +408,26 @@ func (g *gen) emitExploreTally(n *ir.Node, in string, lam *ast.Lambda,
 	g.out()
 	g.wl("}")
 	g.wl("%s = %s[:len(%s)-1]", stack, stack, stack)
-	g.wl("%s[%s] = false", onStack, cur)
-	g.wl("if _, %s := %s[%s]; %s { continue }", ok, memo, cur, ok)
-	g.wl("%s := %s[%s]", k, kids, cur)
+	g.wl("%s[%s] = false", onStack, hk(cur))
+	g.wl("if _, %s := %s[%s]; %s { continue }", ok, memo, hk(cur), ok)
+	g.wl("%s := %s[%s]", k, kids, hk(cur))
 	g.wl("if len(%s) == 0 {", k)
 	g.in()
-	g.wl("%s[%s] = %s", memo, cur, valExpr)
+	g.wl("%s[%s] = %s", memo, hk(cur), valExpr)
 	g.wl("continue")
 	g.out()
 	g.wl("}")
-	g.wl("%s := %s[%s[0]]", acc, memo, k)
+	g.wl("%s := %s[%s]", acc, memo, hk(k+"[0]"))
 	g.wl("for _, %s := range %s[1:] {", i, k)
 	g.in()
-	g.wl("%s := %s[%s]", other, memo, i)
+	g.wl("%s := %s[%s]", other, memo, hk(i))
 	g.wl("%s = %s", acc, combExpr)
 	g.out()
 	g.wl("}")
-	g.wl("%s[%s] = %s", memo, cur, acc)
+	g.wl("%s[%s] = %s", memo, hk(cur), acc)
 	g.out()
 	g.wl("}")
 	v := g.fresh("v")
-	g.wl("%s := %s[%s]", v, memo, in)
+	g.wl("%s := %s[%s]", v, memo, hk(in))
 	return v, nil
 }

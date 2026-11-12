@@ -210,6 +210,85 @@ Reveal: stdout
 		explain: "Domain made 1 accumulator update(s) in Fold write in place — the copy was never read.",
 	},
 	{
+		name: "a fold that counts conditionally",
+		program: `Cursed Energy: stdin
+Shikigami: Ints
+Maximum Technique: Fold
+    Seed: 0
+    Using: (acc, x) -> if x > 2 then acc + 1 else acc
+Reveal: stdout
+`,
+		input:   "1\n5\n3",
+		output:  "2",
+		explain: "Domain rewrote Fold (Seed: 0, a conditional count) → Count Matching. Guaranteed hit.",
+	},
+	{
+		name: "a sort whose order never reaches the sum",
+		program: `Cursed Energy: stdin
+Shikigami: Ints
+Domain Expansion: Quicksort
+Cursed Technique: Map Each
+    Using: (x) -> x * x
+Maximum Technique: Sum
+Reveal: stdout
+`,
+		input:   "3\n1\n2",
+		output:  "14",
+		explain: "Domain rewrote Sort + Map Each + Sum → Map Each + Sum (every stage after the Sort works one element at a time, so its ordering never reaches the result). Guaranteed hit.",
+	},
+	{
+		name: "a filter moved ahead of a sort",
+		program: `Cursed Energy: stdin
+Shikigami: Ints
+Domain Expansion: Quicksort
+Cursed Technique: Filter
+    Using: (x) -> x > 1
+Reveal: stdout
+`,
+		input:   "3\n1\n2",
+		output:  "[2, 3]",
+		explain: "Domain rewrote Quicksort + Filter → Filter + Quicksort (filter first, sort only the survivors). Guaranteed hit.",
+	},
+	{
+		name: "a distinct count",
+		program: `Cursed Energy: stdin
+Shikigami: Ints
+Cursed Technique: Unique
+Maximum Technique: Count
+Reveal: stdout
+`,
+		input:   "3\n1\n3",
+		output:  "2",
+		explain: "Domain rewrote Unique + Count → Count Distinct (the set is counted, the deduplicated list never built). Guaranteed hit.",
+	},
+	{
+		name: "a count compared with zero",
+		program: `Cursed Energy: stdin
+Shikigami: Ints
+Maximum Technique: Count Matching
+    Using: (x) -> x > 2
+Cursed Technique: Apply
+    Using: (c) -> c > 0
+Reveal: stdout
+`,
+		input:   "3\n1\n3",
+		output:  "true",
+		explain: "Domain rewrote Count Matching + Apply (count > 0) → Any (stops at the first match instead of counting them all). Guaranteed hit.",
+	},
+	{
+		name: "one element of a mapped list",
+		program: `Cursed Energy: stdin
+Shikigami: Ints
+Cursed Technique: Map Each
+    Using: (x) -> x * x
+Cursed Technique: Take Item 2
+Reveal: stdout
+`,
+		input:   "3\n1\n4",
+		output:  "16",
+		explain: "Domain rewrote Map Each + Take Item 2 → Take Item 2 + Apply (the lambda runs once, on the element that is kept). Guaranteed hit.",
+	},
+	{
 		name: "a loop state written through",
 		program: `Cursed Energy: stdin
 Shikigami: Ints
@@ -222,6 +301,155 @@ Reveal: stdout
 		input:   "1\n2\n3",
 		output:  "[5, 2, 3]",
 		explain: "Domain made 1 state update(s) in While write in place — the copy was never read.",
+	},
+	{
+		name: "window 2 read at its ends",
+		program: `Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Window 2
+Maximum Technique: Count Matching
+    Using: (w) -> first(w) < last(w)
+Reveal: stdout
+`,
+		input:   "199 200 208 210 200 207",
+		output:  "4",
+		explain: "Domain rewrote Window 2 + Count Matching → Pairs + Count Matching (each window was only read at its two ends; a pair is a tuple, not a list). Guaranteed hit.",
+	},
+	{
+		name: "window 3 read by position",
+		program: `Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Window 3
+Cursed Technique: Map Each
+    Using: (w) -> if first(w) = last(w) then first(w) else 0
+Reveal: stdout
+`,
+		input:   "1 2 1 5 5 5",
+		output:  "[1, 0, 0, 5]",
+		explain: "Domain rewrote Window 3 + Map Each → Window Positions + Map Each (each window is read only at position 0, position 2, so those elements are read straight from the list instead of every window being copied). Guaranteed hit.",
+	},
+	{
+		name: "duplicate found by sorting",
+		program: `Cursed Energy: stdin
+Cursed Technique: Split Text by " "
+Domain Expansion: Sort
+Cursed Technique: Window 2
+Maximum Technique: Any
+    Using: (a) -> first(a) = last(a)
+Reveal: stdout
+`,
+		input:   "aa bb cc dd aa",
+		output:  "true",
+		explain: "Domain rewrote Sort + Window 2 + Any (neighbours equal) → one hash pass (a duplicate check needs a set, not an ordering). Guaranteed hit.",
+	},
+	{
+		name: "duplicate found by comparing every pair",
+		program: `Cursed Energy: stdin
+Cursed Technique: Split Text by " "
+Domain Expansion: All Pairs
+    Mode: Map
+    Using: (a, b) -> if a = b then 0 else 1
+Maximum Technique: Any
+    Using: (x) -> x = 0
+Reveal: stdout
+`,
+		input:   "aa bb cc dd ee",
+		output:  "false",
+		explain: "Domain rewrote All Pairs (a = b) + Any → one hash pass (a duplicate check needs a set, not every pair). Guaranteed hit.",
+	},
+	{
+		name: "a bool summed as a number",
+		program: `Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Maximum Technique: Sum By
+    Using: (x) -> if x > 2 then 0 else 1
+Reveal: stdout
+`,
+		input:   "1 2 3 4 5",
+		output:  "2",
+		explain: "Domain rewrote Sum By (if … then 1 else 0) → Count Matching (a Bool was being turned into a number to be summed). Guaranteed hit.",
+	},
+	{
+		name: "empty lists filtered out of a flatten",
+		program: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Filter
+    Using: (xs) -> length(xs) > 0
+Cursed Technique: Flatten
+Reveal: stdout
+`,
+		input:   "1 2\n\n3",
+		output:  "[1, 2, 3]",
+		explain: "Domain rewrote Filter (non-empty) + Flatten → Flatten (an empty list adds nothing to a concatenation). Guaranteed hit.",
+	},
+	{
+		name: "a trajectory iterated long enough to be sure",
+		program: `Cursed Energy: stdin
+Cursed Technique: Apply
+    Using: (t) -> toint(t)
+Cursed Technique: Iterate 50000
+    Using: (x) -> mod(x * 3, 7)
+Maximum Technique: Find Cycle
+Reveal: stdout
+`,
+		input:   "1",
+		output:  "[0, 6]",
+		explain: "Domain rewrote Iterate 50000 + Find Cycle → an Iterate that stops at its first repeated state (everything after a repeat is a copy of what came before). Guaranteed hit.",
+	},
+	{
+		name: "a body joined to the stage after it",
+		program: `Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Reverse Cursed Technique: Reverse
+Maximum Technique: Sum By
+    Using: (ys) -> sum(take(ys, 1))
+Reveal: stdout
+`,
+		input:   "1 2\n3 4",
+		output:  "6",
+		explain: "Domain rewrote Map Each + Sum By → one Sum By over the joined bodies (one loop; the first body cannot fail, so no failure moves). Guaranteed hit.",
+	},
+	{
+		name: "a whole-list builtin named as its primitive",
+		program: `Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Apply
+    Using: (x) -> sort(x)
+Reveal: stdout
+`,
+		input:   "3 1 2",
+		output:  "[1, 2, 3]",
+		explain: "Domain rewrote Apply (sort) → Sort (a whole-list builtin, spelled as the primitive so the passes that know it can see it). Guaranteed hit.",
+	},
+	{
+		name: "a take pushed in front of a map",
+		program: `Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Using: (x) -> x * x
+Cursed Technique: Apply
+    Using: (x) -> take(x, 3)
+Reveal: stdout
+`,
+		input:   "1 2 3 4 5",
+		output:  "[1, 4, 9]",
+		explain: "Domain rewrote Map Each + Apply (take 3) → Apply (take 3) + Map Each (the lambda runs on the elements kept, not on all of them). Guaranteed hit.",
+	},
+	{
+		name: "a take pushed in front of a window",
+		program: `Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Window 3
+Cursed Technique: Apply
+    Using: (x) -> take(x, 2)
+Reveal: stdout
+`,
+		input:   "1 2 3 4 5",
+		output:  "[[1, 2, 3], [2, 3, 4]]",
+		explain: "Domain rewrote Window + Apply (take 2) → Apply (take 4) + Window (only the windows that are kept get built). Guaranteed hit.",
 	},
 }
 

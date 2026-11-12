@@ -28,13 +28,15 @@ func (g *gen) emitGroupBy(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmMap", declMap)
-	g.helper("dmAppend", declMapAppend)
-	g.wl("%s := dmNewMap[%s, %s]()", m, keyGo, valGo)
+	g.chelper(n.Out.Key, "dmMap", declMap)
+	g.chelper(n.Out.Key, "dmAppend", declMapAppend)
+	if err := g.wnewMap(m, n.Out.Key, keyGo, valGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.wl("%s := %s", k, body)
-	g.wl("dmAppend(&%s, %s, %s)", m, k, e)
+	g.wl("%s(&%s, %s, %s)", cname(n.Out.Key, "dmAppend"), m, k, e)
 	g.out()
 	g.wl("}")
 	return m, nil
@@ -135,8 +137,9 @@ func (g *gen) emitSetReduce(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	acc := g.fresh("acc")
-	g.helper("dmSet", declSet)
-	g.wl("%s := dmNewSet[%s]()", acc, elemGo)
+	if err := g.wnewSet(acc, n.Out.Elem, elemGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("if len(%s) > 0 {", in)
 	g.in()
 	e0 := g.fresh("e")
@@ -152,14 +155,18 @@ func (g *gen) emitSetReduce(n *ir.Node, in string) (string, error) {
 		// Intersect needs per-group membership: build the group's set, then keep
 		// only accumulator elements present in it.
 		s, e1 := g.fresh("s"), g.fresh("e")
-		g.wl("%s := dmNewSet[%s]()", s, elemGo)
+		if err := g.wnewSet(s, n.Out.Elem, elemGo); err != nil {
+			return "", unsupported(n, "%v", err)
+		}
 		g.wl("for _, %s := range %s {", e1, grp)
 		g.in()
 		g.wl("%s.add(%s)", s, e1)
 		g.out()
 		g.wl("}")
 		e2, next := g.fresh("e"), g.fresh("next")
-		g.wl("%s := dmNewSet[%s]()", next, elemGo)
+		if err := g.wnewSet(next, n.Out.Elem, elemGo); err != nil {
+			return "", unsupported(n, "%v", err)
+		}
 		g.wl("for _, %s := range %s.elems {", e2, acc)
 		g.in()
 		g.wl("if %s.contains(%s) {", s, e2)
@@ -199,17 +206,19 @@ func (g *gen) emitDifference(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmSet", declSet)
-	sa, err := g.channelAsSet(n, froms[0], elemGo)
+	g.chelper(n.Out.Elem, "dmSet", declSet)
+	sa, err := g.channelAsSet(n, froms[0], elemGo, n.Out.Elem)
 	if err != nil {
 		return "", err
 	}
-	sb, err := g.channelAsSet(n, froms[1], elemGo)
+	sb, err := g.channelAsSet(n, froms[1], elemGo, n.Out.Elem)
 	if err != nil {
 		return "", err
 	}
 	v, e := g.fresh("v"), g.fresh("e")
-	g.wl("%s := dmNewSet[%s]()", v, elemGo)
+	if err := g.wnewSet(v, n.Out.Elem, elemGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("for _, %s := range %s.elems {", e, sa)
 	g.in()
 	g.wl("if !%s.contains(%s) {", sb, e)
@@ -224,7 +233,7 @@ func (g *gen) emitDifference(n *ir.Node, in string) (string, error) {
 
 // channelAsSet returns a dmSet variable for a channel, converting a List
 // channel via insertion-order dedup (ir.SetFromList's semantics).
-func (g *gen) channelAsSet(n *ir.Node, name, elemGo string) (string, error) {
+func (g *gen) channelAsSet(n *ir.Node, name, elemGo string, elemT *ir.Type) (string, error) {
 	cv, ok := g.chans[name]
 	if !ok {
 		return "", unsupported(n, "channel %q was not compiled", name)
@@ -234,7 +243,9 @@ func (g *gen) channelAsSet(n *ir.Node, name, elemGo string) (string, error) {
 		return cv.v, nil
 	case ir.KList:
 		s, e := g.fresh("s"), g.fresh("e")
-		g.wl("%s := dmNewSet[%s]()", s, elemGo)
+		if err := g.wnewSet(s, elemT, elemGo); err != nil {
+			return "", unsupported(n, "%v", err)
+		}
 		g.wl("for _, %s := range %s {", e, cv.v)
 		g.in()
 		g.wl("%s.add(%s)", s, e)

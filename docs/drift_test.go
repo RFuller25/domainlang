@@ -262,12 +262,14 @@ func TestPassCatalogNumberingIsConsistent(t *testing.T) {
 		28: "Twenty-eight", 29: "Twenty-nine", 30: "Thirty", 31: "Thirty-one",
 		32: "Thirty-two", 33: "Thirty-three", 34: "Thirty-four", 35: "Thirty-five",
 		36: "Thirty-six", 37: "Thirty-seven", 38: "Thirty-eight", 39: "Thirty-nine", 40: "Forty",
+		41: "Forty-one", 42: "Forty-two", 43: "Forty-three", 44: "Forty-four", 45: "Forty-five",
+		46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight", 49: "Forty-nine", 50: "Fifty",
 	}
 	families, ok := names[last-1]
 	if !ok {
-		t.Fatalf("%d passes in the four families — extend the number-word table", last-1)
+		t.Fatalf("%d passes in the five families — extend the number-word table", last-1)
 	}
-	if want := families + " passes in four families, plus one that runs after the rest."; !strings.Contains(catalog, want) {
+	if want := families + " passes in five families, plus one that runs after the rest."; !strings.Contains(catalog, want) {
 		t.Errorf("optimizer.md no longer opens the catalog with %q", want)
 	}
 

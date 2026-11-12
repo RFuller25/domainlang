@@ -53,14 +53,18 @@ func (g *gen) graphBuildFn(gt, edgeT *ir.Type) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.helper("dmGraph", declGraph)
+	g.chelper(gt.Elem, "dmGraph", declGraph)
+	newG, err := g.newGraphExpr(gt.Elem, nodeGo)
+	if err != nil {
+		return "", err
+	}
 
 	key := "graphbuild:" + canonicalKey(edgeT)
 	return g.listFn(key, "GraphOf", func(name string) (string, error) {
 		if edgeT.Elem.Kind == ir.KList {
 			g.helper("dmFail", declFail, "fmt", "os")
 			return fmt.Sprintf(`func %s(es %s) %s {
-	out := dmNewGraph[%s]()
+	out := %s
 	for i, e := range es {
 		if len(e) != 2 && len(e) != 3 {
 			dmFail("graph: edge %%d has %%d parts, want 2 (from, to) or 3 (from, to, weight)", i, len(e))
@@ -68,7 +72,7 @@ func (g *gen) graphBuildFn(gt, edgeT *ir.Type) (string, error) {
 		out.addEdge(e[0], e[1], 1)
 	}
 	return out
-}`, name, edgeGo, graphGo, nodeGo), nil
+}`, name, edgeGo, graphGo, newG), nil
 		}
 		// A tuple edge: its arity is static, so the weight is decided here.
 		w := "1"
@@ -76,12 +80,12 @@ func (g *gen) graphBuildFn(gt, edgeT *ir.Type) (string, error) {
 			w = "e." + tupleField(2)
 		}
 		return fmt.Sprintf(`func %s(es %s) %s {
-	out := dmNewGraph[%s]()
+	out := %s
 	for _, e := range es {
 		out.addEdge(e.%s, e.%s, %s)
 	}
 	return out
-}`, name, edgeGo, graphGo, nodeGo, tupleField(0), tupleField(1), w), nil
+}`, name, edgeGo, graphGo, newG, tupleField(0), tupleField(1), w), nil
 	})
 }
 
@@ -98,7 +102,7 @@ func (g *gen) graphEdgesFn(gt *ir.Type) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.helper("dmGraph", declGraph)
+	g.chelper(gt.Elem, "dmGraph", declGraph)
 
 	return g.listFn("graphedges:"+canonicalKey(gt), "GraphEdges", func(name string) (string, error) {
 		return fmt.Sprintf(`func %s(g %s) []%s {
@@ -131,11 +135,11 @@ func (g *gen) graphEdgesOfFn(gt *ir.Type) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.helper("dmGraph", declGraph)
+	g.chelper(gt.Elem, "dmGraph", declGraph)
 
 	return g.listFn("graphedgesof:"+canonicalKey(gt), "GraphEdgesOf", func(name string) (string, error) {
 		return fmt.Sprintf(`func %s(g %s, n %s) []%s {
-	i, ok := g.index[n]
+	i, ok := %s
 	if !ok {
 		return []%s{}
 	}
@@ -144,7 +148,7 @@ func (g *gen) graphEdgesOfFn(gt *ir.Type) (string, error) {
 		out[k] = %s{%s: g.nodes[e.to], %s: e.w}
 	}
 	return out
-}`, name, graphGo, nodeGo, pairGo, pairGo, pairGo, pairGo,
+}`, name, graphGo, nodeGo, pairGo, nodeIndex(gt.Elem, "g", "n"), pairGo, pairGo, pairGo,
 			tupleField(0), tupleField(1)), nil
 	})
 }
@@ -161,9 +165,12 @@ func (g *gen) emitConvertToGraph(n *ir.Node, in string) (string, error) {
 	weighted, _ := n.Meta["weighted"].(bool)
 	fromMap, _ := n.Meta["fromMap"].(bool)
 
-	g.helper("dmGraph", declGraph)
 	out, e := g.fresh("gr"), g.fresh("e")
-	g.wl("%s := dmNewGraph[%s]()", out, nodeGo)
+	newG, err := g.newGraphExpr(n.Out.Elem, nodeGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.wl("%s := %s", out, newG)
 
 	// add emits one arc, plus its reverse when the mode asked for it. Both go
 	// through addEdge, which brings the endpoints in — so an isolated node can
@@ -177,7 +184,7 @@ func (g *gen) emitConvertToGraph(n *ir.Node, in string) (string, error) {
 
 	switch {
 	case fromMap:
-		g.helper("dmMap", declMap)
+		g.chelper(n.Out.Elem, "dmMap", declMap)
 		k, s, ix := g.fresh("k"), g.fresh("s"), g.fresh("i")
 		g.wl("for %s, %s := range %s.keys {", ix, k, in)
 		g.in()
@@ -225,7 +232,7 @@ func (g *gen) emitConvertToEdges(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmGraph", declGraph)
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	out, i, arcs, e := g.fresh("es"), g.fresh("i"), g.fresh("arcs"), g.fresh("e")
 	g.wl("%s := make([]%s, 0, len(%s.edges))", out, tripleGo, in)
 	g.wl("for %s, %s := range %s.adj {", i, arcs, in)
@@ -256,7 +263,7 @@ func (g *gen) graphSearchStart(n *ir.Node, in, prim, role, key string) (string, 
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
 	idx, ok := g.fresh("st"), g.fresh("ok")
-	g.wl("%s, %s := %s.index[%s]", idx, ok, in, val)
+	g.wl("%s, %s := %s", idx, ok, nodeIndex(n.In.Elem, in, val))
 	g.wl("if !%s {", ok)
 	g.in()
 	g.wl(`dmFail("%s: %s: %%v is not a node of the graph", %s)`, prim, role, val)
@@ -298,11 +305,12 @@ func (g *gen) emitGraphBFS(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.helper("dmGraph", declGraph)
-	g.helper("dmMap", declMap)
-	g.helper("dmGraphBFS", declGraphBFS)
+	nt := n.Out.Key
+	g.chelper(nt, "dmGraph", declGraph)
+	g.chelper(nt, "dmMap", declMap)
+	fn := g.chelper(nt, "dmGraphBFS", declGraphBFS)
 	v := g.fresh("d")
-	g.wl("%s := dmGraphBFS[%s](%s, %s)", v, nodeGo, in, start)
+	g.wl("%s := %s[%s](%s, %s)", v, fn, nodeGo, in, start)
 	return v, nil
 }
 
@@ -316,13 +324,14 @@ func (g *gen) emitGraphDijkstra(n *ir.Node, in string) (string, error) {
 		return "", err
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmGraph", declGraph)
-	g.helper("dmMap", declMap)
+	nt := n.Out.Key
+	g.chelper(nt, "dmGraph", declGraph)
+	g.chelper(nt, "dmMap", declMap)
 	g.helper("dmPQ", declPQ)
-	g.helper("dmGraphNoNeg", declGraphNoNeg)
-	g.helper("dmGraphDijkstra", declGraphDijkstra)
+	g.chelper(nt, "dmGraphNoNeg", declGraphNoNeg)
+	fn := g.chelper(nt, "dmGraphDijkstra", declGraphDijkstra)
 	v := g.fresh("d")
-	g.wl("%s := dmGraphDijkstra[%s](%s, %s)", v, nodeGo, in, start)
+	g.wl("%s := %s[%s](%s, %s)", v, fn, nodeGo, in, start)
 	return v, nil
 }
 
@@ -331,10 +340,10 @@ func (g *gen) emitGraphComponents(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmGraph", declGraph)
-	g.helper("dmGraphComponents", declGraphComponents)
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
+	fn := g.chelper(n.In.Elem, "dmGraphComponents", declGraphComponents)
 	v := g.fresh("c")
-	g.wl("%s := dmGraphComponents[%s](%s)", v, nodeGo, in)
+	g.wl("%s := %s[%s](%s)", v, fn, nodeGo, in)
 	return v, nil
 }
 
@@ -344,28 +353,28 @@ func (g *gen) emitGraphComponents(n *ir.Node, in string) (string, error) {
 
 func (g *gen) emitGraphRoot(n *ir.Node, in string) (string, error) {
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmGraph", declGraph)
-	g.helper("dmGraphRoot", declGraphRoot, "fmt")
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
+	fn := g.chelper(n.In.Elem, "dmGraphRoot", declGraphRoot, "fmt")
 	v := g.fresh("rt")
 	// The builtin and the stage say the same three things; the message prefix
 	// is the builtin's, which is the name a reader is likelier to have met.
-	g.wl("%s := dmGraphRoot(%s)", v, in)
+	g.wl("%s := %s(%s)", v, fn, in)
 	return v, nil
 }
 
 func (g *gen) emitMinimumSpanningTree(n *ir.Node, in string) (string, error) {
-	g.helper("dmGraph", declGraph)
-	g.helper("dmGraphMST", declGraphMST, "sort")
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
+	fn := g.chelper(n.In.Elem, "dmGraphMST", declGraphMST, "sort")
 	v := g.fresh("mst")
-	g.wl("%s := dmGraphMST(%s)", v, in)
+	g.wl("%s := %s(%s)", v, fn, in)
 	return v, nil
 }
 
 func (g *gen) emitStronglyConnectedComponents(n *ir.Node, in string) (string, error) {
-	g.helper("dmGraph", declGraph)
-	g.helper("dmGraphSCC", declGraphSCC, "sort")
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
+	fn := g.chelper(n.In.Elem, "dmGraphSCC", declGraphSCC, "sort")
 	v := g.fresh("scc")
-	g.wl("%s := dmGraphSCC(%s)", v, in)
+	g.wl("%s := %s(%s)", v, fn, in)
 	return v, nil
 }
 
@@ -377,10 +386,13 @@ func (g *gen) emitConvertToAdjacency(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmGraph", declGraph)
-	g.helper("dmMap", declMap)
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	out, i, succ, e := g.fresh("adj"), g.fresh("i"), g.fresh("succ"), g.fresh("e")
-	g.wl("%s := dmNewMap[%s, []%s]()", out, nodeGo, nodeGo)
+	newM, err := g.newMapExpr(n.In.Elem, nodeGo, "[]"+nodeGo, "")
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.wl("%s := %s", out, newM)
 	g.wl("for %s := range %s.nodes {", i, in)
 	g.in()
 	g.wl("%s := make([]%s, 0, len(%s.adj[%s]))", succ, nodeGo, in, i)
@@ -409,12 +421,12 @@ func (g *gen) emitShortestPath(n *ir.Node, in string) (string, error) {
 		return "", err
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmGraph", declGraph)
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	g.helper("dmPQ", declPQ)
-	g.helper("dmGraphNoNeg", declGraphNoNeg)
-	g.helper("dmGraphPath", declGraphPath)
+	g.chelper(n.In.Elem, "dmGraphNoNeg", declGraphNoNeg)
+	fn := g.chelper(n.In.Elem, "dmGraphPath", declGraphPath)
 	v := g.fresh("p")
-	g.wl("%s := dmGraphPath[%s](%s, %s, %s)", v, nodeGo, in, start, goal)
+	g.wl("%s := %s[%s](%s, %s, %s)", v, fn, nodeGo, in, start, goal)
 	return v, nil
 }
 
@@ -458,8 +470,8 @@ func (g *gen) emitAccumulateUp(n *ir.Node, in string) (string, error) {
 	}
 
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmGraph", declGraph)
-	g.helper("dmMap", declMap)
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
+	g.chelper(n.In.Elem, "dmMap", declMap)
 
 	out, parents, outst, queue := g.fresh("up"), g.fresh("par"), g.fresh("out"), g.fresh("q")
 	totals, i, e, cur, p, v := g.fresh("tot"), g.fresh("i"), g.fresh("e"), g.fresh("cur"),
@@ -533,7 +545,11 @@ func (g *gen) emitAccumulateUp(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 
-	g.wl("%s := dmNewMap[%s, int64]()", out, nodeGo)
+	newM, err := g.newMapExpr(n.In.Elem, nodeGo, "int64", "")
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.wl("%s := %s", out, newM)
 	g.wl("for %s := range %s.nodes {", i, in)
 	g.in()
 	g.wl("%s.put(%s.nodes[%s], %s[%s])", out, in, i, totals, i)

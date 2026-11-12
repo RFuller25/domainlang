@@ -76,7 +76,7 @@ func TestCollectionBuiltinTypeErrors(t *testing.T) {
 		params []*ir.Type
 		sub    string
 	}{
-		{"(xs) -> toset(xs)", []*ir.Type{ir.List(ir.List(ir.Int()))}, "keyable"},
+		{"(xs) -> toset(xs)", []*ir.Type{ir.List(ir.List(ir.Float()))}, "keyable"},
 		{"(xs) -> tomap(xs)", []*ir.Type{ir.List(ir.Int())}, "(key, value) pairs"},
 		{"(s) -> insert(s, \"x\")", []*ir.Type{ir.Set(ir.Int())}, "insert value must be Int"},
 		{"(a, b) -> union(a, b)", []*ir.Type{ir.Set(ir.Int()), ir.Set(ir.Text())}, "same type"},

@@ -235,7 +235,7 @@ func (h *hoister) collect(slot *ast.Expr, varying map[string]bool, env typecheck
 	// List as a Set.
 	if c, ok := e.(*ast.CallExpr); ok && builtinName(c) == "contains" && len(c.Args) == 2 &&
 		h.invariant(c.Args[0], varying) && !h.invariant(c.Args[1], varying) {
-		if t, err := typecheck.ExprType(c.Args[0], env); err == nil && t != nil && t.Kind == ir.KList && ir.Keyable(t.Elem) {
+		if t, err := typecheck.ExprType(c.Args[0], env); err == nil && t != nil && t.Kind == ir.KList && ir.ListKeyable(t.Elem) {
 			inv := h.candidate(&c.Args[0], env)
 			inv.set, inv.typ = true, ir.Set(t.Elem)
 			*out = append(*out, inv)

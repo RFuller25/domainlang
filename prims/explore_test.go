@@ -113,12 +113,13 @@ func TestExploreOverTupleStates(t *testing.T) {
 
 func TestExploreRejectsUnkeyableState(t *testing.T) {
 	src := "Cursed Energy: stdin\n" +
-		"Shikigami: Ints\n" +
+		"Cursed Technique: Apply\n" +
+		"    Using: (s) -> list(tofloat(1))\n" +
 		"Domain Expansion: Explore\n" +
 		"    Using: (xs) -> list(xs)\n"
 	_, err := resolveSrc(t, src)
 	if err == nil {
-		t.Fatal("expected a keyability error for a List state")
+		t.Fatal("expected a keyability error for a List<Float> state (a List of Int/Text is a key now)")
 	}
 	if msg := err.Error(); !strings.Contains(msg, "keyable") || !strings.Contains(msg, "tuple(") {
 		t.Errorf("error should explain keyability and suggest tuple(...), got: %s", msg)

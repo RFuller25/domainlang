@@ -17,7 +17,7 @@ import (
 // O(n) hash-set scan).
 //
 //	Domain Expansion: All Pairs        # k = 2
-//	    Mode: First                    # Filter | Count | First | Map
+//	    Mode: First                    # Filter | Count | First | Map | Any | All
 //	    Using: (a, b) -> a + b = 2020
 //
 // Modes:
@@ -25,6 +25,10 @@ import (
 //	Count  -> Int            (how many satisfy the predicate)
 //	First  -> List<T>        (the first satisfying combo; errors if none)
 //	Map    -> List<U>        (lambda applied to every combo)
+//	Any    -> Bool           (does some combo satisfy the predicate? stops at the first that does)
+//	All    -> Bool           (does every combo? stops at the first that does not)
+//
+// A list too short to have a combination: Any is false, All is true.
 
 var allPairs = &Primitive{
 	ID:      "All Pairs",
@@ -88,11 +92,16 @@ func buildCombinations(prim string, k int, args ArgSet, in *ir.Type, pos token.P
 			return nil, predicateBoolErr(prim, bodyType, pos)
 		}
 		out = ir.List(elem)
+	case "Any", "All":
+		if !bodyType.Equal(ir.Bool()) {
+			return nil, predicateBoolErr(prim, bodyType, pos)
+		}
+		out = ir.Bool()
 	case "Map":
 		out = ir.List(bodyType)
 	default:
 		return nil, &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("%s Mode must be Filter, Count, First, or Map (got %q)", prim, mode)}
+			Msg: fmt.Sprintf("%s Mode must be Filter, Count, First, Map, Any, or All (got %q)", prim, mode)}
 	}
 
 	return &ir.Node{
@@ -171,6 +180,30 @@ func combosEval(prim string, k int, mode string, lam *ast.Lambda, elem *ir.Type,
 				return nil, runtimeErr(prim, pos, "no combination satisfied the predicate")
 			}
 			return found, nil
+
+		case "Any", "All":
+			// Any stops at the first combination that satisfies the
+			// predicate; All at the first that does not.
+			want := mode == "Any"
+			hit := false
+			err := genCombos(n, k, func(idx []int) (bool, error) {
+				ok, err := evalComboPredicate(lam, params, xs, idx)
+				if err != nil {
+					return false, err
+				}
+				if ok == want {
+					hit = true
+					return true, nil
+				}
+				return false, nil
+			})
+			if err != nil {
+				return nil, runtimeErr(prim, pos, "%v", err)
+			}
+			if want {
+				return hit, nil
+			}
+			return !hit, nil
 
 		case "Map":
 			out := make([]ir.Value, 0)

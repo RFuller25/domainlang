@@ -20,14 +20,33 @@ const declReadSource = `func dmReadInto(r io.Reader, sizeHint int64) (string, er
 	// io.ReadAll([]byte) + string(data) pattern, whose second full-input copy
 	// doubles live heap and stalls the GC on large inputs. TrimRight below is a
 	// substring, not a copy.
-	var b strings.Builder
 	if sizeHint > 0 {
+		var b strings.Builder
 		b.Grow(int(sizeHint))
+		if _, err := io.Copy(&b, r); err != nil {
+			return "", err
+		}
+		return b.String(), nil
 	}
-	if _, err := io.Copy(&b, r); err != nil {
-		return "", err
+	// No size: a pipe. strings.Builder (and io.ReadAll) grow by a quarter once
+	// large, reallocating and copying a dozen times to reach 12 MB. Doubling
+	// from a 1 MB first buffer reaches it in four, and the finished buffer is
+	// the string — one allocation more than the size-hinted path, no copy.
+	buf := make([]byte, 0, 1<<20)
+	for {
+		if len(buf) == cap(buf) {
+			buf = append(buf, 0)[:len(buf)]
+		}
+		n, err := r.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+n]
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
 	}
-	return b.String(), nil
+	return unsafe.String(unsafe.SliceData(buf), len(buf)), nil
 }
 
 func dmStdinSize() int64 {

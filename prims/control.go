@@ -258,17 +258,18 @@ func (r *resolver) resolveForLoop(stmt *ast.Statement, op *ast.Operation, cur *i
 	if isRange {
 		display = fmt.Sprintf("For %s in range(%d)", varName, rangeN)
 	}
+	forMeta := map[string]any{
+		"kind": "for", "nodes": subNodes, "varName": varName,
+		"isRange": isRange, "rangeN": rangeN, "channel": channelName,
+		"elem": elemType,
+	}
 	return &ir.Node{
 		Prim: "Simple Domain (For)", In: cur, Out: cur,
 		Display: display, Pos: stmt.Pos,
 		// isRange/rangeN/channel and the element type are recorded so the
 		// compiler backend can emit the same loop; the interpreter reads them
 		// from the closure below.
-		Meta: map[string]any{
-			"kind": "for", "nodes": subNodes, "varName": varName,
-			"isRange": isRange, "rangeN": rangeN, "channel": channelName,
-			"elem": elemType,
-		},
+		Meta: forMeta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
 			var xs []ir.Value
 			if isRange {
@@ -287,11 +288,12 @@ func (r *resolver) resolveForLoop(stmt *ast.Statement, op *ast.Operation, cur *i
 				}
 				xs = items
 			}
+			body := bodyOf(forMeta, subNodes)
 			for i, x := range xs {
 				pushAmbientValue(x, elemType)
 				var err error
 				label := func() string { return fmt.Sprintf("For %s iter %d/%d", varName, i+1, len(xs)) }
-				v, err = runIteration(ctx, subNodes, v, label, cur)
+				v, err = runIteration(ctx, body, v, label, cur)
 				popAmbientValue()
 				if err != nil {
 					return nil, err
@@ -379,12 +381,13 @@ func (r *resolver) resolveForEachLoop(stmt *ast.Statement, op *ast.Operation, cu
 			if err != nil {
 				return nil, runtimeErr("Simple Domain (For Each)", stmt.Pos, "%v", err)
 			}
-			v = ownLoopState(subNodes, v, cur, meta)
+			body := bodyOf(meta, subNodes)
+			v = ownLoopState(body, v, cur, meta)
 			for i, x := range xs {
 				pushAmbientValue(x, elemType)
 				pushAmbientValue(int64(i), ir.Int())
 				label := func() string { return fmt.Sprintf("%s iter %d/%d", display, i+1, len(xs)) }
-				v, err = runIteration(ctx, subNodes, v, label, cur)
+				v, err = runIteration(ctx, body, v, label, cur)
 				popAmbientValue()
 				popAmbientValue()
 				if err != nil {
@@ -428,6 +431,19 @@ func parseRangeArg(op *ast.Operation, pos token.Position) (int64, error) {
 		return 0, &ResolveError{Pos: pos, Msg: "range(...) argument must be >= 0"}
 	}
 	return op.Ints[0], nil
+}
+
+// bodyOf reads a body's node list from its owner's Meta at the moment it runs,
+// not from the slice the resolver handed the closure. A length-changing
+// optimizer rewrite (Sort + Filter swapped, two nodes fused into one) replaces
+// Meta["nodes"] with a different slice, and only a read at run time sees it —
+// the same arrangement Channel has had since fuseUnfoldStream. Falls back to
+// the slice the closure holds, so a node built without the key still runs.
+func bodyOf(meta map[string]any, resolved []*ir.Node) []*ir.Node {
+	if nodes, ok := meta["nodes"].([]*ir.Node); ok {
+		return nodes
+	}
+	return resolved
 }
 
 // runBody runs a loop body once. Every loop kind shares it, which is what lets
@@ -591,6 +607,7 @@ func repeatNode(body []*ir.Node, timesM Measured, t *ir.Type, pos token.Position
 		Display: "Repeat " + timesM.Describe(), Pos: pos,
 		Meta: meta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
+			body := bodyOf(meta, body)
 			v = ownLoopState(body, v, t, meta)
 			// Measured once, before the first lap: the count is a property of
 			// the value entering the loop, not of each lap's value.
@@ -618,6 +635,7 @@ func whileNode(body []*ir.Node, lam *ast.Lambda, t *ir.Type, pos token.Position)
 		Display: "While", Pos: pos,
 		Meta: meta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
+			body := bodyOf(meta, body)
 			v = ownLoopState(body, v, t, meta)
 			for iters := 0; ; iters++ {
 				r, err := evalLambda(lam, []*ir.Type{t}, v)
@@ -645,11 +663,13 @@ func whileNode(body []*ir.Node, lam *ast.Lambda, t *ir.Type, pos token.Position)
 }
 
 func fixedPointNode(body []*ir.Node, t *ir.Type, pos token.Position) *ir.Node {
+	meta := map[string]any{"kind": "fixedpoint", "nodes": body}
 	return &ir.Node{
 		Prim: "Simple Domain (Fixed Point)", In: t, Out: t,
 		Display: "Iterate Until Fixed Point", Pos: pos,
-		Meta: map[string]any{"kind": "fixedpoint", "nodes": body},
+		Meta: meta,
 		Eval: func(ctx *ir.Context, v ir.Value) (ir.Value, error) {
+			body := bodyOf(meta, body)
 			for iters := 0; ; iters++ {
 				label := func() string { return fmt.Sprintf("Fixed Point iter %d", iters+1) }
 				nv, err := runIteration(ctx, body, v, label, t)

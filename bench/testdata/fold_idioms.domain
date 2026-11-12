@@ -1,0 +1,13 @@
+# Fold as the only tool: a Map Each feeding a hand-written conditional sum.
+# The compiler recognizes the reduction the Fold spells out (Sum By), and then
+# streams the Map Each into it — the program below builds no list after the
+# parse.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Using: (x) -> x * 7 % 1009
+Maximum Technique: Fold
+    Seed: 0
+    Using: (acc, x) -> if x % 3 = 0 then acc + x * x else acc
+Reveal: stdout

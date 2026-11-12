@@ -29,7 +29,7 @@ func rewritePairs(p *ir.Pipeline, rule pairRewrite) []Rewrite {
 	var out []*ir.Node
 	for i := 0; i < len(p.Nodes); i++ {
 		if i+1 < len(p.Nodes) {
-			if repl, msg, ok := rule(p.Nodes[i], p.Nodes[i+1]); ok {
+			if repl, msg, ok := applyPairRule(rule, p.Nodes[i], p.Nodes[i+1]); ok {
 				out = append(out, repl...)
 				rewrites = append(rewrites, Rewrite{Message: msg})
 				i++ // consume b as well
@@ -214,7 +214,7 @@ func elideMapBeforeCount(p *ir.Pipeline) []Rewrite {
 			return nil, "", false
 		}
 		lam := nodeLambda(a)
-		if lam == nil || !isTotal(lam.Body) {
+		if lam == nil || len(lam.Params) != 1 || !isTotalElementwise(lam.Body, lam.Params[0], elemType(a.In)) {
 			return nil, "", false
 		}
 		return []*ir.Node{b},
@@ -238,15 +238,34 @@ func fuseMapMap(p *ir.Pipeline) []Rewrite {
 		if f == nil || g == nil || len(f.Params) != 1 || len(g.Params) != 1 {
 			return nil, "", false
 		}
-		if !isTotal(f.Body) {
+		if !isTotalElementwise(f.Body, f.Params[0], elemType(a.In)) {
 			return nil, "", false
+		}
+		// f's parameter becomes the fused lambda's, so a *binding* of the same
+		// name that g reads from an enclosing scope would be captured by it.
+		if f.Params[0] != g.Params[0] && mentions(g.Body, f.Params[0]) {
+			return nil, "", false
+		}
+		// Substituting f's body for g's parameter evaluates it once per
+		// mention. That is free when f is arithmetic and is the whole cost
+		// again when f calls something — `(x) -> sort(x)` into
+		// `(s) -> last(s) - first(s)` would sort twice — so a body that calls
+		// and is read more than once is bound instead of substituted.
+		var body ast.Expr
+		if countMentions(g.Body, g.Params[0]) > 1 && hasCall(f.Body) {
+			// The binding cannot hide f's parameter from f's own body, which is
+			// evaluated outside it, nor from g's, which was just checked not
+			// to read it.
+			body = &ast.LetExpr{Name: g.Params[0], Value: f.Body, Body: g.Body, Pos: g.Pos}
+		} else {
+			body = substIdent(g.Body, g.Params[0], f.Body)
 		}
 		composed := &ast.Lambda{
 			Params: f.Params,
-			Body:   substIdent(g.Body, g.Params[0], f.Body),
+			Body:   body,
 			Pos:    f.Pos,
 		}
-		pos, elem := a.Pos, elemType(a.In)
+		pos, elem := b.Pos, elemType(a.In)
 		fused := &ir.Node{
 			Prim:    "Map Each",
 			In:      a.In,
@@ -277,6 +296,64 @@ func fuseMapMap(p *ir.Pipeline) []Rewrite {
 	})
 }
 
+// countMentions counts the free occurrences of name in e, by the same walk
+// substIdent substitutes with. An expression kind it does not know counts as
+// many, which is the answer that makes a caller cautious.
+func countMentions(e ast.Expr, name string) int {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if x.Name == name {
+			return 1
+		}
+		return 0
+	case *ast.IntLit, *ast.StringLit, *ast.BoolLit, *ast.GlobalRef:
+		return 0
+	case *ast.UnaryExpr:
+		return countMentions(x.X, name)
+	case *ast.BinaryExpr:
+		return countMentions(x.Left, name) + countMentions(x.Right, name)
+	case *ast.FieldAccess:
+		return countMentions(x.Target, name)
+	case *ast.CallExpr:
+		n := 0
+		for _, a := range x.Args {
+			n += countMentions(a, name)
+		}
+		return n
+	case *ast.CondExpr:
+		return countMentions(x.Cond, name) + countMentions(x.Then, name) + countMentions(x.Else, name)
+	case *ast.LetExpr:
+		n := countMentions(x.Value, name)
+		if x.Name != name {
+			n += countMentions(x.Body, name)
+		}
+		return n
+	}
+	return 2
+}
+
+// hasCall reports whether e calls anything — the line between a body that is
+// free to evaluate twice and one that is not.
+func hasCall(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.CallExpr:
+		return true
+	case *ast.UnaryExpr:
+		return hasCall(x.X)
+	case *ast.BinaryExpr:
+		return hasCall(x.Left) || hasCall(x.Right)
+	case *ast.FieldAccess:
+		return hasCall(x.Target)
+	case *ast.CondExpr:
+		return hasCall(x.Cond) || hasCall(x.Then) || hasCall(x.Else)
+	case *ast.LetExpr:
+		return hasCall(x.Value) || hasCall(x.Body)
+	case *ast.Ident, *ast.IntLit, *ast.StringLit, *ast.BoolLit, *ast.GlobalRef:
+		return false
+	}
+	return true
+}
+
 // fuseFilterFilter fuses two adjacent Filters into one whose predicate is the
 // conjunction — one pass, and elements failing the first predicate never
 // reach the second, exactly like the naive pipeline.
@@ -287,6 +364,11 @@ func fuseFilterFilter(p *ir.Pipeline) []Rewrite {
 		}
 		f, g := nodeLambda(a), nodeLambda(b)
 		if f == nil || g == nil || len(f.Params) != 1 || len(g.Params) != 1 {
+			return nil, "", false
+		}
+		// f's parameter becomes the fused predicate's, so a binding of the
+		// same name that g reads from an enclosing scope would be captured.
+		if f.Params[0] != g.Params[0] && mentions(g.Body, f.Params[0]) {
 			return nil, "", false
 		}
 		conj := &ast.Lambda{

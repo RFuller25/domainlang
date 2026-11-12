@@ -1,0 +1,10 @@
+# How many distinct values: Unique, then Count. The compiler counts the set
+# Unique would have built and never builds the deduplicated list.
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Channeled Energy: Convert List to Integers
+Cursed Technique: Map Each
+    Using: (x) -> x * 31 % 50021
+Cursed Technique: Unique
+Maximum Technique: Count
+Reveal: stdout

@@ -139,8 +139,9 @@ func expressionOpinion(e ast.Expr, add func(Diagnostic)) {
 				Msg: fmt.Sprintf("`%s` sorts the whole list to read %s — O(n log n) for an O(n) question",
 					format.Expr(outer), what),
 				Help: fmt.Sprintf("for a list of numbers, write `%s`", better),
-				Notes: []string{"the compiler leaves this as written: on an empty list the two report " +
-					"different errors, and it does not change what a program says when it fails"},
+				Notes: []string{"the compiler makes this swap itself when the list is a plain name, " +
+					"keeping the empty-list error as it was; spelled any other way it stays as written, " +
+					"because the two report different errors and it does not change what a program says when it fails"},
 			})
 		}
 	case "reverse":
@@ -157,8 +158,9 @@ func expressionOpinion(e ast.Expr, add func(Diagnostic)) {
 				Msg: fmt.Sprintf("`%s` copies the whole list, reversed, to read one end of it",
 					format.Expr(outer)),
 				Help: fmt.Sprintf("write `%s`", better),
-				Notes: []string{"the compiler leaves this as written: on an empty list the two report " +
-					"different errors, and it does not change what a program says when it fails"},
+				Notes: []string{"the compiler makes this swap itself when the list is a plain name, " +
+					"keeping the empty-list error as it was; spelled any other way it stays as written, " +
+					"because the two report different errors and it does not change what a program says when it fails"},
 			})
 		}
 	}

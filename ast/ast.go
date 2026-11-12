@@ -379,6 +379,78 @@ type Lambda struct {
 	Params []string
 	Body   Expr
 	Pos    token.Position
+
+	// Patterns is parallel to Params and non-nil only when the lambda was
+	// written with a destructuring parameter, `((a, b)) -> …`. The parser has
+	// already desugared it: Params[i] is then a synthesized, unwritable name
+	// (`$pN`), and Body is wrapped in LetExprs binding each field to
+	// `item($pN, k)`, so nothing past the parser needs to know. Patterns keeps
+	// what was written, for tools that show the lambda back (hover, the
+	// visualizer). An entry is nil for an ordinary parameter.
+	Patterns []*Pattern
+}
+
+// Pattern is a tuple-destructuring lambda parameter: `(a, (b, c), _)`. Each
+// field is a name, `_` (ignored), or a nested Pattern.
+type Pattern struct {
+	Fields []PatField
+	Pos    token.Position
+}
+
+// PatField is one field of a Pattern: Sub when it is a nested pattern,
+// otherwise Name ("_" for an ignored field).
+type PatField struct {
+	Name string
+	Sub  *Pattern
+	Pos  token.Position
+}
+
+// String renders the pattern as written: `(a, (b, c), _)`.
+func (p *Pattern) String() string {
+	parts := make([]string, len(p.Fields))
+	for i, f := range p.Fields {
+		if f.Sub != nil {
+			parts[i] = f.Sub.String()
+		} else {
+			parts[i] = f.Name
+		}
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// Names appends every name the pattern binds, in order (ignored fields
+// excluded).
+func (p *Pattern) Names(out []string) []string {
+	for _, f := range p.Fields {
+		if f.Sub != nil {
+			out = f.Sub.Names(out)
+		} else if f.Name != "_" {
+			out = append(out, f.Name)
+		}
+	}
+	return out
+}
+
+// ParamLabel is how parameter i reads in source: its name, or its pattern.
+func (l *Lambda) ParamLabel(i int) string {
+	if i < len(l.Patterns) && l.Patterns[i] != nil {
+		return l.Patterns[i].String()
+	}
+	return l.Params[i]
+}
+
+// BoundNames is every name the lambda's parameter list binds as written:
+// plain parameters and the names inside patterns, never the synthesized ones.
+func (l *Lambda) BoundNames() []string {
+	var out []string
+	for i, p := range l.Params {
+		if i < len(l.Patterns) && l.Patterns[i] != nil {
+			out = l.Patterns[i].Names(out)
+		} else {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Expr is the plain (non-themed) expression layer.
@@ -489,6 +561,14 @@ type LetExpr struct {
 	Value Expr
 	Body  Expr
 	Pos   token.Position
+
+	// Pattern is set only on the bindings a destructuring lambda parameter
+	// desugars to (see Lambda.Patterns): the pattern as written, and the
+	// number of fields it has. The typechecker uses them to say "pattern
+	// (a, b) needs a Tuple of 2 fields, got Int" instead of reporting the
+	// synthesized `item` call. Nothing else reads them.
+	Pattern    string
+	PatternLen int
 }
 
 // AssignExpr is `NAME := VALUE`: an update to a local already in scope, whose

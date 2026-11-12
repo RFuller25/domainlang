@@ -539,8 +539,17 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		}
 		return fn + "(" + args[0] + ")", types[0], nil
 	case "unique":
-		if _, err := listElem(0); err != nil {
+		uelem, err := listElem(0)
+		if err != nil {
 			return "", nil, err
+		}
+		if ir.ContainsList(uelem) {
+			kf, err := g.keyFn(uelem)
+			if err != nil {
+				return "", nil, err
+			}
+			g.helper("dmUniqueBy", declUniqueBy)
+			return "dmUniqueBy(" + args[0] + ", " + kf + ")", types[0], nil
 		}
 		g.helper("dmUniqueList", declUniqueList)
 		return "dmUniqueList(" + args[0] + ")", types[0], nil
@@ -702,17 +711,24 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "strings.Contains(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
 		}
 		if types[0] != nil && types[0].Kind == ir.KSet {
-			g.helper("dmSet", declSet)
-			g.helper("dmSetHas", declSetHas)
-			return "dmSetHas(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+			g.chelper(types[0].Elem, "dmSet", declSet)
+			return g.chelper(types[0].Elem, "dmSetHas", declSetHas) + "(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
 		}
 		if types[0] != nil && types[0].Kind == ir.KGraph {
-			g.helper("dmGraph", declGraph)
-			return "func() bool { _, ok := (" + args[0] + ").index[" + args[1] + "]; return ok }()",
+			g.chelper(types[0].Elem, "dmGraph", declGraph)
+			return "func() bool { _, ok := " + nodeIndex(types[0].Elem, "("+args[0]+")", args[1]) + "; return ok }()",
 				ir.Bool(), nil
 		}
 		if _, err := listElem(0); err != nil {
 			return "", nil, err
+		}
+		if elem := types[0].Elem; lKeyed(elem) {
+			kf, err := g.keyFn(elem)
+			if err != nil {
+				return "", nil, err
+			}
+			g.helper("dmLContains", declLContains)
+			return "dmLContains(" + args[0] + ", " + args[1] + ", " + kf + ")", ir.Bool(), nil
 		}
 		g.helper("dmContains", declContains)
 		return "dmContains(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
@@ -721,9 +737,8 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "", nil, fmt.Errorf("get needs a Map argument, got %s", types[0])
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMap", declMap)
-		g.helper("dmMapGet", declMapGet)
-		return "dmMapGet(" + args[0] + ", " + args[1] + ")", types[0].Elem, nil
+		g.chelper(types[0].Key, "dmMap", declMap)
+		return g.chelper(types[0].Key, "dmMapGet", declMapGet) + "(" + args[0] + ", " + args[1] + ")", types[0].Elem, nil
 	case "at":
 		if types[0] != nil && types[0].Kind == ir.KSparse {
 			// Total on the infinite plane: unset cells read the default.
@@ -893,6 +908,14 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if _, err := listElem(0); err != nil {
 			return "", nil, err
 		}
+		if elem := types[0].Elem; lKeyed(elem) {
+			kf, err := g.keyFn(elem)
+			if err != nil {
+				return "", nil, err
+			}
+			g.helper("dmLIndexOf", declLIndexOf)
+			return "dmLIndexOf(" + args[0] + ", " + args[1] + ", " + kf + ")", ir.Int(), nil
+		}
 		g.helper("dmIndexOf", declIndexOf)
 		return "dmIndexOf(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "slice":
@@ -1057,12 +1080,15 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 }`, pt))
 		return "dmAround8(" + args[0] + ")", ir.List(irPoint()), nil
 	case "haskey":
-		g.helper("dmMap", declMap)
+		g.chelper(types[0].Key, "dmMap", declMap)
+		if lKeyed(types[0].Key) {
+			return "func() bool { m := " + args[0] + "; return m.has(" + args[1] + ") }()", ir.Bool(), nil
+		}
 		return "func() bool { _, ok := (" + args[0] + ").idx[" + args[1] + "]; return ok }()", ir.Bool(), nil
 	case "getor":
 		// The total lookup: `get` errors on a missing key and there was no way
 		// to guard it, which made a Count By map unreadable.
-		g.helper("dmMap", declMap)
+		g.chelper(types[0].Key, "dmMap", declMap)
 		valGo, err := g.goType(types[0].Elem)
 		if err != nil {
 			return "", nil, err
@@ -1070,15 +1096,15 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		return "func() " + valGo + " { if v, ok := (" + args[0] + ").get(" + args[1] +
 			"); ok { return v }; return " + args[2] + " }()", types[0].Elem, nil
 	case "keys":
-		g.helper("dmMap", declMap)
+		g.chelper(types[0].Key, "dmMap", declMap)
 		return "(" + args[0] + ").keys", ir.List(types[0].Key), nil
 	case "pluck":
 		if types[0] == nil || types[0].Kind != ir.KMap {
 			return "", nil, fmt.Errorf("pluck needs a Map argument, got %s", types[0])
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMap", declMap)
-		g.helper("dmPluck", `func dmPluck[K comparable, V any](m dmMap[K, V], ks []K) []V {
+		g.chelper(types[0].Key, "dmMap", declMap)
+		return g.chelper(types[0].Key, "dmPluck", `func dmPluck[K comparable, V any](m dmMap[K, V], ks []K) []V {
 	out := make([]V, len(ks))
 	for i, k := range ks {
 		v, ok := m.get(k)
@@ -1088,10 +1114,9 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		out[i] = v
 	}
 	return out
-}`)
-		return "dmPluck(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+}`) + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
 	case "values":
-		g.helper("dmMap", declMap)
+		g.chelper(types[0].Key, "dmMap", declMap)
 		// The key and value types are not named by the (generic) helper, but
 		// interning them here keeps their struct declarations emitted and
 		// surfaces an uncompilable element type at the same point it used to.
@@ -1101,23 +1126,22 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if _, err := g.goType(types[0].Elem); err != nil {
 			return "", nil, err
 		}
-		g.helper("dmMapValues", `func dmMapValues[K comparable, V any](m dmMap[K, V]) []V {
+		return g.chelper(types[0].Key, "dmMapValues", `func dmMapValues[K comparable, V any](m dmMap[K, V]) []V {
 	return append([]V(nil), m.vs...)
-}`)
-		return "dmMapValues(" + args[0] + ")", ir.List(types[0].Elem), nil
+}`) + "(" + args[0] + ")", ir.List(types[0].Elem), nil
 	case "tolist":
-		g.helper("dmSet", declSet)
+		g.chelper(types[0].Elem, "dmSet", declSet)
 		return "(" + args[0] + ").elems", ir.List(types[0].Elem), nil
 	case "size":
 		if types[0] != nil && types[0].Kind == ir.KGraph {
-			g.helper("dmGraph", declGraph)
+			g.chelper(types[0].Elem, "dmGraph", declGraph)
 			return "int64(len((" + args[0] + ").nodes))", ir.Int(), nil
 		}
 		if types[0] != nil && types[0].Kind == ir.KSet {
-			g.helper("dmSet", declSet)
+			g.chelper(types[0].Elem, "dmSet", declSet)
 			return "int64(len((" + args[0] + ").elems))", ir.Int(), nil
 		}
-		g.helper("dmMap", declMap)
+		g.chelper(types[0].Key, "dmMap", declMap)
 		return "int64(len((" + args[0] + ").keys))", ir.Int(), nil
 	case "manhattan":
 		pt, err := g.pointGo()
@@ -1270,9 +1294,15 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmSet", declSet)
-		g.helper("dmToSet", declToSet)
-		return "dmToSet(" + args[0] + ")", ir.Set(elem), nil
+		g.chelper(elem, "dmSet", declSet)
+		if lKeyed(elem) {
+			kf, err := g.keyFn(elem)
+			if err != nil {
+				return "", nil, err
+			}
+			return g.chelper(elem, "dmToSet", declToSet) + "(" + args[0] + ", " + kf + ")", ir.Set(elem), nil
+		}
+		return g.chelper(elem, "dmToSet", declToSet) + "(" + args[0] + ")", ir.Set(elem), nil
 	case "emptyset":
 		// The witness contributes nothing but its type — but it is still
 		// *evaluated*, because the interpreter evaluates every argument before
@@ -1283,9 +1313,15 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmSet", declSet)
-		return "func(" + elemGo + ") dmSet[" + elemGo + "] { return dmNewSet[" + elemGo +
-			"]() }(" + args[0] + ")", ir.Set(types[0]), nil
+		newSet, err := g.newSetExpr(types[0], elemGo)
+		if err != nil {
+			return "", nil, err
+		}
+		setGo, err := g.goType(ir.Set(types[0]))
+		if err != nil {
+			return "", nil, err
+		}
+		return "func(" + elemGo + ") " + setGo + " { return " + newSet + " }(" + args[0] + ")", ir.Set(types[0]), nil
 	case "emptylist":
 		// Same witness discipline as emptyset: the value is discarded but still
 		// evaluated, so `emptylist(first(xs))` on an empty list fails in both
@@ -1305,10 +1341,15 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmMap", declMap)
-		mapGo := "dmMap[" + keyGo + ", " + valGo + "]"
-		return "func(" + keyGo + ", " + valGo + ") " + mapGo + " { return dmNewMap[" +
-				keyGo + ", " + valGo + "]() }(" + args[0] + ", " + args[1] + ")",
+		newMap, err := g.newMapExpr(types[0], keyGo, valGo, "")
+		if err != nil {
+			return "", nil, err
+		}
+		mapGo, err := g.goType(ir.Map(types[0], types[1]))
+		if err != nil {
+			return "", nil, err
+		}
+		return "func(" + keyGo + ", " + valGo + ") " + mapGo + " { return " + newMap + " }(" + args[0] + ", " + args[1] + ")",
 			ir.Map(types[0], types[1]), nil
 	case "tomap":
 		elem, err := listElem(0)
@@ -1327,11 +1368,14 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmMap", declMap)
+		newMap, err := g.newMapExpr(elem.Elems[0], mustGo(g, elem.Elems[0]), mustGo(g, elem.Elems[1]), "len(ps)")
+		if err != nil {
+			return "", nil, err
+		}
 		// Parameterized rather than closed over, so the argument expression is
 		// evaluated exactly once however big it is.
-		return "func(ps []" + pairGo + ") " + mapGo + " { m := dmNewMapCap[" + mustGo(g, elem.Elems[0]) + ", " + mustGo(g, elem.Elems[1]) +
-			"](len(ps)); for _, p := range ps { m.put(p.f0, p.f1) }; return m }(" +
+		return "func(ps []" + pairGo + ") " + mapGo + " { m := " + newMap +
+			"; for _, p := range ps { m.put(p.f0, p.f1) }; return m }(" +
 			args[0] + ")", mapT, nil
 	case "entries":
 		if types[0] == nil || types[0].Kind != ir.KMap {
@@ -1346,7 +1390,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmMap", declMap)
+		g.chelper(types[0].Key, "dmMap", declMap)
 		return "func(m " + mapGo + ") []" + pairGo + " { out := make([]" + pairGo +
 				", 0, len(m.keys)); for i, k := range m.keys { out = append(out, " + pairGo +
 				"{f0: k, f1: m.vs[i]}) }; return out }(" + args[0] + ")",
@@ -1357,52 +1401,43 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		// see optimizer/linear.go. The in-place helper is the functional one
 		// minus the clone.
 		if types[0] != nil && types[0].Kind == ir.KSet {
-			g.helper("dmSet", declSet)
+			g.chelper(types[0].Elem, "dmSet", declSet)
 			if x.InPlace {
-				g.helper("dmSetAddIn", declSetAddIn)
-				return "dmSetAddIn(" + args[0] + ", " + args[1] + ")", types[0], nil
+				return g.chelper(types[0].Elem, "dmSetAddIn", declSetAddIn) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 			}
-			g.helper("dmSetClone", declSetClone)
-			g.helper("dmSetWith", declSetWith)
-			return "dmSetWith(" + args[0] + ", " + args[1] + ")", types[0], nil
+			g.chelper(types[0].Elem, "dmSetClone", declSetClone)
+			return g.chelper(types[0].Elem, "dmSetWith", declSetWith) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 		}
 		if types[0] == nil || types[0].Kind != ir.KMap {
 			return "", nil, fmt.Errorf("insert needs a Set or Map argument, got %s", types[0])
 		}
-		g.helper("dmMap", declMap)
+		g.chelper(types[0].Key, "dmMap", declMap)
 		if x.InPlace {
-			g.helper("dmMapPutIn", declMapPutIn)
-			return "dmMapPutIn(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+			return g.chelper(types[0].Key, "dmMapPutIn", declMapPutIn) + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
 		}
-		g.helper("dmMapClone", declMapClone)
-		g.helper("dmMapWith", declMapWith)
-		return "dmMapWith(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		g.chelper(types[0].Key, "dmMapClone", declMapClone)
+		return g.chelper(types[0].Key, "dmMapWith", declMapWith) + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
 	case "del":
 		if types[0] != nil && types[0].Kind == ir.KSet {
-			g.helper("dmSet", declSet)
-			g.helper("dmSetClone", declSetClone)
-			g.helper("dmSetWithout", declSetWithout)
-			return "dmSetWithout(" + args[0] + ", " + args[1] + ")", types[0], nil
+			g.chelper(types[0].Elem, "dmSet", declSet)
+			g.chelper(types[0].Elem, "dmSetClone", declSetClone)
+			return g.chelper(types[0].Elem, "dmSetWithout", declSetWithout) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 		}
 		if types[0] == nil || types[0].Kind != ir.KMap {
 			return "", nil, fmt.Errorf("del needs a Set or Map argument, got %s", types[0])
 		}
-		g.helper("dmMap", declMap)
-		g.helper("dmMapClone", declMapClone)
-		g.helper("dmMapWithout", declMapWithout)
-		return "dmMapWithout(" + args[0] + ", " + args[1] + ")", types[0], nil
+		g.chelper(types[0].Key, "dmMap", declMap)
+		g.chelper(types[0].Key, "dmMapClone", declMapClone)
+		return g.chelper(types[0].Key, "dmMapWithout", declMapWithout) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 	case "union", "intersect", "difference":
-		g.helper("dmSet", declSet)
+		g.chelper(types[0].Elem, "dmSet", declSet)
 		switch name {
 		case "union":
-			g.helper("dmSetUnion", declSetUnion)
-			return "dmSetUnion(" + args[0] + ", " + args[1] + ")", types[0], nil
+			return g.chelper(types[0].Elem, "dmSetUnion", declSetUnion) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 		case "intersect":
-			g.helper("dmSetIntersect", declSetIntersect)
-			return "dmSetIntersect(" + args[0] + ", " + args[1] + ")", types[0], nil
+			return g.chelper(types[0].Elem, "dmSetIntersect", declSetIntersect) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 		}
-		g.helper("dmSetDiff", declSetDiff)
-		return "dmSetDiff(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return g.chelper(types[0].Elem, "dmSetDiff", declSetDiff) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 	case "setat":
 		if types[0] == nil || types[0].Kind != ir.KGrid {
 			return "", nil, fmt.Errorf("setat needs a Grid argument, got %s", types[0])
@@ -1458,20 +1493,23 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmGraph", declGraph)
-		return "func(_ " + nodeGo + ") " + goT + " { return dmNewGraph[" + nodeGo + "]() }(" +
+		ng, err := g.newGraphExpr(types[0], nodeGo)
+		if err != nil {
+			return "", nil, err
+		}
+		return "func(_ " + nodeGo + ") " + goT + " { return " + ng + " }(" +
 			args[0] + ")", gt, nil
 	case "addnode":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("addnode needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		if x.InPlace {
-			g.helper("dmGraphAddNodeIn", declGraphAddNodeIn)
-			return "dmGraphAddNodeIn(" + args[0] + ", " + args[1] + ")", types[0], nil
+			g.chelper(types[0].Elem, "dmGraphAddNodeIn", declGraphAddNodeIn)
+			return cname(types[0].Elem, "dmGraphAddNodeIn") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 		}
-		g.helper("dmGraphAddNode", declGraphAddNode)
-		return "dmGraphAddNode(" + args[0] + ", " + args[1] + ")", types[0], nil
+		g.chelper(types[0].Elem, "dmGraphAddNode", declGraphAddNode)
+		return cname(types[0].Elem, "dmGraphAddNode") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 	case "addedge":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("addedge needs a Graph argument, got %s", types[0])
@@ -1480,22 +1518,22 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if len(args) == 4 {
 			w = args[3]
 		}
-		g.helper("dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		if x.InPlace {
-			g.helper("dmGraphAddEdgeIn", declGraphAddEdgeIn)
-			return "dmGraphAddEdgeIn(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
+			g.chelper(types[0].Elem, "dmGraphAddEdgeIn", declGraphAddEdgeIn)
+			return cname(types[0].Elem, "dmGraphAddEdgeIn") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
 				types[0], nil
 		}
-		g.helper("dmGraphAddEdge", declGraphAddEdge)
-		return "dmGraphAddEdge(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
+		g.chelper(types[0].Elem, "dmGraphAddEdge", declGraphAddEdge)
+		return cname(types[0].Elem, "dmGraphAddEdge") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
 			types[0], nil
 	case "deledge":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("deledge needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphDelEdge", declGraphDelEdge)
-		return "dmGraphDelEdge(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphDelEdge", declGraphDelEdge)
+		return cname(types[0].Elem, "dmGraphDelEdge") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
 	case "nodes":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("nodes needs a Graph argument, got %s", types[0])
@@ -1504,7 +1542,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if err != nil {
 			return "", nil, err
 		}
-		g.helper("dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		// Copied, because the interpreter hands back a copy and a later append
 		// on the result must not be visible through the graph.
 		return "append([]" + nodeGo + "{}, (" + args[0] + ").nodes...)",
@@ -1522,9 +1560,9 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("neighbors needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphNeighbors", declGraphNeighbors)
-		return "dmGraphNeighbors(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphNeighbors", declGraphNeighbors)
+		return cname(types[0].Elem, "dmGraphNeighbors") + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
 	case "edgesof":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("edgesof needs a Graph argument, got %s", types[0])
@@ -1538,7 +1576,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("hasedge needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		return "func() bool { _, ok := (" + args[0] + ").weight(" + args[1] + ", " + args[2] +
 			"); return ok }()", ir.Bool(), nil
 	case "weight":
@@ -1546,114 +1584,114 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			return "", nil, fmt.Errorf("weight needs a Graph argument, got %s", types[0])
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphWeight", declGraphWeightAt)
-		return "dmGraphWeight(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphWeight", declGraphWeightAt)
+		return cname(types[0].Elem, "dmGraphWeight") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
 	case "weightor":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("weightor needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphWeightOr", declGraphWeightOr)
-		return "dmGraphWeightOr(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphWeightOr", declGraphWeightOr)
+		return cname(types[0].Elem, "dmGraphWeightOr") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
 			ir.Int(), nil
 	case "degree":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("degree needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphDegree", declGraphDegree)
-		return "dmGraphDegree(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphDegree", declGraphDegree)
+		return cname(types[0].Elem, "dmGraphDegree") + "(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "weightof":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("weightof needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphWeightOf", declGraphWeightOf)
-		return "dmGraphWeightOf(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphWeightOf", declGraphWeightOf)
+		return cname(types[0].Elem, "dmGraphWeightOf") + "(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "root":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("root needs a Graph argument, got %s", types[0])
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphRoot", declGraphRoot, "fmt")
-		return "dmGraphRoot(" + args[0] + ")", types[0].Elem, nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphRoot", declGraphRoot, "fmt")
+		return cname(types[0].Elem, "dmGraphRoot") + "(" + args[0] + ")", types[0].Elem, nil
 	case "indegree":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("indegree needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphInDegree", declGraphInDegree)
-		return "dmGraphInDegree(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphInDegree", declGraphInDegree)
+		return cname(types[0].Elem, "dmGraphInDegree") + "(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "roots", "leaves":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("%s needs a Graph argument, got %s", name, types[0])
 		}
-		g.helper("dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		fn, decl := "dmGraphRoots", declGraphRoots
 		if name == "leaves" {
 			fn, decl = "dmGraphLeaves", declGraphLeaves
 		}
-		g.helper(fn, decl)
+		fn = g.chelper(types[0].Elem, fn, decl)
 		return fn + "(" + args[0] + ")", ir.List(types[0].Elem), nil
 	case "reachable":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("reachable needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphReachable", declGraphReachable)
-		return "dmGraphReachable(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphReachable", declGraphReachable)
+		return cname(types[0].Elem, "dmGraphReachable") + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
 	case "delnode":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("delnode needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphSub", declGraphSub) // dmGraphDelNode is written in terms of it
-		g.helper("dmGraphDelNode", declGraphDelNode)
-		return "dmGraphDelNode(" + args[0] + ", " + args[1] + ")", types[0], nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphSub", declGraphSub) // dmGraphDelNode is written in terms of it
+		g.chelper(types[0].Elem, "dmGraphDelNode", declGraphDelNode)
+		return cname(types[0].Elem, "dmGraphDelNode") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 	case "hascycle":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("hascycle needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphHasCycle", declGraphHasCycle)
-		return "dmGraphHasCycle(" + args[0] + ")", ir.Bool(), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphHasCycle", declGraphHasCycle)
+		return cname(types[0].Elem, "dmGraphHasCycle") + "(" + args[0] + ")", ir.Bool(), nil
 	case "weightsum":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("weightsum needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphWeightSum", declGraphWeightSum)
-		return "dmGraphWeightSum(" + args[0] + ")", ir.Int(), nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphWeightSum", declGraphWeightSum)
+		return cname(types[0].Elem, "dmGraphWeightSum") + "(" + args[0] + ")", ir.Int(), nil
 	case "undirected":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("undirected needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphUndirected", declGraphUndirected)
-		return "dmGraphUndirected(" + args[0] + ")", types[0], nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphUndirected", declGraphUndirected)
+		return cname(types[0].Elem, "dmGraphUndirected") + "(" + args[0] + ")", types[0], nil
 	case "mergegraphs":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("mergegraphs needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphMerge", declGraphMerge)
-		return "dmGraphMerge(" + args[0] + ", " + args[1] + ")", types[0], nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphMerge", declGraphMerge)
+		return cname(types[0].Elem, "dmGraphMerge") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 	case "flipedges":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("flipedges needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphFlip", declGraphFlip)
-		return "dmGraphFlip(" + args[0] + ")", types[0], nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphFlip", declGraphFlip)
+		return cname(types[0].Elem, "dmGraphFlip") + "(" + args[0] + ")", types[0], nil
 	case "subgraph":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
 			return "", nil, fmt.Errorf("subgraph needs a Graph argument, got %s", types[0])
 		}
-		g.helper("dmGraph", declGraph)
-		g.helper("dmGraphSub", declGraphSub)
-		return "dmGraphSub(" + args[0] + ", " + args[1] + ")", types[0], nil
+		g.chelper(types[0].Elem, "dmGraph", declGraph)
+		g.chelper(types[0].Elem, "dmGraphSub", declGraphSub)
+		return cname(types[0].Elem, "dmGraphSub") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
 
 	// -- list generation ---------------------------------------------------------
 	case "range":
@@ -2004,12 +2042,52 @@ func (g *gen) modGo(a, b string, divisor ast.Expr) string {
 	return "dmMod(" + a + ", " + b + ")"
 }
 
+// tryDivisibility lowers `a % K = 0` (K a nonzero literal, 0 on either side)
+// to Go's own remainder. Euclidean and truncated remainders differ only in the
+// sign they give a nonzero result; they are zero for exactly the same a, so a
+// divisibility test needs neither dmModNZ's fix-up nor its branch — and Go
+// compiles `a % K == 0` for a constant K to a multiply and a compare, with no
+// divide at all. It is the commonest thing a `%` is written for.
+func (g *gen) tryDivisibility(x *ast.BinaryExpr, env exprEnv) (string, bool, error) {
+	if x.Op != token.EQ {
+		return "", false, nil
+	}
+	mod, zero := x.Left, x.Right
+	if lit, ok := mod.(*ast.IntLit); ok && lit.Value == 0 {
+		mod, zero = zero, mod
+	}
+	if lit, ok := zero.(*ast.IntLit); !ok || lit.Value != 0 {
+		return "", false, nil
+	}
+	rem, ok := mod.(*ast.BinaryExpr)
+	if !ok || rem.Op != token.PERCENT {
+		return "", false, nil
+	}
+	k, ok := rem.Right.(*ast.IntLit)
+	if !ok || k.Value == 0 {
+		return "", false, nil
+	}
+	a, at, err := g.compileExpr(rem.Left, env)
+	if err != nil {
+		return "", false, err
+	}
+	if at == nil || at.Kind != ir.KInt {
+		return "", false, nil
+	}
+	return fmt.Sprintf("(%s%%%d == 0)", a, k.Value), true, nil
+}
+
 func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, error) {
 	// The fusion below rewrites the comparison into a different shape; an
 	// operand that writes to a binding must be compiled as written.
 	if !ast.HasUpdate(x) {
 		if fused, ft, ok := g.tryMaxCompare(x, env); ok {
 			return fused, ft, nil
+		}
+		if test, ok, err := g.tryDivisibility(x, env); err != nil {
+			return "", nil, err
+		} else if ok {
+			return test, ir.Bool(), nil
 		}
 	}
 	l, lt, err := g.compileExpr(x.Left, env)

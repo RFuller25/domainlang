@@ -57,6 +57,44 @@ Reveal: stdout
 123
 ```
 
+### Destructuring a tuple parameter
+
+A parameter written as a parenthesized list of names binds the fields of one
+Tuple, so a loop that keeps its state in a tuple does not spend lines
+unpacking it with `item`:
+
+```
+((n, map, x)) -> …              one Tuple parameter, three fields
+(acc, (name, qty)) -> …         beside an ordinary parameter
+(acc, (key, (lo, hi))) -> …     patterns nest
+((_, _, count)) -> count        `_` ignores a field
+```
+
+A pattern has at least two fields and binds at least one name. It means
+exactly `consider n as item(p, 0) in consider map as item(p, 1) in …` for an
+unwritable parameter `p`, so everything that holds of those bindings holds of
+it: the names are locals of the body (and `:=` on one is refused, as on any
+parameter), and a `While` that threads its state through `set` still writes
+in place. A parameter that is not a Tuple, or has a different number of
+fields, is a type error naming the pattern. `_` is only a placeholder inside
+a pattern; elsewhere it is an ordinary identifier, as before.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Extract Integers
+Cursed Technique: Enumerate
+Maximum Technique: Fold
+    Seed: 0
+    Using: (acc, (i, x)) -> acc + i * x
+Reveal: stdout
+```
+```input
+5 1 9
+```
+```output
+19
+```
+
 ## Writing an expression across lines
 
 An expression that has outgrown its line breaks in one of two places, and both

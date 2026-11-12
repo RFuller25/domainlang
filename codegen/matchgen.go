@@ -35,6 +35,18 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) > 0 && hasMeasured(nodes[0], "sep") {
 		return 0, "", false, nil
 	}
+	// Every rule below also reads nodes[0]'s input as a slice and types its
+	// lambda from `.In.Elem`. A sequence primitive over a Set or a Map is
+	// neither: emitNode is what turns the collection into its element slice
+	// and retypes the node (a Map's .Elem is its *value* type, not the entry
+	// tuple a lambda sees). Fusing here skipped that step, so `Count By` +
+	// `Map Each (e) -> item(e, 1)` + `Sum` typed `e` as the count and refused
+	// to compile — only unoptimized, since the optimizer rewrites the pair
+	// into a Sum By first. The per-node path handles these.
+	if len(nodes) > 0 && nodes[0].In != nil && seqConsumers[nodes[0].Prim] &&
+		(nodes[0].In.Kind == ir.KSet || nodes[0].In.Kind == ir.KMap) {
+		return 0, "", false, nil
+	}
 	// Mode: Try and Mode: Scan are deliberately not fusible: every fused path
 	// below assumes each line parses to exactly one value and calls dmFail when
 	// one does not, which is the whole behaviour those two modes exist to
@@ -127,7 +139,10 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// intermediate []string (16 bytes/line of slice headers on large inputs).
 	if len(nodes) >= 2 && nodes[0].Prim == "Split" && nodes[1].Prim == "Convert To Integers" &&
 		nodes[1].In != nil && nodes[1].In.Equal(ir.List(ir.Text())) {
-		if sep, _ := nodes[0].Meta["sep"].(string); len(sep) == 1 {
+		// When the parsed integers flow through elementwise stages straight
+		// into a reduction, the stream fuser parses each one out of the text
+		// as the loop reaches it and the []int64 is never built either.
+		if sep, _ := nodes[0].Meta["sep"].(string); len(sep) == 1 && !streamsParseIntoSink(nodes, in) {
 			out := g.emitSplitInts(sep[0], in)
 			return 2, out, true, nil
 		}

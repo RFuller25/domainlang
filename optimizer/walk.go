@@ -4,6 +4,7 @@ import (
 	"domain/ast"
 	"domain/ir"
 	"domain/token"
+	"domain/typecheck"
 )
 
 // This file holds the shared AST/IR walking utilities the passes are built on.
@@ -237,14 +238,24 @@ func effectful(l *ast.Lambda) bool {
 // fail on out-of-range/empty/missing inputs. A pass may only *discard* an
 // expression when it is total, otherwise the rewrite would swallow an error
 // the naive pipeline reports.
-func isTotal(e ast.Expr) bool {
+func isTotal(e ast.Expr) bool { return isTotalIn(e, nil) }
+
+// isTotalIn is isTotal with the types of the names in scope, when the caller
+// knows them. Types buy exactly one thing, and it is the thing hand-written
+// programs are made of: a Tuple's arity is static, so `item(t, 2)` with a
+// literal index in bounds cannot fail — wherever in the expression it sits,
+// and whatever total expression t is (a parameter, a `consider` binding, a
+// projection of another tuple). Without a type every `item` is partial, which
+// stood every totality-gated rewrite down on any stage that kept its state in
+// a tuple. A nil env answers exactly as the untyped analysis always did.
+func isTotalIn(e ast.Expr, env typecheck.Env) bool {
 	switch x := e.(type) {
 	case *ast.IntLit, *ast.StringLit, *ast.BoolLit, *ast.Ident, *ast.GlobalRef:
 		// A global is declared before any stage runs, so reading one is as
 		// total as reading a parameter.
 		return true
 	case *ast.UnaryExpr:
-		return isTotal(x.X)
+		return isTotalIn(x.X, env)
 	case *ast.BinaryExpr:
 		if x.Op == token.SLASH || x.Op == token.PERCENT {
 			// Safe only when the divisor is a nonzero literal — mod by zero
@@ -253,14 +264,17 @@ func isTotal(e ast.Expr) bool {
 				return false
 			}
 		}
-		return isTotal(x.Left) && isTotal(x.Right)
+		return isTotalIn(x.Left, env) && isTotalIn(x.Right, env)
 	case *ast.FieldAccess:
 		// Field existence was proven by typecheck.
-		return isTotal(x.Target)
+		return isTotalIn(x.Target, env)
 	case *ast.CallExpr:
 		id, ok := x.Fn.(*ast.Ident)
 		if !ok {
 			return false
+		}
+		if id.Name == "item" && tupleProjection(x, env) {
+			return isTotalIn(x.Args[0], env)
 		}
 		switch id.Name {
 		case "length", "take", "drop", "reverse", "concat", "sum", "contains",
@@ -270,6 +284,9 @@ func isTotal(e ast.Expr) bool {
 			// are deliberately absent: each has a documented error case.
 			"slice", "indexof", "startswith", "endswith", "replace", "trim",
 			"upper", "lower", "chars", "textjoin", "tuple",
+			// record's field names are literals the typechecker has already
+			// required (recordType), so only its values can fail.
+			"record",
 			// Collection builders that cannot fail on a well-typed argument:
 			// every failure path in their evaluators is a type assertion the
 			// typechecker has already discharged. range and fill are absent
@@ -278,6 +295,9 @@ func isTotal(e ast.Expr) bool {
 			"sort", "unique", "toset", "keys", "values", "entries", "tolist",
 			"flatten", "zip", "enumerate", "product", "words", "split",
 			"size", "haskey", "getor",
+			// Empty-collection constructors: they take a prototype value that is
+			// never inspected and build nothing that could fail.
+			"emptyset", "emptylist", "emptymap", "sparse", "insert", "del",
 			// Graph. Every reader answers empty/false/0 for a node that is not
 			// in the graph rather than failing, and every update is a functional
 			// copy that cannot reject its input. `weight` is deliberately absent
@@ -294,15 +314,18 @@ func isTotal(e ast.Expr) bool {
 			return false // item, first, last, min, max, get, at are partial
 		}
 		for _, a := range x.Args {
-			if !isTotal(a) {
+			if !isTotalIn(a, env) {
 				return false
 			}
 		}
 		return true
 	case *ast.CondExpr:
-		return isTotal(x.Cond) && isTotal(x.Then) && isTotal(x.Else)
+		return isTotalIn(x.Cond, env) && isTotalIn(x.Then, env) && isTotalIn(x.Else, env)
 	case *ast.LetExpr:
-		return isTotal(x.Value) && isTotal(x.Body)
+		if !isTotalIn(x.Value, env) {
+			return false
+		}
+		return isTotalIn(x.Body, letEnv(x, env))
 	case *ast.AssignExpr, *ast.AlsoExpr:
 		// Not because either can fail — an update is as total as the value it
 		// writes — but because the callers use this answer to decide whether a
@@ -313,6 +336,41 @@ func isTotal(e ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+// tupleProjection reports whether call is `item(t, k)` with a literal k inside
+// the static arity of a Tuple-typed t — the one `item` that cannot fail.
+func tupleProjection(call *ast.CallExpr, env typecheck.Env) bool {
+	if env == nil || len(call.Args) != 2 {
+		return false
+	}
+	lit, ok := call.Args[1].(*ast.IntLit)
+	if !ok {
+		return false
+	}
+	t, err := typecheck.ExprType(call.Args[0], env)
+	return err == nil && t != nil && t.Kind == ir.KTuple &&
+		lit.Value >= 0 && int(lit.Value) < len(t.Elems)
+}
+
+// letEnv is env with a `consider` binding's own type added, for analysing its
+// body. A value that does not type under env (it reads a name env does not
+// hold) removes the name instead, so an outer binding it shadows cannot be
+// mistaken for it.
+func letEnv(x *ast.LetExpr, env typecheck.Env) typecheck.Env {
+	if env == nil {
+		return nil
+	}
+	out := make(typecheck.Env, len(env)+1)
+	for k, v := range env {
+		out[k] = v
+	}
+	if t, err := typecheck.ExprType(x.Value, env); err == nil && t != nil {
+		out[x.Name] = t
+	} else {
+		delete(out, x.Name)
+	}
+	return out
 }
 
 // linearForm recognizes bodies of the shape a*x + b over the single parameter

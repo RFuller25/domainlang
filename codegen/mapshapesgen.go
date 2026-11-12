@@ -27,8 +27,9 @@ func (g *gen) emitMapElements(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmSet", declSet)
-	g.wl("%s := dmNewSet[%s]()", out, outGo)
+	if err := g.wnewSet(out, n.Out.Elem, outGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	g.wl("for _, %s := range %s.elems {", e, in)
 	g.in()
 	// add() drops a repeat, so two elements mapping to one value are one.
@@ -60,8 +61,9 @@ func (g *gen) emitMapKeys(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmMap", declMap)
-	g.wl("%s := dmNewMap[%s, %s]()", out, keyGo, valGo)
+	if err := g.wnewMap(out, n.Out.Key, keyGo, valGo); err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	ix := g.fresh("i")
 	g.wl("for %s, %s := range %s.keys {", ix, k, in)
 	g.in()
@@ -90,11 +92,15 @@ func (g *gen) emitMapNodes(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmGraph", declGraph)
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
+	newG, err := g.newGraphExpr(n.Out.Elem, outGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
 	// Every node is renamed first, so an isolated one survives and an arc's
 	// endpoints agree with the node list.
 	g.wl("%s := make([]%s, len(%s.nodes))", renamed, outGo, in)
-	g.wl("%s := dmNewGraph[%s]()", out, outGo)
+	g.wl("%s := %s", out, newG)
 	g.wl("for %s := range %s.nodes {", i, in)
 	g.in()
 	g.wl("%s := %s.nodes[%s]", nd, in, i)
@@ -137,8 +143,12 @@ func (g *gen) emitMapWeights(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "lambda: %v", err)
 	}
-	g.helper("dmGraph", declGraph)
-	g.wl("%s := dmNewGraph[%s]()", out, nodeGo)
+	g.chelper(n.In.Elem, "dmGraph", declGraph)
+	newG, err := g.newGraphExpr(n.Out.Elem, nodeGo)
+	if err != nil {
+		return "", unsupported(n, "%v", err)
+	}
+	g.wl("%s := %s", out, newG)
 	g.wl("for %s := range %s.nodes {", i, in)
 	g.in()
 	g.wl("%s.addNode(%s.nodes[%s])", out, in, i)

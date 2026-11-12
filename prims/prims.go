@@ -316,6 +316,11 @@ var argNames = []string{
 	"Height", "High", "Index", "Low", "Mark", "Mode", "Params", "Row", "Seed",
 	"Case", "Size", "Step", "Thickness", "Times", "Until", "Using", "Value", "While",
 	"Width", "With", "Zip",
+	// Find Cycle's step form: how many steps to try, and what to compare
+	// states by.
+	"Limit", "Key",
+	// Fold's final expression over the finished accumulator.
+	"Then",
 	// The graph searches name their endpoints. They are deliberately not
 	// `From:`/`To:` — `From:` already means "these channels" everywhere else,
 	// and a node is not a channel.
@@ -1037,6 +1042,14 @@ func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc sc
 		}
 		nodes = append(nodes, node)
 		cur = node.Out
+		then, err := r.thenStage(stmt, node)
+		if err != nil {
+			return nodes, nil, err
+		}
+		if then != nil {
+			nodes = append(nodes, then)
+			cur = then.Out
+		}
 	default:
 		node, err := r.resolveOne(stmt, cur)
 		if err != nil {
@@ -1044,6 +1057,14 @@ func (r *resolver) resolveStatementBody(stmt *ast.Statement, cur *ir.Type, sc sc
 		}
 		nodes = append(nodes, node)
 		cur = node.Out
+		then, err := r.thenStage(stmt, node)
+		if err != nil {
+			return nodes, nil, err
+		}
+		if then != nil {
+			nodes = append(nodes, then)
+			cur = then.Out
+		}
 	}
 	return nodes, cur, nil
 }

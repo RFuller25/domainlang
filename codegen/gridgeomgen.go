@@ -15,21 +15,9 @@ import (
 // the length known, so the slice is allocated exactly once; measured bounds
 // are computed first and the capacity comes out of them.
 func (g *gen) emitRange(n *ir.Node, in string) (string, error) {
-	lo, err := g.measuredOperand(n, in, "lo", "Low", math.MinInt64)
+	lo, hi, err := g.emitRangeBounds(n, in)
 	if err != nil {
 		return "", err
-	}
-	hi, err := g.measuredOperand(n, in, "hi", "High", math.MinInt64)
-	if err != nil {
-		return "", err
-	}
-	if hasMeasured(n, "lo", "hi") {
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.wl("if %s < %s {", hi, lo)
-		g.in()
-		g.wl(`dmFail("bounds are half-open [%%d, %%d), so the high bound may not be below the low one", %s, %s)`, lo, hi)
-		g.out()
-		g.wl("}")
 	}
 	v, i := g.fresh("v"), g.fresh("i")
 	g.wl("%s := make([]int64, 0, %s-%s)", v, hi, lo)
@@ -39,6 +27,29 @@ func (g *gen) emitRange(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	return v, nil
+}
+
+// emitRangeBounds renders a Range's two bounds and, when either is measured,
+// the half-open check the interpreter makes at the same moment. It is shared
+// with the stream fuser, which counts through the range without building it.
+func (g *gen) emitRangeBounds(n *ir.Node, in string) (lo, hi string, err error) {
+	lo, err = g.measuredOperand(n, in, "lo", "Low", math.MinInt64)
+	if err != nil {
+		return "", "", err
+	}
+	hi, err = g.measuredOperand(n, in, "hi", "High", math.MinInt64)
+	if err != nil {
+		return "", "", err
+	}
+	if hasMeasured(n, "lo", "hi") {
+		g.helper("dmFail", declFail, "fmt", "os")
+		g.wl("if %s < %s {", hi, lo)
+		g.in()
+		g.wl(`dmFail("bounds are half-open [%%d, %%d), so the high bound may not be below the low one", %s, %s)`, lo, hi)
+		g.out()
+		g.wl("}")
+	}
+	return lo, hi, nil
 }
 
 // emitSubgrid crops. The bounds are compile-time literals; the fit check is
@@ -221,6 +232,9 @@ func (g *gen) emitConvertToRows(n *ir.Node, in string) (string, error) {
 }
 
 func (g *gen) emitFindCycle(n *ir.Node, in string) (string, error) {
+	if n.Meta["lambda"] != nil {
+		return g.emitFindCycleState(n, in)
+	}
 	elemGo, err := g.goType(n.In.Elem)
 	if err != nil {
 		return "", unsupported(n, "%v", err)
@@ -230,17 +244,27 @@ func (g *gen) emitFindCycle(n *ir.Node, in string) (string, error) {
 		return "", unsupported(n, "%v", err)
 	}
 	v, seen, i, e := g.fresh("v"), g.fresh("seen"), g.fresh("i"), g.fresh("e")
+	// An element holding a List is hashed through its byte encoding; anything
+	// else is its own map key.
+	key, keyGo := e, elemGo
+	if ir.ContainsList(n.In.Elem) {
+		kf, err := g.keyFn(n.In.Elem)
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		key, keyGo = kf+"("+e+")", "string"
+	}
 	g.wl("%s := %s{-1, 0}", v, pt)
-	g.wl("%s := map[%s]int64{}", seen, elemGo)
+	g.wl("%s := map[%s]int64{}", seen, keyGo)
 	g.wl("for %s, %s := range %s {", i, e, in)
 	g.in()
-	g.wl("if at, ok := %s[%s]; ok {", seen, e)
+	g.wl("if at, ok := %s[%s]; ok {", seen, key)
 	g.in()
 	g.wl("%s = %s{at, int64(%s) - at}", v, pt, i)
 	g.wl("break")
 	g.out()
 	g.wl("}")
-	g.wl("%s[%s] = int64(%s)", seen, e, i)
+	g.wl("%s[%s] = int64(%s)", seen, key, i)
 	g.out()
 	g.wl("}")
 	return v, nil
@@ -259,16 +283,20 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 	if err != nil {
 		return "", unsupported(n, "%v", err)
 	}
-	g.helper("dmMap", declMap)
+	g.chelper(node, "dmMap", declMap)
 	// A Graph is folded into the adjacency map first, exactly as the
 	// interpreter's graphAdjacency does. Going through the map rather than
 	// walking the graph directly is what keeps the tie-breaking identical
 	// across the three input shapes: a graph and the edge list it was built
 	// from sort the same way.
 	if isGraph, _ := n.Meta["graph"].(bool); isGraph {
-		g.helper("dmGraph", declGraph)
+		g.chelper(node, "dmGraph", declGraph)
 		m, i, nd, e := g.fresh("m"), g.fresh("i"), g.fresh("nd"), g.fresh("e")
-		g.wl("%s := dmNewMap[%s, []%s]()", m, keyGo, keyGo)
+		newM, err := g.newMapExpr(node, keyGo, "[]"+keyGo, "")
+		if err != nil {
+			return "", unsupported(n, "%v", err)
+		}
+		g.wl("%s := %s", m, newM)
 		g.wl("for %s, %s := range %s.nodes {", i, nd, in)
 		g.in()
 		g.wl("%s := make([]%s, 0, len(%s.adj[%s]))", e+"s", keyGo, in, i)
@@ -283,7 +311,7 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		in = m
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
-	g.helper("dmTopo", declTopo)
+	g.chelper(node, "dmTopo", declTopo)
 	// The renderer is only used to name a node in the cycle error. Scalars
 	// have no fmtFunc — they are printed directly everywhere else — so the
 	// function is built per kind here.
@@ -313,7 +341,15 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		if !tuple {
 			from, to = e+"[0]", e+"[1]"
 		}
-		g.wl("%s := dmNewTopo[%s](len(%s))", t, keyGo, in)
+		if lKeyed(node) {
+			kf, err := g.keyFn(node)
+			if err != nil {
+				return "", unsupported(n, "%v", err)
+			}
+			g.wl("%s := dmNewLTopo[%s](%s, len(%s))", t, keyGo, kf, in)
+		} else {
+			g.wl("%s := dmNewTopo[%s](len(%s))", t, keyGo, in)
+		}
 		g.wl("for _, %s := range %s {", e, in)
 		g.in()
 		if !tuple {
@@ -331,8 +367,7 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		g.wl("%s := %s.sort(%s)", v, t, fmtFn)
 		return v, nil
 	}
-	g.helper("dmTopoSort", declTopoSort)
-	g.wl("%s := dmTopoSort(%s, %s)", v, in, fmtFn)
+	g.wl("%s := %s(%s, %s)", v, g.chelper(node, "dmTopoSort", declTopoSort), in, fmtFn)
 	return v, nil
 }
 

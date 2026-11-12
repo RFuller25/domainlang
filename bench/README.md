@@ -7,8 +7,8 @@ the hand-written Go with the **same** toolchain flags, checks the two agree
 byte for byte, and times them against each other.
 
 The question these numbers answer: **does `domain build` output stay within
-2× of what a competent Go programmer writes by hand?** On all thirty-seven
-cases it does, twenty-four of them faster than the hand-written Go.
+2× of what a competent Go programmer writes by hand?** On all forty-four
+cases it does, thirty-six of them faster than the hand-written Go.
 
 ## Running them
 
@@ -64,6 +64,13 @@ so drift lands on both.
 | `list_shaping` | `Chunk`, `Take While`, `Unique` and `Reverse`, one after another |
 | `for_loop` | a `For` loop binding an ambient parameter into the body's lambdas |
 | `math_builtins` | the number-theory builtins — `gcd`, `isqrt`, `modpow` in a hot lambda |
+| `sort_gaps` | the plain integer `Quicksort`, needed for its order — the type-specialised sort the compiler emits |
+| `fold_idioms` | **idiom recognition** — a hand-written conditional-sum `Fold` becomes `Sum By`, and the parse and `Map Each` stream into it |
+| `dead_sort` | a `Quicksort` whose order never reaches the result — dropped across `Filter` and `Map Each` into `Sum` |
+| `range_stream` | `Range` as a stream source — a counting loop; the list of N integers is never built |
+| `distinct_count` | `Unique` + `Count` as a distinct count — the set is counted, the list never built |
+| `any_from_count` | `Filter` + `Count` compared with zero — rewritten to `Any`, which stops at the first match |
+| `part_bodies` | rewrites inside `Part` bodies — a sort for a top-3 and a sort before a sum, each in its own `Part` |
 
 ## Results
 
@@ -72,47 +79,54 @@ Best of five alternating runs each, Go 1.25, linux/amd64. Lower is better;
 
 | Case | Domain | Go | Ratio |
 |---|---:|---:|---:|
-| `read_length` | 10.5 ms | 73.6 ms | **0.14×** |
-| `pairs_increase` | 49.7 ms | 58.4 ms | **0.85×** |
-| `scan_mod` | 65.4 ms | 64.7 ms | 1.01× |
-| `sliding_max` | 73.1 ms | 246.5 ms | **0.30×** |
-| `pipeline_body` | 63.5 ms | 76.7 ms | **0.83×** |
-| `text_builtins` | 66.0 ms | 65.5 ms | 1.01× |
-| `fold_map_dp` | 112.3 ms | 103.6 ms | 1.08× |
-| `fold_grid_writes` | 44.4 ms | 42.9 ms | 1.03× |
-| `count_by_entries` | 66.9 ms | 65.0 ms | 1.03× |
-| `partition_parts` | 62.1 ms | 61.7 ms | 1.01× |
-| `topk_sum` | 70.6 ms | 426.0 ms | **0.17×** |
-| `dijkstra_grid` | 82.9 ms | 117.0 ms | **0.71×** |
-| `match_pattern` | 41.9 ms | 88.0 ms | **0.48×** |
-| `toposort_words` | 188.3 ms | 200.4 ms | **0.94×** |
-| `combinations3` | 899.2 ms | 892.2 ms | 1.01× |
-| `sort_by_key` | 264.7 ms | 651.1 ms | **0.41×** |
-| `merge_ranges` | 442.0 ms | 393.5 ms | 1.12× |
-| `group_map_values` | 65.7 ms | 81.8 ms | **0.80×** |
-| `set_intersect` | 16.5 ms | 139.8 ms | **0.12×** |
-| `connected_components` | 23.4 ms | 24.5 ms | **0.95×** |
-| `grid_bfs` | 73.2 ms | 70.4 ms | 1.04× |
-| `sparse_life` | 149.1 ms | 85.9 ms | 1.73× |
-| `explore_states` | 567.5 ms | 612.1 ms | **0.93×** |
-| `loop_repeat` | 25.4 ms | 25.0 ms | 1.02× |
-| `join_output` | 81.2 ms | 88.2 ms | **0.92×** |
-| `channels_zip` | 94.6 ms | 317.2 ms | **0.30×** |
-| `shikigami_calls` | 53.0 ms | 63.8 ms | **0.83×** |
-| `vows_hot` | 53.1 ms | 193.2 ms | **0.27×** |
-| `grid_transform` | 79.2 ms | 80.8 ms | **0.98×** |
-| `float_sum` | 103.6 ms | 111.5 ms | **0.93×** |
-| `fold_tuple` | 48.2 ms | 63.2 ms | **0.76×** |
-| `iterate_unfold` | 26.8 ms | 23.5 ms | 1.14× |
-| `while_halve` | 114.5 ms | 145.5 ms | **0.79×** |
-| `fixed_point` | 96.5 ms | 162.1 ms | **0.59×** |
-| `list_shaping` | 69.0 ms | 235.3 ms | **0.29×** |
-| `for_loop` | 117.1 ms | 233.8 ms | **0.50×** |
-| `math_builtins` | 90.5 ms | 85.8 ms | 1.06× |
+| `read_length` | 10.8 ms | 56.5 ms | **0.19×** |
+| `pairs_increase` | 46.9 ms | 56.8 ms | **0.83×** |
+| `scan_mod` | 57.1 ms | 58.0 ms | **0.98×** |
+| `sliding_max` | 63.7 ms | 199.4 ms | **0.32×** |
+| `pipeline_body` | 59.4 ms | 73.2 ms | **0.81×** |
+| `text_builtins` | 58.0 ms | 55.7 ms | 1.04× |
+| `fold_map_dp` | 104.9 ms | 97.3 ms | 1.08× |
+| `fold_grid_writes` | 26.1 ms | 39.3 ms | **0.66×** |
+| `count_by_entries` | 36.8 ms | 54.2 ms | **0.68×** |
+| `partition_parts` | 61.0 ms | 54.4 ms | 1.12× |
+| `topk_sum` | 66.4 ms | 356.4 ms | **0.19×** |
+| `dijkstra_grid` | 77.8 ms | 103.9 ms | **0.75×** |
+| `match_pattern` | 36.5 ms | 76.4 ms | **0.48×** |
+| `toposort_words` | 214.9 ms | 242.6 ms | **0.89×** |
+| `combinations3` | 780.8 ms | 796.0 ms | **0.98×** |
+| `sort_by_key` | 242.2 ms | 616.1 ms | **0.39×** |
+| `merge_ranges` | 405.5 ms | 365.2 ms | 1.11× |
+| `group_map_values` | 46.4 ms | 73.9 ms | **0.63×** |
+| `set_intersect` | 18.5 ms | 125.8 ms | **0.15×** |
+| `connected_components` | 21.9 ms | 22.8 ms | **0.96×** |
+| `grid_bfs` | 65.5 ms | 65.0 ms | 1.01× |
+| `sparse_life` | 113.3 ms | 103.0 ms | 1.10× |
+| `explore_states` | 697.4 ms | 666.1 ms | 1.05× |
+| `loop_repeat` | 22.9 ms | 22.6 ms | 1.01× |
+| `join_output` | 72.5 ms | 79.4 ms | **0.91×** |
+| `channels_zip` | 87.5 ms | 278.2 ms | **0.31×** |
+| `shikigami_calls` | 38.9 ms | 54.1 ms | **0.72×** |
+| `vows_hot` | 51.7 ms | 198.8 ms | **0.26×** |
+| `grid_transform` | 83.3 ms | 106.7 ms | **0.78×** |
+| `float_sum` | 86.8 ms | 93.0 ms | **0.93×** |
+| `fold_tuple` | 43.1 ms | 60.8 ms | **0.71×** |
+| `iterate_unfold` | 27.7 ms | 27.9 ms | **0.99×** |
+| `while_halve` | 117.3 ms | 126.5 ms | **0.93×** |
+| `fixed_point` | 117.3 ms | 152.0 ms | **0.77×** |
+| `list_shaping` | 67.2 ms | 172.2 ms | **0.39×** |
+| `for_loop` | 114.2 ms | 172.8 ms | **0.66×** |
+| `math_builtins` | 72.7 ms | 79.3 ms | **0.92×** |
+| `sort_gaps` | 224.4 ms | 305.2 ms | **0.74×** |
+| `fold_idioms` | 36.9 ms | 56.3 ms | **0.66×** |
+| `dead_sort` | 51.3 ms | 69.9 ms | **0.73×** |
+| `range_stream` | 45.3 ms | 46.6 ms | **0.97×** |
+| `distinct_count` | 58.2 ms | 88.8 ms | **0.66×** |
+| `part_bodies` | 74.9 ms | 154.0 ms | **0.49×** |
+| `any_from_count` | 42.6 ms | 181.9 ms | **0.23×** |
 
-All thirty-seven are inside the 2× target and twenty-four are faster than
-the hand-written Go. The worst is `sparse_life` at 1.73×; the history of how it
-got there from 4.50× is [below](#the-case-that-was-over-target-sparse_life).
+All forty-four are inside the 2× target and thirty-six are faster than
+the hand-written Go. The worst is `partition_parts` at 1.12×; `sparse_life`, which started at 4.50×,
+is now at parity — [its history](#the-case-that-was-over-target-sparse_life) is below.
 
 Where Domain wins it is usually not a codegen trick but a decision the
 compiler is in a position to make and a hand-written program usually is not:
@@ -545,6 +559,175 @@ Re-run the test after a toolchain upgrade; the README's earlier 1.14× on that
 loop was measured with an older one.
 `join_output`'s `fmt`
 buffer was worth about 5% on its own; the builder reallocation was the rest.
+
+## Round five: the speed review, and code written the long way
+
+Rounds one to four asked whether a program written *with* the vocabulary
+compiles to what a Go programmer would write. This round asked the other half
+of the compiler's promise — *you describe the result, the compiler picks the
+way* — by writing programs the way someone who knows three primitives writes
+them, and reading what came out: a `Fold` for every reduction, a sort "to be
+safe" before a sum, a count compared with zero. Most of them compiled to
+exactly what they said. The six new cases in the table pin what was done about
+it, each against the Go a programmer who *had* noticed would write.
+
+Before and after, same machine, best of seven (the "before" binary is the
+compiler at the start of the round):
+
+| Case | before | after | Go | what changed |
+|---|---:|---:|---:|---|
+| `sort_gaps` | 788.7 ms | 173.7 ms | 286.1 ms | integer and Text sorts are `slices.Sort` |
+| `dead_sort` | 795.3 ms | 36.7 ms | 52.8 ms | the sort is recognized as dead across `Filter` + `Map Each`; the parse streams into the sum |
+| `range_stream` | 363.4 ms | 33.7 ms | 33.5 ms | `Range` is a stream source; `x % K = 0` is Go's own remainder |
+| `distinct_count` | 147.1 ms | 48.4 ms | 73.8 ms | `Unique` + `Count` → `CountDistinct`, streamed from the parse |
+| `fold_idioms` | 60.2 ms | 27.9 ms | 42.5 ms | the `Fold` is recognized as `Sum By`; parse + `Map Each` stream into it |
+| `any_from_count` | 46.6 ms | 37.3 ms | 181.5 ms | `Filter` + `Count` + `> 0` → `Any` |
+| `shikigami_calls` | 48.7 ms | 36.2 ms | 50.9 ms | (existing case) the parse streams into the sink; no `[]int64` |
+
+### What was found
+
+**1. Every plain integer sort was a stable closure sort.** `Domain Expansion:
+Quicksort` on a `List<Int>` emitted `sort.SliceStable(v, func(i, j int) bool {…})`
+— a merge-insertion sort calling a closure through a reflective swapper. No
+case caught it, because every sort in the suite was substituted away
+(`topk_sum`) or keyed (`sort_by_key`). Two equal Ints are the same value, so
+stability is unobservable; `slices.Sort` is a pdqsort specialised to the
+element type. **4.5× on two million integers**, and the same for `sort(xs)` in
+a lambda. Tuples and Floats keep the stable sort: for a tuple the tie order is
+visible, and a Float `NaN` has to land where the interpreter puts it.
+
+**2. A `Fold` was a wall the stream fuser could not see through.** The fuser
+streams into `Sum`, `Count`, `Count Matching` — the *named* reductions. A
+`Fold` with `Seed: 0` and `(acc, x) -> acc + x * x` is `Sum By` in every way
+except its name, and because of the name the `Map Each` in front of it built a
+two-million-element list. The optimizer now recognizes four hand-written
+reductions ([pass 36](../docs/optimizer.md#idioms--the-long-way-round)), and
+the fuser gained `Sum By`, `Product By`, `Any`, `All` and `CountDistinct` as
+sinks.
+
+**3. A sort was only dead if the reduction was the very next line.** `Sort` +
+`Sum` was elided; `Sort` + `Filter` + `Map Each` + `Sum` sorted two million
+integers to add them up. Pass 37 follows the ordering through pure, total
+elementwise stages. Where the ordering *is* needed, pass 38 moves a `Filter`
+ahead of the `Sort` so only the survivors are sorted.
+
+**4. `Range` always built its list.** "The multiples of 3 or 5 below N" —
+`Range` + `Filter` + `Sum` — allocated N integers to add some of them. `Range`
+is now a stream source: a counting loop, 240 MB less memory at N = 30M, and 11×
+faster.
+
+**5. The parse built a list even when nothing kept it.** `Split` + `Convert To
+Integers` has a dedicated lowering that parses into a pre-sized `[]int64`. It
+ran first, so `…` + `Filter` + `Sum` streamed over that list instead of over the
+text. When the run reaches a sink, the stream fuser now takes the whole chain
+and each integer is parsed as the loop reaches it. This is the "stream a
+`Split` into the stage that consumes it" item from the fusion list above, for
+the integer case; it moved `shikigami_calls` from 0.92× to 0.71× and is most of
+`dead_sort` and `fold_idioms`.
+
+**6. `x % 3 = 0` paid for a sign it never looked at.** `%` is Euclidean, so it
+compiles to a truncated remainder plus a fix-up branch. A comparison with zero
+does not care which remainder it is given — they are zero for the same `x` —
+and Go compiles `x % K == 0` for a constant K to a multiply and a compare.
+1.35× → 1.0× on `range_stream`.
+
+**7. Questions asked by building the answer.** `Unique` + `Count` built the
+deduplicated list to take its length (pass 39); `Filter` + `Count` + `> 0`
+counted every match to learn whether there was one (pass 40); `Map Each` +
+`Take Item k` mapped every element to read one (pass 41).
+
+## Round six: the seven things round five left
+
+Round five ended with seven suggestions. This is what each one turned out to be.
+
+| Case | before | after | what changed |
+|---|---:|---:|---|
+| `part_bodies` | 393 ms | 78 ms | length-changing passes run inside `Part` bodies (suggestion 5) |
+| `sparse_life` | 1.71× | 1.00–1.10× | coalesced repeated keys (suggestion 2, below) |
+| `count_by_entries` | 0.98× | 0.62× | `Count By` is a stream sink (3) |
+| `group_map_values` | 0.97× | 0.63× | `Group Reduce` is a stream sink (3) |
+| piped input, 12 MB | 150 ms | 110 ms | doubling read buffer (7) |
+
+**1. A general `Fold` is a stream sink.** A `Fold` behind a `Map Each` or
+`Filter` no longer builds the list it folds. The conditions are the ones the
+other sinks have, plus one specific to `Fold`: a *measured* seed is a lambda
+over the whole list, so it streams only when it does not read the list and
+cannot fail — it now runs before the first element instead of after the last
+stage, and a failing seed would otherwise be reported ahead of a stage failure
+that comes first unfused. To make the commonest seeds qualify, `emptymap`,
+`emptyset`, `emptylist`, `sparse`, `insert` and `del` are now recognized as
+total (each fails only on a type error the typechecker has already ruled out).
+`fold_map_dp` and `fold_tuple` stream; neither got faster, because both are
+bound by the map they build, not by the list they no longer read.
+
+**2. `sparse_life` closes — by a different road than the one proposed.** The
+double-buffered plane was the hand-written program's advantage as the review
+saw it. Reading the emitted Go for the loop turned up something simpler: the
+Domain source weights a live cell by writing `p` nine times in the `list(…)`,
+and the fused `Map Each` + `Flatten` + `Count By` emitted nine `dmBump(&m, k,
+1)` calls on the same key — nine hash probes where the Go program does one
+`+= 9`. A run of consecutive identical keys, under pure lambdas, is now one
+bump by the run's length. The first evaluation fails where the run's first
+would, and a map's key order is decided by a key's first sighting either way.
+**1.71× → 1.00–1.10×.** The double buffer would have saved the plane rebuild;
+at parity there is no longer a case for it.
+
+**3. `Split` streams into more consumers.** `Count By`, `Group By` and the
+optimizer's `Group Reduce` are sinks; `Split Each` by a literal,
+`Convert Each List to Integers` and `Match Pattern` over lines are stages. One
+rule had to be learned the hard way: a run that reaches *no* sink only
+collects, and taking it would steal the nodes a dedicated lowering starts from.
+The first version did exactly that to `set_intersect` (0.15× → 4.8×: a
+`[][]string` where a running intersection used to be) and to
+`fold_grid_writes`. A run containing one of those three stages is now taken only
+when it reaches a sink, and `TestCollectingRunsDoNotStealDedicatedFusions` pins
+it.
+
+**4. The expression simplifier has types.** Where the stage states its
+parameters' types (`Apply`, `Map Each`, `Filter`, `Fold`, …) the simplifier
+types the body, so `sum`/`min`/`max` of a `sort` or `reverse` read the list
+directly, and `first`/`last`/`item(_, 0)` of `sort(xs)` become `min`/`max`
+**behind an empty-list guard** that keeps the original's failure on an empty
+list in the original's words. `first(reverse(xs))` swaps to `last(xs)` the same
+way. See [optimizer.md](../docs/optimizer.md#idioms--the-long-way-round).
+
+**5. Length-changing passes run inside `Part` and loop bodies.** `Part` and the
+`Simple Domain` loops now read their node list from `Meta["nodes"]` when they
+run — the arrangement `Channel` has had since the day-15 stream fusion — and
+`optimizer.runInBodies` runs every pass over each such body. A two-part AoC
+solution gets the same rewrites in both parts it gets at the top level. A `Using:`
+pipeline body and a `Consider`'s `Of` are still held by closures that do not
+re-read, and stay out of reach.
+
+**6. Bounds checks: measured again, and still not worth a pass.** The upper
+bound — the whole suite built with every check deleted (`-gcflags=-B`) — is, on
+a noisy box, between −20% and +25% per case with a median near +2%, which is the
+shape of noise around a true value near zero. The two cases that read as real
+(`fold_grid_writes`, `pairs_increase`) are both already faster than the Go they
+race. One concrete candidate was tried — one unsigned compare per grid axis
+instead of two signed ones in `dmGridAt`/`dmGridSetIn` — and moved
+`fold_grid_writes` by 0.0%. It was reverted. The earlier conclusion stands: the
+check that remains is `cells[r*cols+c]` against `len(cells)`, which Go cannot
+connect to `rows*cols`, and removing it means trusting a struct invariant with
+`unsafe` — a memory-safety trade for a gain this measurement cannot see.
+
+**7. Reading from a pipe is 27% faster.** The reader used to grow a
+`strings.Builder` a quarter at a time; it now reads into a buffer that doubles
+from 1 MB and hands the finished buffer over as the string without a copy.
+`cat input | ./prog` on a 12 MB input: 150 ms → 110 ms. The rest of the gap to
+a redirected file (52 ms) is the pipe itself — `cat input | wc -c` alone costs
+13 ms, and the reader sees 64 KB at a time.
+
+### What is still on the table
+
+- **Typed rules for more stages.** `lambdaEnv` names the stages whose parameter
+  types it will state; a `Consider`'s bindings and an enclosing loop's are only
+  known one level up. Threading the full environment through (as the hoisting
+  pass already does) would let the typed rules reach lambdas inside loops.
+- **`Using:` pipeline bodies and `Consider` bodies** are the last bodies the
+  length-changing passes cannot reach (see suggestion 5).
+- **Streaming `Sort By`, `Window` and `Enumerate` runs.** They are consumers of
+  a list that fuse only by their own dedicated lowerings today.
 
 ## Verifying the in-place widening against the AoC 2017 suite
 

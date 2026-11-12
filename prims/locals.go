@@ -552,7 +552,7 @@ func (r *resolver) rewriteExpr(e ast.Expr, shadowed map[string]bool) (ast.Expr, 
 		if v == x.Value && body == x.Body {
 			return x, nil
 		}
-		return &ast.LetExpr{Name: x.Name, Value: v, Body: body, Pos: x.Pos}, nil
+		return &ast.LetExpr{Name: x.Name, Value: v, Body: body, Pos: x.Pos, Pattern: x.Pattern, PatternLen: x.PatternLen}, nil
 
 	case *ast.AssignExpr:
 		// The target is a name, not a subexpression, so it is not rewritten:
@@ -808,7 +808,7 @@ func renameIdents(e ast.Expr, sub map[string]string, shadowed map[string]bool) a
 		}
 		return &ast.LetExpr{Name: x.Name,
 			Value: renameIdents(x.Value, sub, shadowed),
-			Body:  renameIdents(x.Body, sub, inner), Pos: x.Pos}
+			Body:  renameIdents(x.Body, sub, inner), Pos: x.Pos, Pattern: x.Pattern, PatternLen: x.PatternLen}
 	case *ast.AssignExpr:
 		// The target is renamed with everything else: a write to a name that
 		// is being renamed has to follow it, or it would land on whatever the

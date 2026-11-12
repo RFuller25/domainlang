@@ -75,9 +75,9 @@ var mapElements = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if !ir.Keyable(out) {
+		if !ir.ListKeyable(out) {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Map Elements: a Set's elements must be keyable (Int, Text, or a tuple/record of them), got %s", out)}
+				"Map Elements: a Set's elements must be keyable (Int, Text, or Lists/Tuples/Records of them), got %s", out)}
 		}
 		return &ir.Node{
 			Prim: "Map Elements", In: in, Out: ir.Set(out),
@@ -113,9 +113,9 @@ var mapKeys = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if !ir.Keyable(out) {
+		if !ir.ListKeyable(out) {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Map Keys: a Map's keys must be keyable (Int, Text, or a tuple/record of them), got %s", out)}
+				"Map Keys: a Map's keys must be keyable (Int, Text, or Lists/Tuples/Records of them), got %s", out)}
 		}
 		return &ir.Node{
 			Prim: "Map Keys", In: in, Out: ir.Map(out, in.Elem),
@@ -152,9 +152,9 @@ var mapNodes = &Primitive{
 		if err != nil {
 			return nil, err
 		}
-		if !ir.Keyable(out) {
+		if !ir.ListKeyable(out) {
 			return nil, &ResolveError{Pos: pos, Msg: fmt.Sprintf(
-				"Map Nodes: a Graph's nodes must be keyable (Int, Text, or a tuple/record of them), got %s", out)}
+				"Map Nodes: a Graph's nodes must be keyable (Int, Text, or Lists/Tuples/Records of them), got %s", out)}
 		}
 		return &ir.Node{
 			Prim: "Map Nodes", In: in, Out: ir.Graph(out),
