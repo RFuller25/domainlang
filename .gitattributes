@@ -9,7 +9,7 @@
 /selfhost          export-ignore
 /docs/superpowers  export-ignore
 /bench             export-ignore
-/testdata          export-ignore
-/codegen/testdata  export-ignore
-/docs/testdata     export-ignore
+testdata           export-ignore
 *_test.go          export-ignore
+*.expected         export-ignore
+/bloat_findings.md export-ignore

@@ -10,9 +10,16 @@
         f system nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAllSystems (system: pkgs: rec {
-        domain = pkgs.buildGoModule {
-          pname = "domain";
+      packages = forAllSystems (system: pkgs:
+        let
+          # One definition, two packages. `domain` (the default) can compile:
+          # `domain build` shells out to `go build`, so its wrapper carries the
+          # Go toolchain in the runtime closure — about 228 MB of the package's
+          # 254 MB. `domain-lite` is the same binary without the wrapper: the
+          # interpreter, the REPL, the editor, `fmt`, `doc` and the rest, for
+          # someone who never compiles, and a closure of a few tens of MB.
+          build = withGo: pkgs.buildGoModule {
+          pname = if withGo then "domain" else "domain-lite";
           version = "0.6.0";
           # What the build copies into the store. The Go build needs neither the
           # tests, nor the benchmark suite, nor the research and planning
@@ -35,6 +42,13 @@
                 (fs.maybeMissing ./codegen/testdata)
                 (fs.maybeMissing ./docs/testdata)
                 (fs.maybeMissing ./docs/superpowers)
+                (fs.maybeMissing ./diag/testdata)
+                # The programs the docs and README point at. The binary embeds
+                # none of them (the playground's gallery is docs/gallery.json),
+                # and their .expected files exist only for the tests.
+                (fs.maybeMissing ./examples)
+                (fs.maybeMissing ./challenges)
+                (fs.maybeMissing ./bloat_findings.md)
               ]);
             };
 
@@ -84,9 +98,9 @@
           # buildGoModule forbids by default (disallowedReferences); this is
           # the sanctioned opt-out. The price is the Go toolchain in the
           # runtime closure — inherent to a compiler that invokes `go build`.
-          allowGoReference = true;
-          nativeBuildInputs = [ pkgs.makeWrapper ];
-          postInstall = ''
+          allowGoReference = withGo;
+          nativeBuildInputs = pkgs.lib.optional withGo pkgs.makeWrapper;
+          postInstall = pkgs.lib.optionalString withGo ''
             wrapProgram $out/bin/domain \
               --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.go ]}
           '';
@@ -121,6 +135,10 @@
             mainProgram = "domain";
           };
         };
+        in rec {
+          domain = build true;
+          domain-lite = build false;
+
         # Neovim/Vim syntax highlighting as an installable plugin:
         #   programs.neovim.plugins = [ domain.packages.${system}.domain-nvim ];
         domain-nvim = pkgs.vimUtils.buildVimPlugin {
