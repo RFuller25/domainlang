@@ -6,7 +6,10 @@
 # therefore ships a docs site with no Run buttons unless docs/wasm/build.sh
 # has already been run. `make build` runs both steps in order.
 
+# The CLI is linked with -s -w (no symbol table, no DWARF) and -trimpath, the
+# same flags docs/wasm/build.sh and the generated-program build already use.
+
 .PHONY: build
 build:
 	./docs/wasm/build.sh
-	go build -o domain ./cmd/domain
+	go build -trimpath -ldflags="-s -w" -o domain ./cmd/domain

@@ -1,0 +1,15 @@
+# Left out of `git archive`, which is what GitHub's tarball and zip downloads —
+# and therefore `nix run github:...` and `nix flake` inputs — are built from.
+# None of it is needed to build or run `domain`: the binary embeds only the
+# top-level docs and the editor extension files. Tests and research material
+# stay in the repository; they just are not shipped.
+#
+# `*_test.go` and the testdata directories are a deliberate trade: a download
+# cannot run `go test`. Clone the repository for that.
+/selfhost          export-ignore
+/docs/superpowers  export-ignore
+/bench             export-ignore
+/testdata          export-ignore
+/codegen/testdata  export-ignore
+/docs/testdata     export-ignore
+*_test.go          export-ignore

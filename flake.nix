@@ -14,12 +14,38 @@
         domain = pkgs.buildGoModule {
           pname = "domain";
           version = "0.6.0";
-          src = self;
+          # What the build copies into the store. The Go build needs neither the
+          # tests, nor the benchmark suite, nor the research and planning
+          # material, and every file left in `src` is one more thing to hash,
+          # copy and rebuild on. `docs/` and `editors/` stay whole apart from
+          # these: the binary embeds their documentation and extension files.
+          # `go mod vendor` sees the same dependency set without the tests, so
+          # `vendorHash` is unchanged. maybeMissing: a flake fetched as a
+          # GitHub tarball has these paths removed by `.gitattributes`
+          # (export-ignore) before this ever evaluates.
+          src =
+            let fs = pkgs.lib.fileset;
+            in fs.toSource {
+              root = ./.;
+              fileset = fs.difference ./. (fs.unions [
+                (fs.fileFilter (f: pkgs.lib.hasSuffix "_test.go" f.name) ./.)
+                (fs.maybeMissing ./selfhost)
+                (fs.maybeMissing ./bench)
+                (fs.maybeMissing ./testdata)
+                (fs.maybeMissing ./codegen/testdata)
+                (fs.maybeMissing ./docs/testdata)
+                (fs.maybeMissing ./docs/superpowers)
+              ]);
+            };
 
           # Vendor hash covers charm.land/bubbletea/v2, charm.land/bubbles/v2,
           # and their transitive dependencies (the REPL's line editor).
           vendorHash = "sha256-BaaZD69s6Xmum7SRRUSK6YbiNWsg5w8ChtBxPirPINU=";
           subPackages = [ "cmd/domain" ];
+
+          # No symbol table and no DWARF in the shipped CLI: about a quarter
+          # off the binary. Panic traces still carry function names.
+          ldflags = [ "-s" "-w" ];
 
           # buildGoModule builds the dependencies in a *separate* derivation
           # (`domain-<version>-go-modules`) whose only job is to run
