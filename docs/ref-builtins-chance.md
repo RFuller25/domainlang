@@ -2,10 +2,10 @@
 
 Part of the [expression layer reference](expressions.md).
 
-Five builtins, and they are the only ones in the language whose answer is not
+Six builtins, and they are the only ones in the language whose answer is not
 decided by their arguments. Everything else is a function of what it was
 handed — which is the assumption almost every [optimizer](optimizer.md) pass
-rests on, and why these five are treated specially by all of them.
+rests on, and why these six are treated specially by all of them.
 
 | Builtin | Type | Meaning |
 |---|---|---|
@@ -14,6 +14,7 @@ rests on, and why these five are treated specially by all of them.
 | `pick(xs)` | `List<T> \| Set<T> -> T` | One element, drawn from the stream. |
 | `frame()` | `-> Int` | How many frames have been drawn. |
 | `elapsed()` | `-> Int` | Milliseconds the run has been going. |
+| `pending(tag)` | `Text -> Bool` | Whether a `Request` with that tag is still out. |
 
 ## The stream is seeded
 
@@ -127,7 +128,8 @@ Reveal: stdout
 [`Request`](ref-expansions.md#request--w---w-game-dev) with that tag is still
 out. It belongs on this page for the same reason the rest do: its answer is not
 a function of its argument — the same call answers differently as the exchange
-goes on.
+goes on — so the optimizer treats it like the others and never folds or reorders
+a lambda that calls it.
 
 One request is in flight per tag, and firing again supersedes the one that was
 out, so a reply can be lost. That is the right trade for a position poll and

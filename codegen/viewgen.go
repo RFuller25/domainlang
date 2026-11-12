@@ -113,6 +113,9 @@ func dmViewLayout(v dmView, st dmViewStyle) dmViewBlock {
 		if k := dmViewChild(v); k != nil {
 			in = dmViewLayout(k[0], st)
 		}
+		if v.align == "fit" {
+			return dmViewLayoutFit(in, v.w, v.h, st)
+		}
 		return dmViewLayoutAlign(in, v.w, v.h, v.align, st)
 	}
 	return dmViewBlock{}
@@ -251,6 +254,38 @@ func dmViewLayoutAlign(in dmViewBlock, w, h int, how string, st dmViewStyle) dmV
 	}
 	for len(out.lines) < h {
 		out.lines = append(out.lines, []dmViewRun{{text: dmViewSpaces(w), style: st}})
+	}
+	return out
+}
+
+func dmViewLayoutFit(in dmViewBlock, w, h int, st dmViewStyle) dmViewBlock {
+	if w < 0 {
+		w = 0
+	}
+	if h < 0 {
+		h = 0
+	}
+	out := dmViewBlock{w: w}
+	for i := 0; i < h; i++ {
+		if i >= len(in.lines) {
+			out.lines = append(out.lines, []dmViewRun{{text: dmViewSpaces(w), style: st}})
+			continue
+		}
+		row, left := []dmViewRun{}, w
+		for _, run := range in.lines[i] {
+			if left <= 0 {
+				break
+			}
+			if n := dmViewWidth(run.text); n > left {
+				run.text = string([]rune(run.text)[:left])
+			}
+			row = append(row, run)
+			left -= dmViewWidth(run.text)
+		}
+		if left > 0 {
+			row = append(row, dmViewRun{text: dmViewSpaces(left), style: st})
+		}
+		out.lines = append(out.lines, row)
 	}
 	return out
 }

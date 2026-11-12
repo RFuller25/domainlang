@@ -30,3 +30,21 @@ func TestUpdatedNamesMarksALocalWrite(t *testing.T) {
 		t.Errorf("a read-only local reported writes: %v", names)
 	}
 }
+
+// Every builtin whose value is not decided by its arguments must be on the
+// list, or the optimizer folds or reorders a lambda that calls it. `pending`
+// reads the run's table of requests still out, so it belongs with the clock.
+func TestNondeterministicBuiltins(t *testing.T) {
+	for _, name := range []string{"random", "randomf", "pick", "frame", "elapsed", "pending"} {
+		if !Nondeterministic(name) {
+			t.Errorf("%s answers differently across a run but is not marked nondeterministic", name)
+		}
+	}
+	call := &CallExpr{Fn: &Ident{Name: "pending"}, Args: []Expr{&StringLit{Value: "guess"}}}
+	if !HasNondeterminism(call) {
+		t.Error("an expression calling pending() is not seen as nondeterministic")
+	}
+	if Nondeterministic("length") {
+		t.Error("length is a function of its argument")
+	}
+}

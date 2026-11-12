@@ -140,6 +140,9 @@ func layout(v *ViewValue, st ViewStyle) *ViewBlock {
 	case VMargin:
 		return layoutMargin(layout(child(v), st), v.W, v.H, st)
 	case VAlign:
+		if v.Align == "fit" {
+			return layoutFit(layout(child(v), st), v.W, v.H, st)
+		}
 		return layoutAlign(layout(child(v), st), v.W, v.H, v.Align, st)
 	}
 	return &ViewBlock{}
@@ -282,6 +285,36 @@ func layoutAlign(inner *ViewBlock, w, h int, how string, st ViewStyle) *ViewBloc
 	}
 	for len(out.Lines) < h {
 		out.Lines = append(out.Lines, ViewLine{{Text: spaces(w), Style: st}})
+	}
+	return out
+}
+
+// layoutFit forces a block to exactly w×h: rows beyond h and columns beyond w
+// are cut, and a block smaller than the area is padded with blank space at the
+// right and bottom. It is the one layout that may lose part of a picture.
+func layoutFit(inner *ViewBlock, w, h int, st ViewStyle) *ViewBlock {
+	w, h = max(w, 0), max(h, 0)
+	out := &ViewBlock{W: w}
+	for i := range h {
+		if i >= len(inner.Lines) {
+			out.Lines = append(out.Lines, ViewLine{{Text: spaces(w), Style: st}})
+			continue
+		}
+		row, left := ViewLine{}, w
+		for _, run := range inner.Lines[i] {
+			if left <= 0 {
+				break
+			}
+			if n := runeWidth(run.Text); n > left {
+				run.Text = string([]rune(run.Text)[:left])
+			}
+			row = append(row, run)
+			left -= runeWidth(run.Text)
+		}
+		if left > 0 {
+			row = append(row, ViewRun{Text: spaces(left), Style: st})
+		}
+		out.Lines = append(out.Lines, row)
 	}
 	return out
 }

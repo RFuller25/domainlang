@@ -91,6 +91,24 @@ than overflowing one. `fit` is where clipping is asked for by name.
 ```domain run
 Cursed Energy: stdin
 Cursed Technique: Apply
+    Using: (t) -> stack(box(fit(text("abcdef"), 3, 1)), box(fit(text("hi"), 4, 2)))
+Reveal: stdout
+```
+```input
+```
+```output
+┌───┐
+│abc│
+└───┘
+┌────┐
+│hi  │
+│    │
+└────┘
+```
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Apply
     Using: (t) -> box(align(text("hi"), 8, 1, "center"))
 Reveal: stdout
 ```

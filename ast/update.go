@@ -143,7 +143,7 @@ func HasInPlace(e Expr) bool {
 // nondeterministic is every builtin whose value is not decided by its
 // arguments.
 //
-// There are five, and they are the only way an expression in this language can
+// There are six, and they are the only way an expression in this language can
 // give two answers to one question. Everything else is a function of what it
 // was handed, which is the assumption almost every optimizer pass rests on:
 // that a stage may be reordered, fused, folded or run once instead of twice
@@ -151,10 +151,13 @@ func HasInPlace(e Expr) bool {
 //
 // `random` and `randomf` and `pick` draw from the run's stream, so calling one
 // twice is two draws. `frame` and `elapsed` read the run's progress, so the
-// same call answers differently as the program goes on.
+// same call answers differently as the program goes on. `pending` reads the
+// run's table of requests still out, so it answers differently as the exchange
+// goes on — folded to a constant at resolve time it would say "nothing is
+// pending" for the whole of a game.
 var nondeterministic = map[string]bool{
 	"random": true, "randomf": true, "pick": true,
-	"frame": true, "elapsed": true,
+	"frame": true, "elapsed": true, "pending": true,
 }
 
 // Nondeterministic reports whether a builtin's value depends on anything but

@@ -510,8 +510,9 @@ the usual fix is to stop writing the global.
 
 `random`, `randomf` and `pick` read from the run's
 [seeded stream](ref-builtins-chance.md), and `frame` and `elapsed` read its
-clock. All five answer differently on two identical inputs, which is the one
-thing every pass in this catalog assumes cannot happen.
+clock, and `pending` reads the table of requests still out. All six answer
+differently on two identical inputs, which is the one thing every pass in this
+catalog assumes cannot happen.
 
 So a lambda that names any of them is **effectful**, by the same seam a
 writing lambda is: `ast.HasNondeterminism` feeds `optimizer/globals.go`'s

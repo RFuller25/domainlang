@@ -10,7 +10,7 @@ func plain(t *testing.T, v *ViewValue) string {
 	return RenderViewPlain(v)
 }
 
-func TestViewText(t *testing.T) {
+func TestTextView(t *testing.T) {
 	if got := plain(t, TextView("hello")); got != "hello" {
 		t.Errorf("got %q, want %q", got, "hello")
 	}
@@ -202,5 +202,30 @@ func TestViewValueDescribesAndFormats(t *testing.T) {
 	}
 	if got := FormatValueTyped(v, View()); got != FormatValue(v) {
 		t.Errorf("typed formatting differs: %q", got)
+	}
+}
+
+// fit is the one layout that clips: columns past w and rows past h are cut, and
+// a block smaller than the area is padded at the right and bottom, so the
+// result is exactly w×h whatever went in.
+func TestFitViewClipsAndPads(t *testing.T) {
+	cases := []struct {
+		name string
+		v    *ViewValue
+		w, h int
+		want string
+	}{
+		{"clips columns", TextView("abcdef"), 2, 1, "ab"},
+		{"clips rows", StackView(TextView("one"), TextView("two"), TextView("three")), 5, 2, "one\ntwo"},
+		{"pads", TextView("hi"), 4, 2, "hi\n"},
+		{"empty area", TextView("hi"), 0, 0, ""},
+	}
+	for _, c := range cases {
+		if got := RenderViewPlain(FitView(c.v, c.w, c.h)); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+	if b := LayoutView(FitView(TextView("abcdef"), 2, 3)); b.W != 2 || len(b.Lines) != 3 {
+		t.Errorf("fit(…, 2, 3) is %d wide and %d tall, want exactly 2×3", b.W, len(b.Lines))
 	}
 }

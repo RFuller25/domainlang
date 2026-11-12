@@ -63,7 +63,7 @@ the buttons.
 **Every example in the reference runs.** A block marked ```domain run carries
 the input it is given and the output it must print; both backends execute it
 in both optimizer modes and the printed answer is diffed, so nothing on these
-pages can drift from what the language does. 345 runnable examples at present,
+pages can drift from what the language does. 346 runnable examples at present,
 at least two for every primitive, language construct and builtin group.
 
 ## Quick orientation
