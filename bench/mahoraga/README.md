@@ -60,7 +60,7 @@ linux/amd64, four cores. **before** is the search as it shipped; **after** is
 the search in this branch. Both columns are what the tool itself reported.
 
 These were measured **before** the in-place loop write landed in the optimizer
-(`docs/aoc-gaps.md` gap 14). That change belongs to the compiler rather than
+(pass 51 in `docs/optimizer.md`). That change belongs to the compiler rather than
 to the search, and it moved `i05_jumps`'s baseline from 390 ms to 7.7 ms —
 see "what the compiler took back" below, which is the more interesting half of
 the result.

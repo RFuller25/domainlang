@@ -1,19 +1,22 @@
 # Match Pattern: the typed-hole template language
 
-`Match Pattern` is the parsing workhorse — most input handling flows through
-it. This page is the full reference for the template syntax, the output shapes
-it produces, how it is typed, how it is lowered by each backend, and how it
-fails.
+Most puzzle input is lines of text with numbers and words in fixed places.
+`Match Pattern` parses such a line with a **template**: you write the line as
+it looks, with a typed *hole* wherever a value goes, and get the values back
+with the right types.
 
-Template parsing and typing live in the `pattern` package; the pipeline
-primitive lives in `prims/match.go`; the compiled lowering is
-`codegen/matchgen.go`. The primitive itself is summarized in
-[primitives.md](ref-transforms.md#match-pattern--text---v-or-listtext---listv).
+```
+"{name:word} has {n:int}"   on   "ana has 3"   →   {name: ana, n: 3}
+```
+
+This page is the full reference for the template syntax, what a template
+produces, and how matching fails. The operation itself is summarized in
+[the primitive reference](ref-transforms.md#match-pattern--text---v-or-listtext---listv).
 
 ## The shape of it
 
-- **Syntax:** typed-hole templates — not raw regex, `sscanf`, or a combinator
-  DSL. The template is a literal, so the output type is known statically.
+- **Syntax:** a template string with typed holes. The template is written in
+  the program, so the type of the result is known before the program runs.
 - **Hole types:** `{int}`, `{hex}`, `{digits}`, `{word}`, `{char}`, `{text}`.
 - **Repetition:** `{ns:int+ sep=", "}` captures one or more elements as a
   `List`.
@@ -298,81 +301,32 @@ Example results:
                                -> {id: "target", vals: [1, 2, 3]}
 ```
 
-## Type checking
+## The result's type
 
-`Match Pattern` resolves at lower-time to a node whose `Out` type is computed
-from the template:
+The template alone decides the type of the result, so it is known before the
+program runs:
 
-- positional → `List<T>` when all holes share a type, otherwise a `Tuple`
-  type carrying a per-position element-type vector (new IR type, see
-  `docs/data-model.md`);
-- named → a `Record` type with the declared field set.
+- **named holes** give a `Record` with one field per hole;
+- **unnamed holes** give a `List<T>` when every hole has the same type, and a
+  tuple otherwise.
 
-Because the template is a literal known at resolve time, the output type is
-fully determined statically — no inference needed. A pattern that fails to parse
-at resolve time (malformed `{...}`, unknown hole type) is a resolve error with a
-position.
+A template that is malformed — an unclosed `{`, an unknown hole type — is an
+error at that point too, with a line and column.
 
-## Lowering
+## How matching works
 
-The template becomes a matcher once, at resolve time:
+A template must match the **whole** text it is given (except under
+`Mode: Scan`). Literal characters must appear exactly; each hole captures the
+text its type allows, and the captured text is then converted to the hole's
+type.
 
-1. Tokenize the template into a sequence of literals and holes.
-2. Compile to a regular expression with one capture group per hole
-   (`{int}` → `(-?\d+)`, `{word}` → `(\S+)`, `{text}` → `(.*)`), anchored to the
-   whole field. Named holes map to named groups.
-3. At run time, match the current value (or each element under `Mode: Each` and
-   `Mode: Try`), convert captures to their hole types, and assemble the
-   Record/tuple.
+A repeated hole captures the whole run and then splits it on the separator. A
+repeated `word` stops at the separator's first character, so `a,b,c` with
+`sep=","` is three words rather than one.
 
-An optional group is a **capturing** group with `?` on it — `( … )?`, not
-`(?: … )?` — and the match is read with `FindStringSubmatchIndex` rather than
-`FindStringSubmatch`. The text form reports a non-participating group as `""`,
-which a group that legitimately matched empty also reports; the index form gives
-`-1` and is exact. A group's own capture is what carries presence, so a
-flag-only group has somewhere to read it from.
-
-A repeated group's inner template lowers to a **non-capturing** element pattern,
-so the run is one capture like a repeated hole's, split and then re-matched
-element by element against the inner template's own regex.
-
-Once a template has an optional group, regex order and declaration order stop
-agreeing: the group's wrapper capture comes before the holes it guards and owns
-no hole itself. So `Template.lower` walks the segments **once** and returns both
-the regex and a capture plan saying which group fills which slot; `RegexSource`
-and `Captures` are thin wrappers over it. Two walks would be two chances to
-number the captures differently in the two backends.
-
-A repeated hole is still **one** capture group, spanning the whole run
-(`(?:-?\d+)(?:,(?:-?\d+))*`), split on the separator afterwards. A group per
-element is not an option: a Go regexp keeps only the last match of a repeated
-group. A repeated `word` element is narrowed from `\S+` to exclude the
-separator's first byte, or `a,b,c` would capture as one element rather than
-three.
-
-`Template.RegexSource` builds both spellings of that pattern — named groups for
-the interpreter, plain ones for the compiler — from one walk over the segments.
-Two lowerings of one template is exactly how a compiled program could parse
-differently from the interpreted one, so there is only the one.
-
-The regex is an implementation detail the user never sees; the template surface
-stays themed and friendly.
-
-**The compiler has a faster path.** `domain build` emits a
-`func dmParseN(s string) (T, bool)` per template. A template whose holes are
-all `{int}`, separated by literals that a greedy scan cannot mis-split,
-compiles to a **hand-rolled scanner with no regexp at run time**; anything else
-(a `{word}` or `{text}` hole, a repeated hole, either kind of group, an
-ambiguous separator) falls back to a package-level compiled regexp with
-identical semantics.
-`TestMatchPatternPathSelection` pins which template takes which path, and the
-interpreter-vs-binary oracle tests pin that both agree.
-
-The compiler also fuses parse-then-reduce adjacencies — `Split` +
-`Match Pattern, Mode: Each` + `Count Matching` becomes one streaming loop that
-never materializes the `[]string` or the `[]Record`. `Mode: Try` does not fuse:
-the fused loop feeds every line to the consumer, and a Try stage is defined by
-the lines it does *not* pass on.
+Interpreted and compiled programs match identically. A compiled program is
+faster at it — a template made only of `{int}` holes and unambiguous literal
+separators compiles to a plain scanning loop.
 
 ## Error behavior
 
@@ -411,12 +365,11 @@ Each of these is covered by a test.
 
 ## Deliberate omissions
 
-The template language stops here on purpose — past this point a regex would be
-the honest tool, and `Match Pattern` is meant to stay readable at a glance:
+The template language is kept small on purpose, so that a template stays
+readable at a glance. It does not have:
 
-- Alternation *inside* a template. Several shapes on one line is `Case:`, whose
-  same-fields rule is what keeps the output one type; a genuinely union-shaped
-  result would need a sum type to land in.
+- **Alternatives inside a template.** For lines of several shapes use
+  `Case:`, one template per shape.
 - **Nested groups.** One level only — a group holds literals and holes, never
   another group.
 - Recursive patterns.

@@ -166,11 +166,11 @@ client's npm dependency (`vscode-languageclient`), which needs npm: highlighting
 works without it, the server features wait for `npm install --omit=dev` in the
 installed folder. The installer prints that command with the path filled in.
 
-The rule of thumb: **a bare program file runs it; anything more builds it.**
-The explicit `run` subcommand exists because of that rule — it is the only
-way to interpret *with* flags (`domain run prog.domain --explain`), since a
-subcommand-less `domain prog.domain --explain` counts as "extra args" and
-selects the compiler.
+The rule of thumb: **a bare program file runs it, and nothing else is
+accepted next to it.** The explicit `run` subcommand is the way to interpret
+*with* flags (`domain run prog.domain --explain`); a subcommand-less
+`domain prog.domain --explain` is a usage error that names `run` and `build`,
+rather than quietly choosing a backend for you.
 
 ## Flags
 
@@ -525,12 +525,10 @@ the UI then navigates what was recorded. Four consequences worth knowing:
 
 ### A failure is always in the recording
 
-A run that dies 400,000 steps in used to record its opening stretch, report
-`capped`, and leave `!` with nothing to jump to — the tool saying "this run
-failed" and "there is no failure here" in the same breath. A step that failed is
-now recorded **however far past the cap it happened**, and the frames around it
-are kept to hold it, so the failing row is reachable in every recording that has
-one.
+A recording stops keeping steps once it reaches its cap, with one exception:
+a step that failed is recorded **however far past the cap it happened**, along
+with the frames around it. So if a run fails, `!` always has a failing row to
+jump to.
 
 Loops, `Channel` bodies, `Part` bodies and nested `Using:` bodies are **frames
 you can step into**: `Repeat 4` collapses to one row and opens into `Repeat 4
@@ -1210,8 +1208,8 @@ probe build reporting what the program's own bindings and list accumulators
 held — and the Go the compiler actually emitted. Turns 2–8 each adapt to what
 has been measured: dead code for this input, how the program is compiled, pass
 ablation, pass ordering, templated codegen edits, guarded specialisation,
-pinned specialisation. Turns not yet built are reported as such, so the report
-distinguishes "found nothing" from "did not look".
+pinned specialisation. A turn that finds nothing still runs and says so, so
+the report distinguishes "found nothing" from "did not look".
 
 **Turn 3 asks how `go build` should be invoked** — the one question the Domain
 compiler never gets to ask. A rebuild against a profile of this program doing
@@ -1465,7 +1463,7 @@ effect on a program you run yourself, and you never need to set them.
 |---|---|
 | 0 | success |
 | 1 | program error: unreadable program file, lex/parse/resolve failure, runtime error, vow violation, or a failed `go build` |
-| 2 | usage error: no arguments at all, unknown flag, missing file argument, or a flag missing its value |
+| 2 | usage error: no arguments at all, unknown flag, missing file argument, an extra argument after a bare file, or a flag missing its value |
 
 Compiled binaries follow the same convention: 0 on success, 1 with a
 `domain: ...` message on stderr for runtime failures (including vow

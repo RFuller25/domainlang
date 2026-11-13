@@ -366,8 +366,7 @@ Reveal: stdout
 ```
 
 **`Then:` — one last expression over the finished accumulator.** A fold often
-needs a final step (`depth * distance`), and the only way to write it used to be
-to append a sentinel element so the last lambda call could compute it. `Then:
+needs a final step (`depth * distance`) once every element has been seen. `Then:
 (acc) -> expr` is that step: the stage's result is `Then(final accumulator)`
 and its type is the lambda's, so it may differ from the accumulator's. On an
 empty list `Then` applies to the seed. It also reads any `Consider` stage

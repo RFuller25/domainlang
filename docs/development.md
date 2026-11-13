@@ -175,8 +175,8 @@ would — and hands the screen to the **run monitor** for as long as it takes.
 The program's `Reveal:` output is captured rather than printed: a raw-mode
 terminal cannot take interleaved writes from a program that thinks it owns
 stdout, which is why [`:visualize`](tooling.md) captures it too. The monitor
-tails what has been captured as it arrives, so capturing it no longer costs you
-the *timing* of the output — only its place on the terminal. The whole of it is
+shows what has been captured as it arrives, so you still see the output in
+real time. The whole of it is
 in a scrollable pane when the run is over.
 
 `ctrl+c` stops a run. `Simple Domain: While` runs to a billion iterations

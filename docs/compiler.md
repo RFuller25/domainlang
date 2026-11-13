@@ -1,21 +1,34 @@
 # The Go compiler backend
 
-`domain build`
-hands the **post-optimizer** IR — the same pipeline the interpreter runs —
-to the `codegen` package, which emits one fully typed Go `main.go` and shells
-out to `go build -trimpath -ldflags "-s -w"` (CGO disabled).
+`domain build prog.domain -o prog` turns a Domain program into a standalone
+native binary. The binary prints exactly what `domain run` prints for the same
+input; it is simply faster.
+
+**What you need to know to use it:**
+
+- Building needs the Go toolchain installed. Running the binary needs nothing.
+- A compiled binary looks for a `Cursed Energy:` file relative to the
+  directory you run it from; the interpreter looks relative to the program
+  file. See [the two differences](#documented-semantic-deltas).
+- `domain build prog.domain --emit-go -` shows the Go that was generated.
+
+The rest of this page describes how the compiler works, for readers who want
+to know what their program becomes.
+
+## How it works
+
+`domain build` takes the program **after optimization** — the same pipeline
+the interpreter runs — and hands it to the `codegen` package, which emits one
+fully typed Go `main.go` and runs `go build -trimpath -ldflags "-s -w"` on it
+(CGO disabled).
 
 **How self-contained the result is depends on the program's
 [Innate Domain](scopes.md).** An `Advent of Code` program — which is every
-program written without a scope line — compiles to what it always did: a
+program written without a scope line — compiles to a
 static binary under 2 MB, standard library only, needing nothing at
-runtime and nothing at build time but the Go toolchain. That is not a
-default the game backend inherited by accident; it is asserted byte for byte
-(`codegen.moduleFiles`, `TestStdlibBuildInputsAreUnchanged`), because every
-number in [`bench/`](../bench/README.md) and every claim on this page is a
-claim about those build inputs.
+runtime and nothing at build time but the Go toolchain.
 
-A `Game Dev` program is the exception, and the only one so far. It paints a
+A `Game Dev` program is the exception. It paints a
 terminal, and the terminal half of this repository is Bubble Tea, so its
 binary is around 7.5 MB and its **build** needs the modules — not the network:
 `domain build` writes a `go.mod` and the repository's own `go.sum` beside the
@@ -35,8 +48,8 @@ interpreter runs it, so a binary containing one needs that language's runtime
 — `python3`, the Go toolchain, `rask`, `crust`, `weave` — on the machine it
 runs on.
 
-Everything else about a binary is unchanged whatever its scope, including the
-parity oracle: the compiled program's stdout matches the interpreter's byte
+Everything else about a binary is the same whatever its scope, including the
+guarantee of identical output: the compiled program's stdout matches the interpreter's byte
 for byte, in both optimizer modes. For a game that means its **frames**: a
 replayed game writes a deterministic sequence of them to stdout, and
 `codegen/game_test.go` diffs those against the interpreter's for six anchor
@@ -88,8 +101,7 @@ quicksort or pair loop — the thesis survives compilation intact.
   as a `*T` instead. That pointer is the Go analogue of the interpreter's one
   shared binding stack: a write inside the body reaches the caller's variable,
   so the next element and the next lap see it in both backends. Only the
-  written bindings pay for it (an address taken is an escape); a body that
-  writes nothing emits exactly the signature it emitted before. A body nested
+  written bindings pay for it (an address taken is an escape). A body nested
   inside another passes the same pointer straight down.
 - **Updates are sequenced explicitly.** Go orders the *function calls* in an
   expression left to right but says nothing about when a bare variable is read
@@ -97,8 +109,7 @@ quicksort or pair loop — the thesis survives compilation intact.
   So when an operand or argument contains a `:=`, each sibling is wrapped in
   `func() T { return … }()` — a call, and therefore ordered — which is what
   makes `n + (n := x) + n` mean the same thing in both backends. Nothing is
-  wrapped in a program that never writes: those compile to exactly the Go they
-  compiled to before the operator existed.
+  wrapped in a program that never writes.
 - **Elementwise chains compile to one loop.** A source (a list in hand, a
   `Split` by a literal separator, or a `Range`), any run of stages — `Map Each`,
   `Filter`, `Convert To Integers` / `Floats`, `Split Each` by a literal,
@@ -112,9 +123,9 @@ quicksort or pair loop — the thesis survives compilation intact.
   leave the loop at the element that decides them (which skips stage
   evaluations, so they are sinks only when no stage in the run can fail). A
   `Fold` is a sink when its lambda is pure and its seed is a literal or a
-  measured lambda that does not read the list (the list no longer exists) and
-  cannot fail (it now runs before the first element rather than after the
-  last stage):
+  measured lambda that does not read the list (in the fused loop there is no
+  list to read) and cannot fail (it runs before the first element rather than
+  after the last stage):
 
   ```go
   var b3 strings.Builder
@@ -192,8 +203,8 @@ deterministic.
 Emission is also checked to be deterministic, a golden snapshot of the
 Day 1 anchor's generated source catches accidental codegen churn in review
 (re-bless with `go test ./codegen -run TestEmittedSourceGolden -update`),
-and a synthetic unknown primitive proves the "not compilable yet" guard
-still fires for future primitives shipped without a codegen case.
+and a synthetic unknown primitive proves that a primitive with no codegen
+case is refused with a clear error.
 
 ## Performance
 
@@ -205,7 +216,7 @@ Measured on synthetic large inputs (identical answers throughout):
   1.47s → 0.22s) — the regexp+evaluator per line becomes an inlined scanner
   and comparison.
 
-These are now `go test -bench` guards (`codegen/bench_test.go`):
+These are `go test -bench` guards (`codegen/bench_test.go`):
 `BenchmarkSplitHeavy*` and `BenchmarkMatchPattern*` run interpreter vs
 compiled binary over the same generated large inputs — the compiled numbers
 include process startup, which is what a user actually pays. Run them with
@@ -213,13 +224,12 @@ include process startup, which is what a user actually pays. Run them with
 
 Beating the interpreter is the easy half. The other half — **is the emitted
 Go as fast as Go you would have written?** — is
-[`bench/`](../bench/README.md): thirty-seven Domain programs, each with a
+[`bench/`](../bench/README.md): forty-four Domain programs, each with a
 hand-written Go counterpart answering the same question about the same
 input, built with the same flags and required to print the same bytes.
-Today all of them are inside 2× of the hand-written program and
-twenty-four are faster than it. `bench/README.md` carries the table, the
-methodology, and the measured payoff of the fusion passes that are not
-written yet.
+All of them are required to be inside 2× of the hand-written program, and
+most are faster than it. `bench/README.md` carries the table and the
+methodology.
 
 ```sh
 go test ./bench                                          # the two must agree
@@ -257,9 +267,7 @@ tuple, repeatably across runs.
 Interpreted, the same pair goes the other way and by much more — roughly
 **2.8× faster** with globals — because that is where the tuple really is
 allocated every lap. `domain run` is the default and `domain build` is the
-opt-in, so that is the trade the feature makes. Caching a global in a local
-across a loop that provably cannot observe it would close the compiled gap; it
-is not done yet.
+opt-in, so that is the trade the feature makes.
 
 ## Documented semantic deltas
 
@@ -268,44 +276,31 @@ differences remain:
 
 1. **Input path resolution.** Interpreting resolves a relative
    `Cursed Energy:` target against the program file's directory; a compiled
-   binary resolves it against the **working directory** (it no longer knows
-   where the source lived). Both fall back to stdin when the file is
-   missing. This is a settled decision: a standalone binary behaving
-   like every other CLI tool — inputs relative to where you run it — beats
-   an `--input-base` override baked in at compile time. `domain build --run`
+   binary resolves it against the **working directory**, like every other
+   command-line tool (it does not know where the source lived). Both fall back
+   to stdin when the file is missing. `domain build --run`
    inherits the caller's working directory, so its resolution matches a
    plain `./binary` invocation.
 2. **Error wording.** Runtime failures abort with exit 1 and a
    `domain: ...` message in both backends, but the exact message text can
    differ: the interpreter's errors carry the source position of the stage
-   that failed and name the primitive, and a compiled binary — which no longer
-   has the source — carries neither. The *diagnosis* is the same one: an int
+   that failed and name the primitive, and a compiled binary — which does not
+   have the source — carries neither. The *diagnosis* is the same one: an int
    capture too large for int64 reports `captured "…" is not a valid integer`
    from both backends, in every `Match Pattern` mode, and only the `3:1:` in
    front and the `(in Match Pattern)` behind it are the interpreter's.
 
 ## Limits
 
-- There is no program the interpreter runs and this backend refuses. The two
-  that used to be — a `:=` from inside a pipeline body, and two Record types
-  declaring the same fields in different orders — are closed. What keeps that
-  list empty is the oracle testing
-  [above](#correctness-the-interpreter-is-the-oracle): a program the two
-  backends disagree about fails the suite, whether it disagrees by refusing to
-  compile or by printing something else.
+- **Every program the interpreter runs, the compiler compiles.** The oracle
+  testing [above](#correctness-the-interpreter-is-the-oracle) enforces it: a
+  program the two disagree about fails the suite, whether the compiler refuses
+  it or the binary prints something else.
 - `While` / `Iterate Until Fixed Point` / `Unfold` stop after **1,000,000,000**
-  iterations in a compiled binary, matching the interpreter:
-  `dmMaxLoopIterations` mirrors `prims.maxLoopIterations`, and
-  `maxUnfoldElements` is defined as the former so the three cannot drift. They
-  did drift once — the compiled `Unfold` bound stayed at 1,000,000 after the
-  loop ceiling was lifted, so a 40,000,000-element unfold ran interpreted and
-  died compiled, which is exactly the divergence this section exists to deny.
-  The interpreter's bound is a `var` a test can lower; the compiled one is a
-  build-time constant, so a binary cannot be asked for a ceiling after the
-  fact.
-- A primitive added to the language without a codegen case fails
-  `domain build` with a positioned error naming it and pointing back at
-  `domain run`.
+  iterations in a compiled binary, exactly as in the interpreter. In a binary
+  the ceiling is a build-time constant.
+- A primitive with no codegen case fails `domain build` with a positioned
+  error naming it and pointing back at `domain run`.
 
 ## The AoC toolbox compiles
 
@@ -319,8 +314,7 @@ The full AoC toolbox surface is compiled:
   mirroring `prims/search.go`, including the bad-start and negative-cost
   failure wording. The Permutations/Subsets bounds are read from the same
   vars as the interpreter (`prims.MaxPermutationInput` / `MaxSubsetInput`),
-  both zero by default — so neither backend refuses a large input, and if a
-  ceiling is set back both refuse identically.
+  both zero by default — so neither backend refuses a large input.
 - **Expression builtins:** all of them compile (the toolbox group included). Points lower to the interned
   `(Int, Int)` tuple struct; `padd`/`manhattan`/`rotl`/`rotr`/`dirs4`/
   `neighbors4`/`neighbors8`/`solve2x2` become concrete `dm*` helpers over

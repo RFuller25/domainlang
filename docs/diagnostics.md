@@ -3,10 +3,10 @@
 Domain's diagnostics engine (package `diag/`) sits on top of the static front
 end and turns every failure into a rich, positioned report: what is wrong,
 where, why, and — whenever the repair is unambiguous — a machine-applicable
-fix. It powers the five diagnostic `domain expansion:` CLI commands below.
-(Two more, `domain expansion: documentation` and `domain expansion: vscode`,
-are unrelated to the engine — they serve this documentation as a local website
-and install the VS Code extension; both are in [cli.md](cli.md).)
+fix. It powers the three diagnostic `domain expansion:` CLI commands below.
+(The other expansion commands — `explain`, `oracle`, `bench`, `mahoraga`,
+`visualize`, `development`, `documentation`, `vscode` and `year of fortune` —
+are not part of the engine; they are in [cli.md](cli.md).)
 
 ## The report format
 
@@ -161,7 +161,7 @@ program is written. It acts on that view in one of two ways:
    itself. `domain run` and `domain build` print these on stderr before the
    program runs; `--quiet` hides them. They never stop a program running.
 
-The warnings, today:
+The warnings:
 
 - **Invariant work it could not move.** Work in a per-element lambda that does
   not depend on the element, left in place because it can fail (moved out, it

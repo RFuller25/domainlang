@@ -1,93 +1,95 @@
 # Domain documentation
 
-Domain is a pipeline language for Advent of Code built on one thesis: **you
-describe *what* needs to happen; the compiler decides *how* to do it
-optimally.** A named algorithm (`Domain Expansion: Quicksort`) is a request,
-not a command — the optimizer may substitute a faster implementation with the
-same result, and the Go compiler backend turns the optimized pipeline into a
-standalone native binary.
+Domain is a small programming language for puzzles of the Advent of Code
+kind: read some awkward input, reshape it, compute an answer.
 
-The theme is *Jujutsu Kaisen*: transformations are Cursed Techniques,
-reductions are Maximum Techniques, named algorithms are Domain Expansions,
-assertions are Binding Vows, user-defined operations are Shikigami. The theme
-is load-bearing — each keyword class maps to a semantic role the tooling
-relies on.
-
-## Start here
-
-**[getting-started.md](getting-started.md)** — the ground-up tutorial: install,
-first program, the two layers, grids, Channels, loops, sparse grids, and
-compiling to a binary. Then come back to the reference below.
-
-**[walkthroughs.md](walkthroughs.md)** — the same features as whole programs
-rather than as definitions: what flows between the stages, one working program
-per idea, every output taken from a real run.
-
-Runnable material: twenty-one annotated programs in
-[../examples/](../examples/README.md) and thirteen classic challenges
-(FizzBuzz → Game of Life) in [../challenges/](../challenges/README.md),
-all golden-tested in both backends.
-
-Reading this on the documentation site (`domain expansion: documentation`)?
-Every one of those programs is on it with a **Run** button, and so is a
-playground — the language compiled to WebAssembly, running in your own tab.
-**Explain** shows the optimizer answering a named-algorithm request with a
-different algorithm, which is the one claim in these documents worth watching
-happen rather than taking on trust. The playground is a separate build step
-(`./docs/wasm/build.sh`); without it the site works exactly as before, minus
-the buttons.
-
-## Reference
-
-| Document | Covers |
-|---|---|
-| [walkthroughs.md](walkthroughs.md) | Whole programs, start to finish: bindings, all five loops, Channels, Parts, pipeline bodies, Shikigami, the optimizer |
-| [scopes.md](scopes.md) | `Innate Domain`: what a scope decides, the two that exist, which tools work on each, and how a scope differs from importing a library |
-| [game-dev.md](game-dev.md) | Writing a game: the world, the events that change it, the frame drawn from it, and talking to a server — built up a step at a time. The [`Part` roles](ref-game-parts.md) have a reference page of their own |
-| [language.md](language.md) | Source structure: the two layers, keywords, statements, arguments, Channels, Shikigami, loops, vows |
-| [primitives.md](primitives.md) | Every pipeline primitive: signature, arguments, errors, two runnable examples each — an index over seven pages, one per keyword class |
-| [expressions.md](expressions.md) | The expression layer: operators, lambdas, conditionals, `consider`, `:=`, stage bindings. The 208 builtin functions are on six pages linked from it |
-| [aoc-toolbox.md](aoc-toolbox.md) | The classic AoC helper library (parsing, grids, searches, math, ranges, combinatorics) mapped onto Domain, item by item |
-| [data-model.md](data-model.md) | The value and type model (Int, Float, Text, Bool, List, Tuple, Record, Map, Set, Grid, Sparse): representation, construction, equality, rendering |
-| [match-pattern.md](match-pattern.md) | The `Match Pattern` typed-hole template language: syntax, output shapes, lowering, and failure modes |
-| [cli.md](cli.md) | The `domain` binary: implicit modes, subcommands, every flag, exit codes |
-| [diagnostics.md](diagnostics.md) | The error engine: rich diagnostics, "did you mean" suggestions, auto-fix, the linter, and the `domain expansion:` command family |
-| [tooling.md](tooling.md) | The REPL (`domain repl`) and the language server (`domain lsp`), with editor wiring |
-| [development.md](development.md) | `domain expansion: development`, the terminal editor: types and errors on screen, completion, running, the stepper, and the opening it offers for an input file |
-| [optimizer.md](optimizer.md) | The 51-pass catalog (algorithm substitution, dead code, fusion, expression simplification, linear accumulators), `--explain`, and the oracle-testing discipline |
-| [compiler.md](compiler.md) | The Go compiler backend: what it emits, its guarantees, and its documented deltas |
-| [mahoraga.md](mahoraga.md) | `domain expansion: mahoraga`: adapting one program to one input — the tiers, why it can't cheat, the eight turns, the recipe, and what a real benchmark suite found |
-| [../bench/README.md](../bench/README.md) | Domain against hand-written Go: thirty-seven paired programs, the 2× speed gate, the method, and what each round of measurement found and fixed |
-| [aoc-gaps.md](aoc-gaps.md) | The other side of the toolbox: the AoC problems Domain still cannot express (or cannot express fast enough), each with a measurement and the smallest change that would close it |
-
-**Every example in the reference runs.** A block marked ```domain run carries
-the input it is given and the output it must print; both backends execute it
-in both optimizer modes and the printed answer is diffed, so nothing on these
-pages can drift from what the language does. 346 runnable examples at present,
-at least two for every primitive, language construct and builtin group.
-
-## Quick orientation
-
-A program is a top-to-bottom pipeline threading one implicit "current value":
+A program is a **pipeline**. It is read top to bottom, there is one value in
+flight, and each line transforms it:
 
 ```domain
-Cursed Energy: input.txt                  # Text
-Cursed Technique: Split Text by "\n\n"    # List<Text>
-Cursed Technique: Split Each by "\n"      # List<List<Text>>
+Cursed Energy: input.txt                  # Text — the whole file
+Cursed Technique: Split Text by "\n\n"    # List<Text> — the blank-line-separated groups
+Cursed Technique: Split Each by "\n"      # List<List<Text>> — each group's lines
 Channeled Energy: Convert Each List to Integers
-Maximum Technique: Sum Each Group         # List<Int>
-Domain Expansion: Quicksort, Descending   # a *request* —
-Maximum Technique: Select Top 3, Sum      # …rewritten to quickselect
+Maximum Technique: Sum Each Group         # List<Int> — one total per group
+Domain Expansion: Quicksort, Descending
+Maximum Technique: Select Top 3, Sum      # Int — the three largest, added up
 Reveal: stdout
 ```
 
-Run it, or compile it to a native binary:
+Two things make it unusual.
+
+**You say what you want, and the compiler decides how.** The program above
+asks for a sort and then the top three. Domain notices that sorting everything
+to keep three is wasted work and runs a faster selection instead. The answer
+is the same; `--explain` tells you what it did.
+
+**The keywords are themed after *Jujutsu Kaisen*.** Each keyword names the
+role a line plays — `Cursed Energy` is input, `Cursed Technique` transforms,
+`Maximum Technique` reduces to an answer, `Domain Expansion` names an
+algorithm, `Reveal` prints. You do not need to know the series, and the
+keywords are optional once you know the operations.
 
 ```sh
-domain prog.domain < input.txt      # interpret
-domain build prog.domain -o prog    # compile (same optimized IR)
-domain run prog.domain --explain    # see what the optimizer substituted
+domain prog.domain < input.txt      # run it
+domain build prog.domain -o prog    # compile it to a native binary
+domain run prog.domain --explain    # run it, and show what the optimizer changed
 ```
 
-Installation (including Nix flake usage) is covered in the
-[repository README](../README.md).
+Installation is covered in the [repository README](../README.md).
+
+## Where to start
+
+1. **[getting-started.md](getting-started.md)** — the tutorial. Install, a
+   first program, and each feature of the language in turn. Start here.
+2. **[walkthroughs.md](walkthroughs.md)** — the same features again as whole
+   programs, showing what flows from line to line.
+3. **The runnable programs** — twenty-one annotated programs in
+   [../examples/](../examples/README.md) and thirteen classic challenges
+   (FizzBuzz → Game of Life) in [../challenges/](../challenges/README.md).
+
+Then use the reference below to look things up.
+
+On the documentation site (`domain expansion: documentation`) every example
+has a **Run** button, and there is a playground that runs Domain in your
+browser. The playground is built separately (`./docs/wasm/build.sh`); without
+it the site works, minus the buttons.
+
+## Reference
+
+**The language**
+
+| Page | Covers |
+|---|---|
+| [language.md](language.md) | How a program is put together: source format, keywords, statements and arguments, Channels, Parts, Shikigami, loops, globals, vows |
+| [expressions.md](expressions.md) | What goes inside a lambda: operators, conditionals, `consider`, `:=`, stage bindings, pipeline bodies. The 208 builtin functions are on pages linked from it |
+| [primitives.md](primitives.md) | Every operation: what it takes, what it gives, its arguments and errors, with two runnable examples each — an index over one page per keyword |
+| [data-model.md](data-model.md) | The types (Int, Float, Text, Bool, List, Tuple, Record, Map, Set, Grid, Sparse, Graph): how to get one, read one, and how each prints |
+| [match-pattern.md](match-pattern.md) | `Match Pattern`, the template language for parsing lines of input |
+| [aoc-toolbox.md](aoc-toolbox.md) | "How do I do the thing my AoC helper library does?" — parsing, grids, searches, maths, ranges, combinatorics, item by item |
+| [aoc-gaps.md](aoc-gaps.md) | Known limits: what Domain cannot express, and what to do instead |
+| [scopes.md](scopes.md) | `Innate Domain`: declaring what kind of program this is, and the two kinds there are |
+| [game-dev.md](game-dev.md) | Writing a terminal game, built up a step at a time. Its building blocks are in [ref-game-parts.md](ref-game-parts.md) |
+
+**The tools**
+
+| Page | Covers |
+|---|---|
+| [cli.md](cli.md) | The `domain` command: every subcommand and flag, exit codes |
+| [diagnostics.md](diagnostics.md) | Error messages, "did you mean" suggestions, automatic fixes, the linter |
+| [tooling.md](tooling.md) | The REPL (`domain repl`) and editor support (`domain lsp`) |
+| [development.md](development.md) | `domain expansion: development`, a terminal editor with types and errors on screen, completion, and a stepper |
+
+**Under the hood** — not needed to write programs
+
+| Page | Covers |
+|---|---|
+| [optimizer.md](optimizer.md) | The 51-pass catalog of rewrites, the conditions on each, and how they are tested |
+| [compiler.md](compiler.md) | How `domain build` turns a program into Go, and what it guarantees |
+| [mahoraga.md](mahoraga.md) | `domain expansion: mahoraga`: tuning one program for one input |
+| [../bench/README.md](../bench/README.md) | Compiled Domain measured against hand-written Go |
+
+**Every example in these pages runs.** A block marked ```domain run carries
+the input it is given and the output it must print, and the test suite runs
+each one — interpreted and compiled — and compares the output. There are
+346 runnable examples.

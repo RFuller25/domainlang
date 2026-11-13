@@ -24,7 +24,6 @@ import (
 var notOnSite = map[string]string{
 	"README.md":       "the site's own overview page, rendered as the landing view",
 	"wasm/README.md":  "build instructions for the playground bundle, not a page",
-	"aoc-gaps.md":     "a working document about what the language cannot do yet",
 	"development.md":  "reached from the tooling page rather than listed twice",
 	"tooling.md":      "listed under Tooling; see the navigation entry",
 	"walkthroughs.md": "listed under Introduction; see the navigation entry",

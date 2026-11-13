@@ -1,341 +1,260 @@
 # The data model
 
-Every value Domain can hold, how it is represented in the type checker
-(`ir.Type`), how it looks at runtime (`ir.Value`), how it is constructed and
-accessed, and how it renders. The scalar core is `Int`, `Float`, `Text` and
-`Bool`; the composites are **List**, **Tuple**, **Record**, **Map**, **Set**,
-**Grid**, **Sparse** and **Graph**.
+Every value in a Domain program has one of the types on this page. For each
+type this page says what it is, how you get one, how you read it, and how it
+prints.
 
-Everything described here is implemented in both backends. For what each
-primitive does with these types see [primitives.md](primitives.md); for the
-builtins that read them see [expressions.md](expressions.md).
+For the operations that work on these types see
+[primitives.md](primitives.md); for the functions that read them inside a
+lambda see [expressions.md](expressions.md).
 
-## Type representation (`ir.Type`)
+## The types at a glance
 
-| Kind | Carries | Prints as |
-|---|---|---|
-| `KInt` | — | `Int` |
-| `KFloat` | — | `Float` |
-| `KText` | — | `Text` |
-| `KBool` | — | `Bool` |
-| `KList` | `Elem *Type` | `List<T>` |
-| `KTuple` | `Elems []*Type` (fixed arity) | `(T1, T2, …)` |
-| `KRecord` | ordered `Fields []Field{Name, Type}` | `{a:Int, b:Int}` |
-| `KMap` | `Key *Type` (keyable), `Val *Type` | `Map<K,V>` |
-| `KSet` | `Elem *Type` (keyable) | `Set<T>` |
-| `KGrid` | `Elem *Type` | `Grid<T>` |
-| `KSparse` | `Elem *Type` | `Sparse<T>` |
-| `KGraph` | `Elem *Type` (the **node** type, keyable) | `Graph<K>` |
+| Type | Written | What it is | Prints as |
+|---|---|---|---|
+| Int | `Int` | a 64-bit whole number | `42` |
+| Float | `Float` | a 64-bit floating-point number | `3.25` |
+| Text | `Text` | a string | `hello` |
+| Bool | `Bool` | true or false | `true` |
+| List | `List<T>` | any number of values of one type, in order | `[1, 2, 3]` |
+| Tuple | `(A, B)` | a fixed number of values, each with its own type | `[1, x]` |
+| Record | `{a: Int, b: Text}` | a fixed set of named fields | `{a: 1, b: x}` |
+| Map | `Map<K,V>` | keys, each with a value | `{k1: v1, k2: v2}` |
+| Set | `Set<T>` | distinct values | `{v1, v2}` |
+| Grid | `Grid<T>` | a rectangle of cells | its rows, one per line |
+| Sparse | `Sparse<T>` | an unbounded plane of cells | `{[0, 0]: #, [1, 2]: #}` |
+| Graph | `Graph<K>` | nodes joined by weighted, directed edges | `{a: [(b, 1)], b: []}` |
+| View | `View` | a picture to draw (games) | the picture |
 
-Equality rules:
+The "Written" column is how a type appears in a
+[Shikigami signature](language.md#declared-signatures) and in error messages.
 
-- **Tuple** equal iff same arity and element-wise equal types.
-- **Record** equal iff same field names *and* types. (Structural, order of
-  declaration normalized — sort fields by name for comparison.)
-- **Map/Set/Grid/Sparse/Graph** equal iff key/element types equal. A
-  `Graph`'s `Elem` is its *node* type — a graph has no separate element, and
-  its edge weight is always `Int`.
+You never write a type on a value or a lambda. Types are worked out from the
+input and the operations applied to it, and a program whose types do not fit
+is rejected before it runs.
 
-## Runtime representation (`ir.Value`)
+## Three properties types differ in
 
-`ir.Value` is `any`. Runtime structs are suffixed `*Value` to avoid colliding
-with the same-named static type constructors (`ir.Record(...)`, `ir.Map(...)`,
-etc.).
+**Equality.** `=` works on any two values of the same type, and compares
+contents: two lists are equal when they hold equal elements in the same order.
+The one exception is `View`, which cannot be compared at all.
 
-| Type | Go runtime value |
-|---|---|
-| Tuple | `[]Value` (fixed length; same as a list at runtime) |
-| Record | `*RecordValue` — `{ Fields []string; Vals map[string]Value }` (keeps field order) |
-| Map | `*MapValue` — keys in insertion order; internally keyed via `ir.KeyOf` (scalars raw, composites canonically encoded) |
-| Set | `*SetValue` over keyable values via `ir.KeyOf` (insertion order preserved) |
-| Grid | `*GridValue` — `{ Rows, Cols int; Cells []Value }` row-major |
-| Sparse | `*SparseValue` — set-cells map keyed by `(row, col)` + a default value + exact bounds |
-| Graph | `*GraphValue` — nodes in insertion order, `KeyOf(node) -> index`, and adjacency held as `(index, weight)` arcs |
+**Order.** `<`, `>`, sorting, and `Min By` / `Max By` work on types that have
+an order: `Int`, `Float`, `Text`, and tuples of those. Text orders
+alphabetically by character code; a tuple orders by its first differing field.
 
-Tuples reuse `[]Value` so existing list ops (index access) work on them; the
-distinction lives only in the static type. These are implemented in
-`ir/collections.go` with `Set`-op helpers (`SetIntersect`/`Union`/`Difference`)
-and `Grid` neighbor walks.
+**Keyable.** A Map's keys, a Set's elements, a Graph's nodes, and the states
+of an `Explore` search must be *keyable*: `Int`, `Text`, or a tuple, record or
+list built from keyable types. `Float` is not keyable, and neither are Grid,
+Sparse, Graph or View. The same rule applies to `Unique` and `Group By`.
+
+## Numbers
+
+`Int` is a 64-bit signed integer. There are no big integers; operations that
+could overflow say so instead (`factorial` is an error past `20!`).
+
+`Float` is a 64-bit floating-point number, written with a dot and at least one
+digit after it: `3.25`.
+
+- **Mixing Int and Float gives a Float.** This applies to arithmetic,
+  comparison and `=`.
+- **Going back to Int is explicit**: `floor`, `ceil` or `round`.
+- `tofloat` converts an Int or a Text. `Convert To Floats` converts a whole
+  list.
+- `Sum`, `Max`, `Min`, `Product` and `Sort` accept a list of floats; `abs`,
+  `sum`, `min` and `max` work on either kind of number.
+- A Float prints in the shortest form that reads back as the same number.
+- Float literals appear in expressions and named arguments. A number written
+  in an operation phrase (`Window 3`) is always an Int.
+
+## Lists and tuples
+
+A **List** holds any number of values of one type. Most pipelines are a list
+being reshaped: `Split` makes one, `Map Each` and `Filter` transform one,
+`Sum` and `Count` reduce one. Inside a lambda, `list(a, b, c)` builds one and
+`item(xs, i)`, `first`, `last` and `length` read one; indexes start at 0.
+
+A **Tuple** holds a fixed number of values that may differ in type — a pair
+of a name and a count, say. `tuple(a, b)` builds one, `item(t, 0)` reads a
+field, and a lambda parameter can
+[unpack one directly](expressions.md#destructuring-a-tuple-parameter):
+`(acc, (name, qty)) -> …`. `Enumerate`, `Zip` and `Pairs` produce tuples.
+
+A point on a grid is a tuple `(Int, Int)` of row and column.
+
+A tuple **prints like a list**: `[3, x]`. The parenthesized spelling
+`(Int, Text)` is how the *type* is written, never the value.
 
 ## Records
 
-- **Produced by** `Match Pattern` with named holes (see
-  [match-pattern.md](match-pattern.md)), and by a **record literal** —
-  `{a: 1, b: x}`, which is the `record("a", 1, "b", x)` call it parses to.
-- **Accessed by** `x.field` in the expression layer. An unknown field is a
-  positioned error; the static typer resolves `x.field` to the field's type at
-  resolve time, so a typo never survives to run time.
-- **Structurally typed:** a `{a:Int, b:Int}` flows wherever that record type is
-  expected; the type checker compares field sets. The written type, the printed
-  value and the literal all use the same braces, so a record reads the same in
-  a signature, in the source and in the output.
+A record is a fixed set of named fields.
+
+- **You get one from** `Match Pattern` with named holes (see
+  [match-pattern.md](match-pattern.md)), or by writing a record literal in a
+  lambda: `{a: 1, b: x}`.
+- **You read a field** with `r.field`. A field the record does not have is an
+  error before the program runs.
+- **Two records have the same type** when they have the same field names with
+  the same types. The order the fields were written in does not matter.
+- **It prints** as `{a: 1, b: x}`, with fields in the order the type declares
+  them.
+
+See [ref-builtins-records.md](ref-builtins-records.md).
 
 ## Maps and Sets
 
-- **Map keys** are any *keyable* type: `Int`, `Text`, or Tuples/Records
-  built from keyable types — so a `Map<(Int, Int), V>` keyed by points models a
-  sparse grid directly. A List of keyable elements
-  (`ir.ListKeyable`) is a legal key too, wherever the compiler has a
-  list-keyed form of the collection. A Go slice cannot be a Go map key, so a
-  `Set` or `Map` whose key holds a List compiles to `dmLSet`/`dmLMap`
-  (`codegen/lkeyruntime.go`): the same fields and the same insertion order as
-  `dmSet`/`dmMap`, indexed by the injective byte encoding of
-  `codegen/keyfn.go`, with the original keys kept beside it. Sets of lists
-  are enabled (`Convert To Set`, `toset`, `emptyset`, `insert`, `contains`,
-  `del`, `union`/`intersect`/`difference`, `Intersect`/`Union`/`Difference`,
-  `Map Elements`), and so are Maps (`Group By`, `Count By`, `Convert To Map`,
-  `tomap`, `emptymap`, `Map Keys`, `get`/`getor`/`haskey`/`del`/`pluck`);
-  Graphs and `Explore` still refuse a list. At runtime `ir.KeyOf` gives every
-  keyable value a canonical comparable key that agrees with `ir.DeepEqual`
-  (records key by sorted field name, matching `DeepEqual`'s order-insensitive
-  comparison); in compiled binaries tuples/records are comparable Go structs,
-  so `dmMap`/`dmSet` key on them natively.
-- **`Group By`** (`Maximum Technique`, `Using:` key lambda) returns
-  `Map<K, List<V>>`: each key maps to the list of elements that produced it.
-- **Frequency counting** is `Group By` then map the values to their lengths, or
-  a dedicated `Count By` returning `Map<K, Int>`.
-- **Set** is a dedup'd, insertion-ordered collection with three primitives:
-  `Intersect`, `Union`, `Difference` (`Maximum Technique`). A `Set<T>` is built
-  from a `List<T>` with `Channeled Energy: Convert To Set`, and `tolist` in the
-  expression layer converts back. Modeling as an ordered set (not a
-  list-to-unit map) keeps rendering and set-ops simple.
+A **Map** holds keys, each with a value. A **Set** holds distinct values.
+Both remember the order things were added, and print in that order.
 
-Access/rendering is via primitives and builtins, not literals — there is no
-Map/Set literal syntax (deferred; AoC builds these from inputs, not from
-literals).
+**Getting one:**
 
+| You want | Use |
+|---|---|
+| elements grouped by something | `Group By` → `Map<K, List<V>>` |
+| how many of each | `Count By` → `Map<K, Int>` |
+| a map from a list of pairs | `tomap` in a lambda |
+| a set from a list | `Convert To Set`, or `toset` in a lambda |
+| to build one up piece by piece | `emptymap` / `emptyset`, then `insert` in a `Fold` |
 
-## Graphs
+**Reading one:** `get`, `getor`, `haskey`, `keys`, `values` for a Map;
+`contains` for a Set; `size` for either. `tolist` turns a Set back into a
+List, and `Convert To Entries` turns a Map into a list of `(key, value)`
+tuples. The Set operations `Intersect`, `Union` and `Difference` are reductions
+over channels, and `intersect`, `union` and `difference` are builtins.
 
-- **Produced by** `Convert To Graph` (an edge list or an adjacency map) or the
-  `graph`/`emptygraph` builtins.
-- **Directed**, always. An undirected graph is one with both arcs, which
-  `Mode: Undirected` inserts — one representation, one set of algorithms.
-  A flag on the value would leak into equality, rendering and every primitive.
-- **`Int`-weighted, default 1.** An unweighted graph is one whose weights are
-  all 1, so no algorithm needs a separate unweighted path. That is why
-  `Graph<K>` takes one type parameter and not two.
-- **Nodes must be keyable**, the rule `Set` elements and `Explore`'s state
-  follow: the visited set is what makes a traversal terminate. A `Graph` is
-  itself neither keyable nor ordered, so it cannot be a `Map` key, a `Set`
-  element, or sorted.
-- **Insertion-ordered**, like `Map` and `Set` and unlike `Sparse` (which sorts,
-  because it is geometry). An edge brings its endpoints into the graph in the
-  order written; only the adjacency-map form can name an isolated node.
-- **A repeated edge re-weights in place** rather than adding a parallel arc,
-  which is what keeps `weight(g, a, b)` a question with one answer.
-- **Equality ignores insertion order.** This is a deliberate divergence from
-  `Map` and `Set`, where order is part of the value because it is part of the
-  rendering. Two graphs built by reading the same edges in a different order
-  *are* the same graph, and a `Iterate Until Fixed Point` over one would
-  otherwise never converge. Rendering still follows insertion order — equality
-  and rendering answer different questions here.
+**A Map can be used where a List is expected.** It is read as its entries —
+`(key, value)` tuples — in insertion order, so `Map Each`, `Filter` and
+`Count` work on one directly.
+
+There is no literal syntax for a Map or Set. Braces in a lambda always build
+a record.
+
+See [ref-builtins-collections.md](ref-builtins-collections.md).
 
 ## Grids
 
-- **Construction** (`Channeled Energy: Convert To Grid`):
-  - from `List<Text>` → `Grid<Text>` of single characters (char grid), or
-  - from `List<List<T>>` → `Grid<T>` (e.g. the digit grid of 2022 D8).
-- **Indexing** is 0-based `(row, col)`.
-- **Out-of-bounds is an error, not a sentinel.** `at(g, r, c)` on a dense grid
-  outside its extent is a clean positioned runtime error
-  (`at: position (5, 5) out of range (grid 2x2)`). Guard with `inbounds(g, r,
-  c)` — it pairs with `at` under short-circuit `and` — or use the
-  `neighbors4`/`neighbors8` builtins, which only ever return in-bounds
-  coordinates. (`Sparse<T>` is the total one: `at` over a sparse grid reads
-  the default rather than failing.)
-- **Neighbor count** (`4` orthogonal vs `8` with diagonals) is chosen by which
-  builtin you call — `neighbors4`/`neighbors8` for a dense grid,
-  `around4`/`around8` for a bare point — not by a `Mode:` argument.
+A `Grid<T>` is a rectangle of cells.
 
-Grids are reached through the `Cursed Technique` primitives `Map Cells`,
-`Find Cells`, `Transpose`, `Subgrid`, `Pad Grid`, `Rotate Grid` and
-`Flip Grid`, the `Maximum Technique: Count Cells` reduction, and the
-expression-layer builtins `at`, `inbounds`, `row`, `col`, `rows`, `cols`.
-Pathfinding and flood fill are `Domain Expansion` primitives in their own
-right — `BFS`, `Dijkstra`, `Flood Fill` and `Connected Components`; see
-[primitives.md](primitives.md).
+- **You get one from** `Convert To Grid`: a `List<Text>` becomes a grid of
+  single characters, and a `List<List<T>>` becomes a `Grid<T>`. The prelude's
+  `Digit Grid` goes straight from text to a `Grid<Int>`.
+- **Positions are `(row, col)`, starting at 0.**
+- **Reading outside the grid is an error**:
+  `at: position (5, 5) out of range (grid 2x2)`. Check first with
+  `inbounds(g, r, c)`, or use `neighbors4` / `neighbors8`, which only ever
+  return positions inside the grid.
+- **Four neighbours or eight** is decided by which function you call:
+  `neighbors4` / `neighbors8` for a position in a grid, `around4` / `around8`
+  for a bare point.
+- **It prints** as its rows, one per line.
+
+The operations on grids are `Map Cells`, `Find Cells`, `Count Cells`,
+`Transpose`, `Subgrid`, `Pad Grid`, `Rotate Grid` and `Flip Grid`
+([grid transforms](ref-transforms-grid.md)), and the searches `BFS`,
+`Dijkstra`, `Flood Fill` and `Connected Components`
+([expansions](ref-expansions.md)). Inside a lambda, `at`, `inbounds`, `row`,
+`col`, `rows` and `cols` read one.
 
 ## Sparse grids
 
-`Sparse<T>` is the dedicated nested/sparse grid: an **unbounded 2D plane**
-addressed by `(row, col)` — negative coordinates included — where every
-position holds a **default value** until explicitly written. Only written
-("set") cells are stored, so memory is proportional to the data, not the
-bounding box. It complements `Grid<T>` (dense, rectangular, bounds-checked):
-sparse is for point clouds, cellular automata, plotters, and anything whose
-extent is unknown up front.
+A `Sparse<T>` is an **unbounded plane**. Every position — negative
+coordinates included — holds a *default value* until something is written
+there, and only written cells are stored. Use it when you do not know the
+extent in advance: scattered points, cellular automata, anything that draws.
 
-The contract (locked in `ir/sparse.go`; both backends follow it exactly):
+**The rules:**
 
-- **`at` is total.** Reading any coordinate of the infinite plane returns
-  the stored value or the default — there is no out-of-bounds.
-- **Writes never remove.** A cell written with the default value is still
-  *set*: `has` reports true, and it participates in bounds, `cells`, and
-  iteration. Bounds are therefore exact and only ever grow.
-- **Iteration is sorted row-major** (by row, then column) — a sparse grid is
-  geometry, not a log, so insertion order is deliberately *not* preserved
-  (unlike Map/Set). `Find Cells`, `Map Cells`, `Count Cells`, and rendering
-  all visit set cells in this canonical order.
-- **`Map Cells` transforms the whole plane**: the lambda maps the default
-  too (that is what makes `Sparse<T> -> Sparse<U>` well-defined). The
-  positional `(grid, row, col)` lambda form is dense-only — the default has
-  no position.
-- **Not keyable**, like Grid.
+- **Reading never fails.** `at(g, r, c)` gives the stored value, or the
+  default.
+- **A written cell stays written**, even if the value written is the default.
+  `has` reports it, and it counts toward the bounds.
+- **Cells are visited in row order**, then column order — not the order they
+  were written. `Find Cells`, `Map Cells`, `Count Cells` and printing all use
+  this order.
+- **`Map Cells` transforms the default too**, since the default is the value
+  of every unwritten cell. The `(grid, row, col)` form of its lambda is for
+  dense grids only.
 
-**Construction** — `Channeled Energy: Convert To Sparse Grid` with a
-`Default:` literal (Int or Text; its type fixes the element type):
+**Getting one** — `Convert To Sparse Grid` with a `Default:` value, from:
 
-- from `Grid<T>`: cells *different from the default* become set cells
-  (that is the point of sparsifying);
-- from `Map<(Int, Int), V>`: every entry becomes a set cell;
-- from `List<(Int, Int)>` or `List<List<Int>>` (two ints per row — the
-  shape `Match Pattern "{int},{int}"` produces) plus a `Mark:` literal:
-  every point is set to the mark.
+- a `Grid<T>`: every cell that differs from the default becomes a written
+  cell;
+- a `Map<(Int, Int), V>`: every entry becomes a written cell;
+- a list of points, with a `Mark:` value: every point is written with the
+  mark.
 
-The expression layer can also build one from nothing: `sparse(default)`
-makes an empty plane (any element type), and `put(g, r, c, v)` is a
-functional update.
+Inside a lambda, `sparse(default)` makes an empty plane and
+`put(g, r, c, v)` gives back the plane with one more cell written.
 
-**Densification** — `Channeled Energy: Convert To Grid` over a `Sparse<T>`
-materializes the bounding box as a dense `Grid<T>`, translated so
-`(minrow, mincol)` lands at `(0, 0)` and default-filled — the standard way
-to *print the picture* (origami letters, Life boards). The empty sparse
-grid densifies to the 0×0 grid. **Unbounded**: `ir.MaxSparseDense` is zero by
-default, because the old 4,000,000-cell ceiling refused plots a machine had
-room for. Two far-apart cells still imply a huge dense box, so the failure
-mode there is memory pressure rather than a clean refusal; a box past what any
-machine could allocate is still a clean error rather than a panic.
+**Reading one:** `at`, `has`, `cells` (how many are written), and `minrow` /
+`maxrow` / `mincol` / `maxcol` for the extent of the written cells.
 
-**Rendering** — the raw `Sparse<T>` renders as a map-style listing of set
-cells in sorted row-major order with point keys (`{[0, 0]: #, [1, 2]: #}`),
-exactly like a `Map<(Int, Int), V>` — deliberately size-proportional so
-`Reveal` can never materialize a huge bounding box. Densify first when the
-picture is what you want. `FormatShort` says `Sparse RxC (N set)`.
+**Printing one.** A sparse grid prints as a listing of its written cells,
+`{[0, 0]: #, [1, 2]: #}`. To print the *picture*, convert it with
+`Convert To Grid`: that produces the smallest dense grid containing every
+written cell, with the default everywhere else. There is no size limit on the
+conversion, so two cells very far apart make a very large grid.
 
-**Builtins** (see [expressions.md](expressions.md)): `sparse`, `put`, `has`,
-`cells`, `minrow`/`maxrow`/`mincol`/`maxcol`, and the `at` overload.
+The challenges `11_game_of_life`, `12_origami` and `13_minesweeper` in
+[../challenges/](../challenges/README.md) are built on sparse grids.
 
-The acceptance tests are `challenges/11_game_of_life.domain` (a glider on
-the infinite plane), `12_origami.domain` (fold-and-plot), and
-`13_minesweeper.domain` (neighbor counts) — see
-[../challenges/README.md](../challenges/README.md).
+## Graphs
+
+A `Graph<K>` is a set of nodes of type `K` joined by edges.
+
+- **You get one from** `Convert To Graph` — given a list of edges or a map
+  from each node to its neighbours — or from the `graph` and `emptygraph`
+  builtins.
+- **Edges are directed.** For an undirected graph, `Mode: Undirected` adds
+  each edge in both directions.
+- **Every edge has an `Int` weight**, 1 unless you say otherwise.
+- **There is one edge at most from one node to another.** Adding it again
+  replaces its weight.
+- **Nodes must be [keyable](#three-properties-types-differ-in).**
+- **Two graphs are equal** when they have the same nodes and edges,
+  whatever order they were added in.
+- **It prints** as `{a: [(b, 1), (c, 2)], b: [], c: []}` — each node with its
+  outgoing edges as `(to, weight)`, nodes in the order they were added.
+  Weights are always shown.
+
+The graph operations — `BFS`, `Dijkstra`, `Shortest Path`,
+`Topological Sort`, `Connected Components` and others — are in
+[ref-expansions.md](ref-expansions.md).
 
 ## Views
 
-`View` is the one type that is not a value in the ordinary sense: it is a
-description of a picture, built by the [render builtins](ref-builtins-view.md)
-and drawn by `Reveal`.
+A `View` is a description of a picture, used by
+[games](game-dev.md). It is built by the
+[view builtins](ref-builtins-view.md) and drawn by `Reveal`.
 
-It is deliberately **opaque**. A View is not keyable, not orderable, and has no
-equality — `view = view` is refused, and so is a comparison of any composite
-containing one. That last part matters more than it looks: `Iterate Until Fixed
-Point` and structural `=` both rest on equality meaning something, and a world
-record caching a rendered panel would otherwise reach them and produce an
-answer nobody could explain.
-
-The alternative was styled `Text`, and it does not survive contact with
-`length`: with escape codes inside a string, `length` counts them, and every
-layout decision is made against a value that lies about its own size. With a
-type of its own the question cannot be asked.
-
-| Property | View |
-|---|---|
-| Written as | `View` |
-| Keyable | no |
-| Ordered | no |
-| Equality | **refused**, including inside a composite |
-| Renders as | the picture, unstyled, trailing spaces trimmed |
-| Width unit | runes, matching `length` on `Text` |
-
-Layout is computed once, in one place, and styling only decides how a run of
-text is drawn. So a picture has the same geometry whether it is printed to a
-pipe or painted on a terminal — which is what lets a rendered frame be
-compared at all.
-
-## Type inference interaction
-
-A primitive's output type can depend on its `Using:` lambda, which the
-`typecheck` package computes from the lambda body against the parameter types
-the primitive binds. There are no type annotations on primitives: a body that
-cannot be typed is a positioned resolve error, not a request for a hint.
-
-- `Match Pattern` output is fully determined by the (literal) template — no
-  inference.
-- `Group By` output `Map<K, List<V>>`: `V` is the input element type, `K` the
-  key lambda's result type.
-- `Map Each` output `List<U>`: `U` is the lambda's result type.
-
-A `Using:` may also be written as an
-[indented pipeline](expressions.md#pipeline-bodies--a-using-that-needs-a-primitive)
-rather than an expression; the body's output type is then the lambda's result
-type, and everything above reads the same.
+A View is the one type you cannot inspect: it has no equality, no order, and
+cannot be a key. Comparing two views, or two values that contain views, is an
+error. Its width is measured in characters, the same unit `length` uses for
+Text.
 
 ## Rendering
 
-`FormatValue` renders a value in full, `FormatShort` the summary the REPL and
-tracing use:
+How `Reveal` prints each type, in one place:
 
-- Tuple → `[v1, v2, …]` — **the same as a List**, which is what a tuple is at
-  runtime (`[]Value`; the arity and the element types live in the type, not in
-  the value). The parenthesized `(T1, T2)` spelling is how the *type* prints,
-  in an error message or a signature; no value ever renders that way.
-- Graph → `{a: [(b, 1), (c, 2)], b: [], c: []}`. Node keys print as map keys
-  do, and each arc prints as `(to, weight)` — parenthesized, which is the one
-  place a pair renders that way rather than as the `[to, weight]` a Tuple value
-  would give. Weights are **always** shown: hiding them when they happen to all
-  be 1 would make the output depend on the data, and both backends have to
-  agree on it byte for byte.
-- Record → `{a: v1, b: v2}` — the field order the **type** declares, which the
-  Reveal sink reads through `FormatValueTyped`. A `*RecordValue` remembers the
-  order it was built in and `FormatValue` uses that, which is the same order
-  until two record types with the same fields in different orders meet (an `if`
-  whose arms build them differently, a list holding both). At that point the
-  type is the only order a compiled binary's struct can produce, so it is the
-  one both backends print.
-- Map → `{k1: v1, k2: v2}` (insertion order; truncate in `FormatShort`)
-- Set → `{v1, v2, …}` (insertion order; truncate)
-- Grid → rows joined by newlines for `FormatValue`; `Grid RxC` summary for
-  `FormatShort`
-- Sparse → `{[r, c]: v, …}` (set cells, sorted row-major); `Sparse RxC
-  (N set)` for `FormatShort`
+| Type | Prints as |
+|---|---|
+| Int, Float, Text, Bool | the value itself: `42`, `3.25`, `hello`, `true` |
+| List | `[v1, v2, …]` |
+| Tuple | `[v1, v2, …]` — the same as a List. `(T1, T2)` is how the *type* is written; no value ever renders that way |
+| Record | `{a: v1, b: v2}`, fields in the order the type declares them |
+| Map | `{k1: v1, k2: v2}`, in the order entries were added |
+| Set | `{v1, v2, …}`, in the order elements were added |
+| Grid | rows joined by newlines |
+| Sparse | `{[r, c]: v, …}` — the written cells, by row then column |
+| Graph | `{a: [(b, 1), (c, 2)], b: [], c: []}` — each edge as `(to, weight)` |
+| View | the picture |
 
-## Floats
+Text inside a collection is printed without quotes: `[a, b]`.
 
-`Float` is a 64-bit IEEE float, runtime value `float64`, added end to end:
+## What the model does not have
 
-- **Literals**: `3.25` — digits, a dot, and at least one trailing digit, so
-  dotted file targets (`Cursed Energy: 2.txt`) still lex as before. Floats
-  appear in the expression layer and named arguments; the themed phrase
-  layer stays integer-only.
-- **Promotion** (the tower's single rule): mixing `Int` with `Float` in
-  arithmetic, comparison, or `=` computes in `Float`. There is no implicit
-  narrowing — `floor`/`ceil`/`round` are the explicit way back to `Int`.
-- **Builtins**: `tofloat` (Int/Float/Text), `floor`/`ceil`/`round`
-  (Float→Int), `sqrt` (negative input errors cleanly); `abs`, `sum`, `min`,
-  `max` are polymorphic over Int/Float.
-- **Primitives**: `Channeled Energy: Convert To Floats` (from `List<Text>`
-  or `List<Int>`, flat or Each-List nested); `Sum`, `Max`, `Min`,
-  `Product`, and `Sort` accept `List<Float>`.
-- **Not keyable**: floats stay out of Map keys, Sets, `Unique`, and
-  `Group By` (NaN and ±0.0 make float identity treacherous); the existing
-  keyability errors apply.
-- **Optimizer**: float pipelines are exempt from the int-specialized
-  rewrites (quickselect fusions, reorder elision, lambda algebra) because
-  float addition is not associative and NaN is unordered — a float `Sort`
-  runs exactly as written.
-- **Rendering**: shortest round-trip form (`strconv.FormatFloat('g', -1)`),
-  byte-identical between the interpreter and compiled binaries.
-
-## Deliberate omissions
-
-Two things the model does not have, by decision rather than by backlog:
-
-- **Map/Set/tuple literal syntax.** These are built from inputs, not written
-  out — `tuple(...)` and `list(...)` cover the cases where a literal would
-  have been wanted, and a Map or Set comes from `Group By`, `Count By`, or
-  `Convert To Set`.
-- **Big integers.** `Int` is int64 throughout. Arbitrary precision would box
-  every arithmetic operation in both backends, and no anchor problem needs it;
-  the operations that *can* overflow say so instead (`factorial` errors past
-  `20!`, `choose` is computed multiplicatively to stay in range).
+- **Literals for Maps and Sets.** Build them from data with `Group By`,
+  `Count By`, `Convert To Set`, `tomap` or `toset`.
+- **Big integers.** `Int` is 64 bits.
+- **Types that contain themselves**, such as a tree. See
+  [known limits](aoc-gaps.md#no-recursive-data).

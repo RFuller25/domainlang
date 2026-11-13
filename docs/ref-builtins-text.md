@@ -59,7 +59,7 @@ noon
 | `split(s, sep)` | `Text × Text -> List<Text>` | The expression layer's `Split Text by`. An empty separator splits into runes, like `chars`. Line splitting is `split(s, "\n")` — the pipeline layer's `Lines` Shikigami is the same operation. |
 | `words(s)` | `Text -> List<Text>` | Split on runs of whitespace, dropping empties. |
 | `contains(s, sub)` | `Text × Text -> Bool` | Substring test. `indexof(s, sub) >= 0` said the same thing, but a membership question should read the same whatever it is asked of. |
-| `ord(s)` | `Text -> Int` | The first rune's code point. **Error** on the empty text. `ord(c) - ord("a")` is the a–z index that used to need an `indexof` over a literal alphabet. |
+| `ord(s)` | `Text -> Int` | The first rune's code point. **Error** on the empty text. `ord(c) - ord("a")` is a letter's a–z index. |
 | `chr(n)` | `Int -> Text` | The character with code point `n`. **Error** outside a valid code point. |
 | `repeat(s, n)` | `Text × Int -> Text` | `n` copies. Total: a non-positive count is `""`. Not to be confused with `repeats(s)`, which asks whether `s` *is* a repetition. |
 | `padleft(s, n, p)` / `padright(s, n, p)` | `Text × Int × Text -> Text` | Widen to `n` **runes** by repeating `p` on one side, truncating the last copy. Text already that wide is returned untouched. |

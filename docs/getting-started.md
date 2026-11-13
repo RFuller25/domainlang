@@ -5,11 +5,15 @@ awkward input, reshape it, compute an answer. It is built on one idea —
 
 > **You describe *what* needs to happen. The compiler decides *how*.**
 
-Everything else follows from that. This guide starts from nothing and ends
-with you compiling your own programs. Every complete program on this page is
-run by the test suite and diffed against the output shown beneath it, so what
-you read is what the program actually printed — not what someone remembered it
-printing.
+This guide starts from nothing and ends with you compiling your own programs.
+Each complete program on this page is shown with its input and the output it
+prints; the test suite runs every one of them, so what you read is what the
+program really does.
+
+One thing to know before the first program: the keywords are themed after the
+manga *Jujutsu Kaisen* — `Cursed Energy`, `Cursed Technique`, `Domain
+Expansion`. You do not need to know the series. Each keyword simply names the
+job a line does, and §3 lists them all.
 
 ## 1. The idea, in one program
 
@@ -125,8 +129,8 @@ and the tooling relies on them:
 
 | Keyword | Role |
 |---|---|
-| `Innate Domain:` | declare the program's scope (this keyword is required) |
-| `Inherited Technique:` | import a library of Shikigami (this keyword is required) |
+| `Innate Domain:` | say what kind of program this is — only needed for [games](game-dev.md) |
+| `Inherited Technique:` | import a library of Shikigami |
 | `Cursed Energy:` | where data comes from (a file name, or `stdin`) |
 | `Cursed Technique:` | 1:1 transforms — `Split`, `Map Each`, `Filter`, … |
 | `Channeled Energy:` | type coercions — `Convert To Integers`, `Convert To Grid`, `Convert To Set`, … |
@@ -141,8 +145,9 @@ and the tooling relies on them:
 | `Binding Vow:` | a debug assertion over the current value |
 | `Reveal:` | print the current value |
 
-They are also **optional**. Most operations only make sense in one role, so
-the compiler works it out. This is the same program:
+They are also **optional** (all but the first two, which are always written
+out). Most operations only make sense in one role, so the compiler works it
+out. This is the same program:
 
 ```domain run
 stdin
@@ -163,7 +168,7 @@ stdout
 Write the keyword where it clarifies and drop it where it does not — the two
 mix line by line. This guide keeps them, because they are the fastest way to
 learn the roles. See [optional keywords](language.md#optional-keywords) for
-the one thing dropping them costs you.
+the exact rules.
 
 Two syntax rules: indentation is significant and **spaces only**, and a
 comment starts at `#` — or at the word `technically`, which reads the way an
@@ -294,9 +299,9 @@ Reveal: stdout
 ```
 
 **`Cursed Object`** names a value for the rest of the program. That matters
-when a loop computes something the stages after it need — a `Consider` would
-go out of scope when the loop ends, so the count would have to ride out inside
-the loop's own value:
+when a loop works out something the lines after it need. Here the loop halves
+a number until it reaches 1, and a global counts the laps (loops are
+introduced properly in §9):
 
 ```domain run
 Cursed Energy: stdin
@@ -318,10 +323,11 @@ Reveal: stdout
 4
 ```
 
-`:=` writes to a name already in scope, and `also` runs a clause for its
-effect and discards the result. `Cursed Tool:` is the statement form of the
-same write. See [globals](language.md#cursed-object--globals) for the scope
-rules and what a global costs the optimizer.
+Two new pieces of expression syntax appear here. `laps := laps + 1` writes a
+new value to a name that already exists, and `also` runs that write after the
+lambda's own result (`n / 2`) has been computed. `Cursed Tool:` is a statement
+that does the same write. See [globals](language.md#cursed-object--globals)
+for the rules.
 
 ## 7. Parsing awkward input
 
@@ -503,10 +509,12 @@ Reveal: stdout
 [3, 6, 9]
 ```
 
-**Loops** run a pipeline body over the current value, and come in four
-drivers: `Repeat N` for a fixed count, `While` for a predicate,
-`Iterate Until Fixed Point` for "until nothing changes", and `For x in …` to
-walk a channel's list, binding each element as an extra lambda parameter.
+**Loops** run an indented pipeline over the current value, again and again.
+The main kinds are `Repeat N` for a fixed count, `While` for "as long as this
+is true", `Iterate Until Fixed Point` for "until nothing changes", and
+`For x in …` to walk a list, with each element available to the lambdas
+inside as an extra parameter. ([All five](language.md#simple-domain--loops)
+are in the reference.)
 
 ```domain run
 Cursed Energy: stdin
@@ -539,8 +547,7 @@ the moment reality stops matching what you assumed:
 
 ## 10. Compile it
 
-Every program that runs also compiles to a standalone native binary, from the
-same optimized IR, with no interpreter inside:
+Every program that runs also compiles to a standalone native binary:
 
 ```sh
 domain build prog.domain -o prog
@@ -550,12 +557,11 @@ domain build prog.domain --emit-go -   # inspect the generated Go
 domain build prog.domain --run         # compile and run in one step
 ```
 
-The generated Go is fully typed — no `[]any` — and lambdas are inlined into
-the loops that consume them. The interpreter is the correctness oracle: the
-test suite requires byte-identical stdout from both backends for every
-example, challenge, and documentation program on this page. Speedups vary with the
-program: about 2× on split-heavy work and about 7× on `Match Pattern`-heavy
-work (see [compiler.md](compiler.md#performance)).
+A compiled program prints exactly what the interpreted one prints — the test
+suite checks that for every program in these pages. It is faster: about 2× on
+work that is mostly splitting text, and about 7× on work that is mostly
+`Match Pattern` (see [compiler.md](compiler.md#performance)). Building needs
+the Go toolchain installed; running the result needs nothing.
 
 One behavioural difference to know: a compiled binary resolves
 `Cursed Energy:` file paths against the *working directory*, like any CLI
@@ -584,6 +590,7 @@ Start with whichever matches how you like to learn.
 **By understanding the machine**
 - [optimizer.md](optimizer.md) — every rewrite, and the safety rules each one
   obeys.
+- [aoc-gaps.md](aoc-gaps.md) — what Domain cannot do, and what to do instead.
 - [compiler.md](compiler.md) — what the generated Go looks like.
 - [data-model.md](data-model.md) — the type model underneath it all.
 - [tooling.md](tooling.md) — the REPL and the language server;

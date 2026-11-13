@@ -22,10 +22,9 @@ Almost no program writes that line, because it is the default. A file with no
 | the prelude | a standard library, written in Domain, loaded before your file |
 | the host | how the resolved program is run, and whether it compiles |
 
-A scope only ever **adds** to the vocabulary. Nothing an `Innate Domain` does
-can make an operation stop resolving in a program that resolves today, and
-nothing it adds is reserved anywhere it is not available — so a `Shikigami`
-you may name today, you may name tomorrow.
+A scope only ever **adds** to the vocabulary. Declaring one never makes an
+operation unavailable, and the names a scope adds are reserved only inside
+that scope — elsewhere you may use them for your own `Shikigami`.
 
 ## The ones that exist
 
@@ -34,11 +33,9 @@ you may name today, you may name tomorrow.
 | `Advent of Code` | — | Puzzle input in, answer out: the pipeline Domain was designed around. |
 | `Game Dev` | `Game` | A terminal game: a world, events that change it, and a frame drawn from it. |
 
-`Advent of Code` has no short spelling on purpose. `Innate Domain: aoc` is what
-every program written before scopes existed says, and it meant *import the aoc
-library* — so it has to stay an error, and get you
-[the keyword that now imports](#the-rules) rather than quietly becoming a
-scope declaration.
+`Advent of Code` has no short spelling. `Innate Domain: aoc` is an error,
+because `aoc` is a common name for a *library* — and a library is imported
+with [`Inherited Technique:`](#the-rules), which is what the error suggests.
 
 Declaring it explicitly changes nothing at all:
 

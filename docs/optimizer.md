@@ -1,15 +1,31 @@
 # The optimizer
 
-The optimizer is the language's thesis made concrete: a `Domain Expansion`
-names an algorithm, and the pipeline owes you its **result**, not its
-method. After resolution produces the typed IR, `optimizer.Optimize` runs
-rewrite passes over the node list; each applied rewrite is recorded for
-`--explain`. Because Shikigami are inlined before optimization, rewrites
-fire straight through user-defined operations — calling the prelude's
-`Top K Sum` still fuses.
+A `Domain Expansion` names an algorithm, and what the program owes you is that
+algorithm's **result**, not its method. The optimizer is the part of Domain
+that takes advantage of this: before a program runs, it looks for places where
+a different way of computing the same answer is cheaper, and rewrites them.
 
-Both backends consume the pipeline **after** optimization, so a rewrite
-speeds up the interpreter and the compiled binary alike.
+**What you need to know to write programs:**
+
+- The answer never changes. A rewrite is only made when the result — including
+  which error is reported, if one is — is provably identical.
+- `domain run prog.domain --explain` prints every rewrite that was made.
+- `--no-optimize` runs the program exactly as written. The two must agree.
+- A statement whose lambda writes to a binding or a global, or uses randomness,
+  is left exactly as written.
+
+The rest of this page is the full catalog of rewrites and the conditions on
+each. It is reference material; you do not need it to use the language.
+
+## How it runs
+
+The optimizer works on the type-checked program, after Shikigami calls have
+been replaced by their bodies — so rewrites apply straight through
+user-defined operations. Calling the prelude's `Top K Sum` is rewritten into a
+quickselect just as the two statements inside it would be.
+
+Both the interpreter and the compiler run the program **after** optimization,
+so a rewrite speeds up both.
 
 Passes run in rounds until a full round applies nothing, so rewrites
 **cascade**: `Quicksort + Reverse` first flips into one descending
@@ -180,7 +196,7 @@ Pass 36 additionally requires the literal seed `0`, for the reason pass 24
 does. Pass 36 rewrites in place and so also fires inside `Part`, loop and
 pipeline bodies; 37–41 change the node list's length and run at the top level.
 
-Passes 47–49 are the follow-ups. **47** interleaves two loops, which moves which
+**47** interleaves two loops, which moves which
 failure is reported first, so the first body must be *total*: `totalNodes` is an
 allowlist of primitives whose evaluators have no failure path but their
 lambdas', each lambda proven total with its parameter types. `Take Item`, `Max`,
@@ -191,7 +207,7 @@ returns the lambda's own error, so the words of a failure do not change.
 **49** drops evaluations past N, so the map must be pure and total, and a
 measured `Window` size or step stands the rewrite down; `take` clamps, and the
 cut is the same builtin with the same N, so negative and oversized counts mean
-what they meant. Separately, every adjacent-pair pass now sees through a
+what they meant. Every adjacent-pair pass also sees through a
 single-stage `Consider … Of` (see "Local bindings" below).
 
 Pass 50 generalizes 42 to any window: `Window size [step]` (size and step literal or measured) followed by `Map Each`, `Count Matching`, `Sum By`, `Any` or `All` whose lambda reads each window only as `first(w)`, `last(w)` or `item(w, c)` with a literal `c` becomes `WindowPositions` + the same consumer. `WindowPositions` walks the same start indexes (same size/step resolution, bound checks and order) and builds, per window, a tuple of just the elements read (the bare element when only one position is read), so AoC 2017 day 1 part 2 (`Window` of a measured size, compared at its two ends) is O(n) instead of O(n·size). The consumer is unchanged, so a failing lambda is reported against the same window index in the same words, and `Any`/`All` stop where they did. `item(w, c)` with `c > 0` is only rewritten for a literal size with `c < size` (otherwise the naive pipeline fails inside the lambda, in words that name the window's length, which a tuple cannot reproduce); a measured size admits only `first`, `last` and `item(w, 0)`. Any other use of the window (`length(w)`, `sum(w)`, a computed index, the window passed whole) stands the rewrite down.
@@ -249,10 +265,10 @@ Float list's order is observable through `NaN`). `first(reverse(xs))` and
 `insert`, `put` and `setat` are **functional**: each returns a new collection
 and leaves its argument untouched, which is what makes a lambda safe to apply
 twice (see [expressions.md](ref-builtins-collections.md#building-and-updating-a-collection)).
-They were implemented by copying, so a `Fold` that built a collection one
-write at a time was quadratic in the *collection*, not linear in the writes —
-20,000 inserts into a Map took 30 s interpreted, and 20,000 `setat`s on a
-300×300 grid took 44 s, because each one copied all 90,000 cells.
+Taken literally that means a copy per write, so a `Fold` that builds a
+collection one write at a time costs the size of the *collection* for every
+write: 20,000 `setat`s on a 300×300 grid would copy all 90,000 cells 20,000
+times.
 
 The semantics do not change. What the pass observes is that a fold's
 accumulator is dead the moment the lambda returns, so where nothing can read
@@ -327,9 +343,9 @@ before the write is rewritten. That is conservative rather than clever, and
 deliberately so: the alternative is reasoning about which field aliases which,
 and the cost of being wrong is a silently different answer.
 
-On `bench/mahoraga/i05_jumps.domain` — a jump-offset walk over a 384-element
-list, which is written the second way — the compiled binary goes from **381 ms
-to 7.6 ms**, and at full puzzle size from 33 s to 0.17 s.
+The difference is large when it applies. `bench/mahoraga/i05_jumps.domain` — a
+jump-offset walk over a list, written the second way — runs about fifty times
+faster with the write made in place than with a copy per lap.
 
 Three builtins that *look* like they belong are also excluded, each for its
 own reason:
@@ -337,7 +353,7 @@ own reason:
 - **`del`** — removing a key shifts the key order, which a list taken from the
   accumulator earlier *would* see, unlike an append.
 - **`with` (Record)** — excluded on cost, not safety. A record copy is
-  O(fields), which was never what made anything quadratic.
+  O(fields), which is small.
 
 **`set` (List) is in, behind a guard rather than an argument.** A `List` is a
 Go slice at run time, and `take`, `drop` and `slice` hand out a subslice of the
@@ -357,9 +373,8 @@ being wrong is a program that answers differently for a reason no reader can
 see. `concat` needs no guard — it allocates — and `item` reads one element out,
 so the next-pointer fold this exists for passes untouched.
 
-On the example [aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize)
-recorded for it — 20,000 writes into a 100,000-element list — the interpreter
-goes from **29.9 s to 23 ms**, and the compiled binary runs it in 4 ms. See
+For scale: 20,000 writes into a 100,000-element list take about 30 s with a
+copy per write and about 20 ms in place. The implementation is in
 `optimizer/linear.go`.
 
 ## The safety rules every pass obeys
@@ -374,10 +389,10 @@ goes from **29.9 s to 23 ms**, and the compiled binary runs it in 4 ms. See
    `optimizer/walk.go` is the gatekeeper. It is **typed** wherever the stage
    states its parameter types: a Tuple's arity is static, so `item(t, k)` with
    a literal `k` in range is total wherever it sits in the body — on the
-   parameter, on a `consider` binding, on a projection of a projection. Before
-   that, any stage that kept its data in a tuple (which is every stage after an
-   `Enumerate`, a `Zip`, a `Pairs`, or a hand-rolled `tuple(...)`) was partial
-   as far as every gated pass could tell, and got none of them.
+   parameter, on a `consider` binding, on a projection of a projection. That
+   is what lets the gated passes apply to a stage that keeps its data in a
+   tuple (every stage after an `Enumerate`, a `Zip`, a `Pairs`, or a
+   hand-rolled `tuple(...)`).
 3. **Both backends see the same rewrite.** Rewritten nodes carry their
    arguments in `Meta`, and the fused lambdas both backends run are the
    *same* object — the codegen switch has a case for every rewritten prim
@@ -400,9 +415,8 @@ goes from **29.9 s to 23 ms**, and the compiled binary runs it in 4 ms. See
    rewritten node list (`SetBlockNodes`) — which matters more than its place in
    this list suggests: a hand-written program puts a `Map Each` body around its
    work the moment its data is a list of lists, so that body is where its
-   `Sort` + `Window` + `Any` actually is. A `Consider`'s `Of` body is still
-   captured by its parent's closure and stays out of reach of the
-   length-changing passes.
+   `Sort` + `Window` + `Any` actually is. A `Consider`'s `Of` body is the
+   exception: the length-changing passes do not reach inside it.
 
 Two documented near-misses show where the line is: `Unique` is *not*
 elided before `Sum`/`Count` (it changes them), and `Sort + Unique` swaps
@@ -448,9 +462,8 @@ literal, because its rewrite is valid *because of what the literal is*:
 | `Fold` (seed 0) → `Sum` | `seed` | The identity depends on the seed being 0 |
 | the pair/triple scans | `k` | Not applicable — `Combinations k` fixes a lambda arity and stays literal by rule |
 
-The guard is the default, so a measured argument added later to a primitive a
-pass has never heard of is refused rather than mis-folded, and enabling a pass
-is a deliberate change at one call site.
+The guard is the default: a pass that has not opted in to carrying a measured
+argument stands down when it meets one.
 
 ## Lambdas that update a binding
 
@@ -635,38 +648,3 @@ Three layers, in `optimizer/` and `codegen/`:
    them in `Meta` and add the matching codegen case — otherwise
    `domain build` loses the rewrite (this is how `HashSetPairScan` carries
    its `target`).
-
-Candidate future passes:
-
-- `item(sort(xs), k)` for k > 0 in the expression layer → a selection. The
-  stage form (`Sort` + `Take Item k`) is pass 5, and k = 0 is done above.
-- `Fold → Product` (blocked: `Product` seeds from the first element and
-  errors on empty, but `Fold Seed: 1` returns 1 — semantics differ on empty
-  input).
-- Common-subexpression elimination of *partial* expressions that have no dominating binding (pass-32 family shares only let-bound ones and total ones).
-- **Common prefix hoisting across `Part` blocks.** Two Parts that start with
-  the same operations could share one computation. This is CSE over
-  sub-pipelines and wants its own design — the naive version would have to
-  prove the shared prefix total, since discarding a failing computation would
-  swallow an error the naive program reports.
-- **Part-local dead code.** A `Part` whose body never `Reveal`s computes
-  nothing observable and could be dropped entirely under `--release`. Today
-  it is a lint warning, which is the right first step.
-- **Length-changing passes inside `Consider` `Of` bodies.** `Channel`, `Part`,
-  the loops and `Using:` bodies re-read their node list at run time, so every
-  pass reaches inside them (`optimizer.runInBodies`). An `Of` body is still held
-  by a closure that does not.
-- **Fusing a `Map Each` body into the stage after it.** `Map Each` (body A) +
-  `Sum By` (body B) is one loop over A then B, and concatenating the two bodies
-  would put A's last stage beside B's first — which is where the pattern a pass
-  is looking for often is (AoC 2017 day 4 part 2 builds every pair's flag in
-  one body and asks `Any` about them in the next). It needs a totality analysis
-  for a *body*, since interleaving the two changes which failure is reported
-  first.
-- **A stage carrying a `Consider … Of` binding is invisible to its
-  neighbours.** It sits alone inside the Consider node, so no adjacent-pair
-  pass sees it. Pass 46 looks one level down for exactly this; the general fix
-  is for `rewritePairs` to.
-- **`Window k` read only by position** — `first(w)`, `last(w)`, `item(w, c)` —
-  for any `k`, including a measured one. Pass 42 is the `k = 2` case; the
-  general one never builds a window at all and turns O(n·k) into O(n).

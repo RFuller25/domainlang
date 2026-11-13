@@ -295,12 +295,9 @@ Size and step must be ≥ 1; a list shorter than the window yields no windows.
 Domain Expansion: Permutations
 ```
 
-Every ordering of the list, in lexicographic index order. **Unbounded** —
-Domain used to refuse more than 9 elements, which turned a 10-element input
-(3.6M orderings, comfortable on any machine) into a spurious failure. `n!`
-still explodes, so a large input is slow or memory-hungry rather than
-cleanly refused; `prims.MaxPermutationInput` is a var, so a caller that wants
-a ceiling back can set one, and both backends read the same value.
+Every ordering of the list, in lexicographic index order. There is **no size
+limit**, but there are `n!` orderings — 3.6 million for ten elements — so a
+large input is slow and memory-hungry rather than refused.
 
 ```domain run
 Cursed Energy: stdin
@@ -341,8 +338,8 @@ Domain Expansion: Subsets
 
 The power set. Subset k includes element i iff bit i of k is set, so the
 empty set comes first and the full list last; each subset preserves element
-order. **Unbounded**, for the same reason as `Permutations` (`2^n` still
-explodes; `prims.MaxSubsetInput` restores a ceiling if you want one).
+order. There is **no size limit**, but there are `2^n` subsets, so a large
+input is slow and memory-hungry rather than refused.
 
 ```domain run
 Cursed Energy: stdin
@@ -494,10 +491,11 @@ settles a state the first time it pops it, which a negative edge can
 invalidate after the fact. Grid `Dijkstra` refuses negative cells for the same
 reason.
 
-This is the half of graph search that had no spelling: `Dijkstra` takes a
-`Grid<Int>` and nothing else, so the cheapest path through a graph whose nodes
-are *not* grid cells — `(position, facing, run length)`, `(valve set, minute)`,
-a whole room configuration — could not be asked for at all.
+Use this when the things being searched are not grid cells. `Dijkstra` takes
+a `Grid<Int>` or a `Graph`; `Cheapest` finds the cheapest path through any
+space of states you can describe with a successor lambda —
+`(position, facing, run length)`, `(valve set, minute)`, a whole room
+configuration.
 
 #### `Tally` — the counting DP
 

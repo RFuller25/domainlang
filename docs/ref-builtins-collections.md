@@ -217,7 +217,7 @@ Here every node is a one-element list; `Convert To Graph`, the readers
 
 | Builtin | Type | Behavior |
 |---|---|---|
-| `graph(es)` | `List<(K,K)> \| List<(K,K,Int)> \| List<List<K>> -> Graph<K>` | Build from an edge list. Pairs weigh 1; the ragged `List<List<K>>` form is what a positional `Match Pattern` produces, and also weighs 1. |
+| `graph(es)` | `List<(K,K)> \| List<(K,K,Int)> \| List<List<K>> -> Graph<K>` | Build from an edge list. Pairs weigh 1; the ragged `List<List<K>>` form is what a positional `Match Pattern` produces: a two-element row weighs 1 and a three-element row is `(from, to, weight)`, whose last element must then be an `Int`. Any other length is an error. |
 | `emptygraph(k)` | `K -> Graph<K>` | The empty graph. The argument is a *type witness* — evaluated, then discarded — like `emptyset`'s. |
 | `addnode(g, k)` | `Graph<K> × K -> Graph<K>` | A copy with `k` present. An existing node keeps its arcs. |
 | `addedge(g, a, b)` / `addedge(g, a, b, w)` | `Graph<K> × K × K [× Int] -> Graph<K>` | A copy with the arc `a → b` (weight `w`, default 1). Both endpoints join the graph. A repeat re-weights. |
@@ -281,28 +281,23 @@ holding the same value; see
 [optimizer.md](optimizer.md#linear-accumulators--the-pass-that-runs-last) for
 what has to be true, and `--no-optimize` for the copying behaviour.
 
-**Three shapes the rewrite does not reach**, because the cost is real and
-silent when it applies:
+The same applies to a `While` or `Repeat` loop whose value is the collection
+(or a tuple holding it), updated by a single-statement body.
 
-- **`set` on a `List`.** It always copies. `take`/`drop`/`slice` hand out a
-  subslice of the same backing array, so an in-place write would be visible
-  through one taken earlier. A fold that writes into a long list is quadratic;
-  20,000 writes into a 100k list takes 26 s, against 0.1 s for the same shape
-  over a `Map`. Prefer a `Map<Int, V>` accumulator when the list is large, or
-  rebuild with `concat`, which allocates. See
-  [aoc-gaps.md](aoc-gaps.md#14-set-on-a-list-accumulator-is-still-osize).
-- **`with` on a `Record`.** Also always a copy, but O(fields) — small enough
-  that it has never been what made anything slow.
-- **Loop bodies.** `Repeat`, `While`, `For` and `For Each` take a sub-pipeline
-  rather than a lambda, so there is no accumulator parameter to follow and no
-  site to mark.
-  A simulation written as `Repeat N` over a `Map` state copies every lap; the
-  same work written as a `Fold` does not.
+**Where the copy stays**, and the cost is real:
 
-The proof can fail, and then the copy stays: a body that still reads the
-accumulator *after* updating it needs the old value, so it gets it. `del` is
-never done in place. And a `Count By` or `Group By` still builds one
-collection in one pass, which beats any fold.
+- **`For` and `For Each` loops.** An update in one of these bodies copies
+  every lap. Write the work as a `Fold`, a `While` or a `Repeat`.
+- **A body that reads the accumulator after updating it.** It needs the old
+  value, so it gets a copy.
+- **`set` on a `List` that is also sliced.** If the same lambda applies
+  `take`, `drop` or `slice` to the list, every `set` copies.
+- **`del`** is never done in place.
+- **`with` on a `Record`** always copies, but a record is small.
+
+`--explain` reports each update made in place, so you can check. And when one
+pass over the data is enough, `Count By` or `Group By` builds the collection
+directly and beats any fold. See also [known limits](aoc-gaps.md#updating-a-collection-can-copy-it).
 
 A frequency map built one write at a time — `emptymap`'s arguments are type
 witnesses, and `getor` supplies the zero the first write needs:
@@ -367,7 +362,7 @@ an in-place update would let the second application see the first one's work.
 | `setat(g, r, c, v)` | `Grid<T> × Int × Int × T -> Grid<T>` | A copy with cell `(r, c)` replaced. **Error** out of bounds — a dense grid is finite, so unlike `put` there is no cell to write. |
 | `cellpoints(g)` | `Sparse<T> -> List<(Int, Int)>` | The set cells' coordinates in sorted row-major order. `cells` counts them; this is what walks them. |
 
-So a fold can now carry real state:
+So a fold can carry real state:
 
 ```domain run
 Cursed Energy: stdin

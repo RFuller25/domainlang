@@ -9,7 +9,7 @@ pieces to see how far the pattern goes.
 Domain (see the root README) deliberately has **no recursion** (a
 self-referential Shikigami is a compile error — it's inlined at its call
 site) and **no recursive/sum types** (`ir.Type` has no recursive
-constructor — see `docs/aoc-gaps.md` gap #5). Both are normally load-bearing
+constructor — see "No recursive data" in `docs/aoc-gaps.md`). Both are normally load-bearing
 for a compiler: a recursive-descent parser needs the first, an AST needs
 the second.
 

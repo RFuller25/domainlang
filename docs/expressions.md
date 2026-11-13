@@ -1,11 +1,21 @@
-# Expression layer reference
+# Expressions
 
-The expression layer is the plain (non-themed) language inside `Using:`
-lambdas. It is deliberately small, statically typed at resolve time, and
-compiled to bare Go expressions by the compiler backend — a lambda costs no
-closure, no boxing, no dispatch in a built binary.
+The expression layer is the small, plain language written inside a `Using:`
+lambda. The pipeline moves data from statement to statement; an expression
+decides one detail about one element — which to keep, what to turn it into,
+how to combine two of them.
+
+This page covers lambdas, operators, conditionals, naming and updating values,
+and the two things that sit between expressions and the pipeline: stage
+bindings and pipeline bodies. The 208 builtin functions are on
+[their own pages](#builtin-functions).
+
+Expressions are type-checked with the rest of the program, before anything
+runs.
 
 ## Lambdas
+
+A lambda is a parameter list, an arrow, and an expression:
 
 ```
 (a, b) -> a + b = 2020
@@ -13,15 +23,15 @@ closure, no boxing, no dispatch in a built binary.
 (g) -> sum(take(reverse(g), 2))
 ```
 
-A lambda's arity is fixed by the consuming primitive (1 for `Map Each` /
-`Filter` / `Apply` / `Group By` / cell predicates; 2 for `Fold`; k for
-`Combinations k`; one per channel for `Combine`). Parameter types come from
-the pipeline's current type, and the body's result type is inferred — a
-predicate position requires `Bool`, `Map Each` produces `List<body type>`,
-and so on.
+**The operation decides how many parameters the lambda takes.** `Map Each`,
+`Filter`, `Apply` and `Group By` take one; `Fold` takes two; `Combinations k`
+takes k; `Combine` takes one per channel. You never declare parameter types:
+they come from the type of the value flowing through the pipeline, and the
+result type is worked out from the body. Where an operation needs a particular
+result — `Filter` needs a `Bool` — a body of the wrong type is an error.
 
-One parameter, in a `Map Each`; the body's type decides the result's element
-type:
+One parameter, in a `Map Each`. The body's type becomes the element type of
+the result:
 
 ```domain run
 Cursed Energy: stdin
@@ -38,8 +48,8 @@ Reveal: stdout
 [1, 4, 9]
 ```
 
-Two parameters, because the consuming primitive fixes the arity — the lambda
-never declares it:
+Two parameters, because `Fold` hands its lambda the running total and the next
+element:
 
 ```domain run
 Cursed Energy: stdin
@@ -59,25 +69,15 @@ Reveal: stdout
 
 ### Destructuring a tuple parameter
 
-A parameter written as a parenthesized list of names binds the fields of one
-Tuple, so a loop that keeps its state in a tuple does not spend lines
-unpacking it with `item`:
+When a parameter is a tuple, you can name its fields directly by writing a
+parenthesized list of names where the parameter would go:
 
 ```
-((n, map, x)) -> …              one Tuple parameter, three fields
+((n, map, x)) -> …              one tuple parameter, three fields
 (acc, (name, qty)) -> …         beside an ordinary parameter
 (acc, (key, (lo, hi))) -> …     patterns nest
 ((_, _, count)) -> count        `_` ignores a field
 ```
-
-A pattern has at least two fields and binds at least one name. It means
-exactly `consider n as item(p, 0) in consider map as item(p, 1) in …` for an
-unwritable parameter `p`, so everything that holds of those bindings holds of
-it: the names are locals of the body (and `:=` on one is refused, as on any
-parameter), and a `While` that threads its state through `set` still writes
-in place. A parameter that is not a Tuple, or has a different number of
-fields, is a type error naming the pattern. `_` is only a placeholder inside
-a pattern; elsewhere it is an ordinary identifier, as before.
 
 ```domain run
 Cursed Energy: stdin
@@ -95,16 +95,192 @@ Reveal: stdout
 19
 ```
 
+A pattern has at least two fields and must name at least one of them. It is
+shorthand for unpacking with `item(p, 0)`, `item(p, 1)`, … so the names behave
+like any other parameter. If the parameter is not a tuple, or has a different
+number of fields, that is a type error. `_` is a placeholder only inside a
+pattern; anywhere else it is an ordinary name.
+
+## Values and operators
+
+**Literals and names**
+
+| Written | Is |
+|---|---|
+| `42`, `-7` | an `Int` |
+| `3.25` | a `Float` — digits, a dot, and at least one digit after it |
+| `"text"` | a `Text` |
+| `{a: 1, b: x}` | a record (see below) |
+| `x` | a lambda parameter, or any other name in scope |
+| `r.name` | a field of a record |
+| `name(args…)` | a call to a builtin function |
+| `(expr)` | grouping |
+
+**There is no `true` or `false`.** A `Bool` comes from a comparison, from
+`and` / `or` / `ikke`, or from a builtin that answers a question (`contains`,
+`isprime`, …). When you need a constant one, write `1 = 1` or `1 = 2`. (The
+words do appear in one place: as the argument for a
+[`Bool` Shikigami parameter](language.md#parameters).)
+
+**Operators**, loosest-binding first:
+
+| Operators | Works on | Gives |
+|---|---|---|
+| `also` | anything | the value on its left ([below](#running-an-expression-for-its-effect--also)) |
+| `:=` | a name and a value of its type | the value written ([below](#updating-a-local--)) |
+| `or` | Bool | Bool |
+| `and` | Bool | Bool |
+| `ikke` (prefix) | Bool | Bool |
+| `=` `<` `>` `<=` `>=` | see below | Bool |
+| `+` `-` | Int, Float; `+` also joins two Texts | Int, Float, Text |
+| `*` `/` `%` | Int, Float (`%` Int only) | Int, Float |
+
+Operators on one row bind equally and group left to right, except `:=`, which
+groups right to left. A minus sign in front of a number negates it.
+
+Things worth knowing:
+
+- **`=` is equality, always.** Writing to a name is spelled `:=`.
+- **`ikke` means "not"** (it is the Norwegian word). It binds looser than a
+  comparison and tighter than `and`: `ikke a = b` is `ikke (a = b)`, and
+  `ikke a and b` is `(ikke a) and b`.
+- **`and` and `or` stop early.** The right side is not evaluated when the left
+  side already decides the answer, so `n = 0 or 10 / n = 5` never divides by
+  zero.
+- **`/` on integers drops the remainder**, rounding toward zero. Dividing by
+  zero stops the program with an error.
+- **`%` never gives a negative result** for a positive right-hand side:
+  `(0 - 1) % 5` is `4`. That is the behaviour wrap-around indexing wants. It
+  binds like `*`, so `0 - 1 % 5` is `0 - (1 % 5)`. `mod(a, b)` is the same
+  operation as a function.
+- **`=` compares any two values of the same type**, however large — two lists,
+  records or grids are equal when their contents are.
+- **`<` `<=` `>` `>=` compare values that have an order**: Int, Float, Text,
+  or a tuple of those. An Int and a Float can be compared with each other.
+  Text compares alphabetically by character code; a tuple compares by its
+  first differing field. This is the same ordering `Sort` uses. Other types —
+  Bool, records, lists, maps, sets, grids — have no order, and comparing them
+  this way is an error.
+
+**Records.** `{a: 1, b: x}` builds a record with fields `a` and `b`, and
+`r.a` reads a field. Field names are plain words, not expressions. Reading a
+field the record does not have is an error before the program runs. The
+function form `record("a", 1, "b", x)` means the same thing. Records also come
+out of `Match Pattern`, one field per named hole. See
+[ref-builtins-records.md](ref-builtins-records.md).
+
+Braces build records only. To build a set or a map, use `toset` and `tomap`.
+
+## Conditional expressions
+
+```
+if cond then a else b
+if length(xs) = 0 then -1 else first(xs)
+if n < 0 then "neg" else if n = 0 then "zero" else "pos"
+```
+
+The condition must be a `Bool`, and both arms must have the same type — that
+is the type of the whole expression. There is always an `else`.
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Using: (n) -> if mod(n, 2) = 0 then "even" else "odd"
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[odd, even, odd]
+```
+
+**Only the chosen arm is evaluated.** So `if length(xs) = 0 then -1 else
+first(xs)` is safe: `first` is never called on an empty list.
+
+Conditionals chain, which is how a choice between more than two things is
+written:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Using: (n) -> if n < 0 then -1 else if n = 0 then 0 else 1
+Reveal: stdout
+```
+```input
+-5,0,7
+```
+```output
+[-1, 0, 1]
+```
+
+An arm extends as far to the right as it can: `if c then a else b + 1` puts
+`b + 1` in the else arm. Use parentheses for `(if c then a else b) + 1`.
+
+`if`, `then` and `else` are special only in this construct; they remain usable
+as ordinary names elsewhere.
+
+## Local bindings — `consider`
+
+`consider NAME as VALUE in BODY` gives a name to a value for use inside
+`BODY`. The value is computed once.
+
+```
+consider d as manhattan(a, b) in if d < 3 then d else 0
+```
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Using: (n) -> consider d as abs(n - 10) in if d > 3 then d * 2 else d
+Reveal: stdout
+```
+```input
+1,9,20
+```
+```output
+[18, 1, 20]
+```
+
+To introduce more than one name, nest them:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by "\n"
+Cursed Technique: Extract Integers
+Cursed Technique: Map Each
+    Using: (xs) -> consider lo as min(xs) in consider hi as max(xs) in hi - lo
+Reveal: stdout
+```
+```input
+3 1 9
+10 20
+```
+```output
+[8, 10]
+```
+
+Use it whenever the same subexpression would otherwise be written twice — it
+is then also computed only once.
+
+The name exists only inside `BODY`, which extends as far right as it can. An
+inner `consider` of the same name hides an outer one, and hides a lambda
+parameter, for its own body only. Like `if`, the words `consider`, `as` and
+`in` are special only here.
+
 ## Writing an expression across lines
 
-An expression that has outgrown its line breaks in one of two places, and both
-mean the same thing: the expression is not finished yet.
+A long expression can be broken across lines in two ways. Neither changes what
+it means.
 
-**Inside a parenthesis**, a newline is whitespace. The reader can already see
-the expression is unfinished, so nothing else has to say so, and the
-indentation of the continued lines is alignment rather than layout — it is
-yours to arrange, and `domain fmt` leaves it alone (shifting it only when the
-line that opened the parenthesis moves):
+**Inside parentheses, a line break is just a space.** Indent the continued
+lines however reads best; `domain fmt` leaves that alignment alone.
 
 ```domain
 Cursed Technique: Map Each
@@ -114,10 +290,9 @@ Cursed Technique: Map Each
     ))
 ```
 
-**Indented under the argument**, the rest of the expression continues on the
-lines below it. This is the form for the outermost level, which has no
-parentheses to break inside — a `consider … in if … then … else …` is one
-unbracketed expression however long it gets:
+**Lines indented under an argument continue its value.** This is the form for
+an expression with no parentheses to break inside, such as a
+`consider … in if … then … else …`:
 
 ```domain
 Maximum Technique: Combine
@@ -132,22 +307,23 @@ Maximum Technique: Combine
             else t
 ```
 
-Everything indented past the argument's own line is part of its value, however
-deep — the `then` and `else` arms above are indented again purely for reading.
-The block ends where the indentation returns, so the statements after it are
-unaffected, and the value may start on the line below the argument name
-(`Using:` alone, then the lambda) when that reads better.
+Everything indented deeper than the argument's own line belongs to its value;
+the value ends where the indentation returns. The value may also start on the
+line below the argument name — `Using:` alone, then the lambda.
 
-Both forms are just line breaks: they change nothing about how the expression
-is parsed, typed, evaluated or compiled. In the REPL they behave like every
-other indented block — keep typing, finish with a blank line.
+In the REPL these behave like any other indented block: keep typing, and
+finish with a blank line.
 
 ## Pipeline bodies — a `Using:` that needs a primitive
 
-A body stands in wherever a one-parameter `Using:` lambda is accepted, which
-is how a per-element job reaches a primitive — the expression layer cannot
-iterate, so there is no lambda that searches an element which is itself a
-list:
+Expressions have no way to loop. There is no builtin that takes a function, so
+nothing in an expression can map, filter or search. That matters when the
+value a lambda receives is itself a list — a row of a list of rows, say — and
+the job you want done to it is a pipeline operation.
+
+**Indent a pipeline where the lambda would go.** It runs in the lambda's
+place, once per element, with the element as its current value. Its final
+value is the lambda's result.
 
 ```domain run
 Cursed Energy: stdin
@@ -166,8 +342,12 @@ Reveal: stdout
 [3, 9]
 ```
 
-It is not a `Map Each` feature — a `Filter` predicate takes one too, so long
-as the body ends in a `Bool`:
+This is not special to `Map Each`. A body can stand in **wherever a
+one-parameter `Using:` lambda is accepted** — `Filter`, `Sort By`, `Group By`,
+`Count By`, `Sum By`, `Min By` / `Max By`, `Any` / `All`, `Find`, `Partition`,
+`Take While` / `Drop While`, `Map Values`, `Apply`, `Iterate`, `Explore`, the
+grid searches. The usual rule about result types still applies: under a
+`Filter`, the body must end in a `Bool`.
 
 ```domain run
 Cursed Energy: stdin
@@ -188,30 +368,8 @@ Reveal: stdout
 [3]
 ```
 
-
-The expression layer has no higher-order builtins: nothing here maps, filters,
-or searches. So once a lambda's parameter is itself a list, a job that needs a
-*primitive* has no expression spelling at all — `All Pairs` over each row of a
-`List<List<Int>>` cannot be written as `(row) -> ...` because there is no
-expression that searches `row`.
-
-**Indent a pipeline where the lambda would go** and it runs in the lambda's
-place, with the value the parameter would have bound as its current value:
-
-```domain
-Cursed Technique: Map Each          # List<List<Int>> -> List<Int>
-    Domain Expansion: All Pairs
-        Mode: First
-        Using: (a, b) -> a + b = 2020
-    Maximum Technique: Product
-```
-
-This is not a `Map Each` feature. A lambda `(x) -> e` and a sub-pipeline both
-turn one value into one value, so a body stands in **wherever a 1-parameter
-`Using:` lambda is accepted** — `Filter` and the other predicates, `Sort By`,
-`Group By`, `Count By`, `Sum By`, `Min By`/`Max By`, `Any`/`All`, `Find`,
-`Partition`, `Take While`/`Drop While`, `Map Values`, `Apply`, `Iterate`,
-`Explore`, the grid searches, and `Map Each`:
+Two more shapes this makes possible — filtering rows by their sum, and sorting
+rows by their total:
 
 ```domain
 Cursed Technique: Filter            # keep the rows summing over 15
@@ -223,13 +381,11 @@ Domain Expansion: Sort By           # order rows by their total
     Maximum Technique: Sum
 ```
 
-The body's result type is the lambda's result type, so the usual rule applies
-unchanged: a predicate position needs a body ending in `Bool`, `Map Each`
-produces `List<body type>`.
-
-**More than one parameter: `Params:`.** A body still computes one value from
-one value, so a lambda of two or more parameters has exactly one it can be the
-body *of* — and `Params:` says what the rest are called:
+**More than one parameter: `Params:`.** A body turns one value into one value,
+so for a lambda of two or more parameters you must say which parameter the
+body works on and what the others are called. `Params:` lists the names; the
+**last** one is the body's current value, and all of them can be read by name
+inside the body.
 
 ```domain ignore
 Maximum Technique: Fold            # a fold whose step needs a primitive
@@ -240,369 +396,36 @@ Maximum Technique: Fold            # a fold whose step needs a primitive
         Using: (r) -> acc + first(r)
 ```
 
-The **last** name is what the body is over. For a fold that reads the way the
-lambda does: the body is a pipeline over the element, producing the new
-accumulator, and `acc` is the value carried in rather than the one being
-transformed.
+Here the body is a pipeline over `line`, the element; `acc` is the running
+value, readable by name; and the body's result becomes the new `acc`. A
+`Params:` name follows the rules for a
+[stage binding](#stage-bindings--consider--as--consider--of): it may not be
+the name of a builtin function, and two parameters may not share a name.
 
-**Every** name is also readable, the last one included — it is the body's
-current value *and* in scope by name, so a `Params:` name never turns out to
-be decoration. They arrive through the same machinery
-[`Consider`](#stage-bindings--consider--as--consider--of) uses, so an outer
-binding and a body parameter sit side by side and shadow in the usual order,
-and a `Params:` name obeys the rules a binding name does: it may not shadow an
-expression builtin, and two parameters may not share a spelling.
+**Rules:**
 
-Without this, a `Fold` whose step needed to sort, group or search could not be
-written at all: the expression layer has no lambda-taking builtins, so there
-was nothing to reach for inside the lambda either.
-
-**What it cannot do.** A stage with no `Using:` lambda at all refuses a body
-rather than ignoring it. Supplying both a lambda and a body is an error, and so
-is a `Params:` beside a written lambda — that lambda already names its own
-parameters, and silently ignoring the line would let a program say one thing
-and do another.
-
-A body is a nested scope like a loop's: bodies nest, an enclosing `For` loop's
-ambient variable is in scope inside one, and `Channel` definitions and `From:`
-consumers are refused. The optimizer treats it like any other sub-pipeline —
-in-place rewrites, algorithm substitution included, fire inside it (see
-[optimizer.md](optimizer.md)).
-
-## Grammar
-
-Primary expressions: integer literals, float literals (`3.25` — digits, a dot,
-and at least one digit after it), double-quoted string literals, identifiers
-(lambda parameters), parenthesized expressions, **record literals**
-(`{a: 1, b: x}`), field access (`expr.name`), and builtin calls
-(`name(args...)`). Unary minus negates an Int or a Float.
-
-**There is no `true` or `false` literal** in an expression: `(x) -> true` is
-an `unknown identifier "true"` error. A Bool comes from a comparison, `and`,
-`or`, `ikke`, or a builtin that answers a question (`contains`, `isprime`, …);
-when you need a constant one, `1 = 1` and `1 = 2` are the idiom. The one place
-the words are written is a `b: Bool` [Shikigami parameter's
-argument](language.md#parameters) (`b: true`), which is substituted into the
-body as a value.
-
-A record literal is written
-
-```
-record := '{' IDENT ':' expr (',' IDENT ':' expr)* '}'
-```
-
-and is exactly the `record(...)` call it parses to — `{a: 1}` *is*
-`record("a", 1)`, so the two spellings share one set of rules and `domain fmt`
-gives each back as written. Field names are bare identifiers rather than
-expressions because the record's type depends on them. See
-[ref-builtins-records.md](ref-builtins-records.md).
-
-Braces are only record literals. `{1, 2}` and `{"a": 1}` — the set and map
-spellings the values themselves print as — are refused by name, not by a
-generic syntax error, so the syntax stays available; build those with `toset`
-and `tomap`.
-
-Binary operators, loosest-binding first (left-associative unless noted):
-
-| Precedence | Operators | Operands | Result |
-|---|---|---|---|
-| 0 (loosest) | `also` (postfix) | any | the body's type |
-| 0.5 | `:=` (**right**-associative) | the name's type | the value written |
-| 1 | `or` | Bool | Bool |
-| 2 | `and` | Bool | Bool |
-| 2.5 | `ikke` (prefix) | Bool | Bool |
-| 3 | `=` `<` `>` `<=` `>=` | see below | Bool |
-| 4 | `+` `-` | Int, Float; `+` also Text | Int, Float, Text |
-| 5 (tightest) | `*` `/` `%` | Int, Float (`%` Int only) | Int, Float |
-
-Notes:
-
-- **`=` is equality, always.** Assignment is spelled `:=`, and it writes to a
-  name that is already bound rather than introducing one.
-- **`ikke` is negation** (Norwegian for "not"). It binds looser than a
-  comparison and tighter than `and`, so `ikke a = b` reads as `ikke (a = b)`
-  and `ikke a and b` as `(ikke a) and b`.
-- **`+` over two Texts concatenates.** It is the one non-numeric operator
-  overload; everything else stays arithmetic.
-- **`%` is Euclidean modulo**, not Go's truncated remainder: the result is
-  non-negative for a positive modulus whatever the sign of the left operand,
-  so `(0 - 1) % 5` is `4`. Wrap-around indexing is the dominant use and
-  truncated remainder gets it wrong at exactly the interesting boundary. It
-  binds like `*` and `/`, so `0 - 1 % 5` is `0 - (1 % 5)`. Modulo by zero is a
-  clean runtime error. `mod(a, b)` is the same operation as a builtin.
-- `=` compares any two values of the same static type — scalars by value,
-  composites (List/Record/Tuple/Grid/Map/Set) structurally.
-- `<` `<=` `>` `>=` compare any two values of the same **ordered** type: Int,
-  Float, Text, or a Tuple of those (plus mixed Int/Float, which compares
-  through the numeric tower's promotion). That is exactly the reach of
-  `Sort`/`Sort By`/`Min By`/`Max By`, over the same ordering — Text
-  lexicographically (byte-wise, which agrees with rune order), a Tuple by its
-  first differing element. Anything else — Bool, Record, List, Map, Set, Grid,
-  Sparse — is a resolve error saying so. Ordered is deliberately narrower than
-  keyable: a Record is a legal Map key but has no ordering, because its fields
-  have names rather than positions.
-- `and` / `or` short-circuit, so guard idioms are safe:
-  `n = 0 or 10 / n = 5` never divides by zero.
-- `/` is integer division truncating toward zero; division by zero is a
-  clean runtime error in both backends.
-- Field access requires a Record (from a named-hole `Match Pattern`):
-  `m.n`, `r.a`. Unknown fields are resolve-time errors.
-
-## Conditional expressions
-
-```
-if cond then a else b
-if length(xs) = 0 then -1 else first(xs)
-if n < 0 then "neg" else if n = 0 then "zero" else "pos"
-```
-
-The condition must be `Bool` and both arms must share one type (the
-result type). **Arms are lazy** in both backends: only the selected arm is
-evaluated, so the guard idiom above never trips `first` on an empty list —
-the compiler lowers the conditional to an inlined Go `if`, not an eager
-helper call. `if`/`then`/`else` are contextual keywords inside expressions;
-arms extend as far right as possible (`if c then a else b + 1` puts `b + 1`
-in the else arm — parenthesize to override).
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by ","
-Channeled Energy: Convert To Integers
-Cursed Technique: Map Each
-    Using: (n) -> if mod(n, 2) = 0 then "even" else "odd"
-Reveal: stdout
-```
-```input
-1,2,3
-```
-```output
-[odd, even, odd]
-```
-
-Both arms must have the same type, since the expression has one type whichever
-way it goes — and they chain, which is how a multi-way choice is written:
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by ","
-Channeled Energy: Convert To Integers
-Cursed Technique: Map Each
-    Using: (n) -> if n < 0 then -1 else if n = 0 then 0 else 1
-Reveal: stdout
-```
-```input
--5,0,7
-```
-```output
-[-1, 0, 1]
-```
-
-
-## Local bindings — `consider`
-
-```
-consider d as manhattan(a, b) in if d < 3 then d else 0
-consider lo as min(a, b) in consider hi as max(a, b) in hi - lo
-```
-
-`consider NAME as VALUE in BODY` names a subexpression. The value is evaluated
-**exactly once** and `NAME` is in scope only inside `BODY`.
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by ","
-Channeled Energy: Convert To Integers
-Cursed Technique: Map Each
-    Using: (n) -> consider d as abs(n - 10) in if d > 3 then d * 2 else d
-Reveal: stdout
-```
-```input
-1,9,20
-```
-```output
-[18, 1, 20]
-```
-
-They nest, which is how more than one name is introduced:
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by "\n"
-Cursed Technique: Extract Integers
-Cursed Technique: Map Each
-    Using: (xs) -> consider lo as min(xs) in consider hi as max(xs) in hi - lo
-Reveal: stdout
-```
-```input
-3 1 9
-10 20
-```
-```output
-[8, 10]
-```
-
-Without it a repeated subexpression has to be written — and computed — twice,
-since lambda-body CSE is a candidate optimizer pass rather than an implemented
-one.
-
-Like `if`/`then`/`else`, the three words are contextual: they stay usable as
-ordinary identifiers everywhere else. Bindings nest, the body extends as far
-right as possible, and an inner binding shadows an outer one (and a lambda
-parameter) for its body only. The compiler lowers it to a Go local, so it
-costs nothing at runtime.
-
-## Updating a local — `:=`
-
-`NAME := VALUE` writes to a name already in scope and **yields the value it
-wrote**, so the update can sit in the middle of the expression that needs it:
-
-```
-consider t as x * 2 in (t := t + 1) * 10
-```
-
-Two kinds of name can be written to, and the difference is how long the write
-lives:
-
-| Target | The write lives |
-|---|---|
-| a `consider` local | until the expression ends — it cannot escape one evaluation of the lambda |
-| a `Consider … As/Of` **stage binding** | for the whole stage: the next element sees it, and so does the next lap of a loop |
-| a `Cursed Object` **global** | for the rest of the program: every later stage sees it, including after the loop that wrote it ([language.md](language.md#cursed-object--globals)) |
-
-Everything else is refused where it is written, because in each case there is
-nothing to write *to*: a **lambda parameter** is bound afresh by whatever
-applies the lambda, a **function binding** (`Consider f As (x) -> …`) is
-inlined at its call sites, and a **Shikigami parameter** is substituted into
-the body as a literal. Each says so, and says what to write instead.
-
-The type may not change. A binding's type is fixed when its scope opens and is
-what every other expression in that scope was typed against, so `n := 1.5` on
-an `Int` binding is an error rather than a widening — widen at the binding.
-
-**Order is defined and it matters.** Operands and arguments are evaluated left
-to right, so `n + (n := x) + n` reads the old `n`, writes, and reads the new
-one. Both backends agree on this; the compiler emits explicit sequencing to
-guarantee it, since Go's own evaluation order does not.
-
-Writing to a **stage binding** is the kind that carries within a stage: it is
-the one value that survives from one element to the next without a `Fold`.
-Writing to a **global** carries further still — out of the statement entirely,
-so a loop can leave a count behind for the stages after it.
-
-A `consider` local can be written too, and the write stays inside the local:
-
-```domain ignore
-Using: (x) -> consider t as x * 2 in (t := t + 1) * 10
-```
-
-For `x = 3` that reads `t = 6`, writes `7`, and yields `70`. The write never
-reaches a stage binding of the same spelling outside it. Interpreter and
-compiled binary agree on this.
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by ","
-Channeled Energy: Convert To Integers
-Cursed Technique: Map Each
-    Consider running As 0
-    Using: (x) -> running := running + x
-Reveal: stdout
-```
-```input
-1,2,3
-```
-```output
-[1, 3, 6]
-```
-
-A stage binding's write is visible to the next element, which is what makes
-the running total above accumulate rather than reset:
-
-```domain run
-Cursed Energy: stdin
-Cursed Technique: Split Text by ","
-Channeled Energy: Convert To Integers
-Cursed Technique: Map Each
-    Consider seen As 0
-    Using: (x) -> (seen := seen + 1) * x
-Reveal: stdout
-```
-```input
-5,5,5
-```
-```output
-[5, 10, 15]
-```
-
-
-**A write that is not reached does not happen.** `and`/`or` short-circuit and
-`if` arms are lazy in both backends, so the write in `x > 100 and (n := 1) > 0`
-never runs when the left side is false. That is the same laziness the guard
-idiom depends on; it is worth knowing when the right-hand side is doing work
-rather than answering a question.
-
-### What it gives up
-
-A stage whose lambdas write to a binding is no longer a pure function of its
-input, and the optimizer stands its rewrites down for that stage: no algorithm
-substitution, no fusion with a neighbour, no expression simplification (see
-[optimizer.md](optimizer.md)). The binding itself also stops being folded into
-the lambdas that read it — a constant substituted as a literal has nowhere to
-put a new value — which is the same trade a `Consider … Of` binding has always
-made. Stages that do not write are untouched.
-
-`domain expansion: visualize --expressions` replays an application to show what
-each subexpression came to, so it declines a lambda that writes: re-running the
-body would do the writing a second time.
-
-## Running an expression for its effect — `also`
-
-`BODY also C1, C2, …` evaluates the body, then each clause in written order,
-**discards the clauses' values**, and yields the body's. Its type is the body's
-type; the clauses may be any type but still have to typecheck, and one that
-fails at runtime fails the expression.
-
-```domain
-Cursed Technique: Map Each          # each element, and how many came before it
-    Consider seen As 0
-    Using: (x) -> x + seen also seen := seen + 1
-```
-
-The body's value is taken *before* the clauses run, which is the whole point of
-the ordering: a clause updates what the **next** reader of the name sees, not
-what this expression already yielded. Written inside a parenthesis, that next
-reader can be the rest of the same expression:
-
-```
-(x also n := n + 1) + n      # the old x, plus the new n
-```
-
-`also` binds looser than everything, and its clause list runs to the end of the
-expression. That leaves two places it cannot be read without guessing, and both
-are refused rather than guessed:
-
-- **inside a call's arguments**, where the clause commas and the argument
-  commas are the same character — write `f((a also b), c)`;
-- **twice at one level** — write `(a also b) also c`.
-
-So a bare `also` list is written where something else already ends it: at the
-end of a lambda body, a `Consider … As` value, or a parenthesis.
-
-`also` carries no update of its own — a clause that writes nothing is evaluated
-and discarded, which is legal and does nothing. It is the place to put the
-writes whose *value* is not what the expression is for.
-
-A `Using:` written as an [indented
-pipeline](#pipeline-bodies--a-using-that-needs-a-primitive) writes through like
-any other lambda. It compiles to a Go function of its own, and a binding it
-updates reaches that function as a pointer rather than a copy, so the write
-lands on the binding in both backends — including from a body nested inside
-another.
+- An operation that takes no `Using:` lambda does not accept a body.
+- A lambda and a body together is an error. So is `Params:` beside a written
+  lambda.
+- Bodies nest.
+- A `For` loop's variable is in scope inside a body written within the loop.
+- A body may not declare a `Channel` or read one with `From:`.
 
 ## Stage bindings — `Consider … As` / `Consider … Of`
 
-`Of` applies an operation to the value entering the stage, so a whole-list
-statistic is available to a per-element lambda:
+A `consider` names a value inside one expression. A **stage binding** names a
+value for a whole pipeline statement: every lambda on it, and every statement
+nested under it. It is written in the statement's indented block, alongside
+`Mode:` and `Using:`.
+
+There are two forms, and the difference is where the value comes from:
+
+- **`Of`** computes it from the value arriving at the statement.
+- **`As`** never sees that value. It names a constant, an expression, or a
+  function.
+
+`Of` is how a lambda that looks at one element gets at a fact about the whole
+list:
 
 ```domain run
 Cursed Energy: stdin
@@ -620,8 +443,7 @@ Reveal: stdout
 [9, 9]
 ```
 
-`As` never sees the pipeline value; it names a constant or a function, and a
-function binding is inlined at its call sites:
+`As` names a constant or a helper function:
 
 ```domain run
 Cursed Energy: stdin
@@ -640,45 +462,21 @@ Reveal: stdout
 [1, 4, 4]
 ```
 
+Every form:
 
-`consider` names a subexpression *inside* one expression. A **stage binding**
-names a value for a whole pipeline stage — every lambda on it, and every
-statement nested beneath it — and it is written on the pipeline layer, in the
-stage's indented block beside `Mode:` and `Using:`:
+| Written | The name holds |
+|---|---|
+| `Consider accum As 3` | a constant |
+| `Consider n As 2 * (k + 1)` | an expression over the bindings above it |
+| `Consider len As (x) -> length(x)` | **a function** — call it as `len(xs)` |
+| `Consider total Of Sum` | the result of an operation applied to the arriving value |
+| `Consider total Of (xs) -> sum(xs)` | the same, written as a lambda |
+| `Consider total Of` + an indented pipeline | the result of a sub-pipeline over the arriving value |
+| `Consider line Of Itself` | the arriving value, unchanged |
 
-```domain
-Cursed Energy: stdin
-Cursed Technique: Split Text by "\n"
-Channeled Energy: Convert To Integers
-Domain Expansion: All Pairs
-    Mode: Count
-    Consider accum As 3
-    Consider double As (x) -> x * 2
-    Consider total Of Sum
-    Using: (a, b) -> double(a) + b + accum > total
-Reveal: stdout
-```
-
-**The preposition says where the value comes from, and it has to, because a
-1-parameter lambda already means two different things in Domain depending on
-the slot it is written in**: a `Using:` lambda is applied per element, while a
-measured argument's lambda (`Size: (xs) -> length(xs) / 2`) is applied once to
-the current pipeline value. A binding has no slot to disambiguate it.
-
-| Written | Binds | Computed |
-|---|---|---|
-| `Consider accum As 3` | a constant | at compile time |
-| `Consider n As 2 * (k + 1)` | an expression over earlier bindings | at compile time when it folds, otherwise once per pass |
-| `Consider len As (x) -> length(x)` | **a function** — call it as `len(xs)` | at each call site |
-| `Consider total Of Sum` | an operation applied to the current value | once per pass through the stage |
-| `Consider total Of (xs) -> sum(xs)` | the same, written as a lambda | once per pass through the stage |
-| `Consider total Of` + an indented pipeline | a whole sub-pipeline over that value | once per pass through the stage |
-| `Consider line Of Itself` | the value entering the scope, unchanged | once per pass through the stage |
-
-**`As` never sees the pipeline value; `Of` always does.** That is the whole
-rule. `Of` accepts an operation phrase, a lambda over the current value, or an
-indented sub-pipeline — but not a bare expression, so `Of Sum` is
-unambiguously the primitive and never an identifier:
+What follows `Of` is an operation phrase, a lambda, or an indented pipeline —
+never a bare expression, so `Of Sum` always means the operation `Sum`. An `Of`
+with a sub-pipeline looks like this:
 
 ```domain
 Cursed Energy: stdin
@@ -695,133 +493,199 @@ Reveal: stdout
 
 ### Scope
 
-A binding is in scope for **every lambda-valued argument of its statement** —
+A binding is in scope for **every lambda-valued argument on its statement** —
 `Using:`, `By:`, `While:`, `Until:`, a measured `Times:` — and for every
-statement nested beneath it, including a `Using:` written as an indented
-pipeline. It goes out of scope with the statement.
+statement nested under it. It goes out of scope when the statement ends.
 
-Bindings are read in written order and each sees the ones above it, so
-`Consider half As total / 2` is legal and a cycle cannot be written at all.
-An inner block rebinding a name shadows the outer one; a lambda parameter of
-that name shadows the binding, exactly as it shadows an outer `consider`. A
-binding written at the top of a `Shikigami` body scopes over the whole body and
-may use the definition's parameters.
+Bindings are read top to bottom, and each can use the ones above it, so
+`Consider half As total / 2` is fine after `Consider total Of Sum`.
 
-An `Of` binding is computed once when its scope opens, from the value entering
-**the statement it is written on** — which for a `Map Each` is the whole list,
-not one element. That is worth stating outright, because it reads the other way
-round for exactly the stage people reach for most: to name the *element*, put
-the `Consider` on a statement inside the body, where the element is what
-arrives.
+A nearer name hides a farther one: a binding in an inner block hides an outer
+binding of the same name, and a lambda parameter hides a binding.
 
-At the head of a loop, "the stage" is the whole loop rather than one lap.
+A binding at the top of a Shikigami body covers the whole body and may use the
+Shikigami's parameters.
 
-`Of Itself` is the value itself, unchanged. It exists because naming the
-current value otherwise took an identity Apply —
+**An `Of` binding sees what the *statement* receives.** On a `Map Each`, that
+is the whole list, not one element — even though the lambda beside it sees one
+element at a time. To name the element, put the `Consider` on a statement
+*inside* the `Map Each`'s body, where the element is what arrives.
+`Consider line Of Itself` is the direct way to do that.
 
-```domain ignore
-Consider line Of Apply          # the long way
-    Using: (l) -> l
-
-Consider line Of Itself         # the same binding
-```
-
-— which is pure ceremony, and exactly what a pipeline body needs to name its
-own element. `domain expansion: optimize` rewrites the first into the second.
-(It is a word rather than a bare `Consider line Of`, because that spelling is
-how the REPL knows an indented sub-pipeline is still coming.)
+On a loop, the binding is computed once for the whole loop, not once per lap.
 
 ### What a binding cannot be
 
-A binding may not take an expression builtin's name: `Consider length As …` is
-refused rather than allowed to change what `length(xs)` means for every
-expression in scope.
+- **It may not take a builtin function's name.** `Consider length As …` is
+  refused, because it would change what `length(xs)` means everywhere in
+  scope.
+- **A function binding must be called.** Functions are not values in Domain,
+  so `len` on its own is an error where `len(xs)` is wanted. Likewise a value
+  binding cannot be called.
 
-A function binding must be **called**. Domain has no function values — there is
-no type to give one — so `(a + b) * len` where `len` is a lambda is an error
-that says so, and `len(list(a, b))` is what it is asking for. The same rule
-from the other side: a value binding cannot be called.
+### What a binding costs
 
-### What it costs
+A constant and a function cost nothing. The constant is substituted into the
+lambdas that use it, and a function is expanded where it is called, before the
+program is optimized. So `Consider target As 2020` with
+`(a, b) -> a + b = target` is optimized exactly as if `2020` had been written
+in the lambda.
 
-Nothing, for the first two kinds. A constant is substituted into the lambdas
-that read it as a literal, and a function is inlined at each call site (its
-arguments bound with `consider`, so each is evaluated exactly once however many
-times the body names it). Both are gone before either backend sees the program.
+An `Of` binding is not known until the data arrives. It is computed once when
+the statement starts, and an optimization that depends on knowing the value in
+advance does not apply (see [optimizer.md](optimizer.md)). The same goes for
+any binding that is [updated with `:=`](#updating-a-local--).
 
-That is also why a constant is folded rather than bound: the optimizer matches
-the *shape* of a lambda body, so `Consider target As 2020` + `(a, b) -> a + b =
-target` still becomes the hash-set scan, while an `Of` binding — a value that
-is not known until data arrives — stands the rewrite down the way a measured
-argument does (see [optimizer.md](optimizer.md)).
+## Updating a local — `:=`
 
-A binding that something [updates with `:=`](#updating-a-local--) is the third
-case, and it costs what the second one does: it is computed when its scope
-opens rather than folded, because a literal substituted into a body has nowhere
-to put a new value.
+`NAME := VALUE` writes a new value to a name that is already in scope. It is
+itself an expression, and its value is the value written — so an update can
+sit in the middle of a larger expression:
+
+```
+consider t as x * 2 in (t := t + 1) * 10
+```
+
+For `x = 3` that reads `t` as 6, writes 7, and gives 70.
+
+What can be written to, and how long the write lasts:
+
+| The name is | The write lasts |
+|---|---|
+| a `consider` local | until that expression finishes |
+| a `Consider … As/Of` **stage binding** | for the rest of the statement: the next element sees it, and so does the next lap of a loop |
+| a `Cursed Object` **global** | for the rest of the program ([language.md](language.md#cursed-object--globals)) |
+
+Writing to a stage binding is what lets a value carry from one element to the
+next. Here it keeps a running total:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider running As 0
+    Using: (x) -> running := running + x
+Reveal: stdout
+```
+```input
+1,2,3
+```
+```output
+[1, 3, 6]
+```
+
+And here it counts the elements as they go by:
+
+```domain run
+Cursed Energy: stdin
+Cursed Technique: Split Text by ","
+Channeled Energy: Convert To Integers
+Cursed Technique: Map Each
+    Consider seen As 0
+    Using: (x) -> (seen := seen + 1) * x
+Reveal: stdout
+```
+```input
+5,5,5
+```
+```output
+[5, 10, 15]
+```
+
+**Rules:**
+
+- **The type cannot change.** `n := 1.5` on an `Int` binding is an error;
+  declare the binding as a Float instead.
+- **Three kinds of name cannot be written to**: a lambda parameter, a function
+  binding (`Consider f As (x) -> …`), and a Shikigami parameter. Each error
+  says what to write instead.
+- **Evaluation is left to right.** `n + (n := x) + n` reads the old `n`,
+  writes, then reads the new one.
+- **A write that is not reached does not happen.** `and` and `or` stop early
+  and only one arm of an `if` runs, so in `x > 100 and (n := 1) > 0` the write
+  is skipped when `x` is not over 100.
+- A write to a `consider` local stays inside that local, even if a stage
+  binding outside has the same name.
+- A write made from inside a [pipeline body](#pipeline-bodies--a-using-that-needs-a-primitive)
+  reaches the binding like any other.
+
+### What a write costs
+
+A statement whose lambdas write to a binding no longer depends only on its
+input, so the optimizer leaves that statement exactly as written (see
+[optimizer.md](optimizer.md)). Statements that do not write are unaffected.
+
+`domain expansion: visualize --expressions` shows what each subexpression
+evaluated to by running the lambda again; it declines to do that for a lambda
+that writes.
+
+## Running an expression for its effect — `also`
+
+`BODY also C1, C2, …` evaluates `BODY`, then each clause in order, throws the
+clauses' values away, and gives `BODY`'s value. It is where you put a write
+whose value is not the point:
+
+```domain
+Cursed Technique: Map Each          # each element, plus how many came before it
+    Consider seen As 0
+    Using: (x) -> x + seen also seen := seen + 1
+```
+
+**The body's value is taken before the clauses run.** A clause changes what
+the *next* reader of the name sees, not what this expression has already
+produced. Inside parentheses, the next reader can be the rest of the same
+expression:
+
+```
+(x also n := n + 1) + n      # the old x, plus the new n
+```
+
+`also` binds more loosely than anything else, and its clause list runs to the
+end of the expression. Two places would be ambiguous, and need parentheses:
+
+- **inside a function call's arguments**, where the clause commas and the
+  argument commas would be confused — write `f((a also b), c)`;
+- **two at the same level** — write `(a also b) also c`.
+
+So a bare `also` goes where something else already ends the expression: the
+end of a lambda body, the end of a `Consider … As` value, or a closing
+parenthesis.
+
+The clauses are type-checked like any expression, and one that fails at run
+time fails the whole expression.
 
 ## Builtin functions
 
-The fixed builtin table (`typecheck.Builtins`). Every builtin is implemented
-in the interpreter **and** the compiler with identical behavior — the
-*partial* ones fail with the same message wording in both, and the
-point/tuple group compiles through the interned tuple structs (see
-[compiler.md](compiler.md)).
-
-The table is split by what a builtin operates on:
+There are 208 builtin functions. They behave identically whether the program
+is interpreted or compiled, down to the wording of their error messages.
 
 | Page | Covers |
 |---|---|
-| [ref-builtins-list.md](ref-builtins-list.md) | Lists, tuples and grids: indexing, slicing, and the first-order list operations |
-| [ref-builtins-collections.md](ref-builtins-collections.md) | Maps and Sets: reading them, and building or updating a collection |
-| [ref-builtins-math.md](ref-builtins-math.md) | Integer maths, number theory and floats |
+| [ref-builtins-list.md](ref-builtins-list.md) | Lists, tuples and grids: indexing, slicing, sorting, zipping, chunking |
+| [ref-builtins-collections.md](ref-builtins-collections.md) | Maps and Sets: reading them, building and updating them |
+| [ref-builtins-math.md](ref-builtins-math.md) | Integer maths and floats |
 | [ref-builtins-text.md](ref-builtins-text.md) | Text |
 | [ref-builtins-bits.md](ref-builtins-bits.md) | Bit operations, logic and number theory |
 | [ref-builtins-records.md](ref-builtins-records.md) | Records, points and grid geometry, sparse grids |
-| [ref-builtins-view.md](ref-builtins-view.md) | The View type: building, combining and styling a picture |
-| [ref-builtins-chance.md](ref-builtins-chance.md) | The seeded stream and the clock: the six builtins that are not functions of their arguments |
+| [ref-builtins-view.md](ref-builtins-view.md) | Building, combining and styling a picture (for games) |
+| [ref-builtins-chance.md](ref-builtins-chance.md) | Random numbers and the clock |
 
-Each page carries two worked examples for its group, executed against their
-printed output in both backends.
+Each page has worked examples for its group.
 
-### Design rules for extending the table
+## What the expression layer does not have
 
-Keep it small and total where possible. A new builtin is declared once, as a
-`Spec` in package `builtins` (name, argument count, typing rule, interpreter
-evaluator — see `builtins/text.go` for the shape), with its Go emitter attached
-from `codegen` (`codegen/textbuiltins.go`); `TestEveryRegisteredBuiltinHasAnEmitter`
-fails if the emitter is missing. The text builtins are the first group moved
-there; the rest are still arms of three `switch` statements (typecheck,
-eval, codegen) and land in **three** places, with unit tests in the first two
-and an interpreter-vs-binary oracle program in the third. A builtin implemented in
-eval but not codegen must fail compilation with a positioned error — never
-produce differing output. Partial builtins must use identical failure
-wording in both backends.
-
-## What the expression layer does not have (yet)
-
-- **Higher-order builtins.** Nothing here maps, filters or searches with a
-  function you supply. The pure list transforms that need *no* function
-  argument are no longer in that sentence — `sort`, `unique`, `flatten`,
-  `product`, `zip`, `enumerate`, `chunk`, `windows` and `transpose` all have
-  an expression spelling now ([above](ref-builtins-list.md#first-order-list-operations)). What
-  still has none is anything taking a lambda: indent a pipeline where the
-  lambda goes and the primitives do the work instead.
-- **User-defined functions.** Shikigami operate at the pipeline layer instead,
-  and are not recursive — see `Domain Expansion: Explore` in
-  [primitives.md](primitives.md) for the search that replaces recursion.
-
-(Historical gaps since closed: conditional expressions (`if/then/else`
-above) and index-aware grid iteration — the positional `(g, r, c)` lambda
-form of `Map Cells`/`Count Cells` with the `row`/`col`/`rows`/`cols`
-builtins; floats; number-to-text conversion (`totext`); modulo and the
-integer-math group; text access beyond parsing; the Map/Set escape hatches;
-heterogeneous tuples; boolean negation (`ikke`); local bindings
-(`consider`); **collection construction and update** — a Map, Set or dense
-Grid could be read but never built, so a fold could not accumulate one —
-along with list generation, text splitting and code points, the float tower
-past `sqrt`, named-field records, and the base/bit/number-theory group; and,
-most recently, **updating a name** ([`:=`](#updating-a-local--) and
-[`also`](#running-an-expression-for-its-effect--also)), which is how a value
-carried between elements stops having to be threaded through a `Fold`
-accumulator.)
+- **Functions that take functions.** No builtin maps, filters or searches with
+  a lambda you supply. Operations that need no lambda do exist as builtins —
+  `sort`, `unique`, `flatten`, `product`, `zip`, `enumerate`, `chunk`,
+  `windows`, `transpose`
+  ([list builtins](ref-builtins-list.md#first-order-list-operations)). For
+  anything that needs one, use a
+  [pipeline body](#pipeline-bodies--a-using-that-needs-a-primitive).
+- **User-defined functions.** A `Consider f As (x) -> …` binding gives you a
+  helper for one statement. For anything larger, define a
+  [Shikigami](language.md#shikigami--user-defined-operations), which works on
+  the pipeline.
+- **Recursion.** Use `Domain Expansion: Explore`
+  ([reference](ref-expansions.md)) for searching and counting over a space of
+  states.

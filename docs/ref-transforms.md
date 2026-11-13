@@ -167,13 +167,11 @@ Reveal: stdout
 
 `Map Each` takes a `List`, a `Set` or a `Map` and always hands back a **`List`**.
 That is right for what it is — the lambda may change the element type, and the
-result has an order the input need not have had — but it means the only way to
-map a `Set` and still have a `Set` was `Map Each` then `Convert To Set`, and the
-only way to map a `Map`'s *keys* was to take it apart into entries and build it
-again. Two primitives already closed that gap for two of the types:
-[`Map Cells`](ref-transforms-grid.md) keeps a `Grid` (and a `Sparse`)
-and [`Map Values`](ref-transforms-grid.md) keeps a `Map`. These are
-the rest of the row.
+result has an order the input need not have had. When you want the result to
+stay the kind of collection it was, use the mapping operation for that kind:
+[`Map Cells`](ref-transforms-grid.md) keeps a `Grid` (and a `Sparse`),
+[`Map Values`](ref-transforms-grid.md) keeps a `Map`, and the ones below
+keep a `Set`, a `Map`'s keys, and a `Graph`.
 
 | | |
 |---|---|

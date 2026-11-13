@@ -106,11 +106,10 @@ Three forms, chosen by input type:
 - `Sparse<T> -> Grid<T>` — **densify**: materialize the bounding box,
   translated so `(minrow, mincol)` lands at `(0, 0)`, unset cells filled
   with the default. The empty sparse grid becomes the 0×0 grid. This is how
-  a sparse plot becomes a printable picture. **Unbounded** — the old
-  4,000,000-cell ceiling refused plots a machine had room for, so two
-  far-apart cells now cost memory rather than earning a clean refusal
-  (`ir.MaxSparseDense` is a var and restores one). A box beyond what any
-  machine could allocate is still a clean error, not a panic.
+  a sparse plot becomes a printable picture. There is **no size limit**: two
+  far-apart cells imply a large box, and a very large one is slow and
+  memory-hungry rather than refused. Only a box beyond what any machine could
+  allocate is an error.
 
 From `List<Text>`, each character becomes a cell — the char-grid form almost
 every grid puzzle opens with:
