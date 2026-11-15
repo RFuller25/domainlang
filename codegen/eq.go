@@ -13,52 +13,41 @@ import (
 // convergence test.
 
 // eqExpr returns a Go boolean expression comparing a and b, both of type t.
-func (g *gen) eqExpr(a, b string, t *ir.Type) (string, error) {
+func (g *gen) eqExpr(a, b string, t *ir.Type) string {
 	switch t.Kind {
 	case ir.KInt, ir.KFloat, ir.KText, ir.KBool:
-		return "(" + a + " == " + b + ")", nil
+		return "(" + a + " == " + b + ")"
 	case ir.KGraph:
 		// One generic helper rather than an interned per-type function: a
 		// graph's nodes are keyable, so they are already a Go comparable, and
 		// the comparison never has to descend into an element type. It also
 		// keeps the order-insensitivity (ir.GraphEqual's contract) written
 		// once instead of re-emitted per node type.
-		if _, err := g.goType(t); err != nil {
-			return "", err
-		}
+		g.goType(t)
 		g.chelper(t.Elem, "dmGraph", declGraph)
-		return g.chelper(t.Elem, "dmGraphEq", declGraphEq) + "(" + a + ", " + b + ")", nil
+		return g.chelper(t.Elem, "dmGraphEq", declGraphEq) + "(" + a + ", " + b + ")"
 	default:
-		fn, err := g.eqFunc(t)
-		if err != nil {
-			return "", err
-		}
-		return fn + "(" + a + ", " + b + ")", nil
+		fn := g.eqFunc(t)
+		return fn + "(" + a + ", " + b + ")"
 	}
 }
 
 // eqFunc interns a structural-equality function for a composite type.
-func (g *gen) eqFunc(t *ir.Type) (string, error) {
+func (g *gen) eqFunc(t *ir.Type) string {
 	// Canonical, so two Record declaration orders share one equality function
 	// exactly as they share one struct.
 	key := canonicalKey(t)
 	if name, ok := g.eqFns[key]; ok {
-		return name, nil
+		return name
 	}
 	name := fmt.Sprintf("dmEq%d", len(g.eqFns)+1)
 	g.eqFns[key] = name
 
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+	goT := g.goType(t)
 	var sb strings.Builder
 	switch t.Kind {
 	case ir.KList:
-		elemEq, err := g.eqExpr("a[i]", "b[i]", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		elemEq := g.eqExpr("a[i]", "b[i]", t.Elem)
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
 	if len(a) != len(b) {
 		return false
@@ -74,10 +63,7 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 		parts := make([]string, len(t.Fields))
 		for i, f := range t.Fields {
 			fn := fieldName(f.Name)
-			fe, err := g.eqExpr("a."+fn, "b."+fn, f.Type)
-			if err != nil {
-				return "", err
-			}
+			fe := g.eqExpr("a."+fn, "b."+fn, f.Type)
 			parts[i] = fe
 		}
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
@@ -87,20 +73,14 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 		parts := make([]string, len(t.Elems))
 		for i, et := range t.Elems {
 			fn := tupleField(i)
-			fe, err := g.eqExpr("a."+fn, "b."+fn, et)
-			if err != nil {
-				return "", err
-			}
+			fe := g.eqExpr("a."+fn, "b."+fn, et)
 			parts[i] = fe
 		}
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
 	return %s
 }`, name, goT, joinAnd(parts))
 	case ir.KGrid:
-		cellEq, err := g.eqExpr("a.cells[i]", "b.cells[i]", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		cellEq := g.eqExpr("a.cells[i]", "b.cells[i]", t.Elem)
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
 	if a.rows != b.rows || a.cols != b.cols {
 		return false
@@ -113,10 +93,7 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 	return true
 }`, name, goT, cellEq)
 	case ir.KMap:
-		valEq, err := g.eqExpr("a.vs[i]", "bv", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		valEq := g.eqExpr("a.vs[i]", "bv", t.Elem)
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
 	if len(a.keys) != len(b.keys) {
 		return false
@@ -156,14 +133,8 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 	return true
 }`, name, goT)
 	case ir.KSparse:
-		defEq, err := g.eqExpr("a.def", "b.def", t.Elem)
-		if err != nil {
-			return "", err
-		}
-		cellEq, err := g.eqExpr("av", "bv", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		defEq := g.eqExpr("a.def", "b.def", t.Elem)
+		cellEq := g.eqExpr("av", "bv", t.Elem)
 		fmt.Fprintf(&sb, `func %s(a, b %s) bool {
 	if !%s || a.count() != b.count() {
 		return false
@@ -178,10 +149,10 @@ func (g *gen) eqFunc(t *ir.Type) (string, error) {
 	return true
 }`, name, goT, defEq, cellEq)
 	default:
-		return "", fmt.Errorf("no equality for type %s", t)
+		panic(failf("no equality for type %s", t))
 	}
 	g.decls = append(g.decls, sb.String())
-	return name, nil
+	return name
 }
 
 // joinAnd renders a conjunction, degenerating to true for zero terms (a

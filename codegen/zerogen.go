@@ -20,86 +20,59 @@ import (
 )
 
 // zeroExpr is a Go expression for the zero value of t.
-func (g *gen) zeroExpr(t *ir.Type) (string, error) {
+func (g *gen) zeroExpr(t *ir.Type) string {
 	if t == nil {
-		return "", fmt.Errorf("no type to take the zero of")
+		panic(failf("no type to take the zero of"))
 	}
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+	goT := g.goType(t)
 	switch t.Kind {
 	case ir.KInt:
-		return "int64(0)", nil
+		return "int64(0)"
 	case ir.KFloat:
-		return "float64(0)", nil
+		return "float64(0)"
 	case ir.KText:
-		return `""`, nil
+		return `""`
 	case ir.KBool:
-		return "false", nil
+		return "false"
 	case ir.KList:
-		return goT + "{}", nil
+		return goT + "{}"
 	case ir.KMap:
-		key, kerr := g.goType(t.Key)
-		if kerr != nil {
-			return "", kerr
-		}
-		elem, eerr := g.goType(t.Elem)
-		if eerr != nil {
-			return "", eerr
-		}
+		key := g.goType(t.Key)
+		elem := g.goType(t.Elem)
 		return g.newMapExpr(t.Key, key, elem, "")
 	case ir.KSet:
-		elem, eerr := g.goType(t.Elem)
-		if eerr != nil {
-			return "", eerr
-		}
+		elem := g.goType(t.Elem)
 		return g.newSetExpr(t.Elem, elem)
 	case ir.KGraph:
-		elem, eerr := g.goType(t.Elem)
-		if eerr != nil {
-			return "", eerr
-		}
+		elem := g.goType(t.Elem)
 		return g.newGraphExpr(t.Elem, elem)
 	case ir.KSparse:
-		elem, eerr := g.goType(t.Elem)
-		if eerr != nil {
-			return "", eerr
-		}
-		def, derr := g.zeroExpr(t.Elem)
-		if derr != nil {
-			return "", derr
-		}
-		return fmt.Sprintf("dmNewSparse[%s](%s)", elem, def), nil
+		elem := g.goType(t.Elem)
+		def := g.zeroExpr(t.Elem)
+		return fmt.Sprintf("dmNewSparse[%s](%s)", elem, def)
 	case ir.KGrid:
 		// An empty grid rather than a one-cell one, as ir.ZeroValue says: a
 		// picture of nothing is nothing.
-		return goT + "{}", nil
+		return goT + "{}"
 	case ir.KView:
-		return "dmViewBlank()", nil
+		return "dmViewBlank()"
 	case ir.KTuple:
 		parts := make([]string, len(t.Elems))
 		for i, e := range t.Elems {
-			z, zerr := g.zeroExpr(e)
-			if zerr != nil {
-				return "", zerr
-			}
+			z := g.zeroExpr(e)
 			parts[i] = fmt.Sprintf("F%d: %s", i, z)
 		}
-		return goT + "{" + strings.Join(parts, ", ") + "}", nil
+		return goT + "{" + strings.Join(parts, ", ") + "}"
 	case ir.KRecord:
 		// Named fields rather than a bare literal: a record whose field is a
 		// Map needs that field built, not left nil.
 		fields := canonicalFields(t)
 		parts := make([]string, len(fields))
 		for i, f := range fields {
-			z, zerr := g.zeroExpr(f.Type)
-			if zerr != nil {
-				return "", zerr
-			}
+			z := g.zeroExpr(f.Type)
 			parts[i] = fmt.Sprintf("%s: %s", fieldName(f.Name), z)
 		}
-		return goT + "{" + strings.Join(parts, ", ") + "}", nil
+		return goT + "{" + strings.Join(parts, ", ") + "}"
 	}
-	return "", fmt.Errorf("%s has no zero value in compiled code", t)
+	panic(failf("%s has no zero value in compiled code", t))
 }

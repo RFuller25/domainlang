@@ -89,14 +89,6 @@ type Stats struct {
 	Trimmed int
 }
 
-// RelStdErr is the standard error as a fraction of the mean — the noise floor.
-func (s Stats) RelStdErr() float64 {
-	if s.Mean <= 0 {
-		return 0
-	}
-	return float64(s.StdErr) / float64(s.Mean)
-}
-
 // Summarize computes the statistics for a set of samples: the warmup run is
 // dropped, then the slowest quarter of what is left, then the mean and spread
 // are taken from the rest. See the constants above for why each.

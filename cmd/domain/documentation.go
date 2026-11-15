@@ -21,7 +21,6 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
-	"strings"
 
 	"domain/docs"
 )
@@ -34,30 +33,19 @@ const defaultDocsPort = 4444
 // file, so any bare argument is an error.
 func parseDocumentationArgs(args []string) (int, error) {
 	port := defaultDocsPort
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		var val string
-		switch {
-		case a == "-p" || a == "--port":
-			i++
-			if i >= len(args) {
-				return 0, fmt.Errorf("%s requires a port number", a)
-			}
-			val = args[i]
-		case strings.HasPrefix(a, "-p="):
-			val = a[len("-p="):]
-		case strings.HasPrefix(a, "--port="):
-			val = a[len("--port="):]
-		case strings.HasPrefix(a, "-"):
-			return 0, fmt.Errorf("unknown flag %q (documentation accepts only -p/--port)", a)
-		default:
-			return 0, fmt.Errorf("documentation takes no file argument (got %q)", a)
-		}
-		n, err := strconv.Atoi(val)
+	f := newFlagSet("unknown flag %q (documentation accepts only -p/--port)", func(a string) error {
+		return fmt.Errorf("documentation takes no file argument (got %q)", a)
+	})
+	f.val("-p --port -p= --port=", "%s requires a port number", func(s string) error {
+		n, err := strconv.Atoi(s)
 		if err != nil || n < 1 || n > 65535 {
-			return 0, fmt.Errorf("invalid port %q (want 1-65535)", val)
+			return fmt.Errorf("invalid port %q (want 1-65535)", s)
 		}
 		port = n
+		return nil
+	})
+	if err := f.parse(args); err != nil {
+		return 0, err
 	}
 	return port, nil
 }

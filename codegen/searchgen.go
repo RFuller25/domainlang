@@ -33,11 +33,8 @@ func gridSearchFusable(n *ir.Node) bool {
 // Components": it builds the []bool mask and the row/col dimensions directly
 // from the lines, applying the search predicate to a zero-alloc one-rune
 // substring, so the intermediate dmGrid[string] is never materialized.
-func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) (string, error) {
-	lam, err := g.nodeLambda(searchNode)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) string {
+	lam := g.nodeLambda(searchNode)
 	cellT := ir.Text()
 	if searchNode.In != nil && searchNode.In.Elem != nil {
 		cellT = searchNode.In.Elem
@@ -50,11 +47,9 @@ func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) (string
 	// bad byte, which is also the cell the general path would have made.
 	body, byRune := runeTest(lam, ch)
 	if !byRune {
-		var err error
-		body, _, err = g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cell, typ: cellT}})
-		if err != nil {
-			return "", unsupported(searchNode, "lambda: %v", err)
-		}
+		body, _ = asUnsupported2(searchNode, "lambda: ", func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cell, typ: cellT}})
+		})
 		g.imp("unicode/utf8")
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
@@ -102,10 +97,7 @@ func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) (string
 	v := g.fresh("v")
 	switch searchNode.Prim {
 	case "BFS":
-		sr, sc, err := literalStart(searchNode)
-		if err != nil {
-			return "", err
-		}
+		sr, sc := literalStart(searchNode)
 		g.helper("dmCheckStart", declCheckStart)
 		g.helper("dmDistGrid", declDistGrid)
 		g.helper("dmSearchDirs", declSearchDirs)
@@ -115,65 +107,52 @@ func (g *gen) emitGridSearchFromLines(searchNode *ir.Node, lines string) (string
 		g.helper("dmComponents", declComponents)
 		g.wl("%s := dmComponents(%s, %s, %s, %t)", v, rows, cols, mask, nodeDiag(searchNode))
 	case "Flood Fill":
-		sr, sc, err := literalStart(searchNode)
-		if err != nil {
-			return "", err
-		}
+		sr, sc := literalStart(searchNode)
 		g.helper("dmCheckStart", declCheckStart)
 		g.helper("dmSearchDirs", declSearchDirs)
 		g.helper("dmFloodFill", declFloodFill)
 		g.wl("%s := dmFloodFill(%s, %s, %s, %d, %d, %t)", v, rows, cols, mask, sr, sc, nodeDiag(searchNode))
 	default:
-		return "", unsupported(searchNode, "grid-search fusion")
+		panic(unsupported(searchNode, "grid-search fusion"))
 	}
-	return v, nil
+	return v
 }
 
 // emitCellMask inlines the node's cell predicate over every grid cell.
-func (g *gen) emitCellMask(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitCellMask(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	mask, i, e := g.fresh("mask"), g.fresh("i"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.wl("%s := make([]bool, len(%s.cells))", mask, in)
 	g.wl("for %s, %s := range %s.cells {", i, e, in)
 	g.in()
 	g.wl("%s[%s] = %s", mask, i, body)
 	g.out()
 	g.wl("}")
-	return mask, nil
+	return mask
 }
 
 // literalStart reads a literal start, for the fused lines path — which
 // gridSearchFusable has already refused for a measured one.
-func literalStart(n *ir.Node) (int64, int64, error) {
+func literalStart(n *ir.Node) (int64, int64) {
 	r, ok1 := n.Meta["row"].(int64)
 	c, ok2 := n.Meta["col"].(int64)
 	if !ok1 || !ok2 {
-		return 0, 0, unsupported(n, "missing start coordinates metadata")
+		panic(unsupported(n, "missing start coordinates metadata"))
 	}
-	return r, c, nil
+	return r, c
 }
 
 // startCoords reads the "from R C" metadata the resolver stashed, as Go
 // expressions: literals when the search names a fixed cell, computed int64s
 // when the start is measured from the grid. Everything downstream takes them
 // as values, so the two spellings share one lowering.
-func (g *gen) startCoords(n *ir.Node, in string) (string, string, error) {
-	r, err := g.measuredOperand(n, in, "row", "Row", math.MinInt64)
-	if err != nil {
-		return "", "", err
-	}
-	c, err := g.measuredOperand(n, in, "col", "Col", math.MinInt64)
-	if err != nil {
-		return "", "", err
-	}
-	return r, c, nil
+func (g *gen) startCoords(n *ir.Node, in string) (string, string) {
+	r := g.measuredOperand(n, in, "row", "Row", math.MinInt64)
+	c := g.measuredOperand(n, in, "col", "Col", math.MinInt64)
+	return r, c
 }
 
 const declCheckStart = `func dmCheckStart(rows, cols int, sr, sc int64) {
@@ -270,15 +249,9 @@ const declBFS = `func dmBFS(rows, cols int, mask []bool, sr, sc int64, diag bool
 	return out
 }`
 
-func (g *gen) emitBFS(n *ir.Node, in string) (string, error) {
-	mask, err := g.emitCellMask(n, in)
-	if err != nil {
-		return "", err
-	}
-	r, c, err := g.startCoords(n, in)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitBFS(n *ir.Node, in string) string {
+	mask := g.emitCellMask(n, in)
+	r, c := g.startCoords(n, in)
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmGrid", declGrid)
 	g.helper("dmCheckStart", declCheckStart)
@@ -287,7 +260,7 @@ func (g *gen) emitBFS(n *ir.Node, in string) (string, error) {
 	g.helper("dmBFS", declBFS)
 	v := g.fresh("v")
 	g.wl("%s := dmBFS(%s.rows, %s.cols, %s, %s, %s, %t)", v, in, in, mask, r, c, nodeDiag(n))
-	return v, nil
+	return v
 }
 
 const declFloodFill = `func dmFloodFill(rows, cols int, mask []bool, sr, sc int64, diag bool) dmGrid[int64] {
@@ -319,15 +292,9 @@ const declFloodFill = `func dmFloodFill(rows, cols int, mask []bool, sr, sc int6
 	return out
 }`
 
-func (g *gen) emitFloodFill(n *ir.Node, in string) (string, error) {
-	mask, err := g.emitCellMask(n, in)
-	if err != nil {
-		return "", err
-	}
-	r, c, err := g.startCoords(n, in)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitFloodFill(n *ir.Node, in string) string {
+	mask := g.emitCellMask(n, in)
+	r, c := g.startCoords(n, in)
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmGrid", declGrid)
 	g.helper("dmCheckStart", declCheckStart)
@@ -335,7 +302,7 @@ func (g *gen) emitFloodFill(n *ir.Node, in string) (string, error) {
 	g.helper("dmFloodFill", declFloodFill)
 	v := g.fresh("v")
 	g.wl("%s := dmFloodFill(%s.rows, %s.cols, %s, %s, %s, %t)", v, in, in, mask, r, c, nodeDiag(n))
-	return v, nil
+	return v
 }
 
 // declDijkstra hand-rolls a binary min-heap on (dist, row, col) — ties settle
@@ -418,11 +385,8 @@ const declDijkstra = `func dmDijkstra(rows, cols int, costs []int64, sr, sc int6
 	return out
 }`
 
-func (g *gen) emitDijkstra(n *ir.Node, in string) (string, error) {
-	r, c, err := g.startCoords(n, in)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitDijkstra(n *ir.Node, in string) string {
+	r, c := g.startCoords(n, in)
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmGrid", declGrid)
 	g.helper("dmCheckStart", declCheckStart)
@@ -431,7 +395,7 @@ func (g *gen) emitDijkstra(n *ir.Node, in string) (string, error) {
 	g.helper("dmDijkstra", declDijkstra)
 	v := g.fresh("v")
 	g.wl("%s := dmDijkstra(%s.rows, %s.cols, %s.cells, %s, %s, %t)", v, in, in, in, r, c, nodeDiag(n))
-	return v, nil
+	return v
 }
 
 // declBFSTarget / declDijkstraTarget lower the optimizer's early-exit fusion
@@ -565,16 +529,13 @@ const declDijkstraTarget = `func dmDijkstraTarget(rows, cols int, costs []int64,
 	return -1
 }`
 
-func (g *gen) emitSearchTarget(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSearchTarget(n *ir.Node, in string) string {
 	kind, _ := n.Meta["kind"].(string)
-	r, c, err := g.startCoords(n, in)
-	if err != nil {
-		return "", err
-	}
+	r, c := g.startCoords(n, in)
 	tr, ok1 := n.Meta["trow"].(int64)
 	tc, ok2 := n.Meta["tcol"].(int64)
 	if !ok1 || !ok2 {
-		return "", unsupported(n, "missing target coordinates metadata")
+		panic(unsupported(n, "missing target coordinates metadata"))
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmGrid", declGrid)
@@ -582,21 +543,18 @@ func (g *gen) emitSearchTarget(n *ir.Node, in string) (string, error) {
 	v := g.fresh("v")
 	switch kind {
 	case "BFS":
-		mask, err := g.emitCellMask(n, in)
-		if err != nil {
-			return "", err
-		}
+		mask := g.emitCellMask(n, in)
 		g.helper("dmSearchDirs", declSearchDirs)
 		g.helper("dmBFSTarget", declBFSTarget)
 		g.wl("%s := dmBFSTarget(%s.rows, %s.cols, %s, %s, %s, %d, %d, %t)", v, in, in, mask, r, c, tr, tc, nodeDiag(n))
-		return v, nil
+		return v
 	case "Dijkstra":
 		g.helper("dmSearchDirs", declSearchDirs)
 		g.helper("dmDijkstraTarget", declDijkstraTarget)
 		g.wl("%s := dmDijkstraTarget(%s.rows, %s.cols, %s.cells, %s, %s, %d, %d, %t)", v, in, in, in, r, c, tr, tc, nodeDiag(n))
-		return v, nil
+		return v
 	}
-	return "", unsupported(n, "unknown search kind %q", kind)
+	panic(unsupported(n, "unknown search kind %q", kind))
 }
 
 // declComponents counts the connected regions of true cells by flood fill.
@@ -659,15 +617,12 @@ func runeTest(lam *ast.Lambda, ch string) (string, bool) {
 	return fmt.Sprintf("%s == %s", ch, strconv.QuoteRune(r)), true
 }
 
-func (g *gen) emitConnectedComponents(n *ir.Node, in string) (string, error) {
-	mask, err := g.emitCellMask(n, in)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitConnectedComponents(n *ir.Node, in string) string {
+	mask := g.emitCellMask(n, in)
 	g.helper("dmComponents", declComponents)
 	v := g.fresh("v")
 	g.wl("%s := dmComponents(%s.rows, %s.cols, %s, %t)", v, in, in, mask, nodeDiag(n))
-	return v, nil
+	return v
 }
 
 // nodeDiag reads the connectivity a grid search resolved to (Mode: 4 | 8).

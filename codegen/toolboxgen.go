@@ -36,13 +36,13 @@ const declExtractInts = `func dmExtractInts(s string) []int64 {
 	return out
 }`
 
-func (g *gen) emitExtractIntegers(n *ir.Node, in string) (string, error) {
+func (g *gen) emitExtractIntegers(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmExtractInts", declExtractInts, "strconv")
 	v := g.fresh("v")
 	if n.In.Equal(ir.Text()) {
 		g.wl("%s := dmExtractInts(%s)", v, in)
-		return v, nil
+		return v
 	}
 	line := g.fresh("line")
 	g.wl("%s := make([][]int64, 0, len(%s))", v, in)
@@ -51,15 +51,15 @@ func (g *gen) emitExtractIntegers(n *ir.Node, in string) (string, error) {
 	g.wl("%s = append(%s, dmExtractInts(%s))", v, v, line)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitSplitFields(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSplitFields(n *ir.Node, in string) string {
 	g.imp("strings")
 	v := g.fresh("v")
 	if n.In.Equal(ir.Text()) {
 		g.wl("%s := strings.Fields(%s)", v, in)
-		return v, nil
+		return v
 	}
 	line := g.fresh("line")
 	g.wl("%s := make([][]string, 0, len(%s))", v, in)
@@ -68,7 +68,7 @@ func (g *gen) emitSplitFields(n *ir.Node, in string) (string, error) {
 	g.wl("%s = append(%s, strings.Fields(%s))", v, v, line)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // declRaggedCols mirrors prims.raggedColumns: rune columns of unpadded lines,
@@ -99,94 +99,72 @@ const declRaggedCols = `func dmRaggedCols(lines []string) [][]string {
 	return out
 }`
 
-func (g *gen) emitRaggedColumns(n *ir.Node, in string) (string, error) {
+func (g *gen) emitRaggedColumns(n *ir.Node, in string) string {
 	g.helper("dmRaggedCols", declRaggedCols)
 	v := g.fresh("v")
 	g.wl("%s := dmRaggedCols(%s)", v, in)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitJoin(n *ir.Node, in string) (string, error) {
-	sep, err := g.measuredText(n, in, "sep", n.In)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitJoin(n *ir.Node, in string) string {
+	sep := g.measuredText(n, in, "sep", n.In)
 	g.imp("strings")
 	v := g.fresh("v")
 	g.wl("%s := strings.Join(%s, %s)", v, in, sep)
-	return v, nil
+	return v
 }
 
 // emitFoldOver lowers `Fold From: channel`: fold over the channel's compiled
 // list with the current pipeline value as the seed.
-func (g *gen) emitFoldOver(n *ir.Node, in string) (string, error) {
+func (g *gen) emitFoldOver(n *ir.Node, in string) string {
 	froms, _ := n.Meta["from"].([]string)
 	if len(froms) != 1 {
-		return "", unsupported(n, "missing channel metadata")
+		panic(unsupported(n, "missing channel metadata"))
 	}
 	cv, ok := g.chans[froms[0]]
 	if !ok {
-		return "", unsupported(n, "channel %q was not compiled", froms[0])
+		panic(unsupported(n, "channel %q was not compiled", froms[0]))
 	}
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	accGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	lam := g.nodeLambda(n)
+	accGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
 	acc, e := g.fresh("acc"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: acc, typ: n.Out},
-		lam.Params[1]: {expr: e, typ: cv.typ.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: acc, typ: n.Out},
+			lam.Params[1]: {expr: e, typ: cv.typ.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	g.wl("var %s %s = %s", acc, accGo, g.ownAccumulator(lam, n.Out, in))
 	g.wl("for _, %s := range %s {", e, cv.v)
 	g.in()
 	g.wl("%s = %s", acc, body)
 	g.out()
 	g.wl("}")
-	return acc, nil
+	return acc
 }
 
-func (g *gen) emitConvertToSet(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitConvertToSet(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, e := g.fresh("v"), g.fresh("e")
-	if err := g.wnewSet(v, n.Out.Elem, elemGo); err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	asUnsupported0(n, "", func() { g.wnewSet(v, n.Out.Elem, elemGo) })
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.wl("%s.add(%s)", v, e)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitFindCells(n *ir.Node, in string) (string, error) {
+func (g *gen) emitFindCells(n *ir.Node, in string) string {
 	if n.In.Kind == ir.KSparse {
 		return g.emitFindCellsSparse(n, in)
 	}
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	pt, err := g.pointGo()
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	lam := g.nodeLambda(n)
+	pt := asUnsupported1(n, "", func() string { return g.pointGo() })
 	v, r, c, e := g.fresh("v"), g.fresh("r"), g.fresh("c"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.wl("%s := make([]%s, 0, len(%s.cells))", v, pt, in)
 	g.wl("for %s := int64(0); %s < int64(%s.rows); %s++ {", r, r, in, r)
 	g.in()
@@ -202,18 +180,15 @@ func (g *gen) emitFindCells(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitMergeRanges handles the three accepted shapes — (Int, Int) tuples,
 // two-int rows ([]int64), and two-Int-field records — normalizing each range
 // to a [2]int64 span, merging, and rebuilding the input's element shape.
-func (g *gen) emitMergeRanges(n *ir.Node, in string) (string, error) {
+func (g *gen) emitMergeRanges(n *ir.Node, in string) string {
 	elem := n.In.Elem
-	elemGo, err := g.goType(elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(elem) })
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.imp("sort")
 	g.imp("math")
@@ -294,7 +269,7 @@ func (g *gen) emitMergeRanges(n *ir.Node, in string) (string, error) {
 	}
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 const declPermutations = `func dmPermutations[T any](xs []T, bound int) [][]T {
@@ -325,12 +300,12 @@ const declPermutations = `func dmPermutations[T any](xs []T, bound int) [][]T {
 	return out
 }`
 
-func (g *gen) emitPermutations(n *ir.Node, in string) (string, error) {
+func (g *gen) emitPermutations(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmPermutations", declPermutations)
 	v := g.fresh("v")
 	g.wl("%s := dmPermutations(%s, %d)", v, in, prims.MaxPermutationInput)
-	return v, nil
+	return v
 }
 
 const declSubsets = `func dmSubsets[T any](xs []T, bound int) [][]T {
@@ -351,10 +326,10 @@ const declSubsets = `func dmSubsets[T any](xs []T, bound int) [][]T {
 	return out
 }`
 
-func (g *gen) emitSubsets(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSubsets(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmSubsets", declSubsets)
 	v := g.fresh("v")
 	g.wl("%s := dmSubsets(%s, %d)", v, in, prims.MaxSubsetInput)
-	return v, nil
+	return v
 }

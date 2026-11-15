@@ -15,7 +15,8 @@
 //
 // Migration is one group at a time. A name found here is dispatched here; a
 // name not found falls through to the switch it has always lived in, so the two
-// can coexist until the last arm moves. text.go is the first group.
+// can coexist until the last arm moves. text.go is the first group, numeric.go
+// the second.
 package builtins
 
 import (
@@ -59,6 +60,9 @@ type Emitter interface {
 	Imp(pkgs ...string)
 	// Helper declares a named top-level helper once, with the imports it needs.
 	Helper(name, src string, imports ...string)
+	// PointGo is the Go struct that stands for an (Int, Int) point, interned on
+	// first use.
+	PointGo() (string, error)
 }
 
 // EmitFunc returns the Go expression for a call, and its Domain type. args are

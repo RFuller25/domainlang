@@ -139,10 +139,6 @@ func (e *UnsupportedError) Error() string {
 		e.Pos, e.Prim, e.Msg)
 }
 
-func unsupported(n *ir.Node, format string, args ...any) error {
-	return &UnsupportedError{Prim: n.Prim, Pos: n.Pos, Msg: fmt.Sprintf(format, args...)}
-}
-
 // Options tunes code generation.
 type Options struct {
 	// Release compiles Binding Vows out entirely: vow nodes (top-level or
@@ -185,7 +181,18 @@ func EmitAnnotated(p *ir.Pipeline, opts Options) (string, map[*ir.Node]Span, err
 	return emit(p, opts, true)
 }
 
-func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Span, error) {
+func emit(p *ir.Pipeline, opts Options, annotate bool) (src string, spans map[*ir.Node]Span, err error) {
+	// Generation reports failure by panicking with a failure (fail.go); this is
+	// the one place that turns it back into the error the caller sees.
+	defer func() {
+		if r := recover(); r != nil {
+			f, ok := r.(failure)
+			if !ok {
+				panic(r)
+			}
+			src, spans, err = "", nil, f.err
+		}
+	}()
 	if err := checkScope(p); err != nil {
 		return "", nil, err
 	}
@@ -206,14 +213,9 @@ func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Spa
 	// its Parts become functions and a runtime drives them. See gamegen.go.
 	if p.Scope == gameScope {
 		g.game = true
-		if err := g.emitGame(p); err != nil {
-			return "", nil, err
-		}
+		g.emitGame(p)
 	} else {
-		cur, err := g.emitSequence(p.Nodes, "")
-		if err != nil {
-			return "", nil, err
-		}
+		cur := g.emitSequence(p.Nodes, "")
 		if len(p.Nodes) > 0 && p.Nodes[len(p.Nodes)-1].Prim != "Emit" && cur != "" {
 			g.wl("_ = %s", cur)
 		}
@@ -267,14 +269,14 @@ func emit(p *ir.Pipeline, opts Options, annotate bool) (string, map[*ir.Node]Spa
 	out.Write(g.main.Bytes())
 	out.WriteString("}\n")
 
-	src, err := format.Source([]byte(dropUnusedRangeVars(out.String())))
+	formatted, err := format.Source([]byte(dropUnusedRangeVars(out.String())))
 	if err != nil {
 		return "", nil, fmt.Errorf("internal: generated Go does not parse: %v\n--- generated source ---\n%s", err, out.String())
 	}
 	if !annotate {
-		return string(src), nil, nil
+		return string(formatted), nil, nil
 	}
-	text, spans := g.readMarks(string(src))
+	text, spans := g.readMarks(string(formatted))
 	return text, spans, nil
 }
 
@@ -432,7 +434,7 @@ func goStrMap(m map[string]string) string {
 // emitSequence lowers a node list, applying tryFuse's adjacency rewrites before
 // each node. Used for the top-level pipeline and for Simple Domain loop bodies,
 // so fusions fire identically inside loops.
-func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
+func (g *gen) emitSequence(nodes []*ir.Node, in string) string {
 	// Stages the caller measured doing nothing are removed before anything
 	// else looks at the list, so the fuser sees the pipeline that will actually
 	// be emitted. Filtering inside the loop instead would let an elided stage
@@ -446,9 +448,7 @@ func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
 		// fused pair is attributed to the first of the two, which is the row a
 		// reader of the trace would be looking at.
 		endMark := g.markNode(nodes[i])
-		if consumed, v, ok, err := g.tryFuse(nodes[i:], cur); err != nil {
-			return "", err
-		} else if ok {
+		if consumed, v, ok := g.tryFuse(nodes[i:], cur); ok {
 			endMark()
 			cur = v
 			i += consumed - 1
@@ -467,9 +467,7 @@ func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
 				}
 			}
 		}
-		if consumed, v, ok, err := g.tryStream(nodes[i:], cur); err != nil {
-			return "", err
-		} else if ok {
+		if consumed, v, ok := g.tryStream(nodes[i:], cur); ok {
 			for k := len(endRun) - 1; k >= 0; k-- {
 				endRun[k]()
 			}
@@ -479,15 +477,12 @@ func (g *gen) emitSequence(nodes []*ir.Node, in string) (string, error) {
 			continue
 		}
 		mark := g.main.Len()
-		v, err := g.emitNode(nodes[i], cur)
-		if err != nil {
-			return "", err
-		}
+		v := g.emitNode(nodes[i], cur)
 		g.keepAlive(cur, v, mark)
 		endMark()
 		cur = v
 	}
-	return cur, nil
+	return cur
 }
 
 // keepElem blanks an element variable that the code consuming it never
@@ -563,17 +558,14 @@ func seqElem(t *ir.Type) *ir.Type {
 	return t.Elem
 }
 
-func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
+func (g *gen) emitNode(n *ir.Node, in string) string {
 	if n.In != nil && seqConsumers[n.Prim] {
 		switch n.In.Kind {
 		case ir.KSet:
 			g.chelper(n.In.Elem, "dmSet", declSet)
 			in += ".elems"
 		case ir.KMap:
-			entries, err := g.mapEntries(n, in)
-			if err != nil {
-				return "", err
-			}
+			entries := g.mapEntries(n, in)
 			in = entries
 		}
 		if n.In.Kind == ir.KSet || n.In.Kind == ir.KMap {
@@ -836,7 +828,7 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 	case "Emit":
 		return g.emitEmit(n, in)
 	default:
-		return "", unsupported(n, "no Go lowering for this primitive in the MVP")
+		panic(unsupported(n, "no Go lowering for this primitive in the MVP"))
 	}
 }
 
@@ -844,33 +836,27 @@ func (g *gen) emitNode(n *ir.Node, in string) (string, error) {
 // sources, splitting, conversion
 // ---------------------------------------------------------------------------
 
-func (g *gen) emitReadSource(n *ir.Node) (string, error) {
+func (g *gen) emitReadSource(n *ir.Node) string {
 	target, _ := n.Meta["target"].(string)
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmReadSource", declReadSource, "io", "os", "strings", "unsafe")
 	v := g.fresh("v")
 	g.wl("%s := dmReadSource(%s)", v, goStr(target))
-	return v, nil
+	return v
 }
 
-func (g *gen) emitSplit(n *ir.Node, in string) (string, error) {
-	sep, err := g.measuredText(n, in, "sep", n.In)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitSplit(n *ir.Node, in string) string {
+	sep := g.measuredText(n, in, "sep", n.In)
 	g.imp("strings")
 	v := g.fresh("v")
 	g.wl("%s := strings.Split(%s, %s)", v, in, sep)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitSplitEach(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSplitEach(n *ir.Node, in string) string {
 	// The lambda measures from the whole list, not from each element, so it is
 	// bound and evaluated once before the loop — as the interpreter does.
-	sep, err := g.measuredText(n, in, "sep", n.In)
-	if err != nil {
-		return "", err
-	}
+	sep := g.measuredText(n, in, "sep", n.In)
 	g.imp("strings")
 	v := g.fresh("v")
 	i, s := g.fresh("i"), g.fresh("s")
@@ -880,10 +866,10 @@ func (g *gen) emitSplitEach(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = strings.Split(%s, %s)", v, i, s, sep)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitConvertToIntegers(n *ir.Node, in string) (string, error) {
+func (g *gen) emitConvertToIntegers(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	// The elements come from a Split, so they carry no surrounding whitespace
@@ -900,7 +886,7 @@ func (g *gen) emitConvertToIntegers(n *ir.Node, in string) (string, error) {
 		g.wl("%s[%s] = dmParseIntSeg(%s)", v, i, s)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 	// nested: List<List<Text>> -> List<List<Int>>
 	i, grp := g.fresh("i"), g.fresh("g")
@@ -918,12 +904,12 @@ func (g *gen) emitConvertToIntegers(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s", v, i, row)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitConvertToFloats lowers Convert To Floats: Text parses through
 // dmParseFloat, Int widens through float64().
-func (g *gen) emitConvertToFloats(n *ir.Node, in string) (string, error) {
+func (g *gen) emitConvertToFloats(n *ir.Node, in string) string {
 	conv := func(src string, elem *ir.Type) string {
 		if elem.Kind == ir.KInt {
 			return "float64(" + src + ")"
@@ -941,7 +927,7 @@ func (g *gen) emitConvertToFloats(n *ir.Node, in string) (string, error) {
 		g.wl("%s[%s] = %s", v, i, conv(s, n.In.Elem))
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 	// nested: List<List<T>> -> List<List<Float>>
 	i, grp := g.fresh("i"), g.fresh("g")
@@ -959,18 +945,15 @@ func (g *gen) emitConvertToFloats(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s", v, i, row)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // ---------------------------------------------------------------------------
 // integer reductions
 // ---------------------------------------------------------------------------
 
-func (g *gen) emitSum(n *ir.Node, in string) (string, error) {
-	acc, err := g.goType(n.Out)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitSum(n *ir.Node, in string) string {
+	acc := g.goType(n.Out)
 	v, x := g.fresh("v"), g.fresh("x")
 	g.wl("var %s %s", v, acc)
 	g.wl("for _, %s := range %s {", x, in)
@@ -978,10 +961,10 @@ func (g *gen) emitSum(n *ir.Node, in string) (string, error) {
 	g.wl("%s += %s", v, x)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitSumEachGroup(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSumEachGroup(n *ir.Node, in string) string {
 	v := g.fresh("v")
 	i, grp, s, x := g.fresh("i"), g.fresh("g"), g.fresh("s"), g.fresh("x")
 	g.wl("%s := make([]int64, len(%s))", v, in)
@@ -996,10 +979,10 @@ func (g *gen) emitSumEachGroup(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s", v, i, s)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitIntReduce(n *ir.Node, in string) (string, error) {
+func (g *gen) emitIntReduce(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, x := g.fresh("v"), g.fresh("x")
 	g.wl("if len(%s) == 0 {", in)
@@ -1026,19 +1009,16 @@ func (g *gen) emitIntReduce(n *ir.Node, in string) (string, error) {
 	}
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // ---------------------------------------------------------------------------
 // sorting and selection
 // ---------------------------------------------------------------------------
 
-func (g *gen) emitSort(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSort(n *ir.Node, in string) string {
 	desc, _ := n.Meta["desc"].(bool)
-	elem, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", err
-	}
+	elem := g.goType(n.In.Elem)
 	v := g.fresh("v")
 	g.wl("%s := append([]%s(nil), %s...)", v, elem, in)
 	// Two equal Ints (or Texts) are the same value, so no program can tell a
@@ -1054,7 +1034,7 @@ func (g *gen) emitSort(n *ir.Node, in string) (string, error) {
 		if desc {
 			g.wl("slices.Reverse(%s)", v)
 		}
-		return v, nil
+		return v
 	}
 	g.imp("sort")
 	// Int, Float and Text lower to Go's own <, which is already the order the
@@ -1063,38 +1043,32 @@ func (g *gen) emitSort(n *ir.Node, in string) (string, error) {
 	if desc {
 		lo, hi = hi, lo
 	}
-	lt, err := lessExpr(n.In.Elem, lo, hi)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	lt := asUnsupported1(n, "", func() string { return lessExpr(n.In.Elem, lo, hi) })
 	// SliceStable, not Slice: for a tuple element the comparison is not a
 	// strict total order over *equal* keys, and an unstable sort would then
 	// permute ties differently from the interpreter's stable one.
 	g.wl("sort.SliceStable(%s, func(i, j int) bool { return %s })", v, lt)
-	return v, nil
+	return v
 }
 
 // lessExpr builds a Go expression for `a < b` over an ordered Domain type.
 // Scalars use Go's own operator; a tuple compares lexicographically, first
 // differing element deciding — matching ir.Compare exactly, which is what
 // keeps a compiled sort byte-identical to the interpreter's.
-func lessExpr(t *ir.Type, a, b string) (string, error) {
+func lessExpr(t *ir.Type, a, b string) string {
 	if t == nil {
-		return "", fmt.Errorf("sort needs an element type")
+		panic(failf("sort needs an element type"))
 	}
 	switch t.Kind {
 	case ir.KInt, ir.KFloat, ir.KText:
-		return a + " < " + b, nil
+		return a + " < " + b
 	case ir.KTuple:
 		// Built right to left: f0 < f0 || (f0 == f0 && (f1 < f1 || ...)).
 		expr := ""
 		for i, v := range slices.Backward(t.Elems) {
 			af := a + "." + tupleField(i)
 			bf := b + "." + tupleField(i)
-			inner, err := lessExpr(v, af, bf)
-			if err != nil {
-				return "", err
-			}
+			inner := lessExpr(v, af, bf)
 			if expr == "" {
 				expr = inner
 				continue
@@ -1102,19 +1076,16 @@ func lessExpr(t *ir.Type, a, b string) (string, error) {
 			expr = "(" + inner + " || (" + af + " == " + bf + " && " + expr + "))"
 		}
 		if expr == "" {
-			return "", fmt.Errorf("cannot sort by an empty tuple")
+			panic(failf("cannot sort by an empty tuple"))
 		}
-		return expr, nil
+		return expr
 	}
-	return "", fmt.Errorf("cannot sort by %s (not an ordered type)", t)
+	panic(failf("cannot sort by %s (not an ordered type)", t))
 }
 
-func (g *gen) emitSelectTopK(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSelectTopK(n *ir.Node, in string) string {
 	thenSum, _ := n.Meta["sum"].(bool)
-	k, err := g.measuredOperand(n, in, "k", "Count", 0)
-	if err != nil {
-		return "", err
-	}
+	k := g.measuredOperand(n, in, "k", "Count", 0)
 	cnt := g.fresh("n")
 	g.wl("%s := int(%s)", cnt, k)
 	g.wl("if %s > len(%s) {", cnt, in)
@@ -1131,19 +1102,16 @@ func (g *gen) emitSelectTopK(n *ir.Node, in string) (string, error) {
 		g.wl("%s += %s", v, x)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 	g.wl("%s := append([]int64(nil), %s[:%s]...)", v, in, cnt)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitPartialSelect(n *ir.Node, in string) (string, error) {
+func (g *gen) emitPartialSelect(n *ir.Node, in string) string {
 	desc, _ := n.Meta["desc"].(bool)
 	thenSum, _ := n.Meta["sum"].(bool)
-	k, err := g.measuredOperand(n, in, "k", "Count", 0)
-	if err != nil {
-		return "", err
-	}
+	k := g.measuredOperand(n, in, "k", "Count", 0)
 	// dmTopK counts in int. A literal is an untyped constant and needs no
 	// conversion; a measured count is an int64 variable and does.
 	if hasMeasured(n, "k") {
@@ -1154,7 +1122,7 @@ func (g *gen) emitPartialSelect(n *ir.Node, in string) (string, error) {
 	if !thenSum {
 		v := g.fresh("v")
 		g.wl("%s := dmTopK(%s, %s, %v)", v, in, k, desc)
-		return v, nil
+		return v
 	}
 	top := g.fresh("top")
 	g.wl("%s := dmTopK(%s, %s, %v)", top, in, k, desc)
@@ -1165,7 +1133,7 @@ func (g *gen) emitPartialSelect(n *ir.Node, in string) (string, error) {
 	g.wl("%s += %s", v, x)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,18 +1143,15 @@ func (g *gen) emitPartialSelect(n *ir.Node, in string) (string, error) {
 // emitCombinations lowers the naive All Pairs / Combinations node to k nested
 // loops with the predicate/mapper inlined — the loop nest is fully unrolled at
 // compile time because k is a program constant.
-func (g *gen) emitCombinations(n *ir.Node, in string) (string, error) {
+func (g *gen) emitCombinations(n *ir.Node, in string) string {
 	k, _ := n.Meta["k"].(int)
 	mode, _ := n.Meta["mode"].(string)
 	lam, _ := n.Meta["lambda"].(*ast.Lambda)
 	if lam == nil {
-		return "", unsupported(n, "missing lambda metadata")
+		panic(unsupported(n, "missing lambda metadata"))
 	}
 	elem := n.In.Elem
-	elemGo, err := g.goType(elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(elem) })
 
 	// Bind each lambda parameter to a per-depth element variable.
 	idxVars := make([]string, k)
@@ -1197,10 +1162,7 @@ func (g *gen) emitCombinations(n *ir.Node, in string) (string, error) {
 		elemVars[d] = g.fresh("c")
 		env[lam.Params[d]] = exprBinding{expr: elemVars[d], typ: elem}
 	}
-	body, _, err := g.compileExpr(lam.Body, env)
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) { return g.compileExpr(lam.Body, env) })
 
 	v := g.fresh("v")
 	var found, label string
@@ -1220,13 +1182,10 @@ func (g *gen) emitCombinations(n *ir.Node, in string) (string, error) {
 		g.wl("%s := %t", v, mode == "All")
 		g.wl("%s:", label)
 	case "Map":
-		outElemGo, err := g.goType(n.Out.Elem)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		outElemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 		g.wl("%s := []%s{}", v, outElemGo)
 	default:
-		return "", unsupported(n, "mode %q", mode)
+		panic(unsupported(n, "mode %q", mode))
 	}
 
 	for d := range k {
@@ -1291,16 +1250,16 @@ func (g *gen) emitCombinations(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 	}
-	return v, nil
+	return v
 }
 
 // emitHashSetPairScan lowers the optimizer's O(n) rewrite of the
 // sum-to-constant pair search.
-func (g *gen) emitHashSetPairScan(n *ir.Node, in string) (string, error) {
+func (g *gen) emitHashSetPairScan(n *ir.Node, in string) string {
 	mode, _ := n.Meta["mode"].(string)
 	target, ok := n.Meta["target"].(int64)
 	if !ok {
-		return "", unsupported(n, "missing target metadata")
+		panic(unsupported(n, "missing target metadata"))
 	}
 	v := g.fresh("v")
 	x := g.fresh("x")
@@ -1314,7 +1273,7 @@ func (g *gen) emitHashSetPairScan(n *ir.Node, in string) (string, error) {
 		g.wl("%s[%s]++", seen, x)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 	// First
 	g.helper("dmFail", declFail, "fmt", "os")
@@ -1346,12 +1305,12 @@ func (g *gen) emitHashSetPairScan(n *ir.Node, in string) (string, error) {
 	g.wl("dmFail(%s)", goStr("no combination satisfied the predicate"))
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitHashSetDiffScan lowers the optimizer's O(n) rewrite of the
 // difference-to-constant pair search (optimizer.fusePairDiff).
-func (g *gen) emitHashSetDiffScan(n *ir.Node, in string) (string, error) {
+func (g *gen) emitHashSetDiffScan(n *ir.Node, in string) string {
 	flipped, _ := n.Meta["flipped"].(bool)
 	return g.emitTargetScan(n, in, fmt.Sprintf(", %v", flipped),
 		"dmDiffCount", declDiffCount, "dmDiffFirst", declDiffFirst)
@@ -1359,14 +1318,14 @@ func (g *gen) emitHashSetDiffScan(n *ir.Node, in string) (string, error) {
 
 // emitHashSetTripleScan lowers the optimizer's O(n²) rewrite of the
 // sum-to-constant triple search (optimizer.fuseTripleSum).
-func (g *gen) emitHashSetTripleScan(n *ir.Node, in string) (string, error) {
+func (g *gen) emitHashSetTripleScan(n *ir.Node, in string) string {
 	return g.emitTargetScan(n, in, "",
 		"dmTripleCount", declTripleCount, "dmTripleFirst", declTripleFirst)
 }
 
 // emitDivisorPairScan lowers the optimizer's O(n) rewrite of the
 // product-to-constant pair search (optimizer.fuseAllPairsProduct).
-func (g *gen) emitDivisorPairScan(n *ir.Node, in string) (string, error) {
+func (g *gen) emitDivisorPairScan(n *ir.Node, in string) string {
 	return g.emitTargetScan(n, in, "",
 		"dmProductCount", declProductCount, "dmProductFirst", declProductFirst)
 }
@@ -1374,17 +1333,17 @@ func (g *gen) emitDivisorPairScan(n *ir.Node, in string) (string, error) {
 // emitTargetScan calls the runtime helper behind one of the optimizer's
 // target scans: countFn(in, target extra) in Mode Count, and in Mode First
 // firstFn, failing the way the interpreter does when nothing matched.
-func (g *gen) emitTargetScan(n *ir.Node, in, extra, countFn, countDecl, firstFn, firstDecl string) (string, error) {
+func (g *gen) emitTargetScan(n *ir.Node, in, extra, countFn, countDecl, firstFn, firstDecl string) string {
 	mode, _ := n.Meta["mode"].(string)
 	target, ok := n.Meta["target"].(int64)
 	if !ok {
-		return "", unsupported(n, "missing target metadata")
+		panic(unsupported(n, "missing target metadata"))
 	}
 	v := g.fresh("v")
 	if mode == "Count" {
 		g.helper(countFn, countDecl)
 		g.wl("%s := %s(%s, %d%s)", v, countFn, in, target, extra)
-		return v, nil
+		return v
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper(firstFn, firstDecl)
@@ -1395,12 +1354,12 @@ func (g *gen) emitTargetScan(n *ir.Node, in, extra, countFn, countDecl, firstFn,
 	g.wl("dmFail(%s)", goStr("no combination satisfied the predicate"))
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitQuickselectItem lowers the optimizer's Sort + Take Item fusion: the
 // kth order statistic via dmSelectItem, with Take Item's bounds behavior.
-func (g *gen) emitQuickselectItem(n *ir.Node, in string) (string, error) {
+func (g *gen) emitQuickselectItem(n *ir.Node, in string) string {
 	idx, _ := n.Meta["index"].(int)
 	desc, _ := n.Meta["desc"].(bool)
 	g.helper("dmFail", declFail, "fmt", "os")
@@ -1409,7 +1368,7 @@ func (g *gen) emitQuickselectItem(n *ir.Node, in string) (string, error) {
 		g.wl(`dmFail("index %d out of range (length %%d)", len(%s))`, idx, in)
 		v := g.fresh("v")
 		g.wl("var %s int64", v)
-		return v, nil
+		return v
 	}
 	g.helper("dmSelectNth", declSelectNth)
 	g.helper("dmSelectItem", declSelectItem)
@@ -1422,16 +1381,13 @@ func (g *gen) emitQuickselectItem(n *ir.Node, in string) (string, error) {
 	// A single index reads one order statistic, so quickselect it directly
 	// instead of sorting the whole k-front (dmTopK).
 	g.wl("%s := dmSelectItem(%s, %d, %v)", v, in, idx, desc)
-	return v, nil
+	return v
 }
 
 // emitLinearMapExtremum lowers the optimizer's monotone map/extremum swap:
 // reduce the input first, then inline the lambda body once over the result.
-func (g *gen) emitLinearMapExtremum(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitLinearMapExtremum(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	pickMin, _ := n.Meta["pickMin"].(bool)
 	reduce, _ := n.Meta["reduce"].(string)
 	g.helper("dmFail", declFail, "fmt", "os")
@@ -1455,26 +1411,25 @@ func (g *gen) emitLinearMapExtremum(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: ext, typ: ir.Int()}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: ext, typ: ir.Int()}})
+	})
 	v := g.fresh("v")
 	g.wl("%s := %s", v, body)
-	return v, nil
+	return v
 }
 
 // ---------------------------------------------------------------------------
 // list transforms
 // ---------------------------------------------------------------------------
 
-func (g *gen) nodeLambda(n *ir.Node) (*ast.Lambda, error) {
+func (g *gen) nodeLambda(n *ir.Node) *ast.Lambda {
 	lam, _ := n.Meta["lambda"].(*ast.Lambda)
 	if lam == nil {
-		return nil, unsupported(n, "missing lambda metadata")
+		panic(unsupported(n, "missing lambda metadata"))
 	}
 	g.bindAmbientParams(lam)
-	return lam, nil
+	return lam
 }
 
 // measuredOperand renders one of a node's Int arguments as a Go expression.
@@ -1488,28 +1443,30 @@ func (g *gen) nodeLambda(n *ir.Node) (*ast.Lambda, error) {
 //
 // min is the lower bound to enforce; pass math.MinInt64 for none. what names
 // the argument in the failure message ("Size:").
-func (g *gen) measuredOperand(n *ir.Node, in, key, what string, min int64) (string, error) {
+func (g *gen) measuredOperand(n *ir.Node, in, key, what string, min int64) string {
 	switch lit := n.Meta[key].(type) {
 	case int64:
-		return fmt.Sprintf("%d", lit), nil
+		return fmt.Sprintf("%d", lit)
 	case int:
 		// Take Item keeps its index as an int, the shape two optimizer passes
 		// already match on; a literal is a literal either way.
-		return fmt.Sprintf("%d", lit), nil
+		return fmt.Sprintf("%d", lit)
 	}
 	lam, _ := n.Meta[key+"Expr"].(*ast.Lambda)
 	if lam == nil {
-		return "", unsupported(n, "missing %s metadata", key)
+		panic(unsupported(n, "missing %s metadata", key))
 	}
 	g.bindAmbientParams(lam)
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	body, _, err := try2(func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	})
 	if err != nil {
-		return "", unsupported(n, "%s: %v", what, err)
+		panic(unsupported(n, "%s: %v", what, err))
 	}
 	v := g.fresh("m")
 	g.wl("var %s int64 = %s", v, body)
 	if min == math.MinInt64 {
-		return v, nil // no lower bound of its own; the consumer range-checks it
+		return v // no lower bound of its own; the consumer range-checks it
 	}
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.wl("if %s < %d {", v, min)
@@ -1527,71 +1484,69 @@ func (g *gen) measuredOperand(n *ir.Node, in, key, what string, min int64) (stri
 	}
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // measuredText renders one of a node's Text arguments as a Go string
 // expression: the literal quoted, or the measuring lambda compiled against
 // `in` and bound to a fresh variable. The Text twin of measuredOperand; it has
 // no bound to check, so there is no guard to emit.
-func (g *gen) measuredText(n *ir.Node, in, key string, inType *ir.Type) (string, error) {
+func (g *gen) measuredText(n *ir.Node, in, key string, inType *ir.Type) string {
 	if lit, ok := n.Meta[key].(string); ok {
-		return goStr(lit), nil
+		return goStr(lit)
 	}
 	lam, _ := n.Meta[key+"Expr"].(*ast.Lambda)
 	if lam == nil {
-		return "", unsupported(n, "missing %s metadata", key)
+		panic(unsupported(n, "missing %s metadata", key))
 	}
 	g.bindAmbientParams(lam)
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: inType}})
+	body, _, err := try2(func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: inType}})
+	})
 	if err != nil {
-		return "", unsupported(n, "%s: %v", key, err)
+		panic(unsupported(n, "%s: %v", key, err))
 	}
 	v := g.fresh("sep")
 	g.wl("var %s string = %s", v, body)
-	return v, nil
+	return v
 }
 
 // measuredLit renders one of a node's value-typed arguments (a Pad Grid fill, a
 // Sparse default) as a Go expression: the literal in its own Go form, or the
 // measuring lambda compiled against `in`. lit renders the literal case, since
 // the two consumers spell an Int differently (`int64(3)` vs a bare constant).
-func (g *gen) measuredLit(n *ir.Node, in, key string, inType, outType *ir.Type, lit func(any) (string, error)) (string, error) {
+func (g *gen) measuredLit(n *ir.Node, in, key string, inType, outType *ir.Type, lit func(any) string) string {
 	if v, ok := n.Meta[key]; ok {
 		return lit(v)
 	}
 	lam, _ := n.Meta[key+"Expr"].(*ast.Lambda)
 	if lam == nil {
-		return "", unsupported(n, "missing %s metadata", key)
+		panic(unsupported(n, "missing %s metadata", key))
 	}
 	g.bindAmbientParams(lam)
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: inType}})
-	if err != nil {
-		return "", unsupported(n, "%s: %v", key, err)
-	}
+	body, _ := asUnsupported2(n, key+": ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: inType}})
+	})
 	v := g.fresh(key)
-	goT, err := g.goType(outType)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	goT := asUnsupported1(n, "", func() string { return g.goType(outType) })
 	// Declared with its type rather than inferred, for the same reason
 	// emitApply does: a bare integer literal body is an untyped constant, and
 	// `:=` would make it `int` where an int64 is expected.
 	g.wl("var %s %s = %s", v, goT, body)
-	return v, nil
+	return v
 }
 
 // seedLit renders a literal Fold/Scan seed. Only Int and Text can be written
 // as one — a named argument has no other spelling — so a measured seed is the
 // only way to a composite accumulator.
-func seedLit(v any) (string, error) {
+func seedLit(v any) string {
 	switch x := v.(type) {
 	case int64:
-		return fmt.Sprintf("int64(%d)", x), nil
+		return fmt.Sprintf("int64(%d)", x)
 	case string:
-		return goStr(x), nil
+		return goStr(x)
 	}
-	return "", fmt.Errorf("seed of type %T", v)
+	panic(failf("seed of type %T", v))
 }
 
 // hasMeasured reports whether any of a node's Int arguments is measured, which
@@ -1629,20 +1584,13 @@ func (g *gen) bindAmbientParams(lam *ast.Lambda) {
 	g.ambientNames = names
 }
 
-func (g *gen) emitMapEach(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	outElemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitMapEach(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	outElemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, i, e := g.fresh("v"), g.fresh("i"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.wl("%s := make([]%s, len(%s))", v, outElemGo, in)
 	g.wl("for %s, %s := range %s {", i, e, in)
 	g.in()
@@ -1650,51 +1598,37 @@ func (g *gen) emitMapEach(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s", v, i, body)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitSplitMapSum lowers Split(sep) + Map Each(scalar) + Sum: walk the un-split
 // string line by line (exactly as strings.Split segments it) and accumulate the
 // map lambda's result, so the []string of lines is never materialized.
-func (g *gen) emitSplitMapSum(sep string, mapNode, sumNode *ir.Node, in string) (string, error) {
+func (g *gen) emitSplitMapSum(sep string, mapNode, sumNode *ir.Node, in string) string {
 	g.imp("strings")
-	lam, err := g.nodeLambda(mapNode)
-	if err != nil {
-		return "", err
-	}
-	acc, err := g.goType(sumNode.Out)
-	if err != nil {
-		return "", unsupported(sumNode, "%v", err)
-	}
+	lam := g.nodeLambda(mapNode)
+	acc := asUnsupported1(sumNode, "", func() string { return g.goType(sumNode.Out) })
 	v, line := g.fresh("v"), g.fresh("line")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: line, typ: mapNode.In.Elem}})
-	if err != nil {
-		return "", unsupported(mapNode, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(mapNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: line, typ: mapNode.In.Elem}})
+	})
 	g.wl("var %s %s", v, acc)
 	g.emitLines(sep, in, line, func() {
 		g.keepElem(line, body)
 		g.wl("%s += %s", v, body)
 	})
-	return v, nil
+	return v
 }
 
 // emitMapSum lowers Map Each immediately followed by Sum: the lambda result is
 // accumulated into a scalar, never materializing the mapped list.
-func (g *gen) emitMapSum(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	acc, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitMapSum(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	acc := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, e := g.fresh("v"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.wl("var %s %s", v, acc)
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
@@ -1702,23 +1636,16 @@ func (g *gen) emitMapSum(n *ir.Node, in string) (string, error) {
 	g.wl("%s += %s", v, body)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitFilter(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitFilter(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, e := g.fresh("v"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	// Sized to the input, like Partition's halves: a predicate that keeps most
 	// of its input otherwise pays ~65 reallocations on a two-million-element
 	// list, because Go grows a large slice by a quarter at a time. The cost is
@@ -1733,19 +1660,15 @@ func (g *gen) emitFilter(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitCountMatching(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitCountMatching(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	v, e := g.fresh("v"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.wl("var %s int64", v)
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
@@ -1756,32 +1679,28 @@ func (g *gen) emitCountMatching(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitApply(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+func (g *gen) emitApply(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	})
 	v := g.fresh("v")
 	// Declared with its type rather than inferred with `:=`. A body that is a
 	// bare integer literal (`Apply Using: (s) -> 3`, legal Domain) is an
 	// untyped Go constant, and `:=` would make it `int` — which then fails to
 	// assign anywhere an int64 is expected downstream.
-	if goT, err := g.goType(n.Out); err == nil {
+	if goT, err := try1(func() string { return g.goType(n.Out) }); err == nil {
 		g.wl("var %s %s = %s", v, goT, body)
-		return v, nil
+		return v
 	}
 	g.wl("%s := %s", v, body)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitCount(n *ir.Node, in string) (string, error) {
+func (g *gen) emitCount(n *ir.Node, in string) string {
 	v := g.fresh("v")
 	switch n.In.Kind {
 	case ir.KList:
@@ -1791,55 +1710,39 @@ func (g *gen) emitCount(n *ir.Node, in string) (string, error) {
 	case ir.KMap:
 		g.wl("%s := int64(len(%s.keys))", v, in)
 	default:
-		return "", unsupported(n, "Count over %s", n.In)
+		panic(unsupported(n, "Count over %s", n.In))
 	}
-	return v, nil
+	return v
 }
 
-func (g *gen) emitFold(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitFold(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	// A literal seed is Int or Text; a measured one is whatever its lambda
 	// produces, which is how a fold gets a composite accumulator.
-	seed, err := g.measuredLit(n, in, "seed", n.In, n.Out, seedLit)
-	if err != nil {
-		return "", err
-	}
-	accGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	seed := g.measuredLit(n, in, "seed", n.In, n.Out, seedLit)
+	accGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
 	acc := g.fresh("acc")
 	g.wl("var %s %s = %s", acc, accGo, g.ownAccumulator(lam, n.Out, seed))
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: acc, typ: n.Out},
-		lam.Params[1]: {expr: e, typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: acc, typ: n.Out},
+			lam.Params[1]: {expr: e, typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.keepElem(e, body)
 	g.wl("%s = %s", acc, body)
 	g.out()
 	g.wl("}")
-	return acc, nil
+	return acc
 }
 
-func (g *gen) emitUnique(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitUnique(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, seen, e := g.fresh("v"), g.fresh("seen"), g.fresh("e")
-	key, keyGo, err := g.hashKey(n.In.Elem, e, elemGo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	key, keyGo := asUnsupported2(n, "", func() (string, string) { return g.hashKey(n.In.Elem, e, elemGo) })
 	g.wl("%s := make([]%s, 0, len(%s))", v, elemGo, in)
 	g.wl("%s := make(map[%s]struct{}, len(%s))", seen, keyGo, in)
 	g.wl("for _, %s := range %s {", e, in)
@@ -1852,22 +1755,16 @@ func (g *gen) emitUnique(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitCountDistinct lowers the optimizer's Unique + Count fusion: the set
 // Unique would have built to find the distinct elements, sized the same way,
 // and nothing else — its length is the answer.
-func (g *gen) emitCountDistinct(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitCountDistinct(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, seen, e := g.fresh("v"), g.fresh("seen"), g.fresh("e")
-	key, keyGo, err := g.hashKey(n.In.Elem, e, elemGo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	key, keyGo := asUnsupported2(n, "", func() (string, string) { return g.hashKey(n.In.Elem, e, elemGo) })
 	g.wl("%s := make(map[%s]struct{}, len(%s))", seen, keyGo, in)
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
@@ -1875,20 +1772,17 @@ func (g *gen) emitCountDistinct(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	g.wl("%s := int64(len(%s))", v, seen)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitReverse(n *ir.Node, in string) (string, error) {
+func (g *gen) emitReverse(n *ir.Node, in string) string {
 	if n.In != nil && n.In.Kind == ir.KText {
 		g.helper("dmReverseText", declReverseText)
 		v := g.fresh("v")
 		g.wl("%s := dmReverseText(%s)", v, in)
-		return v, nil
+		return v
 	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, i, e := g.fresh("v"), g.fresh("i"), g.fresh("e")
 	g.wl("%s := make([]%s, len(%s))", v, elemGo, in)
 	g.wl("for %s, %s := range %s {", i, e, in)
@@ -1896,19 +1790,16 @@ func (g *gen) emitReverse(n *ir.Node, in string) (string, error) {
 	g.wl("%s[len(%s)-1-%s] = %s", v, in, i, e)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitTakeItem(n *ir.Node, in string) (string, error) {
+func (g *gen) emitTakeItem(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	if hasMeasured(n, "index") {
 		// The index is only known at run time, so the constant-index shortcuts
 		// below do not apply: bind it, then range-check against the list the
 		// way the interpreter does.
-		m, err := g.measuredOperand(n, in, "index", "Index", math.MinInt64)
-		if err != nil {
-			return "", err
-		}
+		m := g.measuredOperand(n, in, "index", "Index", math.MinInt64)
 		g.wl("if %s < 0 || %s >= int64(len(%s)) {", m, m, in)
 		g.in()
 		g.wl(`dmFail("index %%d out of range (length %%d)", %s, len(%s))`, m, in)
@@ -1916,20 +1807,17 @@ func (g *gen) emitTakeItem(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 		v := g.fresh("v")
 		g.wl("%s := %s[%s]", v, in, m)
-		return v, nil
+		return v
 	}
 	idx, _ := n.Meta["index"].(int)
 	if idx < 0 {
 		// A constant negative index always fails; emit the failure plus a
 		// zero-valued binding so downstream code still compiles.
-		elemGo, err := g.goType(n.Out)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
 		g.wl(`dmFail("index %d out of range (length %%d)", len(%s))`, idx, in)
 		v := g.fresh("v")
 		g.wl("var %s %s", v, elemGo)
-		return v, nil
+		return v
 	}
 	g.wl("if len(%s) <= %d {", in, idx)
 	g.in()
@@ -1938,23 +1826,20 @@ func (g *gen) emitTakeItem(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	v := g.fresh("v")
 	g.wl("%s := %s[%d]", v, in, idx)
-	return v, nil
+	return v
 }
 
 // ---------------------------------------------------------------------------
 // channels
 // ---------------------------------------------------------------------------
 
-func (g *gen) emitChannel(n *ir.Node, in string) (string, error) {
+func (g *gen) emitChannel(n *ir.Node, in string) string {
 	name, _ := n.Meta["name"].(string)
 	subNodes, _ := n.Meta["nodes"].([]*ir.Node)
 	if subNodes == nil {
-		return "", unsupported(n, "missing channel body metadata")
+		panic(unsupported(n, "missing channel body metadata"))
 	}
-	cur, err := g.emitSequence(subNodes, in)
-	if err != nil {
-		return "", err
-	}
+	cur := g.emitSequence(subNodes, in)
 	// Fusions preserve the pipeline value type, so the channel's output type is
 	// the last sub-node's declared output.
 	curType := n.In
@@ -1962,39 +1847,33 @@ func (g *gen) emitChannel(n *ir.Node, in string) (string, error) {
 		curType = subNodes[len(subNodes)-1].Out
 	}
 	g.chans[name] = chanVar{v: cur, typ: curType}
-	return in, nil // a Channel is a passthrough for the main pipeline
+	return in // a Channel is a passthrough for the main pipeline
 }
 
-func (g *gen) emitCombine(n *ir.Node, in string) (string, error) {
+func (g *gen) emitCombine(n *ir.Node, in string) string {
 	froms, _ := n.Meta["from"].([]string)
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+	lam := g.nodeLambda(n)
 	env := exprEnv{}
 	for i, name := range froms {
 		cv, ok := g.chans[name]
 		if !ok {
-			return "", unsupported(n, "channel %q was not compiled", name)
+			panic(unsupported(n, "channel %q was not compiled", name))
 		}
 		env[lam.Params[i]] = exprBinding{expr: cv.v, typ: cv.typ}
 	}
-	body, _, err := g.compileExpr(lam.Body, env)
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) { return g.compileExpr(lam.Body, env) })
 	v := g.fresh("v")
 	g.wl("%s := %s", v, body)
-	return v, nil
+	return v
 }
 
 // ---------------------------------------------------------------------------
 // vows and the sink
 // ---------------------------------------------------------------------------
 
-func (g *gen) emitBindingVow(n *ir.Node, in string) (string, error) {
+func (g *gen) emitBindingVow(n *ir.Node, in string) string {
 	if g.release {
-		return in, nil // release mode: don't even emit the check
+		return in // release mode: don't even emit the check
 	}
 	kind, _ := n.Meta["kind"].(string)
 	raw, _ := n.Meta["raw"].(string)
@@ -2002,22 +1881,19 @@ func (g *gen) emitBindingVow(n *ir.Node, in string) (string, error) {
 	switch kind {
 	case "count":
 		if n.In.Kind != ir.KList {
-			return "", unsupported(n, "Count vow over %s", n.In)
+			panic(unsupported(n, "Count vow over %s", n.In))
 		}
-		want, err := g.measuredOperand(n, in, "want", "Count", math.MinInt64)
-		if err != nil {
-			return "", err
-		}
+		want := g.measuredOperand(n, in, "want", "Count", math.MinInt64)
 		g.wl("if int64(len(%s)) != %s {", in, want)
 		g.in()
 		g.wl(`dmFail("vow violated [%%s]: expected count %%d, got %%d", %s, int64(%s), len(%s))`,
 			goStr(raw), want, in)
 		g.out()
 		g.wl("}")
-		return in, nil
+		return in
 	case "allvalues":
 		if !n.In.Equal(ir.List(ir.Int())) {
-			return "", unsupported(n, "All Values vow over %s", n.In)
+			panic(unsupported(n, "All Values vow over %s", n.In))
 		}
 		sym, _ := n.Meta["sym"].(string)
 		bound, _ := n.Meta["bound"].(int64)
@@ -2036,30 +1912,26 @@ func (g *gen) emitBindingVow(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 		g.out()
 		g.wl("}")
-		return in, nil
+		return in
 	case "holds":
 		// The general form: any predicate over the current value, compiled
 		// inline like every other lambda.
-		lam, err := g.nodeLambda(n)
-		if err != nil {
-			return "", err
-		}
-		pred, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
-		if err != nil {
-			return "", unsupported(n, "predicate: %v", err)
-		}
+		lam := g.nodeLambda(n)
+		pred, _ := asUnsupported2(n, "predicate: ", func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+		})
 		g.wl("if !(%s) {", pred)
 		g.in()
 		g.wl(`dmFail("vow violated [%%s]: predicate is false", %s)`, goStr(raw))
 		g.out()
 		g.wl("}")
-		return in, nil
+		return in
 	default:
-		return "", unsupported(n, "vow kind %q", kind)
+		panic(unsupported(n, "vow kind %q", kind))
 	}
 }
 
-func (g *gen) emitEmit(n *ir.Node, in string) (string, error) {
+func (g *gen) emitEmit(n *ir.Node, in string) string {
 	g.imp("fmt")
 	if g.partLabel != "" {
 		return g.emitLabelledEmit(n, in)
@@ -2092,13 +1964,13 @@ func (g *gen) emitEmit(n *ir.Node, in string) (string, error) {
 		g.helper("dmFmtFloat", declFmtFloat, "strconv")
 		g.wl(printFmt, "dmFmtFloat", in)
 	default:
-		fn, err := g.fmtFunc(n.In)
+		fn, err := try1(func() string { return g.fmtFunc(n.In) })
 		if err != nil {
-			return "", unsupported(n, "cannot render %s: %v", n.In, err)
+			panic(unsupported(n, "cannot render %s: %v", n.In, err))
 		}
 		g.wl(printFmt, fn, in)
 	}
-	return in, nil
+	return in
 }
 
 // emitLabelledEmit is Reveal inside a Part block. The label is a compile-time
@@ -2106,43 +1978,40 @@ func (g *gen) emitEmit(n *ir.Node, in string) (string, error) {
 // has to happen at runtime, and only because Text (and every composite) can
 // contain a newline. dmLabel mirrors ir.LabelledOutput exactly — that pairing is
 // what keeps the two backends byte-identical.
-func (g *gen) emitLabelledEmit(n *ir.Node, in string) (string, error) {
-	rendered, err := g.renderToString(n, in)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitLabelledEmit(n *ir.Node, in string) string {
+	rendered := g.renderToString(n, in)
 	g.helper("dmLabel", declLabel, "strings")
 	g.wl("fmt.Println(dmLabel(%s, %s))", goStr(g.partLabel), rendered)
-	return in, nil
+	return in
 }
 
 // renderToString returns a Go expression of type string rendering the node's
 // input value exactly as ir.FormatValue would.
-func (g *gen) renderToString(n *ir.Node, in string) (string, error) {
+func (g *gen) renderToString(n *ir.Node, in string) string {
 	switch n.In.Kind {
 	case ir.KText:
-		return in, nil
+		return in
 	case ir.KInt, ir.KBool:
-		return fmt.Sprintf("fmt.Sprint(%s)", in), nil
+		return fmt.Sprintf("fmt.Sprint(%s)", in)
 	case ir.KFloat:
 		g.helper("dmFmtFloat", declFmtFloat, "strconv")
-		return fmt.Sprintf("dmFmtFloat(%s)", in), nil
+		return fmt.Sprintf("dmFmtFloat(%s)", in)
 	default:
-		fn, err := g.fmtFunc(n.In)
+		fn, err := try1(func() string { return g.fmtFunc(n.In) })
 		if err != nil {
-			return "", unsupported(n, "cannot render %s: %v", n.In, err)
+			panic(unsupported(n, "cannot render %s: %v", n.In, err))
 		}
-		return fmt.Sprintf("%s(%s)", fn, in), nil
+		return fmt.Sprintf("%s(%s)", fn, in)
 	}
 }
 
 // emitPart emits a Part block: its body inline, with the label in scope for any
 // Reveal inside it, and the main pipeline value passed through untouched.
-func (g *gen) emitPart(n *ir.Node, in string) (string, error) {
+func (g *gen) emitPart(n *ir.Node, in string) string {
 	label, _ := n.Meta["label"].(string)
 	subNodes, _ := n.Meta["nodes"].([]*ir.Node)
 	if subNodes == nil {
-		return "", unsupported(n, "missing part body metadata")
+		panic(unsupported(n, "missing part body metadata"))
 	}
 	prev := g.partLabel
 	g.partLabel = label
@@ -2151,22 +2020,16 @@ func (g *gen) emitPart(n *ir.Node, in string) (string, error) {
 	// Sibling Parts branch from one state, and that guarantee covers the
 	// globals a Part can reach as well as the value it was handed — see
 	// saveGlobals. This is the compiled half of eval.SnapshotGlobals.
-	restoreGlobals, err := g.saveGlobals()
-	if err != nil {
-		return "", err
-	}
+	restoreGlobals := g.saveGlobals()
 
-	cur, err := g.emitSequence(subNodes, in)
-	if err != nil {
-		return "", err
-	}
+	cur := g.emitSequence(subNodes, in)
 	restoreGlobals()
 	// A Part's own result is discarded (only its Reveal is observable), so a
 	// body that does not end in Emit leaves a value Go would reject as unused.
 	if cur != "" && cur != in && subNodes[len(subNodes)-1].Prim != "Emit" {
 		g.wl("_ = %s", cur)
 	}
-	return in, nil // a Part is a passthrough for the main pipeline
+	return in // a Part is a passthrough for the main pipeline
 }
 
 // unusedRangeVar matches a loop that binds an element the body may not read.

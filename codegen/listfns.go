@@ -22,27 +22,21 @@ import (
 
 // listFn interns a generated helper under key, calling build to produce its
 // source the first time.
-func (g *gen) listFn(key, prefix string, build func(name string) (string, error)) (string, error) {
+func (g *gen) listFn(key, prefix string, build func(name string) (string, error)) string {
 	if name, ok := g.listFns[key]; ok {
-		return name, nil
+		return name
 	}
 	name := fmt.Sprintf("dm%s%d", prefix, len(g.listFns)+1)
 	g.listFns[key] = name
-	decl, err := build(name)
-	if err != nil {
-		return "", err
-	}
+	decl := must(build(name))
 	g.decls = append(g.decls, decl)
-	return name, nil
+	return name
 }
 
 // sortFn interns a stable sort for one element type, over the same ordering
 // ir.Compare defines — so `sort(xs)` in a lambda and a `Sort` stage agree.
-func (g *gen) sortFn(elem *ir.Type) (string, error) {
-	elemGo, err := g.goType(elem)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) sortFn(elem *ir.Type) string {
+	elemGo := g.goType(elem)
 	return g.listFn("sort:"+canonicalKey(elem), "Sort", func(name string) (string, error) {
 		g.imp("slices")
 		// Equal Ints and equal Texts are indistinguishable, so the stable sort
@@ -54,7 +48,7 @@ func (g *gen) sortFn(elem *ir.Type) (string, error) {
 	return out
 }`, name, elemGo, elemGo, elemGo), nil
 		}
-		cmp, err := g.cmpExpr("a", "b", elem)
+		cmp, err := try1(func() string { return g.cmpExpr("a", "b", elem) })
 		if err != nil {
 			return "", err
 		}
@@ -70,15 +64,9 @@ func (g *gen) sortFn(elem *ir.Type) (string, error) {
 // way Reveal would (via scalarFmt/fmtFunc, so it stays byte-for-byte with the
 // interpreter's FormatValue) and join the results with the given separator.
 // The Text-element case skips this and calls strings.Join directly.
-func (g *gen) joinFn(elem *ir.Type) (string, error) {
-	elemGo, err := g.goType(elem)
-	if err != nil {
-		return "", err
-	}
-	elemFmt, err := g.scalarFmt("e", elem)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) joinFn(elem *ir.Type) string {
+	elemGo := g.goType(elem)
+	elemFmt := g.scalarFmt("e", elem)
 	g.imp("strings")
 	return g.listFn("join:"+canonicalKey(elem), "TextJoin", func(name string) (string, error) {
 		return fmt.Sprintf(`func %s(xs []%s, sep string) string {
@@ -93,20 +81,14 @@ func (g *gen) joinFn(elem *ir.Type) (string, error) {
 
 // pairFn interns zip or enumerate for one output tuple type. Both build a
 // tuple struct, which is why neither can be a single generic helper.
-func (g *gen) pairFn(kind string, a, b *ir.Type) (string, error) {
+func (g *gen) pairFn(kind string, a, b *ir.Type) string {
 	pairT := ir.Tuple(a, b)
-	pairGo, err := g.goType(pairT)
-	if err != nil {
-		return "", err
-	}
-	aGo, err := g.goType(a)
-	if err != nil {
-		return "", err
-	}
+	pairGo := g.goType(pairT)
+	aGo := g.goType(a)
 	key := kind + ":" + canonicalKey(pairT)
 	return g.listFn(key, strings.ToUpper(kind[:1])+kind[1:], func(name string) (string, error) {
 		if kind == "enumerate" {
-			bGo, err := g.goType(b)
+			bGo, err := try1(func() string { return g.goType(b) })
 			if err != nil {
 				return "", err
 			}
@@ -118,7 +100,7 @@ func (g *gen) pairFn(kind string, a, b *ir.Type) (string, error) {
 	return out
 }`, name, bGo, pairGo, pairGo, pairGo), nil
 		}
-		bGo, err := g.goType(b)
+		bGo, err := try1(func() string { return g.goType(b) })
 		if err != nil {
 			return "", err
 		}

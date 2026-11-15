@@ -7,10 +7,10 @@ go-to-definition, quick fixes) via the built-in language server (`domain
 lsp`). Wiring is in [docs/tooling.md](../docs/tooling.md).
 
 **Both grammars are generated from the language itself** — the primitives from
-`prims.Registry`, all 144 builtins from `typecheck.Builtins`, the keywords from
+`prims.AllPrimitives()`, all 208 builtins from `typecheck.Builtins`, the keywords from
 `ast.Keywords`, the prelude's Shikigami from `prims.PreludeNames()`. `go test
 ./editors -update` rewrites them and every other run fails if they are stale,
-because a hand-maintained copy of a 144-entry list is a copy that falls behind
+because a hand-maintained copy of a 208-entry list is a copy that falls behind
 — as both of these had, by 41 primitives and 83 builtins. A second test reads
 every operation phrase out of every program in the repository and fails on any
 word no rule colours, which is what catches the spellings the registry does not

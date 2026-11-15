@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 // Contestant is one side of a race. Exactly one of Program and Argv is set.
@@ -166,21 +165,6 @@ func prepareExternal(c Contestant, in Input) (*prepared, error) {
 	return p, nil
 }
 
-// CheckAgreement runs every contestant exactly once and reports whether they
-// produced identical output.
-//
-// This is the precondition for a race being worth reporting at all, and it is
-// deliberately separate from the timing runs: a faster program that prints the
-// wrong answer has not come out on top, and publishing a time for it would be
-// the single most misleading thing a head-to-head could do.
-func CheckAgreement(cs []Contestant, in Input, opts Options) ([]Result, error) {
-	one := opts
-	one.Runs = 1
-	one.KeepStdout = true
-	one.Alloc = false
-	return RaceContestants(cs, in, one)
-}
-
 // Disagreement describes two sides that did not produce the same output.
 type Disagreement struct {
 	A, B       int    // indices into the contestant list
@@ -286,12 +270,4 @@ func splitLines(b []byte) []string {
 	}
 	out = append(out, s[start:])
 	return out
-}
-
-// Speedup is a ÷ b as a ratio, or 0 when either side has no time.
-func Speedup(a, b time.Duration) float64 {
-	if a <= 0 || b <= 0 {
-		return 0
-	}
-	return float64(a) / float64(b)
 }

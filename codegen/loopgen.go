@@ -2,10 +2,9 @@ package codegen
 
 import (
 	"fmt"
-	"strings"
 
-	"domain/ast"
 	"domain/ir"
+	"domain/prims"
 )
 
 // Simple Domain loops. The body is a resolved node list (stashed in Meta by
@@ -39,21 +38,14 @@ func comparableScalarElem(t *ir.Type) bool {
 // break) when nothing changed — identical semantics to the general
 // map-then-deep-equal path, with half the per-iteration element visits. `it` is
 // the enclosing loop counter and `v` the loop-carried variable.
-func (g *gen) emitFixedPointMapLoop(mapNode *ir.Node, v, it string) error {
-	lam, err := g.nodeLambda(mapNode)
-	if err != nil {
-		return err
-	}
-	elemGo, err := g.goType(mapNode.Out.Elem)
-	if err != nil {
-		return unsupported(mapNode, "%v", err)
-	}
+func (g *gen) emitFixedPointMapLoop(mapNode *ir.Node, v, it string) {
+	lam := g.nodeLambda(mapNode)
+	elemGo := asUnsupported1(mapNode, "", func() string { return g.goType(mapNode.Out.Elem) })
 	next, i, e, nv := g.fresh("next"), g.fresh("i"), g.fresh("e"), g.fresh("nv")
 	changed := g.fresh("changed")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: mapNode.In.Elem}})
-	if err != nil {
-		return unsupported(mapNode, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(mapNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: mapNode.In.Elem}})
+	})
 	g.wl("%s := make([]%s, len(%s))", next, elemGo, v)
 	g.wl("%s := false", changed)
 	g.wl("for %s, %s := range %s {", i, e, v)
@@ -71,7 +63,6 @@ func (g *gen) emitFixedPointMapLoop(mapNode *ir.Node, v, it string) error {
 	g.wl("}")
 	g.emitIterationGuard(it, "did not converge")
 	g.wl("%s = %s", v, next)
-	return nil
 }
 
 // emitIterationGuard emits the runaway-loop check, and only when a bound is
@@ -89,11 +80,11 @@ func (g *gen) emitIterationGuard(it, what string) {
 	g.wl("}")
 }
 
-func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
+func (g *gen) emitLoop(n *ir.Node, in string) string {
 	kind, _ := n.Meta["kind"].(string)
 	body, _ := n.Meta["nodes"].([]*ir.Node)
 	if body == nil {
-		return "", unsupported(n, "missing loop body metadata")
+		panic(unsupported(n, "missing loop body metadata"))
 	}
 
 	v := g.fresh("v")
@@ -104,7 +95,7 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 	g.wl("%s := %s", v, g.ownLoopState(n, body, in))
 
 	emitBody := func() error {
-		cur, err := g.emitSequence(body, v)
+		cur, err := try1(func() string { return g.emitSequence(body, v) })
 		if err != nil {
 			return err
 		}
@@ -122,29 +113,20 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 	case "repeat":
 		// Measured before the loop opens: the count is a property of the value
 		// entering it, not of each lap's value.
-		count, err := g.measuredOperand(n, v, "n", "Times", 0)
-		if err != nil {
-			return "", err
-		}
+		count := g.measuredOperand(n, v, "n", "Times", 0)
 		i := g.fresh("i")
 		g.wl("for %s := int64(0); %s < %s; %s++ {", i, i, count, i)
 		g.in()
-		if err := emitBody(); err != nil {
-			return "", err
-		}
+		check(emitBody())
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 
 	case "while":
-		lam, err := g.nodeLambda(n)
-		if err != nil {
-			return "", err
-		}
-		pred, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: v, typ: n.In}})
-		if err != nil {
-			return "", unsupported(n, "predicate: %v", err)
-		}
+		lam := g.nodeLambda(n)
+		pred, _ := asUnsupported2(n, "predicate: ", func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: v, typ: n.In}})
+		})
 		g.helper("dmFail", declFail, "fmt", "os")
 		it := g.fresh("it")
 		g.wl("for %s := 0; ; %s++ {", it, it)
@@ -155,12 +137,10 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 		g.emitIterationGuard(it, "loop exceeded")
-		if err := emitBody(); err != nil {
-			return "", err
-		}
+		check(emitBody())
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 
 	case "fixedpoint":
 		g.helper("dmFail", declFail, "fmt", "os")
@@ -171,19 +151,14 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		// list detects convergence *during* the map (the loop already visits
 		// every element), avoiding a second full structural-equality pass.
 		if len(body) == 1 && body[0].Prim == "Map Each" && comparableScalarElem(body[0].Out) {
-			if err := g.emitFixedPointMapLoop(body[0], v, it); err != nil {
-				return "", err
-			}
+			g.emitFixedPointMapLoop(body[0], v, it)
 			g.out()
 			g.wl("}")
-			return v, nil
+			return v
 		}
 		// Run the body against v, but keep its result in a fresh name so we
 		// can compare old and new before committing.
-		cur, err := g.emitSequence(body, v)
-		if err != nil {
-			return "", err
-		}
+		cur := g.emitSequence(body, v)
 		if cur == v {
 			// A body of pure passthroughs (vows/emits) is already converged
 			// after one run, exactly like the interpreter's DeepEqual(v, v).
@@ -191,10 +166,7 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		} else {
 			// Mirror the interpreter's order: converged? then iteration
 			// guard, then commit the new value and go around again.
-			eq, err := g.eqExpr(cur, v, n.In)
-			if err != nil {
-				return "", unsupported(n, "convergence test: %v", err)
-			}
+			eq := asUnsupported1(n, "convergence test: ", func() string { return g.eqExpr(cur, v, n.In) })
 			g.wl("if %s {", eq)
 			g.in()
 			g.wl("%s = %s", v, cur)
@@ -206,7 +178,7 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		}
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 
 	case "for":
 		// `For x in <source>` iterates a channel's list (or an inline
@@ -215,7 +187,7 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		// range; the binding is what needs care, and lives in g.ambient.
 		elemT, _ := n.Meta["elem"].(*ir.Type)
 		if elemT == nil {
-			return "", unsupported(n, "For loop is missing its element type")
+			panic(unsupported(n, "For loop is missing its element type"))
 		}
 		x := g.fresh("x")
 		isRange, _ := n.Meta["isRange"].(bool)
@@ -226,7 +198,7 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 			name, _ := n.Meta["channel"].(string)
 			cv, ok := g.chans[name]
 			if !ok {
-				return "", unsupported(n, "For source channel %q has no value", name)
+				panic(unsupported(n, "For source channel %q has no value", name))
 			}
 			g.wl("for _, %s := range %s {", x, cv.v)
 		}
@@ -247,11 +219,11 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		g.ambient = g.ambient[:len(g.ambient)-1]
 		g.ambientNames = nil
 		if err != nil {
-			return "", err
+			panic(fail(err))
 		}
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 
 	case "foreach":
 		// `For Each x In` (Using: (w) -> list) reads the source fresh from the
@@ -263,16 +235,12 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		// pushes for this kind (prims/control.go's resolveForEachLoop).
 		elemT, _ := n.Meta["elem"].(*ir.Type)
 		if elemT == nil {
-			return "", unsupported(n, "For Each loop is missing its element type")
+			panic(unsupported(n, "For Each loop is missing its element type"))
 		}
-		lam, err := g.nodeLambda(n)
-		if err != nil {
-			return "", err
-		}
-		listExpr, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: v, typ: n.In}})
-		if err != nil {
-			return "", unsupported(n, "Using: %v", err)
-		}
+		lam := g.nodeLambda(n)
+		listExpr, _ := asUnsupported2(n, "Using: ", func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: v, typ: n.In}})
+		})
 		x, idx, idx64 := g.fresh("x"), g.fresh("i"), g.fresh("i64")
 		g.wl("for %s, %s := range %s {", idx, x, listExpr)
 		g.in()
@@ -285,18 +253,18 @@ func (g *gen) emitLoop(n *ir.Node, in string) (string, error) {
 		g.wl("_ = %s", x)
 		g.wl("_ = %s", idx64)
 		g.ambient = append(g.ambient, ambientVar{v: x, typ: elemT}, ambientVar{v: idx64, typ: ir.Int()})
-		err = emitBody()
+		err := emitBody()
 		g.ambient = g.ambient[:len(g.ambient)-2]
 		g.ambientNames = nil
 		if err != nil {
-			return "", err
+			panic(fail(err))
 		}
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 
 	default:
-		return "", unsupported(n, "loop kind %q", kind)
+		panic(unsupported(n, "loop kind %q", kind))
 	}
 }
 
@@ -319,65 +287,20 @@ func (g *gen) ownLoopState(n *ir.Node, body []*ir.Node, in string) string {
 	}
 	// Any stage may carry the marks: the pass looks at every body stage that
 	// threads the state, not only the first.
-	if !anyStageInPlace(body) {
+	if !prims.AnyStageInPlace(body) {
 		return in
 	}
-	owned, err := g.ownValueExpr(in, n.In, "", ownedFields(n))
+	owned, err := try1(func() string { return g.ownValueExpr(in, n.In, "", ownedFields(n)) })
 	if err != nil {
 		return in
 	}
 	return owned
 }
 
-// anyStageInPlace reports whether some body stage carries a marked update.
-func anyStageInPlace(body []*ir.Node) bool {
-	for _, stage := range body {
-		if lam, _ := stage.Meta["lambda"].(*ast.Lambda); lam != nil && ast.HasInPlace(lam.Body) {
-			return true
-		}
-	}
-	return false
-}
-
 // ownedFields reads the paths the optimizer recorded for this loop. A node
 // without them predates the record or came from a caller that does not set it,
 // and owning everything is the reading that is never wrong.
-func ownedFields(n *ir.Node) map[string]bool {
-	paths, ok := n.Meta[ir.OwnedFields].([]string)
-	if !ok {
-		return map[string]bool{ir.OwnsEverything: true}
-	}
-	out := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		out[p] = true
-	}
-	return out
-}
-
-// needsOwn reports whether the storage at path has to be copied: because a
-// marked update writes it, writes something inside it, or writes a container it
-// sits in.
-func needsOwn(path string, owned map[string]bool) bool {
-	for w := range owned {
-		if w == path || pathAncestor(w, path) || pathAncestor(path, w) {
-			return true
-		}
-	}
-	return false
-}
-
-// pathAncestor reports whether a is a strict ancestor of b. The root path is an
-// ancestor of everything, which is the case a plain HasPrefix gets wrong: the
-// root is "", so "" + "." is "." and no real path begins with a dot.
-func pathAncestor(a, b string) bool {
-	if a == b {
-		return false
-	}
-	if a == ir.OwnsEverything {
-		return true
-	}
-	return strings.HasPrefix(b, a+".")
-}
+func ownedFields(n *ir.Node) map[string]bool { return ir.OwnedFieldSet(n.Meta) }
 
 // fieldPath extends a projection path with one tuple index.
 func fieldPath(path string, i int) string {
@@ -389,22 +312,16 @@ func fieldPath(path string, i int) string {
 
 // ownValueExpr is the Go expression copying the storage inside a value that a
 // marked update reaches, leaving the rest of it shared.
-func (g *gen) ownValueExpr(expr string, t *ir.Type, path string, owned map[string]bool) (string, error) {
-	if !needsOwn(path, owned) {
-		return expr, nil
+func (g *gen) ownValueExpr(expr string, t *ir.Type, path string, owned map[string]bool) string {
+	if !ir.NeedsOwn(path, owned) {
+		return expr
 	}
 	switch t.Kind {
 	case ir.KList:
-		elemGo, err := g.goType(t.Elem)
-		if err != nil {
-			return "", err
-		}
-		return "append([]" + elemGo + "(nil), " + expr + "...)", nil
+		elemGo := g.goType(t.Elem)
+		return "append([]" + elemGo + "(nil), " + expr + "...)"
 	case ir.KTuple:
-		tupGo, err := g.goType(t)
-		if err != nil {
-			return "", err
-		}
+		tupGo := g.goType(t)
 		out := tupGo + "{"
 		// Elems, not Fields: Fields is the record's and is empty for a tuple,
 		// which emits `Tup1{}` — a zero value, and a program that fails with
@@ -413,16 +330,14 @@ func (g *gen) ownValueExpr(expr string, t *ir.Type, path string, owned map[strin
 			field := "(" + expr + ").f" + itoa(i)
 			copied := field
 			if ft != nil && ownableField(ft) {
-				if copied, err = g.ownValueExpr(field, ft, fieldPath(path, i), owned); err != nil {
-					return "", err
-				}
+				copied = g.ownValueExpr(field, ft, fieldPath(path, i), owned)
 			}
 			if i > 0 {
 				out += ", "
 			}
 			out += copied
 		}
-		return out + "}", nil
+		return out + "}"
 
 	// The rest of the collections a mark can be rooted at through a tuple
 	// field. optimizer.projectedCollection lets an update write into any of
@@ -432,32 +347,32 @@ func (g *gen) ownValueExpr(expr string, t *ir.Type, path string, owned map[strin
 	// one already declared for the functional path.
 	case ir.KMap:
 		g.chelper(t.Key, "dmMap", declMap)
-		return g.chelper(t.Key, "dmMapClone", declMapClone) + "(" + expr + ")", nil
+		return g.chelper(t.Key, "dmMapClone", declMapClone) + "(" + expr + ")"
 	case ir.KSet:
 		g.chelper(t.Elem, "dmSet", declSet)
-		return g.chelper(t.Elem, "dmSetClone", declSetClone) + "(" + expr + ")", nil
+		return g.chelper(t.Elem, "dmSetClone", declSetClone) + "(" + expr + ")"
 	case ir.KGrid:
 		g.helper("dmGrid", declGrid)
 		g.helper("dmGridClone", declGridClone)
-		return "dmGridClone(" + expr + ")", nil
+		return "dmGridClone(" + expr + ")"
 	case ir.KSparse:
 		g.helper("dmSparse", declSparse, "slices")
 		g.helper("dmSparseClone", declSparseClone)
-		return "dmSparseClone(" + expr + ")", nil
+		return "dmSparseClone(" + expr + ")"
 	case ir.KGraph:
 		// dmGraph carries its own clone method — the one the functional
 		// addnode/addedge call before mutating — so there is no free function
 		// to declare here.
 		g.chelper(t.Elem, "dmGraph", declGraph)
-		return "(" + expr + ").clone()", nil
+		return "(" + expr + ").clone()"
 	}
-	return expr, nil
+	return expr
 }
 
 // ownableField reports whether a state field holds storage ownValueExpr can
 // copy. It mirrors optimizer.ownableLoopState's field test: what the analysis
 // allows a mark to reach, the clone on entry has to be able to own. Whether it
-// *does* is needsOwn's question.
+// *does* is ir.NeedsOwn's question.
 func ownableField(t *ir.Type) bool {
 	switch t.Kind {
 	case ir.KList, ir.KTuple, ir.KMap, ir.KSet, ir.KGrid, ir.KSparse, ir.KGraph:

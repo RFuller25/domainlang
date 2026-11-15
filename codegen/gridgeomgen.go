@@ -14,11 +14,8 @@ import (
 // emitRange builds the half-open [lo, hi) integer range. Literal bounds make
 // the length known, so the slice is allocated exactly once; measured bounds
 // are computed first and the capacity comes out of them.
-func (g *gen) emitRange(n *ir.Node, in string) (string, error) {
-	lo, hi, err := g.emitRangeBounds(n, in)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitRange(n *ir.Node, in string) string {
+	lo, hi := g.emitRangeBounds(n, in)
 	v, i := g.fresh("v"), g.fresh("i")
 	g.wl("%s := make([]int64, 0, %s-%s)", v, hi, lo)
 	g.wl("for %s := int64(%s); %s < %s; %s++ {", i, lo, i, hi, i)
@@ -26,21 +23,15 @@ func (g *gen) emitRange(n *ir.Node, in string) (string, error) {
 	g.wl("%s = append(%s, %s)", v, v, i)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitRangeBounds renders a Range's two bounds and, when either is measured,
 // the half-open check the interpreter makes at the same moment. It is shared
 // with the stream fuser, which counts through the range without building it.
-func (g *gen) emitRangeBounds(n *ir.Node, in string) (lo, hi string, err error) {
-	lo, err = g.measuredOperand(n, in, "lo", "Low", math.MinInt64)
-	if err != nil {
-		return "", "", err
-	}
-	hi, err = g.measuredOperand(n, in, "hi", "High", math.MinInt64)
-	if err != nil {
-		return "", "", err
-	}
+func (g *gen) emitRangeBounds(n *ir.Node, in string) (lo, hi string) {
+	lo = g.measuredOperand(n, in, "lo", "Low", math.MinInt64)
+	hi = g.measuredOperand(n, in, "hi", "High", math.MinInt64)
 	if hasMeasured(n, "lo", "hi") {
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.wl("if %s < %s {", hi, lo)
@@ -49,12 +40,12 @@ func (g *gen) emitRangeBounds(n *ir.Node, in string) (lo, hi string, err error) 
 		g.out()
 		g.wl("}")
 	}
-	return lo, hi, nil
+	return lo, hi
 }
 
 // emitSubgrid crops. The bounds are compile-time literals; the fit check is
 // not, since the grid's size comes from the input.
-func (g *gen) emitSubgrid(n *ir.Node, in string) (string, error) {
+func (g *gen) emitSubgrid(n *ir.Node, in string) string {
 	var op [4]string
 	for i, k := range [4]string{"row", "col", "height", "width"} {
 		name := [4]string{"Row", "Col", "Height", "Width"}[i]
@@ -64,21 +55,12 @@ func (g *gen) emitSubgrid(n *ir.Node, in string) (string, error) {
 		if i >= 2 {
 			lower = 0
 		}
-		s, err := g.measuredOperand(n, in, k, name, lower)
-		if err != nil {
-			return "", err
-		}
+		s := g.measuredOperand(n, in, k, name, lower)
 		op[i] = s
 	}
 	r0, c0, h, w := op[0], op[1], op[2], op[3]
-	gridGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, r := g.fresh("v"), g.fresh("r")
 	g.wl("if %s < 0 || %s < 0 || %s+%s > int64(%s.rows) || %s+%s > int64(%s.cols) {",
@@ -97,35 +79,23 @@ func (g *gen) emitSubgrid(n *ir.Node, in string) (string, error) {
 		v, v, in, r, in, c0, r, in, c0, w)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitPadGrid surrounds the grid with a border of the Fill: literal.
-func (g *gen) emitPadGrid(n *ir.Node, in string) (string, error) {
-	pad, err := g.measuredOperand(n, in, "n", "Thickness", 0)
-	if err != nil {
-		return "", err
-	}
-	gridGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	fill, err := g.measuredLit(n, in, "fill", n.In, n.Out.Elem, func(f any) (string, error) {
+func (g *gen) emitPadGrid(n *ir.Node, in string) string {
+	pad := g.measuredOperand(n, in, "n", "Thickness", 0)
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
+	fill := g.measuredLit(n, in, "fill", n.In, n.Out.Elem, func(f any) string {
 		switch x := f.(type) {
 		case string:
-			return goStr(x), nil
+			return goStr(x)
 		case int64:
-			return fmt.Sprintf("int64(%d)", x), nil
+			return fmt.Sprintf("int64(%d)", x)
 		}
-		return "", unsupported(n, "Pad Grid needs an Int or Text Fill:")
+		panic(unsupported(n, "Pad Grid needs an Int or Text Fill:"))
 	})
-	if err != nil {
-		return "", err
-	}
 	v, i, r, c := g.fresh("v"), g.fresh("i"), g.fresh("r"), g.fresh("c")
 	g.wl("var %s %s", v, gridGo)
 	g.wl("%s.rows, %s.cols = %s.rows+2*int(%s), %s.cols+2*int(%s)", v, v, in, pad, in, pad)
@@ -145,19 +115,13 @@ func (g *gen) emitPadGrid(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitRotateGrid(n *ir.Node, in string) (string, error) {
+func (g *gen) emitRotateGrid(n *ir.Node, in string) string {
 	mode, _ := n.Meta["mode"].(string)
-	gridGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, r, c := g.fresh("v"), g.fresh("r"), g.fresh("c")
 	// A quarter turn swaps the dimensions; Half keeps them.
 	rows, cols := in+".cols", in+".rows"
@@ -181,19 +145,13 @@ func (g *gen) emitRotateGrid(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitFlipGrid(n *ir.Node, in string) (string, error) {
+func (g *gen) emitFlipGrid(n *ir.Node, in string) string {
 	mode, _ := n.Meta["mode"].(string)
-	gridGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, r, c := g.fresh("v"), g.fresh("r"), g.fresh("c")
 	// Horizontal mirrors left-right, Vertical top-bottom.
 	dst := r + "*" + in + ".cols + (" + in + ".cols - 1 - " + c + ")"
@@ -212,14 +170,11 @@ func (g *gen) emitFlipGrid(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitConvertToRows(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitConvertToRows(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, r := g.fresh("v"), g.fresh("r")
 	g.wl("%s := make([][]%s, %s.rows)", v, elemGo, in)
 	g.wl("for %s := 0; %s < %s.rows; %s++ {", r, r, in, r)
@@ -228,30 +183,21 @@ func (g *gen) emitConvertToRows(n *ir.Node, in string) (string, error) {
 		v, r, elemGo, in, r, in, r, in)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitFindCycle(n *ir.Node, in string) (string, error) {
+func (g *gen) emitFindCycle(n *ir.Node, in string) string {
 	if n.Meta["lambda"] != nil {
 		return g.emitFindCycleState(n, in)
 	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	pt, err := g.pointGo()
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
+	pt := asUnsupported1(n, "", func() string { return g.pointGo() })
 	v, seen, i, e := g.fresh("v"), g.fresh("seen"), g.fresh("i"), g.fresh("e")
 	// An element holding a List is hashed through its byte encoding; anything
 	// else is its own map key.
 	key, keyGo := e, elemGo
 	if ir.ContainsList(n.In.Elem) {
-		kf, err := g.keyFn(n.In.Elem)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		kf := asUnsupported1(n, "", func() string { return g.keyFn(n.In.Elem) })
 		key, keyGo = kf+"("+e+")", "string"
 	}
 	g.wl("%s := %s{-1, 0}", v, pt)
@@ -267,22 +213,19 @@ func (g *gen) emitFindCycle(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = int64(%s)", seen, key, i)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitTopologicalSort lowers Kahn's algorithm, mirroring prims/toposort.go
 // including its deterministic first-seen tie-breaking: a set-based ready queue
 // would produce a valid but different order, and the two backends must print
 // the same answer.
-func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
+func (g *gen) emitTopologicalSort(n *ir.Node, in string) string {
 	node, _ := n.Meta["node"].(*ir.Type)
 	if node == nil {
 		node = n.Out.Elem
 	}
-	keyGo, err := g.goType(node)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	keyGo := asUnsupported1(n, "", func() string { return g.goType(node) })
 	g.chelper(node, "dmMap", declMap)
 	// A Graph is folded into the adjacency map first, exactly as the
 	// interpreter's graphAdjacency does. Going through the map rather than
@@ -292,10 +235,7 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 	if isGraph, _ := n.Meta["graph"].(bool); isGraph {
 		g.chelper(node, "dmGraph", declGraph)
 		m, i, nd, e := g.fresh("m"), g.fresh("i"), g.fresh("nd"), g.fresh("e")
-		newM, err := g.newMapExpr(node, keyGo, "[]"+keyGo, "")
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		newM := asUnsupported1(n, "", func() string { return g.newMapExpr(node, keyGo, "[]"+keyGo, "") })
 		g.wl("%s := %s", m, newM)
 		g.wl("for %s, %s := range %s.nodes {", i, nd, in)
 		g.in()
@@ -323,9 +263,9 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		g.imp("strconv")
 		fmtFn = "func(n int64) string { return strconv.FormatInt(n, 10) }"
 	default:
-		f, err := g.fmtFunc(node)
+		f, err := try1(func() string { return g.fmtFunc(node) })
 		if err != nil {
-			return "", unsupported(n, "cannot render %s: %v", node, err)
+			panic(unsupported(n, "cannot render %s: %v", node, err))
 		}
 		fmtFn = f
 	}
@@ -342,10 +282,7 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 			from, to = e+"[0]", e+"[1]"
 		}
 		if lKeyed(node) {
-			kf, err := g.keyFn(node)
-			if err != nil {
-				return "", unsupported(n, "%v", err)
-			}
+			kf := asUnsupported1(n, "", func() string { return g.keyFn(node) })
 			g.wl("%s := dmNewLTopo[%s](%s, len(%s))", t, keyGo, kf, in)
 		} else {
 			g.wl("%s := dmNewTopo[%s](len(%s))", t, keyGo, in)
@@ -365,10 +302,10 @@ func (g *gen) emitTopologicalSort(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 		g.wl("%s := %s.sort(%s)", v, t, fmtFn)
-		return v, nil
+		return v
 	}
 	g.wl("%s := %s(%s, %s)", v, g.chelper(node, "dmTopoSort", declTopoSort), in, fmtFn)
-	return v, nil
+	return v
 }
 
 // declTopo numbers a graph's nodes and records its edges as it goes, so a

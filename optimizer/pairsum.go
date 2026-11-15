@@ -67,7 +67,7 @@ func matchCommutativePair(lam *ast.Lambda, op token.Kind) (int64, bool) {
 	p0, p1 := lam.Params[0], lam.Params[1]
 	if p0 == p1 {
 		// A lambda like `(a, a) -> a + a = K` binds both params to the same
-		// name; eval.EvalLambda's map-based Env makes the second binding
+		// name; eval.EvalLambdaTyped's map-based Env makes the second binding
 		// shadow the first, so the naive path only ever sees one element
 		// doubled. The hash-set rewrite computes a real two-distinct-element
 		// result instead, which would silently diverge from the naive oracle.

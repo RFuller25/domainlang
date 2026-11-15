@@ -46,7 +46,7 @@ func TestEverySpecIsComplete(t *testing.T) {
 }
 
 // Names must be unique case-insensitively, since Lookup matches that way, and
-// so must extensions, since ByExt returns the first match.
+// so must extensions, since an extension must identify one language.
 func TestNamesAndExtensionsAreUnique(t *testing.T) {
 	seenName := map[string]string{}
 	seenExt := map[string]string{}
@@ -80,32 +80,6 @@ func TestLookupIsCaseInsensitive(t *testing.T) {
 	}
 	if _, ok := Lookup(""); ok {
 		t.Error("Lookup accepted the empty name")
-	}
-}
-
-func TestByExt(t *testing.T) {
-	cases := map[string]string{
-		"prog.py":         "Python",
-		"main.go":         "Go",
-		"rival.weave":     "Weave",
-		"rival.wv":        "Weave",
-		"a/b/thing.crust": "cRust",
-		"UPPER.PY":        "Python",
-	}
-	for path, want := range cases {
-		s, ok := ByExt(path)
-		if !ok {
-			t.Errorf("ByExt(%q) found nothing, want %s", path, want)
-			continue
-		}
-		if s.Name != want {
-			t.Errorf("ByExt(%q) = %s want %s", path, s.Name, want)
-		}
-	}
-	for _, path := range []string{"prog", "prog.domain", "prog.txt", ""} {
-		if s, ok := ByExt(path); ok {
-			t.Errorf("ByExt(%q) = %s, want no match", path, s.Name)
-		}
 	}
 }
 
@@ -239,17 +213,5 @@ func TestCommandCopiesTheExtras(t *testing.T) {
 	}
 	if _, leaked := again["sneaky.txt"]; leaked {
 		t.Error("Command exposed the table's own extras map")
-	}
-}
-
-// All must likewise not expose the table.
-func TestAllCopies(t *testing.T) {
-	a := All()
-	if len(a) == 0 {
-		t.Fatal("All returned nothing")
-	}
-	a[0].Name = "clobbered"
-	if All()[0].Name == "clobbered" {
-		t.Error("All exposes the underlying table")
 	}
 }

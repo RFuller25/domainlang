@@ -3,8 +3,8 @@
 //
 // It is the single place a program gets run for measurement, shared by every
 // `domain expansion:` command that answers its question by running something
-// more than once — bench, battle, stats, shrink, fuzz, golf. Seven commands
-// with seven private timing loops would be seven subtly different answers to
+// more than once — bench, oracle and mahoraga. Several commands
+// with private timing loops would be subtly different answers to
 // "how long does this program take", which is the one number they all have to
 // agree on.
 //
@@ -26,10 +26,6 @@
 //     work, since noise only ever adds; alternating between configurations
 //     spreads thermal and cache drift across all of them instead of loading it
 //     onto whichever ran last.
-//
-// In-process interpretation is still available, as Interpret, for the callers
-// that want the trace hook rather than a timing (coverage, fuzz). It is not
-// timed, and says so.
 package runner
 
 import (
@@ -49,7 +45,6 @@ import (
 	// linear chain of nodes needs a runner that is not interp.Run, and
 	// without this every game would be walked in source order instead.
 	_ "domain/game"
-	"domain/interp"
 	"domain/ir"
 	"domain/lexer"
 	"domain/optimizer"
@@ -270,26 +265,6 @@ func Race(program string, configs []Config, in Input, opts Options) ([]Result, e
 		}
 	}
 	return results, nil
-}
-
-// Run measures a single configuration.
-func Run(program string, c Config, in Input, opts Options) (Result, error) {
-	rs, err := Race(program, []Config{c}, in, opts)
-	if err != nil {
-		return Result{}, err
-	}
-	return rs[0], nil
-}
-
-// Once executes a configuration exactly one time, keeping the output and
-// skipping the best-of-N loop. This is what shrink and fuzz drive: they run
-// thousands of different inputs once each, and the answer they want is what
-// the program did, not how fast it did it.
-func Once(program string, c Config, in Input, opts Options) (Result, error) {
-	opts.Runs = 1
-	opts.KeepStdout = true
-	opts.Alloc = false
-	return Run(program, c, in, opts)
 }
 
 // ---------------------------------------------------------------------------
@@ -699,45 +674,6 @@ func mirrorDir(src, target, input, reuse string) (string, error) {
 		return "", err
 	}
 	return dir, nil
-}
-
-// ---------------------------------------------------------------------------
-// Interpretation in process, for the callers that want the trace hook
-// ---------------------------------------------------------------------------
-
-// Interpret runs a program in this process with the given context, returning
-// the pipeline it ran. It takes no timing: an in-process run is not comparable
-// with a subprocess one, and reporting a duration from here would invite
-// exactly that comparison.
-//
-// It is what coverage --dynamic and fuzz drive, because both need a hook
-// installed on the Context (a Tracer, a Probe) that a subprocess cannot carry.
-//
-// # One at a time, process-wide
-//
-// The interpreter keeps process-global mutable state — eval.bindings, reset
-// per run by eval.ResetBindings, and ir.currentCtx, saved and restored around
-// every node evaluation in ir.EvalNode. Two interpretations running at once
-// used to corrupt each other, and the symptom was not a clean failure: it
-// surfaced as impossible values deep inside an unrelated primitive, a negative
-// slice bound most often.
-//
-// interp.Run now holds a process-wide mutex for the duration of a run, so
-// concurrent callers serialise rather than race. Correctness, not throughput:
-// a caller that interprets many inputs still gets no parallelism from doing it
-// on several goroutines. Every measured run goes through a subprocess, which is
-// immune by construction, and that remains one of the several reasons the timed
-// path is built that way.
-func Interpret(program string, optimize bool, ctx *ir.Context) (*ir.Pipeline, ir.Value, error) {
-	pipe, err := LoadPipeline(program, optimize)
-	if err != nil {
-		return nil, nil, err
-	}
-	if ctx.BaseDir == "" {
-		ctx.BaseDir = filepath.Dir(program)
-	}
-	v, err := interp.RunScoped(pipe, ctx)
-	return pipe, v, err
 }
 
 // LoadPipelineSchedule runs the front end and optimizes with a chosen pass

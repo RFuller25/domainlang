@@ -422,3 +422,8 @@ func TestASecondLookClearsWhatItReAsked(t *testing.T) {
 		t.Errorf("inconclusive = %d after the second look left one open, want 1", r.Inconclusive)
 	}
 }
+
+// ReporterFunc adapts a function to Reporter.
+type ReporterFunc func(Event)
+
+func (f ReporterFunc) Report(e Event) { f(e) }

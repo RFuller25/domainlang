@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -42,36 +41,11 @@ type devOptions struct {
 func parseDevelopmentArgs(args []string) (string, devOptions, error) {
 	var opts devOptions
 	var path string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--input" || a == "-i":
-			if i+1 >= len(args) {
-				return "", opts, fmt.Errorf("%s needs a file", a)
-			}
-			i++
-			opts.Input = args[i]
-		case strings.HasPrefix(a, "--input="):
-			opts.Input = strings.TrimPrefix(a, "--input=")
-		case a == "--aoc":
-			if i+1 >= len(args) {
-				return "", opts, fmt.Errorf("%s needs a year and a day, like --aoc 2023/7", a)
-			}
-			i++
-			if err := opts.setAoC(args[i]); err != nil {
-				return "", opts, err
-			}
-		case strings.HasPrefix(a, "--aoc="):
-			if err := opts.setAoC(strings.TrimPrefix(a, "--aoc=")); err != nil {
-				return "", opts, err
-			}
-		case strings.HasPrefix(a, "-"):
-			return "", opts, fmt.Errorf("unknown flag %q (development accepts --input and --aoc)", a)
-		case path != "":
-			return "", opts, fmt.Errorf("unexpected extra argument %q", a)
-		default:
-			path = a
-		}
+	f := newFlagSet("unknown flag %q (development accepts --input and --aoc)", onePath(&path, "unexpected extra argument %q"))
+	f.str("-i --input --input=", "%s needs a file", &opts.Input)
+	f.val("--aoc --aoc=", "%s needs a year and a day, like --aoc 2023/7", opts.setAoC)
+	if err := f.parse(args); err != nil {
+		return "", opts, err
 	}
 	return path, opts, nil
 }

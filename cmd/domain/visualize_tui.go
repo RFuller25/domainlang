@@ -1389,12 +1389,7 @@ func foldedChild(n *interp.TraceNode) (laps int, ok bool) {
 }
 
 // plural renders a count with its noun, so a row does not say "1 steps".
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
+var plural = interp.Plural
 
 // highlightStyle picks out rows the filter actually matched, as opposed to the
 // ancestors kept only to show the path to them.

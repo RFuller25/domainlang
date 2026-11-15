@@ -52,7 +52,7 @@ a,b,c
 | `sum(xs)` | `List<N> -> N` (N = Int or Float) | Total; `0` for the empty list. |
 | `min(xs)` | `List<N> -> N` (N = Int or Float) | **Error** on the empty list. |
 | `max(xs)` | `List<N> -> N` (N = Int or Float) | **Error** on the empty list. |
-| `contains(xs, v)` | `List<T> \| Set<T> × T -> Bool` (T keyable) | Membership over a list or a set. Element type must be keyable (Int, Text, or Lists/Tuples/Records of them) — so a set of points, or a list of lists, works. A Graph's nodes stay Int, Text, or Tuples/Records. |
+| `contains(xs, v)` | `List<T> \| Set<T> × T -> Bool` (T keyable) | Membership over a list or a set. Element type must be keyable (Int, Text, or Lists/Tuples/Records of them) — so a set of points, or a list of lists, works. On a Graph it asks about node membership, and a node may be a List too. |
 | `get(m, k)` | `Map<K,V> × K -> V` | Lookup. **Error** if the key is absent. |
 | `at(g, r, c)` | `Grid<T> \| Sparse<T> × Int × Int -> T` | 0-based `(row, col)` cell. Dense: **error** out of bounds. Sparse: total — unset cells read the default. |
 | `inbounds(g, r, c)` | `Grid<T> × Int × Int -> Bool` | Whether `(r, c)` is a legal cell. Pairs with `at` under short-circuit `and`. |

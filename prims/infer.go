@@ -390,35 +390,3 @@ func namesPrimitive(p *Primitive, words []string) bool {
 	}
 	return true
 }
-
-// ReservedNames lists, in sorted order, the names a Shikigami may not take:
-// every primitive ID, every themed keyword, and every expression-layer
-// builtin. Diagnostics use it to explain the rule.
-func ReservedNames() []string { return ReservedNamesIn(nil) }
-
-// ReservedNamesIn is ReservedNames for one scope's vocabulary. A nil
-// vocabulary is the shared one.
-func ReservedNamesIn(vocab []*Primitive) []string {
-	if vocab == nil {
-		vocab = Core
-	}
-	seen := map[string]bool{}
-	var out []string
-	add := func(s string) {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	for _, p := range vocab {
-		add(p.ID)
-	}
-	for _, k := range ast.Keywords {
-		add(k)
-	}
-	for _, b := range typecheck.Builtins {
-		add(b)
-	}
-	slices.Sort(out)
-	return out
-}

@@ -110,18 +110,9 @@ func TestRecordStructInterning(t *testing.T) {
 	abAgain := ir.Record(ir.Field{Name: "a", Type: ir.Int()}, ir.Field{Name: "b", Type: ir.Text()})
 	ba := ir.Record(ir.Field{Name: "b", Type: ir.Text()}, ir.Field{Name: "a", Type: ir.Int()})
 
-	n1, err := g.recordType(ab)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n2, err := g.recordType(abAgain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n3, err := g.recordType(ba)
-	if err != nil {
-		t.Fatal(err)
-	}
+	n1 := g.recordType(ab)
+	n2 := g.recordType(abAgain)
+	n3 := g.recordType(ba)
 	if n1 != n2 {
 		t.Errorf("structurally equal records interned to different structs: %q vs %q", n1, n2)
 	}
@@ -139,18 +130,9 @@ func TestRecordStructInterning(t *testing.T) {
 	}
 
 	// Tuples intern on the same rule.
-	t1, err := g.tupleType(ir.Tuple(ir.Int(), ir.Int()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t2, err := g.tupleType(ir.Tuple(ir.Int(), ir.Int()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t3, err := g.tupleType(ir.Tuple(ir.Int(), ir.Text()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	t1 := g.tupleType(ir.Tuple(ir.Int(), ir.Int()))
+	t2 := g.tupleType(ir.Tuple(ir.Int(), ir.Int()))
+	t3 := g.tupleType(ir.Tuple(ir.Int(), ir.Text()))
 	if t1 != t2 || t1 == t3 {
 		t.Errorf("tuple interning: got %q %q %q, want first two equal and third distinct", t1, t2, t3)
 	}

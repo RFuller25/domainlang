@@ -144,7 +144,7 @@ func TestSparseTypeModel(t *testing.T) {
 	if !st.Equal(Sparse(Int())) || st.Equal(Sparse(Text())) || st.Equal(Grid(Int())) {
 		t.Fatal("Sparse type equality wrong")
 	}
-	if Keyable(st) {
+	if ListKeyable(st) {
 		t.Fatal("Sparse must not be keyable")
 	}
 	if DescribeValue(NewSparseValue(int64(0))) != "Sparse" {

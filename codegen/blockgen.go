@@ -28,28 +28,22 @@ import (
 
 // emitBlockCall compiles a block body to a top-level function (once) and
 // returns a Go expression applying it to arg.
-func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (string, *ir.Type, error) {
+func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (string, *ir.Type) {
 	nodes := bb.Pipe.BlockNodes()
 	if nodes == nil {
-		return "", nil, fmt.Errorf("block body was never resolved")
+		panic(failf("block body was never resolved"))
 	}
 	if argType == nil {
-		return "", nil, fmt.Errorf("block body has no input type")
+		panic(failf("block body has no input type"))
 	}
-	outType, err := bb.Pipe.BindBlock(argType)
-	if err != nil {
-		return "", nil, err
-	}
+	outType := must(bb.Pipe.BindBlock(argType))
 	// The bindings this body writes to travel as pointers rather than values,
 	// so a `:=` inside it lands on the binding itself — which is what the
 	// interpreter's one shared binding stack does. Everything else is still
 	// passed by value, so a body that writes nothing emits the Go it always
 	// emitted.
 	writes := blockUpdates(nodes, g.bindNames)
-	fn, err := g.blockFunc(bb, nodes, argType, outType, writes)
-	if err != nil {
-		return "", nil, err
-	}
+	fn := g.blockFunc(bb, nodes, argType, outType, writes)
 	// Enclosing For loops' variables and the `Consider` bindings in scope are
 	// locals of main, out of scope in a top-level function, so they are passed
 	// in — see blockFunc.
@@ -74,29 +68,23 @@ func (g *gen) emitBlockCall(bb *ast.BlockBody, arg string, argType *ir.Type) (st
 			// A binding with no cell is not a variable this package owns, so
 			// there is nothing to point at. The resolver refuses a write to
 			// every such name, so this is a backstop rather than a path.
-			return "", nil, fmt.Errorf("this Using: is an indented pipeline that updates %q "+
-				"with `:=`, which is not a binding this backend can address", name)
+			panic(failf("this Using: is an indented pipeline that updates %q "+
+				"with `:=`, which is not a binding this backend can address", name))
 		}
 		call += ", " + b.cell
 	}
-	return call + ")", outType, nil
+	return call + ")", outType
 }
 
 // blockFunc emits the function for one block body and returns its name.
 // Memoized per BlockBody, so a body used by a node the compiler visits twice
 // (a fusion that recompiles a lambda, say) is emitted once.
-func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, writes map[string]bool) (string, error) {
+func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, writes map[string]bool) string {
 	if name, ok := g.blocks[bb]; ok {
-		return name, nil
+		return name
 	}
-	inGo, err := g.goType(in)
-	if err != nil {
-		return "", err
-	}
-	outGo, err := g.goType(out)
-	if err != nil {
-		return "", err
-	}
+	inGo := g.goType(in)
+	outGo := g.goType(out)
 	name := g.fresh("dmBlock")
 	param := g.fresh("bv")
 
@@ -114,10 +102,10 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, w
 	rebound := make([]ambientVar, len(g.ambient))
 	for i, a := range savedAmbient {
 		p := g.fresh("ba")
-		ambGo, terr := g.goType(a.typ)
+		ambGo, terr := try1(func() string { return g.goType(a.typ) })
 		if terr != nil {
 			g.main, g.indent, g.ambient = savedMain, savedIndent, savedAmbient
-			return "", terr
+			panic(fail(terr))
 		}
 		sig += fmt.Sprintf(", %s %s", p, ambGo)
 		rebound[i] = ambientVar{v: p, typ: a.typ}
@@ -141,10 +129,10 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, w
 			continue
 		}
 		p := g.fresh("bb")
-		bindGo, terr := g.goType(b.typ)
+		bindGo, terr := try1(func() string { return g.goType(b.typ) })
 		if terr != nil {
 			g.main, g.indent, g.ambient = savedMain, savedIndent, savedAmbient
-			return "", terr
+			panic(fail(terr))
 		}
 		if writes[bname] {
 			sig += fmt.Sprintf(", %s *%s", p, bindGo)
@@ -158,12 +146,12 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, w
 	}
 	g.bindNames = reboundBinds
 
-	cur, err := g.emitSequence(nodes, param)
+	cur, err := try1(func() string { return g.emitSequence(nodes, param) })
 	body := g.main.String()
 
 	g.main, g.indent, g.ambient, g.bindNames = savedMain, savedIndent, savedAmbient, savedBinds
 	if err != nil {
-		return "", err
+		panic(fail(err))
 	}
 
 	var decl bytes.Buffer
@@ -178,7 +166,7 @@ func (g *gen) blockFunc(bb *ast.BlockBody, nodes []*ir.Node, in, out *ir.Type, w
 		g.blocks = map[*ast.BlockBody]string{}
 	}
 	g.blocks[bb] = name
-	return name, nil
+	return name
 }
 
 // blockUpdates is the set of enclosing bindings a block body writes to — the

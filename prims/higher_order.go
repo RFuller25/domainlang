@@ -96,20 +96,10 @@ func requireLambda(args ArgSet, arity int, prim string, pos token.Position) (*as
 	return lam, nil
 }
 
-// requireKeyable checks a type is usable as a Map/Set key: Int, Text, or a
-// Tuple/Record of keyable types (ir.Keyable). Lists stay unkeyable — their
-// compiled representation is a Go slice, which cannot be a map key.
-func requireKeyable(t *ir.Type, prim string, pos token.Position) error {
-	if !ir.Keyable(t) {
-		return &ResolveError{Pos: pos,
-			Msg: fmt.Sprintf("%s needs keyable keys/elements (Int, Text, or Tuples/Records of them), got %s", prim, t)}
-	}
-	return nil
-}
-
-// requireListKeyable is requireKeyable for a primitive that only hashes the
-// value internally (Unique): a List of keyable elements is fine there. See
-// ir.ListKeyable for why a Map key or Set element is not.
+// requireListKeyable checks a type is usable as a transient hash key, for a
+// primitive that only hashes the value internally (Unique): a List of keyable
+// elements is fine there. See ir.ListKeyable for why a Map key or Set element
+// is not.
 func requireListKeyable(t *ir.Type, prim string, pos token.Position) error {
 	if !ir.ListKeyable(t) {
 		return &ResolveError{Pos: pos,

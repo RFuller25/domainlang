@@ -14,19 +14,13 @@ import (
 // with a head index rather than a dmQueue: the search appends every state at
 // most once (that is what the visited set guarantees), so the backing array
 // grows to the number of distinct states and no more.
-func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitExplore(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	stateT, _ := n.Meta["state"].(*ir.Type)
 	if stateT == nil {
 		stateT = n.In
 	}
-	stateGo, err := g.goType(stateT)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	stateGo := asUnsupported1(n, "", func() string { return g.goType(stateT) })
 	mode, _ := n.Meta["mode"].(string)
 	// The weighted modes settle states in cost order and Tally folds the DAG
 	// rather than walking it; neither is the plain queue below.
@@ -38,10 +32,9 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	}
 
 	cur := g.fresh("s")
-	succ, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: stateT}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	succ, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: stateT}})
+	})
 
 	seen, order, q, head, depth := g.fresh("seen"), g.fresh("order"), g.fresh("q"), g.fresh("head"), g.fresh("depth")
 	steps, dist := g.fresh("steps"), g.fresh("dist")
@@ -56,10 +49,7 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	hasUntilNode := untilLam != nil
 	needOrder := mode != "Count" && mode != "Steps" && mode != "Distances"
 	needDepth := mode == "Distances" || hasUntilNode
-	hk, keyGo, err := g.exploreKeys(stateT, stateGo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	hk, keyGo := asUnsupported2(n, "", func() (func(string) string, string) { return g.exploreKeys(stateT, stateGo) })
 	g.wl("%s := map[%s]bool{%s: true}", seen, keyGo, hk(in))
 	if needOrder {
 		g.wl("%s := []%s{%s}", order, stateGo, in)
@@ -76,20 +66,14 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	g.wl("_ = %s", steps)
 	needDist := mode == "Distances"
 	if needDist {
-		de, err := g.newMapExpr(stateT, stateGo, "int64", "")
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		de := asUnsupported1(n, "", func() string { return g.newMapExpr(stateT, stateGo, "int64", "") })
 		g.wl("%s := %s", dist, de)
 		g.wl("%s.put(%s, 0)", dist, in)
 	}
 
 	// The seed can satisfy Until: on its own, in which case the answer is zero
 	// steps and nothing is ever expanded.
-	hasUntil, seedHit, err := g.exploreUntil(n, in, stateT)
-	if err != nil {
-		return "", err
-	}
+	hasUntil, seedHit := g.exploreUntil(n, in, stateT)
 	done := g.fresh("done")
 	g.wl("%s := false", done)
 	if hasUntil {
@@ -122,10 +106,7 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 		g.wl("%s.put(%s, %s+1)", dist, nxt, d)
 	}
 	if hasUntil {
-		_, hit, err := g.exploreUntil(n, nxt, stateT)
-		if err != nil {
-			return "", err
-		}
+		_, hit := g.exploreUntil(n, nxt, stateT)
 		g.wl("if %s {", hit)
 		g.in()
 		// Until: prunes — the satisfying state is recorded but never expanded.
@@ -152,44 +133,40 @@ func (g *gen) emitExplore(n *ir.Node, in string) (string, error) {
 	case "Count":
 		v := g.fresh("v")
 		g.wl("%s := int64(len(%s))", v, seen)
-		return v, nil
+		return v
 	case "Steps":
-		return steps, nil
+		return steps
 	case "Distances":
-		return dist, nil
+		return dist
 	}
-	return order, nil
+	return order
 }
 
 // exploreKeys returns how the search keys its state-keyed maps: hk wraps a Go
 // expression of the state type into the map key (the state itself when Go can
 // compare it, its injective byte encoding when it holds a List), and keyGo is
 // that key's Go type.
-func (g *gen) exploreKeys(stateT *ir.Type, stateGo string) (hk func(string) string, keyGo string, err error) {
-	_, keyGo, err = g.hashKey(stateT, "x", stateGo)
-	if err != nil {
-		return nil, "", err
-	}
+func (g *gen) exploreKeys(stateT *ir.Type, stateGo string) (hk func(string) string, keyGo string) {
+	_, keyGo = g.hashKey(stateT, "x", stateGo)
 	hk = func(v string) string {
-		k, _, _ := g.hashKey(stateT, v, stateGo)
+		k, _, _ := try2(func() (string, string) { return g.hashKey(stateT, v, stateGo) })
 		return k
 	}
-	return hk, keyGo, nil
+	return hk, keyGo
 }
 
 // exploreUntil compiles the Until: predicate against the given state
 // expression. It returns ok=false when the node has no Until:.
-func (g *gen) exploreUntil(n *ir.Node, state string, stateT *ir.Type) (bool, string, error) {
+func (g *gen) exploreUntil(n *ir.Node, state string, stateT *ir.Type) (bool, string) {
 	lam, ok := n.Meta["until"].(*ast.Lambda)
 	if !ok || lam == nil {
-		return false, "", nil
+		return false, ""
 	}
 	g.bindAmbientParams(lam)
-	expr, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: state, typ: stateT}})
-	if err != nil {
-		return false, "", unsupported(n, "Until: %v", err)
-	}
-	return true, expr, nil
+	expr, _ := asUnsupported2(n, "Until: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: state, typ: stateT}})
+	})
+	return true, expr
 }
 
 // emitExploreCheapest lowers Mode: Cheapest and Mode: Costs — Dijkstra over
@@ -200,22 +177,18 @@ func (g *gen) exploreUntil(n *ir.Node, state string, stateT *ir.Type) (bool, str
 // non-negative, and why the heap needs the same insertion-order tiebreak
 // ir.PQ has — Mode: Costs renders its Map in settle order.
 func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
-	stateT *ir.Type, stateGo, mode string) (string, error) {
+	stateT *ir.Type, stateGo, mode string) string {
 
 	cur := g.fresh("s")
-	succ, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: stateT}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	succ, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: stateT}})
+	})
 	settled, best, q := g.fresh("settled"), g.fresh("best"), g.fresh("q")
 	costs, out, c := g.fresh("costs"), g.fresh("v"), g.fresh("c")
 	nxt, w, nc, prev, ok := g.fresh("nx"), g.fresh("w"), g.fresh("nc"), g.fresh("prev"), g.fresh("ok")
 	done := g.fresh("done")
 
-	hk, keyGo, err := g.exploreKeys(stateT, stateGo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	hk, keyGo := asUnsupported2(n, "", func() (func(string) string, string) { return g.exploreKeys(stateT, stateGo) })
 	g.helper("dmPQ", declPQ)
 	g.wl("%s := map[%s]bool{}", settled, keyGo)
 	g.wl("%s := map[%s]int64{%s: 0}", best, keyGo, hk(in))
@@ -227,10 +200,7 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 		g.wl("%s := int64(-1)", out)
 	}
 	if needCosts {
-		ce, err := g.newMapExpr(stateT, stateGo, "int64", "")
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		ce := asUnsupported1(n, "", func() string { return g.newMapExpr(stateT, stateGo, "int64", "") })
 		g.wl("%s := %s", costs, ce)
 	}
 	g.wl("%s := false", done)
@@ -243,10 +213,7 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 	if needCosts {
 		g.wl("%s.put(%s, %s)", costs, cur, c)
 	}
-	hasUntil, hit, err := g.exploreUntil(n, cur, stateT)
-	if err != nil {
-		return "", err
-	}
+	hasUntil, hit := g.exploreUntil(n, cur, stateT)
 	if hasUntil {
 		g.wl("if %s {", hit)
 		g.in()
@@ -264,10 +231,7 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 	g.wl("for _, %s := range %s {", nxt, succ)
 	g.in()
 	g.wl("if %s[%s] { continue }", settled, hk(nxt))
-	cost, err := g.exploreCost(n, cur, nxt, stateT)
-	if err != nil {
-		return "", err
-	}
+	cost := g.exploreCost(n, cur, nxt, stateT)
 	// Declared rather than inferred: a Cost: of `1` compiles to an untyped Go
 	// literal, which := would make an int.
 	g.wl("var %s int64 = %s", w, cost)
@@ -286,18 +250,18 @@ func (g *gen) emitExploreCheapest(n *ir.Node, in string, lam *ast.Lambda,
 	g.out()
 	g.wl("}")
 	if needCosts {
-		return costs, nil
+		return costs
 	}
-	return out, nil
+	return out
 }
 
 // exploreCost compiles the Cost: lambda against the edge being relaxed. The
 // 1-parameter form is the cost of entering `to`; the 2-parameter form is the
 // cost of the edge, so it binds `from` as well.
-func (g *gen) exploreCost(n *ir.Node, from, to string, stateT *ir.Type) (string, error) {
+func (g *gen) exploreCost(n *ir.Node, from, to string, stateT *ir.Type) string {
 	lam, _ := n.Meta["cost"].(*ast.Lambda)
 	if lam == nil {
-		return "", unsupported(n, "a weighted Explore has no Cost: lambda")
+		panic(unsupported(n, "a weighted Explore has no Cost: lambda"))
 	}
 	arity, _ := n.Meta["costArity"].(int)
 	g.bindAmbientParams(lam)
@@ -308,11 +272,8 @@ func (g *gen) exploreCost(n *ir.Node, from, to string, stateT *ir.Type) (string,
 			lam.Params[1]: {expr: to, typ: stateT},
 		}
 	}
-	expr, _, err := g.compileExpr(lam.Body, env)
-	if err != nil {
-		return "", unsupported(n, "Cost: %v", err)
-	}
-	return expr, nil
+	expr, _ := asUnsupported2(n, "Cost: ", func() (string, *ir.Type) { return g.compileExpr(lam.Body, env) })
+	return expr
 }
 
 // emitExploreTally lowers Mode: Tally — a memoized post-order fold over the
@@ -322,51 +283,39 @@ func (g *gen) exploreCost(n *ir.Node, from, to string, stateT *ir.Type) (string,
 // the interpreter's is: a deep DAG should be bounded by the heap, not by how
 // much stack a goroutine will grow to.
 func (g *gen) emitExploreTally(n *ir.Node, in string, lam *ast.Lambda,
-	stateT *ir.Type, stateGo string) (string, error) {
+	stateT *ir.Type, stateGo string) string {
 
 	valueLam, _ := n.Meta["value"].(*ast.Lambda)
 	combineLam, _ := n.Meta["combine"].(*ast.Lambda)
 	if valueLam == nil || combineLam == nil {
-		return "", unsupported(n, "Mode: Tally has no Value:/Combine: lambda")
+		panic(unsupported(n, "Mode: Tally has no Value:/Combine: lambda"))
 	}
-	valGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	valGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
 	cur := g.fresh("s")
-	succ, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: stateT}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	succ, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: stateT}})
+	})
 	g.bindAmbientParams(valueLam)
-	valExpr, _, err := g.compileExpr(valueLam.Body, exprEnv{valueLam.Params[0]: {expr: cur, typ: stateT}})
-	if err != nil {
-		return "", unsupported(n, "Value: %v", err)
-	}
+	valExpr, _ := asUnsupported2(n, "Value: ", func() (string, *ir.Type) {
+		return g.compileExpr(valueLam.Body, exprEnv{valueLam.Params[0]: {expr: cur, typ: stateT}})
+	})
 	acc, other := g.fresh("acc"), g.fresh("b")
 	g.bindAmbientParams(combineLam)
-	combExpr, _, err := g.compileExpr(combineLam.Body, exprEnv{
-		combineLam.Params[0]: {expr: acc, typ: n.Out},
-		combineLam.Params[1]: {expr: other, typ: n.Out},
+	combExpr, _ := asUnsupported2(n, "Combine: ", func() (string, *ir.Type) {
+		return g.compileExpr(combineLam.Body, exprEnv{
+			combineLam.Params[0]: {expr: acc, typ: n.Out},
+			combineLam.Params[1]: {expr: other, typ: n.Out},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "Combine: %v", err)
-	}
 
 	frame, memo, kids, onStack := g.fresh("frame"), g.fresh("memo"), g.fresh("kids"), g.fresh("onStack")
 	stack, f, ok, i, k := g.fresh("stack"), g.fresh("f"), g.fresh("ok"), g.fresh("i"), g.fresh("ks")
 	g.helper("dmFail", declFail, "fmt", "os")
 	// The cycle message names the state, like Topological Sort's names the
 	// blocked node — "there is a cycle" alone leaves it to be found by hand.
-	stateFmt, err := g.scalarFmt(cur, stateT)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	stateFmt := asUnsupported1(n, "", func() string { return g.scalarFmt(cur, stateT) })
 	g.wl("type %s struct { v %s; expanded bool }", frame, stateGo)
-	hk, keyGo, err := g.exploreKeys(stateT, stateGo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	hk, keyGo := asUnsupported2(n, "", func() (func(string) string, string) { return g.exploreKeys(stateT, stateGo) })
 	g.wl("%s := map[%s]%s{}", memo, keyGo, valGo)
 	g.wl("%s := map[%s][]%s{}", kids, keyGo, stateGo)
 	g.wl("%s := map[%s]bool{}", onStack, keyGo)
@@ -388,10 +337,7 @@ func (g *gen) emitExploreTally(n *ir.Node, in string, lam *ast.Lambda,
 	g.wl("%s[len(%s)-1].expanded = true", stack, stack)
 	// Until: marks a leaf: a satisfying state is never expanded, so it
 	// contributes its Value: and stops.
-	hasUntil, hit, err := g.exploreUntil(n, cur, stateT)
-	if err != nil {
-		return "", err
-	}
+	hasUntil, hit := g.exploreUntil(n, cur, stateT)
 	g.wl("var %s []%s", k, stateGo)
 	if hasUntil {
 		g.wl("if !(%s) { %s = %s }", hit, k, succ)
@@ -429,5 +375,5 @@ func (g *gen) emitExploreTally(n *ir.Node, in string, lam *ast.Lambda,
 	g.wl("}")
 	v := g.fresh("v")
 	g.wl("%s := %s[%s]", v, memo, hk(in))
-	return v, nil
+	return v
 }

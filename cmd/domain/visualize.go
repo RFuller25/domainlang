@@ -44,79 +44,47 @@ type visualizeOptions struct {
 func parseVisualizeArgs(args []string) (string, visualizeOptions, error) {
 	opts := visualizeOptions{Optimize: true}
 	var path string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--plain":
-			opts.Plain = true
-		case a == "--json":
-			opts.JSON = true
-		case a == "--expand-loops":
-			opts.Expand = true
-		case a == "--go":
-			opts.Go = true
-		case a == "--expressions" || a == "--exprs":
-			opts.Exprs = true
-		case a == "--watch" || a == "-w":
-			opts.Watch = true
-		case a == "--no-optimize":
-			opts.Optimize = false
-		case a == "--input" || a == "-i":
-			if i+1 >= len(args) {
-				return "", opts, fmt.Errorf("%s needs a file", a)
-			}
-			i++
-			opts.Input = args[i]
-		case strings.HasPrefix(a, "--input="):
-			opts.Input = strings.TrimPrefix(a, "--input=")
-		case a == "--input-text":
-			if i+1 >= len(args) {
-				return "", opts, fmt.Errorf("--input-text needs some text")
-			}
-			i++
-			opts.InputText = args[i]
-		case strings.HasPrefix(a, "--input-text="):
-			opts.InputText = strings.TrimPrefix(a, "--input-text=")
-		case a == "--max-steps":
-			if i+1 >= len(args) {
-				return "", opts, fmt.Errorf("--max-steps needs a number")
-			}
-			i++
-			n, err := parseMaxSteps(args[i])
-			if err != nil {
-				return "", opts, err
-			}
-			opts.MaxSteps = n
-		case strings.HasPrefix(a, "--max-steps="):
-			n, err := parseMaxSteps(strings.TrimPrefix(a, "--max-steps="))
-			if err != nil {
-				return "", opts, err
-			}
-			opts.MaxSteps = n
-		case a == "--depth":
-			if i+1 >= len(args) {
-				return "", opts, fmt.Errorf("--depth needs a number")
-			}
-			i++
-			n, err := strconv.Atoi(args[i])
-			if err != nil || n <= 0 {
-				return "", opts, fmt.Errorf("--depth needs a positive number, got %q", args[i])
-			}
-			opts.Depth = n
-		case strings.HasPrefix(a, "--depth="):
-			n, err := strconv.Atoi(strings.TrimPrefix(a, "--depth="))
-			if err != nil || n <= 0 {
-				return "", opts, fmt.Errorf("--depth needs a positive number")
-			}
-			opts.Depth = n
-		case strings.HasPrefix(a, "-"):
-			return "", opts, fmt.Errorf("unknown flag %q for visualize", a)
-		default:
-			if path != "" {
-				return "", opts, fmt.Errorf("visualize takes one program file")
-			}
-			path = a
+	f := newFlagSet("unknown flag %q for visualize", func(a string) error {
+		if path != "" {
+			return fmt.Errorf("visualize takes one program file")
 		}
+		path = a
+		return nil
+	})
+	f.bool("--plain", &opts.Plain, true)
+	f.bool("--json", &opts.JSON, true)
+	f.bool("--expand-loops", &opts.Expand, true)
+	f.bool("--go", &opts.Go, true)
+	f.bool("--expressions --exprs", &opts.Exprs, true)
+	f.bool("-w --watch", &opts.Watch, true)
+	f.bool("--no-optimize", &opts.Optimize, false)
+	f.str("-i --input --input=", "%s needs a file", &opts.Input)
+	f.str("--input-text --input-text=", "%s needs some text", &opts.InputText)
+	f.val("--max-steps --max-steps=", "%s needs a number", func(s string) error {
+		n, err := parseMaxSteps(s)
+		if err == nil {
+			opts.MaxSteps = n
+		}
+		return err
+	})
+	// --depth says what it got only when the value came as a separate argument.
+	depth := func(got bool) func(string) error {
+		return func(s string) error {
+			n, err := strconv.Atoi(s)
+			if err != nil || n <= 0 {
+				if got {
+					return fmt.Errorf("--depth needs a positive number, got %q", s)
+				}
+				return fmt.Errorf("--depth needs a positive number")
+			}
+			opts.Depth = n
+			return nil
+		}
+	}
+	f.val("--depth", "%s needs a number", depth(true))
+	f.val("--depth=", "", depth(false))
+	if err := f.parse(args); err != nil {
+		return "", opts, err
 	}
 	if path == "" {
 		return "", opts, fmt.Errorf("visualize needs a program file")

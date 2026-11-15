@@ -18,49 +18,40 @@ import (
 
 // cmpExpr returns a Go int expression over two values of type t: negative,
 // zero or positive, exactly as ir.Compare answers.
-func (g *gen) cmpExpr(a, b string, t *ir.Type) (string, error) {
+func (g *gen) cmpExpr(a, b string, t *ir.Type) string {
 	if t != nil && t.Kind == ir.KTuple {
-		fn, err := g.cmpFunc(t)
-		if err != nil {
-			return "", err
-		}
-		return fn + "(" + a + ", " + b + ")", nil
+		fn := g.cmpFunc(t)
+		return fn + "(" + a + ", " + b + ")"
 	}
 	if !ir.Ordered(t) {
-		return "", fmt.Errorf("no ordering for type %s", t)
+		panic(failf("no ordering for type %s", t))
 	}
 	g.helper("dmCmp", declCmp)
-	return "dmCmp(" + a + ", " + b + ")", nil
+	return "dmCmp(" + a + ", " + b + ")"
 }
 
 // cmpFunc interns a lexicographic comparison for a tuple type: the first
 // differing element decides, and equal elements fall through to the next.
 // Static types make both sides the same arity, so there is no length case.
-func (g *gen) cmpFunc(t *ir.Type) (string, error) {
+func (g *gen) cmpFunc(t *ir.Type) string {
 	key := canonicalKey(t)
 	if name, ok := g.cmpFns[key]; ok {
-		return name, nil
+		return name
 	}
 	name := fmt.Sprintf("dmCmp%d", len(g.cmpFns)+1)
 	g.cmpFns[key] = name
 
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+	goT := g.goType(t)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "func %s(a, b %s) int {\n", name, goT)
 	for i, et := range t.Elems {
 		f := tupleField(i)
-		ce, err := g.cmpExpr("a."+f, "b."+f, et)
-		if err != nil {
-			return "", err
-		}
+		ce := g.cmpExpr("a."+f, "b."+f, et)
 		fmt.Fprintf(&sb, "\tif c := %s; c != 0 {\n\t\treturn c\n\t}\n", ce)
 	}
 	sb.WriteString("\treturn 0\n}")
 	g.decls = append(g.decls, sb.String())
-	return name, nil
+	return name
 }
 
 // declCmp is the scalar three-way compare. It is written as two tests rather

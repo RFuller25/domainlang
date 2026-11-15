@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"domain/ast"
 	"fmt"
 	"regexp"
 	"strings"
@@ -24,7 +25,7 @@ import (
 //	    parse each line, count inline (no []string, no []Record)
 //	Match Pattern(Each) + Count Matching               -> range the []string,
 //	    parse + count inline (no []Record)
-func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
+func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool) {
 	// Every rule below keys on nodes[0]'s separator, and reads it with a type
 	// assertion whose zero value — the empty string — is a *meaningful*
 	// separator here: three of the rules fire on `sep == ""` (the
@@ -33,7 +34,7 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// merely fail to fire. Same rule as the optimizer's hasMeasuredArg: a pass
 	// that folds a literal stands down when there is none.
 	if len(nodes) > 0 && hasMeasured(nodes[0], "sep") {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	// Every rule below also reads nodes[0]'s input as a slice and types its
 	// lambda from `.In.Elem`. A sequence primitive over a Set or a Map is
@@ -45,15 +46,15 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// into a Sum By first. The per-node path handles these.
 	if len(nodes) > 0 && nodes[0].In != nil && seqConsumers[nodes[0].Prim] &&
 		(nodes[0].In.Kind == ir.KSet || nodes[0].In.Kind == ir.KMap) {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	// Mode: Try and Mode: Scan are deliberately not fusible: every fused path
 	// below assumes each line parses to exactly one value and calls dmFail when
 	// one does not, which is the whole behaviour those two modes exist to
 	// replace. Standing the fusion down leaves the ordinary per-node path,
 	// which honours them.
-	if consumed, out, ok, err := g.fuseSparseFilter(nodes, in); err != nil || ok {
-		return consumed, out, ok, err
+	if consumed, out, ok := g.fuseSparseFilter(nodes, in); ok {
+		return consumed, out, ok
 	}
 	matchEach := func(n *ir.Node) bool {
 		if n.Prim != "Match Pattern" {
@@ -73,19 +74,13 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	}
 	if len(nodes) >= 3 && nodes[0].Prim == "Split" && matchEach(nodes[1]) && nodes[2].Prim == "Count Matching" {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep != "" {
-			out, err := g.emitParseCount(sep, nodes[1], nodes[2], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 3, out, true, nil
+			out := g.emitParseCount(sep, nodes[1], nodes[2], in)
+			return 3, out, true
 		}
 	}
 	if len(nodes) >= 2 && matchEach(nodes[0]) && nodes[1].Prim == "Count Matching" {
-		out, err := g.emitParseCount("", nodes[0], nodes[1], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 2, out, true, nil
+		out := g.emitParseCount("", nodes[0], nodes[1], in)
+		return 2, out, true
 	}
 	// Split(single-byte sep) + Convert To Integers + Enumerate + Map Each(scalar)
 	// + Sum: parse each int, form its (index, value) tuple, and accumulate in one
@@ -96,11 +91,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 		nodes[3].Out != nil && nodes[3].Out.Elem != nil &&
 		(nodes[3].Out.Elem.Kind == ir.KInt || nodes[3].Out.Elem.Kind == ir.KFloat) {
 		if sep, _ := nodes[0].Meta["sep"].(string); len(sep) == 1 {
-			out, err := g.emitSplitIntsEnumerateMapSum(sep[0], nodes[2], nodes[3], nodes[4], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 5, out, true, nil
+			out := g.emitSplitIntsEnumerateMapSum(sep[0], nodes[2], nodes[3], nodes[4], in)
+			return 5, out, true
 		}
 	}
 	// Split(single-byte sep) + Convert To Integers + HashSetPairScan(Count):
@@ -113,11 +105,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 		mode, _ := nodes[2].Meta["mode"].(string)
 		sep, _ := nodes[0].Meta["sep"].(string)
 		if mode == "Count" && len(sep) == 1 {
-			out, err := g.emitSplitIntsPairCount(sep[0], nodes[2], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 3, out, true, nil
+			out := g.emitSplitIntsPairCount(sep[0], nodes[2], in)
+			return 3, out, true
 		}
 	}
 	// Split(single-byte sep) + Convert To Integers + Fold(int seed): fold each
@@ -127,11 +116,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 		sep, _ := nodes[0].Meta["sep"].(string)
 		_, intSeed := nodes[2].Meta["seed"].(int64)
 		if len(sep) == 1 && intSeed && !hasMeasured(nodes[2], "seed") {
-			out, err := g.emitSplitIntsFold(sep[0], nodes[2], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 3, out, true, nil
+			out := g.emitSplitIntsFold(sep[0], nodes[2], in)
+			return 3, out, true
 		}
 	}
 	// Split(single-byte sep) + Convert To Integers (flat): scan the string for
@@ -144,7 +130,7 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 		// as the loop reaches it and the []int64 is never built either.
 		if sep, _ := nodes[0].Meta["sep"].(string); len(sep) == 1 && !streamsParseIntoSink(nodes, in) {
 			out := g.emitSplitInts(sep[0], in)
-			return 2, out, true, nil
+			return 2, out, true
 		}
 	}
 	// Split Fields + Convert To Integers + Union + Count: count distinct integers
@@ -160,12 +146,12 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 5 && nodes[0].Prim == "Split" && unionCount(nodes[1], nodes[2], nodes[3], nodes[4]) {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep != "" {
 			out := g.emitFieldsUnionCount(sep, in)
-			return 5, out, true, nil
+			return 5, out, true
 		}
 	}
 	if len(nodes) >= 4 && unionCount(nodes[0], nodes[1], nodes[2], nodes[3]) {
 		out := g.emitFieldsUnionCount("", in)
-		return 4, out, true, nil
+		return 4, out, true
 	}
 	// Split Fields + Convert To Integers + (Max By | Min By): stream a keyed
 	// extremum through one reused per-line buffer, copying only the current
@@ -178,19 +164,13 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	}
 	if len(nodes) >= 4 && nodes[0].Prim == "Split" && keyedExt(nodes[1], nodes[2], nodes[3]) {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep != "" {
-			out, err := g.emitFieldsKeyedExtremum(sep, nodes[3], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 4, out, true, nil
+			out := g.emitFieldsKeyedExtremum(sep, nodes[3], in)
+			return 4, out, true
 		}
 	}
 	if len(nodes) >= 3 && keyedExt(nodes[0], nodes[1], nodes[2]) {
-		out, err := g.emitFieldsKeyedExtremum("", nodes[2], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 3, out, true, nil
+		out := g.emitFieldsKeyedExtremum("", nodes[2], in)
+		return 3, out, true
 	}
 	// Split Fields + Convert To Integers + Map Each(->scalar) + Sum: stream the
 	// whole chain through one reused per-line buffer, accumulating the lambda's
@@ -207,19 +187,13 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// walk lines in the raw string, so the []string of lines is skipped too.
 	if len(nodes) >= 5 && nodes[0].Prim == "Split" && fieldsMapSumScalar(nodes[1], nodes[2], nodes[3], nodes[4]) {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep != "" {
-			out, err := g.emitFieldsMapSum(sep, nodes[3], nodes[4], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 5, out, true, nil
+			out := g.emitFieldsMapSum(sep, nodes[3], nodes[4], in)
+			return 5, out, true
 		}
 	}
 	if len(nodes) >= 4 && fieldsMapSumScalar(nodes[0], nodes[1], nodes[2], nodes[3]) {
-		out, err := g.emitFieldsMapSum("", nodes[2], nodes[3], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 4, out, true, nil
+		out := g.emitFieldsMapSum("", nodes[2], nodes[3], in)
+		return 4, out, true
 	}
 	// Split Fields + Convert To Integers: parse each line's whitespace-separated
 	// integers directly, skipping the intermediate [][]string. Falls back per
@@ -227,7 +201,7 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 2 && nodes[0].Prim == "Split Fields" && nodes[1].Prim == "Convert To Integers" &&
 		nodes[0].In != nil && nodes[0].In.Kind == ir.KList {
 		out := g.emitFieldsInts(in)
-		return 2, out, true, nil
+		return 2, out, true
 	}
 	// Split Each("") + Convert To Integers + Convert To Grid: a digit grid fed
 	// straight into a dmGrid[int64]. Fill the flat cell slice byte-by-byte from
@@ -238,7 +212,7 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep == "" &&
 			nodes[2].Out != nil && nodes[2].Out.Kind == ir.KGrid {
 			out := g.emitDigitGridToGrid(in)
-			return 3, out, true, nil
+			return 3, out, true
 		}
 	}
 	// Split Each("") + Intersect: the character-set intersection over lines.
@@ -250,7 +224,7 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 2 && nodes[0].Prim == "Split Each" && nodes[1].Prim == "Intersect" {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep == "" {
 			out := g.emitSplitEachIntersect(in)
-			return 2, out, true, nil
+			return 2, out, true
 		}
 	}
 	// Split Each("") + Convert To Integers: a digit grid. Build [][]int64
@@ -263,7 +237,7 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 			nodes[1].In != nil && nodes[1].In.Kind == ir.KList &&
 			nodes[1].In.Elem != nil && nodes[1].In.Elem.Kind == ir.KList {
 			out := g.emitDigitGrid(in)
-			return 2, out, true, nil
+			return 2, out, true
 		}
 	}
 	// Partition + Take Item 0/1 with a literal index: collect only the half
@@ -271,11 +245,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 2 && nodes[0].Prim == "Partition" && nodes[1].Prim == "Take Item" &&
 		!hasMeasured(nodes[0], "sep") && !hasMeasured(nodes[1], "index") {
 		if idx, ok := nodes[1].Meta["index"].(int); ok && (idx == 0 || idx == 1) {
-			out, err := g.emitPartitionHalf(nodes[0], in, idx == 0)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 2, out, true, nil
+			out := g.emitPartitionHalf(nodes[0], in, idx == 0)
+			return 2, out, true
 		}
 	}
 	// Pairs + Count Matching: each pair is tupled, tested and dropped, so the
@@ -283,8 +254,9 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// no effect of its own, and the predicate sees the pairs in the same order,
 	// so a pure predicate fails, if it fails, on the same pair.
 	if len(nodes) >= 2 && nodes[0].Prim == "Pairs" && nodes[1].Prim == "Count Matching" {
-		if out, ok, err := g.emitPairsCount(nodes[0], nodes[1], in); err != nil || ok {
-			return 2, out, ok, err
+		if out, ok, err := try2(func() (string, bool) { return g.emitPairsCount(nodes[0], nodes[1], in) }); err != nil || ok {
+			check(err)
+			return 2, out, ok
 		}
 	}
 	// Split(sep) + Split Each(sep) + Convert To Integers over rows, and the
@@ -306,13 +278,13 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 3 && nodes[0].Prim == "Split" && nodes[1].Prim == "Split Each" && nestedInts(nodes[2]) {
 		if lsep, ok := rowSep(nodes[0]); ok {
 			if fsep, ok := rowSep(nodes[1]); ok {
-				return 3, g.emitSplitRowsInts(in, lsep, fsep), true, nil
+				return 3, g.emitSplitRowsInts(in, lsep, fsep), true
 			}
 		}
 	}
 	if len(nodes) >= 2 && nodes[0].Prim == "Split Each" && nestedInts(nodes[1]) {
 		if fsep, ok := rowSep(nodes[0]); ok {
-			return 2, g.emitFieldRowsInts(in, fsep), true, nil
+			return 2, g.emitFieldRowsInts(in, fsep), true
 		}
 	}
 	// Map Each(list literal) + Flatten + Count By: stream each input element's
@@ -323,13 +295,10 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// the resulting map — keys and values — is identical.
 	if len(nodes) >= 3 && nodes[0].Prim == "Map Each" && nodes[1].Prim == "Flatten" &&
 		nodes[2].Prim == "Count By" {
-		if lam, err := g.nodeLambda(nodes[0]); err == nil {
+		if lam, err := try1(func() *ast.Lambda { return g.nodeLambda(nodes[0]) }); err == nil {
 			if inner, iname := callName(lam.Body); iname == "list" && len(inner.Args) >= 1 {
-				out, err := g.emitFlatMapCountBy(nodes[0], nodes[2], inner.Args, in)
-				if err != nil {
-					return 0, "", false, err
-				}
-				return 3, out, true, nil
+				out := g.emitFlatMapCountBy(nodes[0], nodes[2], inner.Args, in)
+				return 3, out, true
 			}
 		}
 	}
@@ -342,11 +311,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	}
 	if len(nodes) >= 4 && nodes[0].Prim == "Split" && matchEach(nodes[1]) && mapSumScalar(nodes[2], nodes[3]) {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep != "" {
-			out, err := g.emitParseMapSum(sep, nodes[1], nodes[2], nodes[3], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 4, out, true, nil
+			out := g.emitParseMapSum(sep, nodes[1], nodes[2], nodes[3], in)
+			return 4, out, true
 		}
 	}
 	// Match Pattern(Each) + Map Each(scalar) + Sum: parse each line into a
@@ -354,11 +320,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	// array and no mapped list. (The record's fields, e.g. a word hole's name
 	// substring, are never retained.)
 	if len(nodes) >= 3 && matchEach(nodes[0]) && mapSumScalar(nodes[1], nodes[2]) {
-		out, err := g.emitParseMapSum("", nodes[0], nodes[1], nodes[2], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 3, out, true, nil
+		out := g.emitParseMapSum("", nodes[0], nodes[1], nodes[2], in)
+		return 3, out, true
 	}
 	// Enumerate + Map Each(scalar) + Sum: fold the index into the map loop,
 	// constructing each (index, value) tuple locally, so the []tuple is never
@@ -366,11 +329,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 3 && nodes[0].Prim == "Enumerate" && nodes[1].Prim == "Map Each" && nodes[2].Prim == "Sum" &&
 		nodes[1].Out != nil && nodes[1].Out.Elem != nil &&
 		(nodes[1].Out.Elem.Kind == ir.KInt || nodes[1].Out.Elem.Kind == ir.KFloat) {
-		out, err := g.emitEnumerateMapSum(nodes[0], nodes[1], nodes[2], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 3, out, true, nil
+		out := g.emitEnumerateMapSum(nodes[0], nodes[1], nodes[2], in)
+		return 3, out, true
 	}
 	// Split(sep) + Map Each(scalar) + Sum: walk lines in the raw string and
 	// accumulate the lambda's result, skipping the []string of lines.
@@ -378,11 +338,8 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 		nodes[1].Out != nil && nodes[1].Out.Elem != nil &&
 		(nodes[1].Out.Elem.Kind == ir.KInt || nodes[1].Out.Elem.Kind == ir.KFloat) {
 		if sep, _ := nodes[0].Meta["sep"].(string); sep != "" {
-			out, err := g.emitSplitMapSum(sep, nodes[1], nodes[2], in)
-			if err != nil {
-				return 0, "", false, err
-			}
-			return 3, out, true, nil
+			out := g.emitSplitMapSum(sep, nodes[1], nodes[2], in)
+			return 3, out, true
 		}
 	}
 	// Map Each + Sum: accumulate the lambda's result into a scalar rather than
@@ -390,65 +347,46 @@ func (g *gen) tryFuse(nodes []*ir.Node, in string) (int, string, bool, error) {
 	if len(nodes) >= 2 && nodes[0].Prim == "Map Each" && nodes[1].Prim == "Sum" &&
 		nodes[0].Out != nil && nodes[0].Out.Elem != nil &&
 		(nodes[0].Out.Elem.Kind == ir.KInt || nodes[0].Out.Elem.Kind == ir.KFloat) {
-		out, err := g.emitMapSum(nodes[0], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 2, out, true, nil
+		out := g.emitMapSum(nodes[0], in)
+		return 2, out, true
 	}
 	// WindowedReduce + Sum: accumulate each window's extremum into a scalar,
 	// never building the per-window []int64.
 	if len(nodes) >= 2 && nodes[0].Prim == "WindowedReduce" && nodes[1].Prim == "Sum" {
-		out, err := g.emitWindowedReduceSum(nodes[0], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 2, out, true, nil
+		out := g.emitWindowedReduceSum(nodes[0], in)
+		return 2, out, true
 	}
 	// Convert To Grid (from text) + BFS/Connected Components: build the mask
 	// straight from lines, never materializing the string grid.
 	if len(nodes) >= 2 && nodes[0].Prim == "Convert To Grid" && gridSearchFusable(nodes[1]) &&
 		nodes[0].In != nil && nodes[0].In.Kind == ir.KList && nodes[0].In.Elem != nil && nodes[0].In.Elem.Kind == ir.KText {
-		out, err := g.emitGridSearchFromLines(nodes[1], in)
-		if err != nil {
-			return 0, "", false, err
-		}
-		return 2, out, true, nil
+		out := g.emitGridSearchFromLines(nodes[1], in)
+		return 2, out, true
 	}
-	return 0, "", false, nil
+	return 0, "", false
 }
 
 // emitParseCount lowers a fused Match-Each + Count-Matching. When sep != ""
 // the input `in` is the un-split string and the loop walks it exactly as
 // strings.Split(in, sep) would (including a lone empty element for empty
 // input); when sep == "" the input is an already-split []string.
-func (g *gen) emitParseCount(sep string, matchNode, countNode *ir.Node, in string) (string, error) {
+func (g *gen) emitParseCount(sep string, matchNode, countNode *ir.Node, in string) string {
 	tmplStr, _ := matchNode.Meta["template"].(string)
 	tmpl, err := pattern.ParseTemplate(tmplStr)
 	if err != nil {
-		return "", unsupported(matchNode, "template: %v", err)
+		panic(unsupported(matchNode, "template: %v", err))
 	}
 	elemType := tmpl.OutputType()
-	elemGo, err := g.goType(elemType)
-	if err != nil {
-		return "", unsupported(matchNode, "%v", err)
-	}
-	fn, err := g.matchParseFunc(tmpl, elemType, elemGo)
-	if err != nil {
-		return "", unsupported(matchNode, "%v", err)
-	}
+	elemGo := asUnsupported1(matchNode, "", func() string { return g.goType(elemType) })
+	fn := asUnsupported1(matchNode, "", func() string { return g.matchParseFunc(tmpl, elemType, elemGo) })
 	g.helper("dmFail", declFail, "fmt", "os")
 
-	lam, err := g.nodeLambda(countNode)
-	if err != nil {
-		return "", err
-	}
+	lam := g.nodeLambda(countNode)
 	v := g.fresh("v")
 	r, ok := g.fresh("r"), g.fresh("ok")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: r, typ: countNode.In.Elem}})
-	if err != nil {
-		return "", unsupported(countNode, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(countNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: r, typ: countNode.In.Elem}})
+	})
 
 	emitBody := func(line string) {
 		g.wl("%s, %s := %s(%s)", r, ok, fn, line)
@@ -472,7 +410,7 @@ func (g *gen) emitParseCount(sep string, matchNode, countNode *ir.Node, in strin
 		emitBody(s)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 
 	g.imp("strings")
@@ -502,7 +440,7 @@ func (g *gen) emitParseCount(sep string, matchNode, countNode *ir.Node, in strin
 	g.wl("%s = %s[%s+%d:]", s, s, idx, len(sep))
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitParseMapSum lowers Match Pattern(Each) + Map Each(scalar) + Sum. When
@@ -510,36 +448,23 @@ func (g *gen) emitParseCount(sep string, matchNode, countNode *ir.Node, in strin
 // the un-split string and the loop walks it exactly as strings.Split(in, sep)
 // would (including a lone empty element for empty input), so neither the
 // []string, the []Record, nor the mapped list is materialized.
-func (g *gen) emitParseMapSum(sep string, matchNode, mapNode, sumNode *ir.Node, in string) (string, error) {
+func (g *gen) emitParseMapSum(sep string, matchNode, mapNode, sumNode *ir.Node, in string) string {
 	tmplStr, _ := matchNode.Meta["template"].(string)
 	tmpl, err := pattern.ParseTemplate(tmplStr)
 	if err != nil {
-		return "", unsupported(matchNode, "template: %v", err)
+		panic(unsupported(matchNode, "template: %v", err))
 	}
 	elemType := tmpl.OutputType()
-	elemGo, err := g.goType(elemType)
-	if err != nil {
-		return "", unsupported(matchNode, "%v", err)
-	}
-	fn, err := g.matchParseFunc(tmpl, elemType, elemGo)
-	if err != nil {
-		return "", unsupported(matchNode, "%v", err)
-	}
+	elemGo := asUnsupported1(matchNode, "", func() string { return g.goType(elemType) })
+	fn := asUnsupported1(matchNode, "", func() string { return g.matchParseFunc(tmpl, elemType, elemGo) })
 	g.helper("dmFail", declFail, "fmt", "os")
-	lam, err := g.nodeLambda(mapNode)
-	if err != nil {
-		return "", err
-	}
-	acc, err := g.goType(sumNode.Out)
-	if err != nil {
-		return "", unsupported(sumNode, "%v", err)
-	}
+	lam := g.nodeLambda(mapNode)
+	acc := asUnsupported1(sumNode, "", func() string { return g.goType(sumNode.Out) })
 	v := g.fresh("v")
 	r, ok := g.fresh("r"), g.fresh("ok")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: r, typ: mapNode.In.Elem}})
-	if err != nil {
-		return "", unsupported(mapNode, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(mapNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: r, typ: mapNode.In.Elem}})
+	})
 	emitBody := func(line string) {
 		g.wl("%s, %s := %s(%s)", r, ok, fn, line)
 		g.wl("if !%s {", ok)
@@ -558,7 +483,7 @@ func (g *gen) emitParseMapSum(sep string, matchNode, mapNode, sumNode *ir.Node, 
 		emitBody(s)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 
 	g.imp("strings")
@@ -586,10 +511,10 @@ func (g *gen) emitParseMapSum(sep string, matchNode, mapNode, sumNode *ir.Node, 
 	g.wl("%s = %s[%s+%d:]", s, s, idx, len(sep))
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
+func (g *gen) emitMatchPattern(n *ir.Node, in string) string {
 	each, _ := n.Meta["each"].(bool)
 
 	// Case: alternatives carry no single template, so their element type comes
@@ -599,15 +524,9 @@ func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
 		if each {
 			elemType = n.Out.Elem
 		}
-		elemGo, err := g.goType(elemType)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		elemGo := asUnsupported1(n, "", func() string { return g.goType(elemType) })
 		g.helper("dmFail", declFail, "fmt", "os")
-		fn, err := g.matchCaseFunc(cases, elemType, elemGo)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		fn := asUnsupported1(n, "", func() string { return g.matchCaseFunc(cases, elemType, elemGo) })
 		return g.emitMatchOver(n, fn, elemGo, in,
 			fmt.Sprintf("matches none of the %d Case: templates", len(cases)))
 	}
@@ -615,23 +534,17 @@ func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
 	tmplStr, _ := n.Meta["template"].(string)
 	tmpl, err := pattern.ParseTemplate(tmplStr)
 	if err != nil {
-		return "", unsupported(n, "template: %v", err)
+		panic(unsupported(n, "template: %v", err))
 	}
 
 	elemType := tmpl.OutputType()
-	elemGo, err := g.goType(elemType)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(elemType) })
 
 	if scan, _ := n.Meta["scan"].(bool); scan {
 		// Scan concatenates every occurrence from every line, so a line
 		// contributes as many values as it contains rather than exactly one.
 		g.helper("dmFail", declFail, "fmt", "os")
-		fn, err := g.matchScanFunc(tmpl, elemType, elemGo)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		fn := asUnsupported1(n, "", func() string { return g.matchScanFunc(tmpl, elemType, elemGo) })
 		v, s := g.fresh("v"), g.fresh("s")
 		g.wl("%s := []%s{}", v, elemGo)
 		g.wl("for _, %s := range %s {", s, in)
@@ -639,13 +552,10 @@ func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
 		g.wl("%s = append(%s, %s(%s)...)", v, v, fn, s)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 
-	fn, err := g.matchParseFunc(tmpl, elemType, elemGo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	fn := asUnsupported1(n, "", func() string { return g.matchParseFunc(tmpl, elemType, elemGo) })
 	g.helper("dmFail", declFail, "fmt", "os")
 
 	return g.emitMatchOver(n, fn, elemGo, in, "does not match template %q", goStr(tmplStr))
@@ -660,7 +570,7 @@ func (g *gen) emitMatchPattern(n *ir.Node, in string) (string, error) {
 // as an *operand* rather than being pasted into the message, because a
 // template contains quotes and may contain a `%`, either of which turns the
 // generated dmFail call into Go that does not parse.
-func (g *gen) emitMatchOver(n *ir.Node, fn, elemGo, in, what string, extra ...string) (string, error) {
+func (g *gen) emitMatchOver(n *ir.Node, fn, elemGo, in, what string, extra ...string) string {
 	tail := ""
 	for _, e := range extra {
 		tail += ", " + e
@@ -674,7 +584,7 @@ func (g *gen) emitMatchOver(n *ir.Node, fn, elemGo, in, what string, extra ...st
 		g.wl(`dmFail("input %%q %s", %s%s)`, what, in, tail)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 
 	try, _ := n.Meta["try"].(bool)
@@ -698,11 +608,11 @@ func (g *gen) emitMatchOver(n *ir.Node, fn, elemGo, in, what string, extra ...st
 	g.wl("%s = append(%s, %s)", v, v, r)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // matchParseFunc interns the parse function for one template.
-func (g *gen) matchParseFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
+func (g *gen) matchParseFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo string) string {
 	g.parsen++
 	name := fmt.Sprintf("dmParse%d", g.parsen)
 	var src string
@@ -730,14 +640,11 @@ func (g *gen) matchParseFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo s
 		// The regex path declares its own imports as it emits each conversion,
 		// so a hole kind that needs strconv or strings cannot be added to
 		// emitCapture and forgotten here.
-		var err error
-		if src, err = g.genRegexParser(name, tmpl, elemType, elemGo); err != nil {
-			return "", err
-		}
+		src = g.genRegexParser(name, tmpl, elemType, elemGo)
 		g.imp("regexp")
 	}
 	g.decls = append(g.decls, src)
-	return name, nil
+	return name
 }
 
 // isWSByte reports whether b is one of Go regexp's \s bytes ([\t\n\f\r ]);
@@ -932,12 +839,12 @@ func genFastParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemG
 // genRegexParser emits the fallback: a package-level compiled regexp with the
 // exact same lowering the interpreter uses (pattern.Template.CompileRegex),
 // minus group names.
-func (g *gen) genRegexParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
+func (g *gen) genRegexParser(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) string {
 	// The template's own lowering, unnamed. Building a second one here is how
 	// the compiled parse and the interpreted one would drift apart.
 	src := tmpl.RegexSource(false)
 	if _, err := regexp.Compile(src); err != nil {
-		return "", fmt.Errorf("template regex: %v", err)
+		panic(failf("template regex: %v", err))
 	}
 
 	reVar := name + "Re"
@@ -957,11 +864,9 @@ func (g *gen) genRegexParser(name string, tmpl *pattern.Template, elemType *ir.T
 	fmt.Fprintf(&b, "\tm := %s.FindStringSubmatchIndex(s)\n", reVar)
 	b.WriteString("\tif m == nil {\n\t\treturn out, false\n\t}\n")
 
-	if err := g.emitCaptures(&b, tmpl, elemType, "out", "\t", "return out, false"); err != nil {
-		return "", err
-	}
+	g.emitCaptures(&b, tmpl, elemType, "out", "\t", "return out, false")
 	b.WriteString("\treturn out, true\n}")
-	return b.String(), nil
+	return b.String()
 }
 
 // emitCaptures writes the whole per-capture assembly for one match: every hole
@@ -975,7 +880,7 @@ func (g *gen) genRegexParser(name string, tmpl *pattern.Template, elemType *ir.T
 // function reports it to its caller, while the scan function has no caller to
 // report to and stops the program.
 func (g *gen) emitCaptures(b *strings.Builder, tmpl *pattern.Template, elemType *ir.Type,
-	outVar, ind, onFail string) error {
+	outVar, ind, onFail string) {
 	target := func(slot int) string {
 		switch elemType.Kind {
 		case ir.KRecord:
@@ -1005,24 +910,21 @@ func (g *gen) emitCaptures(b *strings.Builder, tmpl *pattern.Template, elemType 
 			inner = ind + "\t"
 		}
 		capExpr := fmt.Sprintf("s[%s:%s]", lo, hi)
-		if err := g.emitCapture(b, inner, target(c.Slot), capExpr, *c.Hole, i, onFail); err != nil {
-			return err
-		}
+		g.emitCapture(b, inner, target(c.Slot), capExpr, *c.Hole, i, onFail)
 		if c.Opt != nil {
 			fmt.Fprintf(b, "%s}\n", ind)
 		}
 	}
-	return nil
 }
 
 // genScanFunc emits `Mode: Scan`'s reader: every occurrence of the template
 // inside a line, in order. The pattern is the template's own lowering with the
 // anchors left off — pattern.Template.ScanSource, from the same walk, rather
 // than this file trimming "^" and "$" off a string and hoping.
-func (g *gen) genScanFunc(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
+func (g *gen) genScanFunc(name string, tmpl *pattern.Template, elemType *ir.Type, elemGo string) string {
 	src := tmpl.ScanSource(false)
 	if _, err := regexp.Compile(src); err != nil {
-		return "", fmt.Errorf("template regex: %v", err)
+		panic(failf("template regex: %v", err))
 	}
 	reVar := name + "Re"
 	var b strings.Builder
@@ -1035,25 +937,20 @@ func (g *gen) genScanFunc(name string, tmpl *pattern.Template, elemType *ir.Type
 	} else {
 		fmt.Fprintf(&b, "\t\tv := make(%s, %d)\n", elemGo, len(tmpl.Holes))
 	}
-	if err := g.emitCaptures(&b, tmpl, elemType, "v", "\t\t",
-		`dmFail("input %q does not match template %q", s, `+goStr(tmpl.Raw)+`)`); err != nil {
-		return "", err
-	}
+	g.emitCaptures(&b, tmpl, elemType, "v", "\t\t",
+		`dmFail("input %q does not match template %q", s, `+goStr(tmpl.Raw)+`)`)
 	b.WriteString("\t\tout = append(out, v)\n\t}\n\treturn out\n}")
-	return b.String(), nil
+	return b.String()
 }
 
 // matchScanFunc interns the scan function for one template.
-func (g *gen) matchScanFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo string) (string, error) {
+func (g *gen) matchScanFunc(tmpl *pattern.Template, elemType *ir.Type, elemGo string) string {
 	g.parsen++
 	name := fmt.Sprintf("dmScan%d", g.parsen)
-	src, err := g.genScanFunc(name, tmpl, elemType, elemGo)
-	if err != nil {
-		return "", err
-	}
+	src := g.genScanFunc(name, tmpl, elemType, elemGo)
 	g.imp("regexp")
 	g.decls = append(g.decls, src)
-	return name, nil
+	return name
 }
 
 // numericHole reports a hole whose capture converts to an Int.
@@ -1065,7 +962,7 @@ func numericHole(h pattern.Hole) bool {
 // emitCapture writes the conversion of one capture into its target: a scalar,
 // the list a repeated hole holds, or the list of values a repeated group holds.
 // It mirrors prims/match.go's convertHole case for case.
-func (g *gen) emitCapture(b *strings.Builder, ind, target, capExpr string, h pattern.Hole, i int, onFail string) error {
+func (g *gen) emitCapture(b *strings.Builder, ind, target, capExpr string, h pattern.Hole, i int, onFail string) {
 	switch {
 	case h.Group != nil:
 		// A repeated group is the scalar repetition one level down: split the
@@ -1073,14 +970,8 @@ func (g *gen) emitCapture(b *strings.Builder, ind, target, capExpr string, h pat
 		// element. Generating that function by recursion is what keeps the two
 		// levels from being two implementations.
 		inner := h.Group.OutputType()
-		innerGo, err := g.goType(inner)
-		if err != nil {
-			return err
-		}
-		fn, err := g.matchParseFunc(h.Group, inner, innerGo)
-		if err != nil {
-			return err
-		}
+		innerGo := g.goType(inner)
+		fn := g.matchParseFunc(h.Group, inner, innerGo)
 		g.imp("strings")
 		pv, jv, ev, ov := fmt.Sprintf("p%d", i), fmt.Sprintf("j%d", i),
 			fmt.Sprintf("e%d", i), fmt.Sprintf("o%d", i)
@@ -1107,7 +998,7 @@ func (g *gen) emitCapture(b *strings.Builder, ind, target, capExpr string, h pat
 			fmt.Fprintf(b, "%s\tif e%d != nil {\n%s\t\tdmFail(\"captured %%q is not a valid integer\", q%d)\n%s\t}\n",
 				ind, i, ind, i, ind)
 			fmt.Fprintf(b, "%s\t%s[j%d] = n%d\n%s}\n", ind, target, i, i, ind)
-			return nil
+			return
 		}
 		fmt.Fprintf(b, "%s%s = %s\n", ind, target, pv)
 
@@ -1123,7 +1014,6 @@ func (g *gen) emitCapture(b *strings.Builder, ind, target, capExpr string, h pat
 	default:
 		fmt.Fprintf(b, "%s%s = %s\n", ind, target, capExpr)
 	}
-	return nil
 }
 
 // matchCaseFunc interns the parse function for a `Case:` stage: one regexp per
@@ -1133,7 +1023,7 @@ func (g *gen) emitCapture(b *strings.Builder, ind, target, capExpr string, h pat
 // The alternatives share a Go function rather than one per case with a
 // dispatcher, because every case produces the *same* type — that is the rule
 // the resolver enforces — so there is exactly one struct to fill.
-func (g *gen) matchCaseFunc(cases [][2]string, elemType *ir.Type, elemGo string) (string, error) {
+func (g *gen) matchCaseFunc(cases [][2]string, elemType *ir.Type, elemGo string) string {
 	g.parsen++
 	name := fmt.Sprintf("dmCase%d", g.parsen)
 
@@ -1145,26 +1035,24 @@ func (g *gen) matchCaseFunc(cases [][2]string, elemType *ir.Type, elemGo string)
 		tag, src := c[0], c[1]
 		tmpl, err := pattern.ParseTemplate(src)
 		if err != nil {
-			return "", fmt.Errorf("case %q: %v", tag, err)
+			panic(failf("case %q: %v", tag, err))
 		}
 		re := tmpl.RegexSource(false)
 		if _, err := regexp.Compile(re); err != nil {
-			return "", fmt.Errorf("case %q regex: %v", tag, err)
+			panic(failf("case %q regex: %v", tag, err))
 		}
 		reVar := fmt.Sprintf("%sRe%d", name, i)
 		fmt.Fprintf(&b, "var %s = regexp.MustCompile(%s)\n\n", reVar, goStr(re))
 		fmt.Fprintf(&body, "\tif m := %s.FindStringSubmatchIndex(s); m != nil {\n", reVar)
 		fmt.Fprintf(&body, "\t\tout.%s = %s\n", fieldName(kindFieldName), goStr(tag))
-		if err := g.emitCaptures(&body, tmpl, elemType, "out", "\t\t", "return out, false"); err != nil {
-			return "", err
-		}
+		g.emitCaptures(&body, tmpl, elemType, "out", "\t\t", "return out, false")
 		body.WriteString("\t\treturn out, true\n\t}\n")
 	}
 	body.WriteString("\treturn out, false\n}")
 	b.WriteString(body.String())
 	g.imp("regexp")
 	g.decls = append(g.decls, b.String())
-	return name, nil
+	return name
 }
 
 // kindFieldName is the field a Case: stage adds, naming which alternative

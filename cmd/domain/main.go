@@ -294,40 +294,18 @@ Examples:
 func parseRunArgs(args []string) (string, Options, error) {
 	opts := Options{Optimize: true, Opinions: true}
 	var path string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch a {
-		case "--quiet":
-			opts.Opinions = false
-		case "--explain":
-			opts.Explain = true
-		case "--no-optimize":
-			opts.Optimize = false
-		case "--release":
-			opts.Release = true
-		case "--stats":
-			opts.Stats = true
-		case "--verbose":
-			opts.Verbose = true
-		case "--trace":
-			opts.Trace = true
-		case "--watch", "-w":
-			opts.Watch = true
-		case "--record":
-			i++
-			if i >= len(args) {
-				return "", opts, fmt.Errorf("--record requires a path")
-			}
-			opts.Record = args[i]
-		default:
-			if strings.HasPrefix(a, "-") {
-				return "", opts, fmt.Errorf("unknown flag %q", a)
-			}
-			if path != "" {
-				return "", opts, fmt.Errorf("unexpected extra argument %q", a)
-			}
-			path = a
-		}
+	f := newFlagSet("", onePath(&path, "unexpected extra argument %q"))
+	f.bool("--quiet", &opts.Opinions, false)
+	f.bool("--explain", &opts.Explain, true)
+	f.bool("--no-optimize", &opts.Optimize, false)
+	f.bool("--release", &opts.Release, true)
+	f.bool("--stats", &opts.Stats, true)
+	f.bool("--verbose", &opts.Verbose, true)
+	f.bool("--trace", &opts.Trace, true)
+	f.bool("-w --watch", &opts.Watch, true)
+	f.str("--record", "%s requires a path", &opts.Record)
+	if err := f.parse(args); err != nil {
+		return "", opts, err
 	}
 	if path == "" {
 		return "", opts, fmt.Errorf("missing <file.domain>")
@@ -356,14 +334,8 @@ func withoutWatchFlag(args []string, path string) []string {
 // always runs the full static front end and nothing else.
 func parseCheckArgs(args []string) (string, error) {
 	var path string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			return "", fmt.Errorf("check takes no flags (got %q)", a)
-		}
-		if path != "" {
-			return "", fmt.Errorf("unexpected extra argument %q", a)
-		}
-		path = a
+	if err := newFlagSet("check takes no flags (got %q)", onePath(&path, "unexpected extra argument %q")).parse(args); err != nil {
+		return "", err
 	}
 	if path == "" {
 		return "", fmt.Errorf("missing <file.domain>")
@@ -385,46 +357,17 @@ func Check(path string, stdout, stderr io.Writer) error {
 func parseBuildArgs(args []string) (string, BuildOptions, error) {
 	opts := BuildOptions{Optimize: true, Opinions: true}
 	var path string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch a {
-		case "--quiet":
-			opts.Opinions = false
-		case "--explain":
-			opts.Explain = true
-		case "--no-optimize":
-			opts.Optimize = false
-		case "--release":
-			opts.Release = true
-		case "--run":
-			opts.Run = true
-		case "-o", "--output":
-			i++
-			if i >= len(args) {
-				return "", opts, fmt.Errorf("%s requires a path", a)
-			}
-			opts.Out = args[i]
-		case "--emit-go":
-			i++
-			if i >= len(args) {
-				return "", opts, fmt.Errorf("--emit-go requires a path")
-			}
-			opts.EmitGo = args[i]
-		case "--recipe":
-			i++
-			if i >= len(args) {
-				return "", opts, fmt.Errorf("--recipe requires a path")
-			}
-			opts.Recipe = args[i]
-		default:
-			if strings.HasPrefix(a, "-") {
-				return "", opts, fmt.Errorf("unknown flag %q", a)
-			}
-			if path != "" {
-				return "", opts, fmt.Errorf("unexpected extra argument %q", a)
-			}
-			path = a
-		}
+	f := newFlagSet("", onePath(&path, "unexpected extra argument %q"))
+	f.bool("--quiet", &opts.Opinions, false)
+	f.bool("--explain", &opts.Explain, true)
+	f.bool("--no-optimize", &opts.Optimize, false)
+	f.bool("--release", &opts.Release, true)
+	f.bool("--run", &opts.Run, true)
+	f.str("-o --output", "%s requires a path", &opts.Out)
+	f.str("--emit-go", "%s requires a path", &opts.EmitGo)
+	f.str("--recipe", "%s requires a path", &opts.Recipe)
+	if err := f.parse(args); err != nil {
+		return "", opts, err
 	}
 	if path == "" {
 		return "", opts, fmt.Errorf("missing <file.domain>")

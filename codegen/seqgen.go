@@ -13,23 +13,14 @@ import (
 // iteration builds only the tuple of elements the consumer reads — or the bare
 // element when there is one — instead of copying the whole window. Size and
 // step are read in Window's order, so a measured one fails the same way.
-func (g *gen) emitWindowPositions(n *ir.Node, in string) (string, error) {
+func (g *gen) emitWindowPositions(n *ir.Node, in string) string {
 	slots, _ := n.Meta["slots"].([]int64)
 	if len(slots) == 0 {
-		return "", unsupported(n, "missing slots metadata")
+		panic(unsupported(n, "missing slots metadata"))
 	}
-	outGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	size, err := g.measuredOperand(n, in, "size", "Size", 1)
-	if err != nil {
-		return "", err
-	}
-	step, err := g.measuredOperand(n, in, "step", "Step", 1)
-	if err != nil {
-		return "", err
-	}
+	outGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
+	size := g.measuredOperand(n, in, "size", "Size", 1)
+	step := g.measuredOperand(n, in, "step", "Step", 1)
 	v, i := g.fresh("v"), g.fresh("i")
 	read := func(s int64) string {
 		if s < 0 {
@@ -51,7 +42,7 @@ func (g *gen) emitWindowPositions(n *ir.Node, in string) (string, error) {
 	}
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // Lowerings for the section-D remainder: Window, Flatten, Enumerate, the
@@ -59,22 +50,13 @@ func (g *gen) emitWindowPositions(n *ir.Node, in string) (string, error) {
 // Difference, and the Zip consumer. Each mirrors its interpreter twin in
 // prims/seq.go / prims/channel.go.
 
-func (g *gen) emitWindow(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitWindow(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	// Both operands are read before the loop, in the order the interpreter
 	// measures them, so a program whose Size: fails and whose Step: would also
 	// fail reports the same one in both backends.
-	size, err := g.measuredOperand(n, in, "size", "Size", 1)
-	if err != nil {
-		return "", err
-	}
-	step, err := g.measuredOperand(n, in, "step", "Step", 1)
-	if err != nil {
-		return "", err
-	}
+	size := g.measuredOperand(n, in, "size", "Size", 1)
+	step := g.measuredOperand(n, in, "step", "Step", 1)
 	v, i := g.fresh("v"), g.fresh("i")
 	g.wl("%s := [][]%s{}", v, elemGo)
 	g.wl("for %s := int64(0); %s+%s <= int64(len(%s)); %s += %s {", i, i, size, in, i, step)
@@ -82,22 +64,16 @@ func (g *gen) emitWindow(n *ir.Node, in string) (string, error) {
 	g.wl("%s = append(%s, append([]%s(nil), %s[%s:%s+%s]...))", v, v, elemGo, in, i, i, size)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitWindowedReduce lowers the optimizer's Window + Map Each (sum/max/min)
 // streaming rewrite (optimizer.fuseWindowReduce): prefix sums inline for sum,
 // the shared monotonic-deque helper for max/min.
-func (g *gen) emitWindowedReduce(n *ir.Node, in string) (string, error) {
+func (g *gen) emitWindowedReduce(n *ir.Node, in string) string {
 	op, _ := n.Meta["op"].(string)
-	size, err := g.measuredOperand(n, in, "size", "Size", 1)
-	if err != nil {
-		return "", err
-	}
-	step, err := g.measuredOperand(n, in, "step", "Step", 1)
-	if err != nil {
-		return "", err
-	}
+	size := g.measuredOperand(n, in, "size", "Size", 1)
+	step := g.measuredOperand(n, in, "step", "Step", 1)
 	v := g.fresh("v")
 	switch op {
 	case "sum":
@@ -114,11 +90,11 @@ func (g *gen) emitWindowedReduce(n *ir.Node, in string) (string, error) {
 		g.wl("%s = append(%s, %s[%s+%s]-%s[%s])", v, v, pre, i, size, pre, i)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	case "max", "min":
 		g.helper("dmSlidingExtremum", declSlidingExtremum)
 		g.wl("%s := dmSlidingExtremum(%s, %s, %s, %v)", v, in, size, step, op == "min")
-		return v, nil
+		return v
 	case "product":
 		// No prefix trick survives a zero, so this is the honest per-window
 		// scan — it still never materializes the windows.
@@ -135,9 +111,9 @@ func (g *gen) emitWindowedReduce(n *ir.Node, in string) (string, error) {
 		g.wl("%s = append(%s, %s)", v, v, p)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
-	return "", unsupported(n, "unknown windowed reduction %q", op)
+	panic(unsupported(n, "unknown windowed reduction %q", op))
 }
 
 // emitFlatMapCountBy lowers Map Each(x -> list(e1..eN)) + Flatten + Count By
@@ -145,26 +121,15 @@ func (g *gen) emitWindowedReduce(n *ir.Node, in string) (string, error) {
 // place — no per-element list, no flattened list. Elements are visited in the
 // same order (input order, then literal order) as the unfused path, so the
 // resulting dmMap's key insertion order and values are byte-identical.
-func (g *gen) emitFlatMapCountBy(mapNode, countNode *ir.Node, listArgs []ast.Expr, in string) (string, error) {
-	mapLam, err := g.nodeLambda(mapNode)
-	if err != nil {
-		return "", err
-	}
-	countLam, err := g.nodeLambda(countNode)
-	if err != nil {
-		return "", err
-	}
-	keyGo, err := g.goType(countNode.Out.Key)
-	if err != nil {
-		return "", unsupported(countNode, "%v", err)
-	}
+func (g *gen) emitFlatMapCountBy(mapNode, countNode *ir.Node, listArgs []ast.Expr, in string) string {
+	mapLam := g.nodeLambda(mapNode)
+	countLam := g.nodeLambda(countNode)
+	keyGo := asUnsupported1(countNode, "", func() string { return g.goType(countNode.Out.Key) })
 	elemT := countNode.In.Elem
 	g.chelper(countNode.Out.Key, "dmMap", declMap)
 	g.chelper(countNode.Out.Key, "dmBump", declMapBump)
 	v, e := g.fresh("v"), g.fresh("e")
-	if err := g.wnewMap(v, countNode.Out.Key, keyGo, "int64"); err != nil {
-		return "", unsupported(countNode, "%v", err)
-	}
+	asUnsupported0(countNode, "", func() { g.wnewMap(v, countNode.Out.Key, keyGo, "int64") })
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	mapEnv := exprEnv{mapLam.Params[0]: {expr: e, typ: mapNode.In.Elem}}
@@ -177,15 +142,12 @@ func (g *gen) emitFlatMapCountBy(mapNode, countNode *ir.Node, listArgs []ast.Exp
 	// *consecutive* equals collapses, which keeps every other key's order.
 	pure := optimizer.PureLambda(mapLam) && optimizer.PureLambda(countLam)
 	type bump struct {
-		nbExpr, key string
-		n           int
+		nbExpr string
+		n      int
 	}
 	var bumps []bump
 	for _, arg := range listArgs {
-		nbExpr, _, err := g.compileExpr(arg, mapEnv)
-		if err != nil {
-			return "", unsupported(mapNode, "lambda: %v", err)
-		}
+		nbExpr, _ := asUnsupported2(mapNode, "lambda: ", func() (string, *ir.Type) { return g.compileExpr(arg, mapEnv) })
 		if last := len(bumps) - 1; pure && last >= 0 && bumps[last].nbExpr == nbExpr {
 			bumps[last].n++
 			continue
@@ -195,17 +157,16 @@ func (g *gen) emitFlatMapCountBy(mapNode, countNode *ir.Node, listArgs []ast.Exp
 	for _, b := range bumps {
 		nb := g.fresh("nb")
 		g.wl("%s := %s", nb, b.nbExpr)
-		kBody, _, err := g.compileExpr(countLam.Body, exprEnv{countLam.Params[0]: {expr: nb, typ: elemT}})
-		if err != nil {
-			return "", unsupported(countNode, "lambda: %v", err)
-		}
+		kBody, _ := asUnsupported2(countNode, "lambda: ", func() (string, *ir.Type) {
+			return g.compileExpr(countLam.Body, exprEnv{countLam.Params[0]: {expr: nb, typ: elemT}})
+		})
 		k := g.fresh("k")
 		g.wl("%s := %s", k, kBody)
 		g.wl("%s(&%s, %s, %d)", cname(countNode.Out.Key, "dmBump"), v, k, b.n)
 	}
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitDigitGridToGrid lowers Split Each("") + Convert To Integers + Convert To
@@ -423,31 +384,21 @@ func (g *gen) emitParseFieldsInto(line, buf string) {
 // (Max By | Min By): each line's integers are parsed into a reused buffer, the
 // key lambda is applied, and only the current winner is copied out — no
 // [][]int64. sep == "" consumes []string lines; sep != "" walks the raw string.
-func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (string, error) {
+func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	g.helper("dmParseIntSeg", declParseIntSeg)
 	g.helper("dmParseFieldsInt", declParseFieldsInt)
 	g.imp("strings")
-	lam, err := g.nodeLambda(extNode)
-	if err != nil {
-		return "", err
-	}
+	lam := g.nodeLambda(extNode)
 	buf := g.fresh("buf")
-	kbody, keyT, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: buf, typ: extNode.In.Elem}})
-	if err != nil {
-		return "", unsupported(extNode, "lambda: %v", err)
-	}
-	keyGo, err := g.goType(keyT)
-	if err != nil {
-		return "", unsupported(extNode, "key: %v", err)
-	}
+	kbody, keyT := asUnsupported2(extNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: buf, typ: extNode.In.Elem}})
+	})
+	keyGo := asUnsupported1(extNode, "key: ", func() string { return g.goType(keyT) })
 	best, bestK, found := g.fresh("best"), g.fresh("bestK"), g.fresh("found")
 	k := g.fresh("k")
-	beats, err := keyBeats(extNode.Prim, keyT, k, bestK)
-	if err != nil {
-		return "", unsupported(extNode, "%v", err)
-	}
+	beats := asUnsupported1(extNode, "", func() string { return keyBeats(extNode.Prim, keyT, k, bestK) })
 	line := g.fresh("line")
 	emitBody := func() {
 		g.emitParseFieldsInto(line, buf)
@@ -470,34 +421,27 @@ func (g *gen) emitFieldsKeyedExtremum(sep string, extNode *ir.Node, in string) (
 	g.wl(`dmFail("%s of an empty list is undefined")`, extNode.Prim)
 	g.out()
 	g.wl("}")
-	return best, nil
+	return best
 }
 
 // emitFieldsMapSum streams Split Fields + Convert To Integers + Map Each + Sum.
 // When sep == "" the input is already-split []string lines; when sep != "" the
 // input is the un-split string and the loop walks it exactly as
 // strings.Split(in, sep) would, so the []string is skipped too.
-func (g *gen) emitFieldsMapSum(sep string, mapNode, sumNode *ir.Node, in string) (string, error) {
+func (g *gen) emitFieldsMapSum(sep string, mapNode, sumNode *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	g.helper("dmParseIntSeg", declParseIntSeg)
 	g.helper("dmParseFieldsInt", declParseFieldsInt)
 	g.imp("strings")
-	lam, err := g.nodeLambda(mapNode)
-	if err != nil {
-		return "", err
-	}
-	acc, err := g.goType(sumNode.Out)
-	if err != nil {
-		return "", unsupported(sumNode, "%v", err)
-	}
+	lam := g.nodeLambda(mapNode)
+	acc := asUnsupported1(sumNode, "", func() string { return g.goType(sumNode.Out) })
 	// The map lambda's parameter is one line's integer list; bind it to the
 	// reused buffer. mapNode.In.Elem is that List<Int> element type.
 	buf := g.fresh("buf")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: buf, typ: mapNode.In.Elem}})
-	if err != nil {
-		return "", unsupported(mapNode, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(mapNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: buf, typ: mapNode.In.Elem}})
+	})
 	v := g.fresh("v")
 	line := g.fresh("line")
 	emitBody := func() {
@@ -507,7 +451,7 @@ func (g *gen) emitFieldsMapSum(sep string, mapNode, sumNode *ir.Node, in string)
 	g.wl("var %s %s", v, acc)
 	g.wl("var %s []int64", buf)
 	g.emitLines(sep, in, line, emitBody)
-	return v, nil
+	return v
 }
 
 // emitFieldsInts lowers a fused Split Fields + Convert To Integers over
@@ -547,28 +491,18 @@ func (g *gen) emitFieldsInts(in string) string {
 // Enumerate + Map Each(scalar) + Sum into one pass: parse each segment, build
 // its (running-index, value) tuple locally, and accumulate the map result — no
 // []int64 and no []tuple.
-func (g *gen) emitSplitIntsEnumerateMapSum(sep byte, enumNode, mapNode, sumNode *ir.Node, in string) (string, error) {
+func (g *gen) emitSplitIntsEnumerateMapSum(sep byte, enumNode, mapNode, sumNode *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	g.helper("dmParseIntSeg", declParseIntSeg)
-	tupGo, err := g.goType(enumNode.Out.Elem)
-	if err != nil {
-		return "", unsupported(enumNode, "%v", err)
-	}
-	acc, err := g.goType(sumNode.Out)
-	if err != nil {
-		return "", unsupported(sumNode, "%v", err)
-	}
-	lam, err := g.nodeLambda(mapNode)
-	if err != nil {
-		return "", err
-	}
+	tupGo := asUnsupported1(enumNode, "", func() string { return g.goType(enumNode.Out.Elem) })
+	acc := asUnsupported1(sumNode, "", func() string { return g.goType(sumNode.Out) })
+	lam := g.nodeLambda(mapNode)
 	v, n := g.fresh("v"), g.fresh("n")
 	e, p := g.fresh("e"), g.fresh("p")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: p, typ: mapNode.In.Elem}})
-	if err != nil {
-		return "", unsupported(mapNode, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(mapNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: p, typ: mapNode.In.Elem}})
+	})
 	g.wl("var %s %s", v, acc)
 	g.wl("%s := 0", n) // running Enumerate index
 	g.emitSplitScan(sep, in, func(seg string) {
@@ -577,20 +511,20 @@ func (g *gen) emitSplitIntsEnumerateMapSum(sep byte, enumNode, mapNode, sumNode 
 		g.wl("%s += %s", v, body)
 		g.wl("%s++", n)
 	})
-	return v, nil
+	return v
 }
 
 // emitSplitIntsPairCount lowers Split(sep) + Convert To Integers +
 // HashSetPairScan(Count) into a one-pass O(n) complement count over the parse:
 // no []int64, and the map grows to the real key cardinality rather than being
 // presized to the element count.
-func (g *gen) emitSplitIntsPairCount(sep byte, scanNode *ir.Node, in string) (string, error) {
+func (g *gen) emitSplitIntsPairCount(sep byte, scanNode *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	g.helper("dmParseIntSeg", declParseIntSeg)
 	target, ok := scanNode.Meta["target"].(int64)
 	if !ok {
-		return "", unsupported(scanNode, "missing target metadata")
+		panic(unsupported(scanNode, "missing target metadata"))
 	}
 	v, seen, x := g.fresh("v"), g.fresh("seen"), g.fresh("x")
 	g.wl("%s := make(map[int64]int64)", seen)
@@ -600,51 +534,41 @@ func (g *gen) emitSplitIntsPairCount(sep byte, scanNode *ir.Node, in string) (st
 		g.wl("%s += %s[%d-%s]", v, seen, target, x)
 		g.wl("%s[%s]++", seen, x)
 	})
-	return v, nil
+	return v
 }
 
 // emitSplitIntsFold lowers Split(single-byte sep) + Convert To Integers +
 // Fold(int seed) into one pass: scan for the separator, parse each segment, and
 // fold it into the accumulator — no intermediate []int64. A left fold's visit
 // order is the parse order, which is exactly the walk emitSplitInts emits.
-func (g *gen) emitSplitIntsFold(sep byte, foldNode *ir.Node, in string) (string, error) {
+func (g *gen) emitSplitIntsFold(sep byte, foldNode *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmParseInt", declParseInt, "strconv", "strings")
 	g.helper("dmParseIntSeg", declParseIntSeg)
-	lam, err := g.nodeLambda(foldNode)
-	if err != nil {
-		return "", err
-	}
+	lam := g.nodeLambda(foldNode)
 	seed, _ := foldNode.Meta["seed"].(int64)
 	acc, e := g.fresh("acc"), g.fresh("e")
 	g.wl("%s := int64(%d)", acc, seed)
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: acc, typ: foldNode.Out},
-		lam.Params[1]: {expr: e, typ: foldNode.In.Elem},
+	body, _ := asUnsupported2(foldNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: acc, typ: foldNode.Out},
+			lam.Params[1]: {expr: e, typ: foldNode.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(foldNode, "lambda: %v", err)
-	}
 	g.emitSplitScan(sep, in, func(seg string) {
 		g.wl("%s := dmParseIntSeg(%s)", e, seg)
 		g.keepElem(e, body)
 		g.wl("%s = %s", acc, body)
 	})
-	return acc, nil
+	return acc
 }
 
 // emitWindowedReduceSum lowers WindowedReduce immediately followed by Sum: the
 // per-window extremum/sum is accumulated into a scalar, never a []int64.
-func (g *gen) emitWindowedReduceSum(n *ir.Node, in string) (string, error) {
+func (g *gen) emitWindowedReduceSum(n *ir.Node, in string) string {
 	op, _ := n.Meta["op"].(string)
-	size, err := g.measuredOperand(n, in, "size", "Size", 1)
-	if err != nil {
-		return "", err
-	}
-	step, err := g.measuredOperand(n, in, "step", "Step", 1)
-	if err != nil {
-		return "", err
-	}
+	size := g.measuredOperand(n, in, "size", "Size", 1)
+	step := g.measuredOperand(n, in, "step", "Step", 1)
 	v := g.fresh("v")
 	switch op {
 	case "sum":
@@ -661,11 +585,11 @@ func (g *gen) emitWindowedReduceSum(n *ir.Node, in string) (string, error) {
 		g.wl("%s += %s[%s+%s]-%s[%s]", v, pre, i, size, pre, i)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	case "max", "min":
 		g.helper("dmSlidingExtremumSum", declSlidingExtremumSum)
 		g.wl("%s := dmSlidingExtremumSum(%s, %s, %s, %v)", v, in, size, step, op == "min")
-		return v, nil
+		return v
 	case "product":
 		i, p, x := g.fresh("i"), g.fresh("p"), g.fresh("x")
 		g.wl("var %s int64", v)
@@ -680,16 +604,13 @@ func (g *gen) emitWindowedReduceSum(n *ir.Node, in string) (string, error) {
 		g.wl("%s += %s", v, p)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
-	return "", unsupported(n, "unknown windowed reduction %q", op)
+	panic(unsupported(n, "unknown windowed reduction %q", op))
 }
 
-func (g *gen) emitFlatten(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitFlatten(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, grp, total := g.fresh("v"), g.fresh("grp"), g.fresh("total")
 	// The exact length is one pass over the outer list away, and the outer
 	// list is orders of magnitude shorter than what it flattens to.
@@ -701,30 +622,20 @@ func (g *gen) emitFlatten(n *ir.Node, in string) (string, error) {
 	g.wl("%s = append(%s, %s...)", v, v, grp)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitEnumerateMapSum lowers Enumerate + Map Each(scalar) + Sum into one loop
 // that constructs each (index, value) tuple locally and accumulates the map
 // lambda's result — no []tuple is materialized.
-func (g *gen) emitEnumerateMapSum(enumNode, mapNode, sumNode *ir.Node, in string) (string, error) {
-	tupGo, err := g.goType(enumNode.Out.Elem)
-	if err != nil {
-		return "", unsupported(enumNode, "%v", err)
-	}
-	acc, err := g.goType(sumNode.Out)
-	if err != nil {
-		return "", unsupported(sumNode, "%v", err)
-	}
-	lam, err := g.nodeLambda(mapNode)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitEnumerateMapSum(enumNode, mapNode, sumNode *ir.Node, in string) string {
+	tupGo := asUnsupported1(enumNode, "", func() string { return g.goType(enumNode.Out.Elem) })
+	acc := asUnsupported1(sumNode, "", func() string { return g.goType(sumNode.Out) })
+	lam := g.nodeLambda(mapNode)
 	v, i, e, p := g.fresh("v"), g.fresh("i"), g.fresh("e"), g.fresh("p")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: p, typ: mapNode.In.Elem}})
-	if err != nil {
-		return "", unsupported(mapNode, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(mapNode, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: p, typ: mapNode.In.Elem}})
+	})
 	g.wl("var %s %s", v, acc)
 	g.wl("for %s, %s := range %s {", i, e, in)
 	g.in()
@@ -732,14 +643,11 @@ func (g *gen) emitEnumerateMapSum(enumNode, mapNode, sumNode *ir.Node, in string
 	g.wl("%s += %s", v, body)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitEnumerate(n *ir.Node, in string) (string, error) {
-	tupGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitEnumerate(n *ir.Node, in string) string {
+	tupGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, i, e := g.fresh("v"), g.fresh("i"), g.fresh("e")
 	g.wl("%s := make([]%s, len(%s))", v, tupGo, in)
 	g.wl("for %s, %s := range %s {", i, e, in)
@@ -747,54 +655,38 @@ func (g *gen) emitEnumerate(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s{int64(%s), %s}", v, i, tupGo, i, e)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitCountBy(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	keyGo, err := g.goType(n.Out.Key)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitCountBy(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	keyGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Key) })
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.chelper(n.Out.Key, "dmMap", declMap)
 	g.chelper(n.Out.Key, "dmBump", declMapBump)
 	v, k := g.fresh("v"), g.fresh("k")
-	if err := g.wnewMap(v, n.Out.Key, keyGo, "int64"); err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	asUnsupported0(n, "", func() { g.wnewMap(v, n.Out.Key, keyGo, "int64") })
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.wl("%s := %s", k, body)
 	g.wl("%s(&%s, %s, 1)", cname(n.Out.Key, "dmBump"), v, k)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitGroupReduce lowers the optimizer's Group By + per-bucket sum or length
 // (optimizer.fuseGroupReduce): one keyed accumulator, no bucket lists.
-func (g *gen) emitGroupReduce(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	keyGo, err := g.goType(n.Out.Key)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitGroupReduce(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	keyGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Key) })
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	delta := "1"
 	if reduce, _ := n.Meta["reduce"].(string); reduce == "sum" {
 		delta = e
@@ -802,23 +694,21 @@ func (g *gen) emitGroupReduce(n *ir.Node, in string) (string, error) {
 	g.chelper(n.Out.Key, "dmMap", declMap)
 	g.chelper(n.Out.Key, "dmBump", declMapBump)
 	v := g.fresh("v")
-	if err := g.wnewMap(v, n.Out.Key, keyGo, "int64"); err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	asUnsupported0(n, "", func() { g.wnewMap(v, n.Out.Key, keyGo, "int64") })
 	g.wl("for _, %s := range %s {", e, in)
 	g.in()
 	g.keepElem(e, body+" "+delta)
 	g.wl("%s(&%s, %s, %s)", cname(n.Out.Key, "dmBump"), v, body, delta)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // keyBeats renders "candidate k beats the best so far" for Min By / Max By
 // over any ordered key, reusing the same lessExpr the Sort By emitter does so
 // there is one lowering of the ordering rather than two that can drift. Both
 // arguments must be plain locals: lessExpr repeats its operands for a tuple.
-func keyBeats(prim string, keyT *ir.Type, k, bestK string) (string, error) {
+func keyBeats(prim string, keyT *ir.Type, k, bestK string) string {
 	if prim == "Max By" {
 		return lessExpr(keyT, bestK, k)
 	}
@@ -827,33 +717,20 @@ func keyBeats(prim string, keyT *ir.Type, k, bestK string) (string, error) {
 
 // emitKeyedExtremum lowers Min By / Max By: linear scan tracking the best
 // key, first element winning ties.
-func (g *gen) emitKeyedExtremum(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	elemGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitKeyedExtremum(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
 	e := g.fresh("e")
-	body, keyT, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, keyT := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	// The key is any ordered type, exactly as Sort By's is — a tuple key is
 	// how a tiebreak is written, and it compares lexicographically.
-	keyGo, err := g.goType(keyT)
-	if err != nil {
-		return "", unsupported(n, "key: %v", err)
-	}
+	keyGo := asUnsupported1(n, "key: ", func() string { return g.goType(keyT) })
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, bestK, i, k := g.fresh("v"), g.fresh("bestK"), g.fresh("i"), g.fresh("k")
 	// Strict on both sides, so the first element wins a tie.
-	beats, err := keyBeats(n.Prim, keyT, k, bestK)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	beats := asUnsupported1(n, "", func() string { return keyBeats(n.Prim, keyT, k, bestK) })
 	g.wl("if len(%s) == 0 {", in)
 	g.in()
 	g.wl(`dmFail("%s of an empty list is undefined")`, n.Prim)
@@ -871,30 +748,20 @@ func (g *gen) emitKeyedExtremum(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitSortBy(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitSortBy(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	desc, _ := n.Meta["desc"].(bool)
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	e := g.fresh("e")
-	body, keyT, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, keyT := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	// The key may be Int, Float, Text, or a tuple of them — a tuple key is how
 	// a tiebreak is written, and it compares lexicographically.
-	keyGo, err := g.goType(keyT)
-	if err != nil {
-		return "", unsupported(n, "key: %v", err)
-	}
+	keyGo := asUnsupported1(n, "key: ", func() string { return g.goType(keyT) })
 	g.imp("slices")
 	// Sort (key, original-index) pairs with an unstable pdqsort (slices.SortFunc,
 	// no reflection): the ascending index tiebreak makes (key, idx) a strict
@@ -915,14 +782,8 @@ func (g *gen) emitSortBy(n *ir.Node, in string) (string, error) {
 	if desc {
 		lo, hi = hi, lo
 	}
-	keyLess, err := lessExpr(keyT, lo, hi)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	keyMore, err := lessExpr(keyT, hi, lo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	keyLess := asUnsupported1(n, "", func() string { return lessExpr(keyT, lo, hi) })
+	keyMore := asUnsupported1(n, "", func() string { return lessExpr(keyT, hi, lo) })
 	g.wl("slices.SortFunc(%s, func(%s, %s %s) int {", pairs, a, b, kv)
 	g.in()
 	g.wl("if %s { return -1 }", keyLess)
@@ -939,23 +800,16 @@ func (g *gen) emitSortBy(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s[p.i]", out, i, in)
 	g.out()
 	g.wl("}")
-	return out, nil
+	return out
 }
 
 // emitDifferenceAll lowers the standalone Difference reduction: the first
 // group minus the union of the rest, in the first group's order.
-func (g *gen) emitDifferenceAll(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitDifferenceAll(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, rest := g.fresh("v"), g.fresh("rest")
-	if err := g.wnewSet(v, n.Out.Elem, elemGo); err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	if err := g.wnewSet(rest, n.Out.Elem, elemGo); err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	asUnsupported0(n, "", func() { g.wnewSet(v, n.Out.Elem, elemGo) })
+	asUnsupported0(n, "", func() { g.wnewSet(rest, n.Out.Elem, elemGo) })
 	g.wl("if len(%s) > 0 {", in)
 	g.in()
 	grp, e := g.fresh("grp"), g.fresh("e")
@@ -980,27 +834,24 @@ func (g *gen) emitDifferenceAll(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitZip pairs two compiled channel lists into a tuple slice.
-func (g *gen) emitZip(n *ir.Node, in string) (string, error) {
+func (g *gen) emitZip(n *ir.Node, in string) string {
 	froms, _ := n.Meta["from"].([]string)
 	if len(froms) != 2 {
-		return "", unsupported(n, "missing channel metadata")
+		panic(unsupported(n, "missing channel metadata"))
 	}
 	av, ok := g.chans[froms[0]]
 	if !ok {
-		return "", unsupported(n, "channel %q was not compiled", froms[0])
+		panic(unsupported(n, "channel %q was not compiled", froms[0]))
 	}
 	bv, ok := g.chans[froms[1]]
 	if !ok {
-		return "", unsupported(n, "channel %q was not compiled", froms[1])
+		panic(unsupported(n, "channel %q was not compiled", froms[1]))
 	}
-	tupGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	tupGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, m, i := g.fresh("v"), g.fresh("m"), g.fresh("i")
 	g.wl("%s := len(%s)", m, av.v)
 	g.wl("if len(%s) < %s {", bv.v, m)
@@ -1014,5 +865,5 @@ func (g *gen) emitZip(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s{%s[%s], %s[%s]}", v, i, tupGo, av.v, i, bv.v, i)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }

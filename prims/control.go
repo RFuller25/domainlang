@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	"domain/ast"
 	"domain/ir"
@@ -503,60 +502,21 @@ func ownLoopState(body []*ir.Node, v ir.Value, t *ir.Type, meta map[string]any) 
 	}
 	// Any stage may carry the marks: the pass looks at every body stage that
 	// threads the state, not only the first.
-	if !anyStageInPlace(body) {
+	if !AnyStageInPlace(body) {
 		return v
 	}
-	return ownValue(v, t, "", ownedFields(meta))
+	return ownValue(v, t, "", ir.OwnedFieldSet(meta))
 }
 
-// anyStageInPlace reports whether some body stage carries a marked update.
-func anyStageInPlace(body []*ir.Node) bool {
+// AnyStageInPlace reports whether some body stage carries a marked update.
+// Exported for the compiled backend, which asks the same question.
+func AnyStageInPlace(body []*ir.Node) bool {
 	for _, stage := range body {
 		if lam, _ := stage.Meta["lambda"].(*ast.Lambda); lam != nil && ast.HasInPlace(lam.Body) {
 			return true
 		}
 	}
 	return false
-}
-
-// ownedFields reads the state fields the optimizer said a marked update writes
-// through. A loop that has not been through the pass has no entry, and owning
-// everything is the reading that is never wrong.
-func ownedFields(meta map[string]any) map[string]bool {
-	paths, ok := meta[ir.OwnedFields].([]string)
-	if !ok {
-		return map[string]bool{ir.OwnsEverything: true}
-	}
-	out := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		out[p] = true
-	}
-	return out
-}
-
-// needsOwn reports whether the storage at path has to be copied: because a
-// marked update writes it, writes something inside it, or writes a container it
-// sits in.
-func needsOwn(path string, owned map[string]bool) bool {
-	for w := range owned {
-		if w == path || pathAncestor(w, path) || pathAncestor(path, w) {
-			return true
-		}
-	}
-	return false
-}
-
-// pathAncestor reports whether a is a strict ancestor of b. The root path is an
-// ancestor of everything, which is the case a plain HasPrefix gets wrong: the
-// root is "", so "" + "." is "." and no real path begins with a dot.
-func pathAncestor(a, b string) bool {
-	if a == b {
-		return false
-	}
-	if a == ir.OwnsEverything {
-		return true
-	}
-	return strings.HasPrefix(b, a+".")
 }
 
 func fieldPath(path string, i int) string {
@@ -569,7 +529,7 @@ func fieldPath(path string, i int) string {
 // ownValue deep-copies the storage a marked update reaches, following tuple
 // fields, and leaves everything else shared.
 func ownValue(v ir.Value, t *ir.Type, path string, owned map[string]bool) ir.Value {
-	if t == nil || !needsOwn(path, owned) {
+	if t == nil || !ir.NeedsOwn(path, owned) {
 		return v
 	}
 	switch t.Kind {

@@ -16,54 +16,45 @@ import (
 // jsonFunc interns a JSON writer for a type, mirroring ir.ToJSON's rules: a
 // Record is an object in declared field order, a List is an array, a Map is an
 // object whose keys are rendered and sorted.
-func (g *gen) jsonFunc(t *ir.Type) (string, error) {
+func (g *gen) jsonFunc(t *ir.Type) string {
 	key := "json:" + canonicalKey(t)
 	if name, ok := g.fmtFns[key]; ok {
-		return name, nil
+		return name
 	}
 	name := fmt.Sprintf("dmJSON%d", len(g.fmtFns)+1)
 	g.fmtFns[key] = name
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+	goT := g.goType(t)
 	g.helper("dmJSONString", declJSONString, "strconv")
-	body, err := g.jsonBody(t, "v")
-	if err != nil {
-		return "", err
-	}
+	body := g.jsonBody(t, "v")
 	g.imp("strings")
 	g.decls = append(g.decls, fmt.Sprintf(`func %s(v %s) string {
 	var sb strings.Builder
 %s
 	return sb.String()
 }`, name, goT, body))
-	return name, nil
+	return name
 }
 
 // jsonBody emits the statements that write expr into sb.
-func (g *gen) jsonBody(t *ir.Type, expr string) (string, error) {
+func (g *gen) jsonBody(t *ir.Type, expr string) string {
 	if t == nil {
-		return "", fmt.Errorf("a value of unknown type has no JSON form")
+		panic(failf("a value of unknown type has no JSON form"))
 	}
 	switch t.Kind {
 	case ir.KInt:
 		g.imp("strconv")
-		return "\tsb.WriteString(strconv.FormatInt(" + expr + ", 10))", nil
+		return "\tsb.WriteString(strconv.FormatInt(" + expr + ", 10))"
 	case ir.KFloat:
 		g.helper("dmFmtFloat", declFmtFloat, "strconv")
-		return "\tsb.WriteString(dmFmtFloat(" + expr + "))", nil
+		return "\tsb.WriteString(dmFmtFloat(" + expr + "))"
 	case ir.KBool:
 		g.imp("strconv")
-		return "\tsb.WriteString(strconv.FormatBool(" + expr + "))", nil
+		return "\tsb.WriteString(strconv.FormatBool(" + expr + "))"
 	case ir.KText:
-		return "\tsb.WriteString(dmJSONString(" + expr + "))", nil
+		return "\tsb.WriteString(dmJSONString(" + expr + "))"
 	case ir.KList, ir.KSet:
 		elem := t.Elem
-		fn, err := g.jsonFunc(elem)
-		if err != nil {
-			return "", err
-		}
+		fn := g.jsonFunc(elem)
 		items := expr
 		if t.Kind == ir.KSet {
 			items = expr + ".items()"
@@ -75,15 +66,12 @@ func (g *gen) jsonBody(t *ir.Type, expr string) (string, error) {
 		}
 		sb.WriteString(%s(e))
 	}
-	sb.WriteByte(']')`, items, fn), nil
+	sb.WriteByte(']')`, items, fn)
 	case ir.KTuple:
 		var out string
 		out = "\tsb.WriteByte('[')\n"
 		for i, e := range t.Elems {
-			fn, err := g.jsonFunc(e)
-			if err != nil {
-				return "", err
-			}
+			fn := g.jsonFunc(e)
 			if i > 0 {
 				out += "\tsb.WriteByte(',')\n"
 			}
@@ -92,20 +80,14 @@ func (g *gen) jsonBody(t *ir.Type, expr string) (string, error) {
 		// A tuple is a JSON array, so it closes with a bracket. It read ']'
 		// as '}' until a game decoded one back, which nothing did while the
 		// scope was refused whole.
-		return out + "\tsb.WriteByte(']')", nil
+		return out + "\tsb.WriteByte(']')"
 	case ir.KMap:
 		// A Map is an object, which means its keys must be strings — so an
 		// Int-keyed map is written with its keys rendered, the way it already
 		// prints. Sorted, because a JSON object a server compares has to be
 		// the same bytes for the same value. (ir/json.go says the same.)
-		keyFmt, err := g.scalarFmt("k", t.Key)
-		if err != nil {
-			return "", err
-		}
-		valFn, err := g.jsonFunc(t.Elem)
-		if err != nil {
-			return "", err
-		}
+		keyFmt := g.scalarFmt("k", t.Key)
+		valFn := g.jsonFunc(t.Elem)
 		g.imp("sort")
 		return fmt.Sprintf(`	names := make([]string, 0, len(%[1]s.keys))
 	byName := map[string]string{}
@@ -124,24 +106,21 @@ func (g *gen) jsonBody(t *ir.Type, expr string) (string, error) {
 		sb.WriteByte(':')
 		sb.WriteString(byName[name])
 	}
-	sb.WriteByte('}')`, expr, keyFmt, valFn), nil
+	sb.WriteByte('}')`, expr, keyFmt, valFn)
 	case ir.KRecord:
 		var out string
 		out = "\tsb.WriteByte('{')\n"
 		for i, f := range t.Fields {
-			fn, err := g.jsonFunc(f.Type)
-			if err != nil {
-				return "", err
-			}
+			fn := g.jsonFunc(f.Type)
 			if i > 0 {
 				out += "\tsb.WriteByte(',')\n"
 			}
 			out += fmt.Sprintf("\tsb.WriteString(dmJSONString(%q))\n\tsb.WriteByte(':')\n", f.Name)
 			out += fmt.Sprintf("\tsb.WriteString(%s(%s.%s))\n", fn, expr, fieldName(f.Name))
 		}
-		return out + "\tsb.WriteByte('}')", nil
+		return out + "\tsb.WriteByte('}')"
 	}
-	return "", fmt.Errorf("%s has no JSON form", t)
+	panic(failf("%s has no JSON form", t))
 }
 
 // declJSONString quotes a string the way encoding/json does. strconv.Quote is
@@ -197,37 +176,28 @@ const declJSONString = `func dmJSONString(s string) string {
 // and a client that broke when it did would break on every deployment.
 
 // jsonInFunc interns a decoder for a type: `func(raw any, path string) (T, error)`.
-func (g *gen) jsonInFunc(t *ir.Type) (string, error) {
+func (g *gen) jsonInFunc(t *ir.Type) string {
 	key := "fromjson:" + canonicalKey(t)
 	if name, ok := g.fmtFns[key]; ok {
-		return name, nil
+		return name
 	}
 	name := fmt.Sprintf("dmFromJSON%d", len(g.fmtFns)+1)
 	g.fmtFns[key] = name
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+	goT := g.goType(t)
 	g.helper("dmJSONRead", declJSONRead, "encoding/json", "fmt", "strings")
-	zero, err := g.zeroExpr(t)
-	if err != nil {
-		return "", err
-	}
-	body, err := g.jsonInBody(t, goT, zero)
-	if err != nil {
-		return "", err
-	}
+	zero := g.zeroExpr(t)
+	body := g.jsonInBody(t, goT, zero)
 	g.imp("fmt")
 	g.decls = append(g.decls, fmt.Sprintf(`func %s(raw any, path string) (%s, error) {
 	var zero %s = %s
 %s
 }`, name, goT, goT, zero, body))
-	return name, nil
+	return name
 }
 
 // jsonInBody is the converter's body: the statements that turn raw into a
 // value of t, or return an error saying what was there instead.
-func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
+func (g *gen) jsonInBody(t *ir.Type, goT, zero string) string {
 	// bad is the one error shape ir.convertJSON uses, so the two backends fail
 	// with the same sentence about the same document.
 	bad := func(want string) string {
@@ -243,7 +213,7 @@ func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
 	if err != nil {
 		return zero, fmt.Errorf("%s is not a whole number%s", n.String(), dmJSONWhere(path))
 	}
-	return i, nil`, nil
+	return i, nil`
 	case ir.KFloat:
 		return `	n, ok := raw.(json.Number)
 	if !ok {
@@ -253,24 +223,21 @@ func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
 	if err != nil {
 		return zero, fmt.Errorf("%s is not a number%s", n.String(), dmJSONWhere(path))
 	}
-	return f, nil`, nil
+	return f, nil`
 	case ir.KText:
 		return `	s, ok := raw.(string)
 	if !ok {
 ` + bad("some text") + `
 	}
-	return s, nil`, nil
+	return s, nil`
 	case ir.KBool:
 		return `	b, ok := raw.(bool)
 	if !ok {
 ` + bad("true or false") + `
 	}
-	return b, nil`, nil
+	return b, nil`
 	case ir.KList, ir.KSet:
-		elem, err := g.jsonInFunc(t.Elem)
-		if err != nil {
-			return "", err
-		}
+		elem := g.jsonInFunc(t.Elem)
 		gather := "\t\tout = append(out, v)"
 		open := "\tout := " + goT + "{}"
 		if t.Kind == ir.KSet {
@@ -289,7 +256,7 @@ func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
 		}
 ` + gather + `
 	}
-	return out, nil`, nil
+	return out, nil`
 	case ir.KTuple:
 		var sb strings.Builder
 		sb.WriteString("\tarr, ok := raw.([]any)\n\tif !ok {\n" + bad("a list") + "\n\t}\n")
@@ -297,25 +264,19 @@ func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
 			len(t.Elems), len(t.Elems))
 		sb.WriteString("\tvar out " + goT + "\n")
 		for i, e := range t.Elems {
-			fn, err := g.jsonInFunc(e)
-			if err != nil {
-				return "", err
-			}
+			fn := g.jsonInFunc(e)
 			fmt.Fprintf(&sb, "\tv%d, err%d := %s(arr[%d], fmt.Sprintf(\"%%s[%d]\", path))\n", i, i, fn, i, i)
 			fmt.Fprintf(&sb, "\tif err%d != nil {\n\t\treturn zero, err%d\n\t}\n", i, i)
 			fmt.Fprintf(&sb, "\tout.F%d = v%d\n", i, i)
 		}
 		sb.WriteString("\treturn out, nil")
-		return sb.String(), nil
+		return sb.String()
 	case ir.KRecord:
 		var sb strings.Builder
 		sb.WriteString("\tobj, ok := raw.(map[string]any)\n\tif !ok {\n" + bad("an object") + "\n\t}\n")
 		sb.WriteString("\tout := " + zero + "\n")
 		for i, f := range canonicalFields(t) {
-			fn, err := g.jsonInFunc(f.Type)
-			if err != nil {
-				return "", err
-			}
+			fn := g.jsonInFunc(f.Type)
 			// Strict in this direction on purpose (ir/json.go): a field the
 			// program declared and the document lacks is an error naming it,
 			// because a silently-zero score is worse than a refusal.
@@ -326,15 +287,12 @@ func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
 			fmt.Fprintf(&sb, "\tout.%s = v%d\n", fieldName(f.Name), i)
 		}
 		sb.WriteString("\treturn out, nil")
-		return sb.String(), nil
+		return sb.String()
 	case ir.KMap:
 		if lKeyed(t.Key) {
-			return "", fmt.Errorf("a Map keyed by a List cannot be read from JSON")
+			panic(failf("a Map keyed by a List cannot be read from JSON"))
 		}
-		elem, err := g.jsonInFunc(t.Elem)
-		if err != nil {
-			return "", err
-		}
+		elem := g.jsonInFunc(t.Elem)
 		// A JSON object's keys are strings, so an Int-keyed Map decodes from
 		// the rendered key — which is exactly how one is written out again.
 		g.imp("sort")
@@ -366,9 +324,9 @@ func (g *gen) jsonInBody(t *ir.Type, goT, zero string) (string, error) {
 		}
 		out.put(k, v)
 	}
-	return out, nil`, nil
+	return out, nil`
 	}
-	return "", fmt.Errorf("%s cannot be decoded from JSON", t)
+	panic(failf("%s cannot be decoded from JSON", t))
 }
 
 // declJSONRead is the parser and the two helpers every generated converter

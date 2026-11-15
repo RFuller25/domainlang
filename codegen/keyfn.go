@@ -23,15 +23,9 @@ import (
 // order (a Record's in name order, as the generated struct declares them).
 
 // keyFn returns the name of a generated `func(T) string` for t, interning it.
-func (g *gen) keyFn(t *ir.Type) (string, error) {
-	app, err := g.keyAppender(t)
-	if err != nil {
-		return "", err
-	}
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) keyFn(t *ir.Type) string {
+	app := g.keyAppender(t)
+	goT := g.goType(t)
 	return g.listFn("key:"+canonicalKey(t), "Key", func(name string) (string, error) {
 		return fmt.Sprintf("func %s(x %s) string {\n\treturn string(%s(make([]byte, 0, 32), x))\n}", name, goT, app), nil
 	})
@@ -39,11 +33,8 @@ func (g *gen) keyFn(t *ir.Type) (string, error) {
 
 // keyAppender returns the name of a generated `func([]byte, T) []byte` that
 // appends t's encoding.
-func (g *gen) keyAppender(t *ir.Type) (string, error) {
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) keyAppender(t *ir.Type) string {
+	goT := g.goType(t)
 	g.imp("encoding/binary")
 	return g.listFn("keyapp:"+canonicalKey(t), "KeyApp", func(name string) (string, error) {
 		var sb strings.Builder
@@ -54,7 +45,7 @@ func (g *gen) keyAppender(t *ir.Type) (string, error) {
 		case ir.KText:
 			sb.WriteString("\tb = binary.LittleEndian.AppendUint64(b, uint64(len(x)))\n\treturn append(b, x...)\n")
 		case ir.KList:
-			sub, err := g.keyAppenderCall(t.Elem, "b", "e")
+			sub, err := try1(func() string { return g.keyAppenderCall(t.Elem, "b", "e") })
 			if err != nil {
 				return "", err
 			}
@@ -62,7 +53,7 @@ func (g *gen) keyAppender(t *ir.Type) (string, error) {
 			fmt.Fprintf(&sb, "\tfor _, e := range x {\n\t\tb = %s\n\t}\n\treturn b\n", sub)
 		case ir.KTuple:
 			for i, et := range t.Elems {
-				sub, err := g.keyAppenderCall(et, "b", "x."+tupleField(i))
+				sub, err := try1(func() string { return g.keyAppenderCall(et, "b", "x."+tupleField(i)) })
 				if err != nil {
 					return "", err
 				}
@@ -71,7 +62,7 @@ func (g *gen) keyAppender(t *ir.Type) (string, error) {
 			sb.WriteString("\treturn b\n")
 		case ir.KRecord:
 			for _, f := range canonicalFields(t) {
-				sub, err := g.keyAppenderCall(f.Type, "b", "x."+fieldName(f.Name))
+				sub, err := try1(func() string { return g.keyAppenderCall(f.Type, "b", "x."+fieldName(f.Name)) })
 				if err != nil {
 					return "", err
 				}
@@ -86,24 +77,18 @@ func (g *gen) keyAppender(t *ir.Type) (string, error) {
 	})
 }
 
-func (g *gen) keyAppenderCall(t *ir.Type, b, x string) (string, error) {
-	app, err := g.keyAppender(t)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s(%s, %s)", app, b, x), nil
+func (g *gen) keyAppenderCall(t *ir.Type, b, x string) string {
+	app := g.keyAppender(t)
+	return fmt.Sprintf("%s(%s, %s)", app, b, x)
 }
 
 // hashKey is how a primitive keys an internal seen-map on a value of type t
 // held in the Go variable v (whose Go type is goT): the value itself when Go
 // can compare it, its byte encoding when it holds a List.
-func (g *gen) hashKey(t *ir.Type, v, goT string) (key, keyGo string, err error) {
+func (g *gen) hashKey(t *ir.Type, v, goT string) (key, keyGo string) {
 	if !ir.ContainsList(t) {
-		return v, goT, nil
+		return v, goT
 	}
-	kf, err := g.keyFn(t)
-	if err != nil {
-		return "", "", err
-	}
-	return kf + "(" + v + ")", "string", nil
+	kf := g.keyFn(t)
+	return kf + "(" + v + ")", "string"
 }

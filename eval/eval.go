@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"math/bits"
 	"slices"
 	"strconv"
 	"strings"
@@ -452,52 +451,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			out = append(out, inner...)
 		}
 		return out, nil
-	case "bandall", "borall", "bxorall":
-		xs, err := ir.AsList(args[0])
-		if err != nil {
-			return fail("%s: %v", name, err)
-		}
-		// The identity of each operator, so the empty list is the value that
-		// leaves any later fold unchanged — the rule sum(0)/product(1) follow.
-		// For `and` that is all bits set, which is -1 in two's complement.
-		acc := int64(0)
-		if name == "bandall" {
-			acc = -1
-		}
-		for i, e := range xs {
-			n, err := ir.AsInt(e)
-			if err != nil {
-				return fail("%s: list element %d: %v", name, i, err)
-			}
-			switch name {
-			case "bandall":
-				acc &= n
-			case "borall":
-				acc |= n
-			default:
-				acc ^= n
-			}
-		}
-		return acc, nil
-	case "and", "or", "xor", "not":
-		bs := make([]bool, len(args))
-		for i, a := range args {
-			b, ok := a.(bool)
-			if !ok {
-				return fail("%s: expected Bool, got %s", name, ir.DescribeValue(a))
-			}
-			bs[i] = b
-		}
-		switch name {
-		case "and":
-			return bs[0] && bs[1], nil
-		case "or":
-			return bs[0] || bs[1], nil
-		case "xor":
-			return bs[0] != bs[1], nil
-		default:
-			return !bs[0], nil
-		}
 	case "product":
 		xs, err := ir.AsList(args[0])
 		if err != nil {
@@ -832,46 +785,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		return maxC, nil
 
 	// -- math / number theory ------------------------------------------------
-	case "abs":
-		switch n := args[0].(type) {
-		case int64:
-			if n < 0 {
-				return -n, nil
-			}
-			return n, nil
-		case float64:
-			// Branch form (not math.Abs) so abs(-0.0) renders identically in
-			// both backends — codegen's dmAbs is the same comparison.
-			if n < 0 {
-				return -n, nil
-			}
-			return n, nil
-		}
-		return fail("abs: expected a number, got %s", ir.DescribeValue(args[0]))
-	case "sign":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("sign: %v", err)
-		}
-		switch {
-		case n < 0:
-			return int64(-1), nil
-		case n > 0:
-			return int64(1), nil
-		}
-		return int64(0), nil
-	case "gcd":
-		a, b, err := twoInts(args, "gcd")
-		if err != nil {
-			return fail("%v", err)
-		}
-		return gcdInt(a, b), nil
-	case "lcm":
-		a, b, err := twoInts(args, "lcm")
-		if err != nil {
-			return fail("%v", err)
-		}
-		return lcmInt(a, b), nil
 	case "mod":
 		a, b, err := twoInts(args, "mod")
 		if err != nil {
@@ -896,56 +809,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("divmod by zero")
 		}
 		return []ir.Value{q, m}, nil
-	case "pow":
-		// Follows the operators' promotion rule: integral unless an operand is
-		// a Float, in which case it is math.Pow like every other float op.
-		if isFloatOperand(args[0]) || isFloatOperand(args[1]) {
-			a, err1 := ir.AsFloat(args[0])
-			b, err2 := ir.AsFloat(args[1])
-			if err := firstErr(err1, err2); err != nil {
-				return fail("pow: %v", err)
-			}
-			return math.Pow(a, b), nil
-		}
-		a, b, err := twoInts(args, "pow")
-		if err != nil {
-			return fail("%v", err)
-		}
-		r, err := powInt(a, b)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return r, nil
-	case "isqrt":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("isqrt: %v", err)
-		}
-		r, err := isqrtInt(n)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return r, nil
-	case "factorial":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("factorial: %v", err)
-		}
-		r, err := factorialInt(n)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return r, nil
-	case "choose":
-		n, k, err := twoInts(args, "choose")
-		if err != nil {
-			return fail("%v", err)
-		}
-		r, err := chooseInt(n, k)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return r, nil
 	case "clamp":
 		// Float if any operand is, matching the arithmetic promotion rule.
 		if isFloatOperand(args[0]) || isFloatOperand(args[1]) || isFloatOperand(args[2]) {
@@ -981,80 +844,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		out := make([]ir.Value, len(args))
 		copy(out, args)
 		return out, nil
-	case "modpow":
-		base, err1 := ir.AsInt(args[0])
-		exp, err2 := ir.AsInt(args[1])
-		mod, err3 := ir.AsInt(args[2])
-		if err := firstErr(err1, err2, err3); err != nil {
-			return fail("modpow: %v", err)
-		}
-		r, err := modPow(base, exp, mod)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return r, nil
-	case "modinv":
-		a, m, err := twoInts(args, "modinv")
-		if err != nil {
-			return fail("%v", err)
-		}
-		r, err := modInverse(a, m)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return r, nil
-	case "solve2x2":
-		ns := make([]int64, 6)
-		for i := range ns {
-			n, err := ir.AsInt(args[i])
-			if err != nil {
-				return fail("solve2x2: %v", err)
-			}
-			ns[i] = n
-		}
-		x, y, err := solve2x2(ns[0], ns[1], ns[2], ns[3], ns[4], ns[5])
-		if err != nil {
-			return fail("%v", err)
-		}
-		return []ir.Value{x, y}, nil
-
-	// -- floats (H) --------------------------------------------------------------
-	case "tofloat":
-		switch x := args[0].(type) {
-		case float64:
-			return x, nil
-		case int64:
-			return float64(x), nil
-		case string:
-			f, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
-			if err != nil {
-				return fail("tofloat: %q is not a number", x)
-			}
-			return f, nil
-		}
-		return fail("tofloat: expected Int, Float, or Text, got %s", ir.DescribeValue(args[0]))
-	case "floor", "ceil", "round":
-		f, ok := args[0].(float64)
-		if !ok {
-			return fail("%s: expected Float, got %s", name, ir.DescribeValue(args[0]))
-		}
-		switch name {
-		case "floor":
-			return int64(math.Floor(f)), nil
-		case "ceil":
-			return int64(math.Ceil(f)), nil
-		default:
-			return int64(math.Round(f)), nil
-		}
-	case "sqrt":
-		f, err := ir.AsFloat(args[0])
-		if err != nil {
-			return fail("sqrt: %v", err)
-		}
-		if f < 0 {
-			return fail("sqrt of a negative number (%s)", ir.FormatFloat(f))
-		}
-		return math.Sqrt(f), nil
 
 	// -- text ------------------------------------------------------------------
 	case "indexof":
@@ -1409,30 +1198,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		return int64(grid.Cols), nil
 
 	// -- bit operations ----------------------------------------------------------
-	case "band", "bor", "bxor":
-		a, b, err := twoInts(args, name)
-		if err != nil {
-			return fail("%v", err)
-		}
-		switch name {
-		case "band":
-			return a & b, nil
-		case "bor":
-			return a | b, nil
-		}
-		return a ^ b, nil
-	case "shl", "shr":
-		a, n, err := twoInts(args, name)
-		if err != nil {
-			return fail("%v", err)
-		}
-		if n < 0 {
-			return fail("%s: negative shift count %d", name, n)
-		}
-		if name == "shl" {
-			return a << n, nil
-		}
-		return a >> n, nil
 	case "frombin":
 		s, ok := args[0].(string)
 		if !ok {
@@ -1824,38 +1589,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 		}
 		return out, nil
 
-	// -- text --------------------------------------------------------------------
-	// -- floats ------------------------------------------------------------------
-	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
-		f, err := ir.AsFloat(args[0])
-		if err != nil {
-			return fail("%s: %v", name, err)
-		}
-		r, err := float1(name, f)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return r, nil
-	case "atan2", "hypot":
-		a, err1 := ir.AsFloat(args[0])
-		b, err2 := ir.AsFloat(args[1])
-		if err := firstErr(err1, err2); err != nil {
-			return fail("%s: %v", name, err)
-		}
-		if name == "atan2" {
-			return math.Atan2(a, b), nil
-		}
-		return math.Hypot(a, b), nil
-	case "trunc":
-		if n, ok := args[0].(int64); ok {
-			return n, nil
-		}
-		f, err := ir.AsFloat(args[0])
-		if err != nil {
-			return fail("trunc: %v", err)
-		}
-		return int64(math.Trunc(f)), nil
-
 	// -- records -----------------------------------------------------------------
 	case "record":
 		rec := ir.NewRecordValueSized(len(args) / 2)
@@ -1880,107 +1613,6 @@ func evalCall(x *ast.CallExpr, env Env, types typecheck.Env) (ir.Value, error) {
 			return fail("with: record has no field %q", field)
 		}
 		return rec.With(field, args[2]), nil
-
-	// -- bases, bits, number theory ----------------------------------------------
-	case "frombase", "fromhex":
-		s, ok := args[0].(string)
-		if !ok {
-			return fail("%s: expected Text, got %s", name, ir.DescribeValue(args[0]))
-		}
-		base := int64(16)
-		if name == "frombase" {
-			var err error
-			if base, err = ir.AsInt(args[1]); err != nil {
-				return fail("frombase: %v", err)
-			}
-		}
-		n, err := parseBase(name, s, base)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return n, nil
-	case "tobase", "tohex", "tobin":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("%s: %v", name, err)
-		}
-		base := int64(16)
-		switch name {
-		case "tobin":
-			base = 2
-		case "tobase":
-			if base, err = ir.AsInt(args[1]); err != nil {
-				return fail("tobase: %v", err)
-			}
-			if base < 2 || base > 36 {
-				return fail("tobase: base must be between 2 and 36, got %d", base)
-			}
-		}
-		return strconv.FormatInt(n, int(base)), nil
-	case "bnot":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("bnot: %v", err)
-		}
-		return ^n, nil
-	case "popcount":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("popcount: %v", err)
-		}
-		return int64(bits.OnesCount64(uint64(n))), nil
-	case "testbit":
-		n, i, err := twoInts(args, "testbit")
-		if err != nil {
-			return fail("%v", err)
-		}
-		if i < 0 || i > 63 {
-			return fail("testbit: bit %d is outside an Int (0 to 63)", i)
-		}
-		return n&(1<<uint(i)) != 0, nil
-	case "digits":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("digits: %v", err)
-		}
-		return decimalDigits(n), nil
-	case "fromdigits":
-		ds, err := ir.AsIntSlice(args[0])
-		if err != nil {
-			return fail("fromdigits: %v", err)
-		}
-		n, err := fromDigits(ds)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return n, nil
-	case "isprime":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("isprime: %v", err)
-		}
-		return isPrime(n), nil
-	case "divisors":
-		n, err := ir.AsInt(args[0])
-		if err != nil {
-			return fail("divisors: %v", err)
-		}
-		out, err := divisorsOf(n)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return out, nil
-	case "crt":
-		rs, err1 := ir.AsIntSlice(args[0])
-		ms, err2 := ir.AsIntSlice(args[1])
-		if err := firstErr(err1, err2); err != nil {
-			return fail("crt: %v", err)
-		}
-		n, err := crtSolve(rs, ms)
-		if err != nil {
-			return fail("%v", err)
-		}
-		return n, nil
 
 	default:
 		return fail("unknown function %q", name)
@@ -2072,196 +1704,6 @@ func euclidDiv(a, b int64) (int64, error) {
 	return (a - m) / b, nil
 }
 
-// powInt is integer exponentiation by squaring. A negative exponent is an
-// error rather than a silent 0: Domain has no rationals, so there is no
-// answer to hand back.
-func powInt(b, e int64) (int64, error) {
-	if e < 0 {
-		return 0, fmt.Errorf("pow: exponent must be non-negative, got %d", e)
-	}
-	r := int64(1)
-	for e > 0 {
-		if e&1 == 1 {
-			r *= b
-		}
-		b *= b
-		e >>= 1
-	}
-	return r, nil
-}
-
-// isqrtInt is the integer square root: the largest n with n*n <= x, exact for
-// every x in range — including near a perfect square, where the float root
-// alone can land one off.
-func isqrtInt(x int64) (int64, error) {
-	if x < 0 {
-		return 0, fmt.Errorf("isqrt: negative input %d", x)
-	}
-	if x < 2 {
-		return x, nil
-	}
-	// The float root is within one of the answer; the corrections compare by
-	// division so they cannot overflow near MaxInt64. (The Newton iteration
-	// this replaced started at x/2+1, which is already below x only from 3 on,
-	// so isqrt(2) came back as 2.)
-	r := int64(math.Sqrt(float64(x)))
-	for r > x/r {
-		r--
-	}
-	for r+1 <= x/(r+1) {
-		r++
-	}
-	return r, nil
-}
-
-// factorialInt errors on overflow rather than wrapping: 21! exceeds int64,
-// and a silently wrapped factorial is a wrong answer that looks like a right
-// one.
-func factorialInt(n int64) (int64, error) {
-	if n < 0 {
-		return 0, fmt.Errorf("factorial: negative input %d", n)
-	}
-	if n > 20 {
-		return 0, fmt.Errorf("factorial: %d! overflows Int (max is 20!)", n)
-	}
-	r := int64(1)
-	for i := int64(2); i <= n; i++ {
-		r *= i
-	}
-	return r, nil
-}
-
-// chooseInt is the binomial coefficient, computed by a multiplicative loop
-// that divides at every step, so it stays in range far past where factorial
-// would overflow.
-func chooseInt(n, k int64) (int64, error) {
-	if n < 0 {
-		return 0, fmt.Errorf("choose: negative n %d", n)
-	}
-	if k < 0 || k > n {
-		return 0, nil
-	}
-	if k > n-k {
-		k = n - k
-	}
-	// After step i the running value is C(n-k+i, i), always an integer, so
-	// the division is exact at every step and nothing is lost to truncation.
-	// The product before that division is taken in 128 bits: it can exceed
-	// int64 when the quotient does not — C(62, 31) fits, its last product
-	// does not — and each quotient is at most C(n, k), so a quotient that
-	// does not fit means the answer does not either.
-	r := uint64(1)
-	for i := int64(1); i <= k; i++ {
-		hi, lo := bits.Mul64(r, uint64(n-k+i))
-		if hi >= uint64(i) {
-			return 0, fmt.Errorf("choose: C(%d, %d) overflows Int", n, k)
-		}
-		r, _ = bits.Div64(hi, lo, uint64(i))
-		if r > math.MaxInt64 {
-			return 0, fmt.Errorf("choose: C(%d, %d) overflows Int", n, k)
-		}
-	}
-	return int64(r), nil
-}
-
-// gcdInt is the non-negative greatest common divisor; gcd(0, 0) = 0.
-func gcdInt(a, b int64) int64 {
-	a, b = absInt(a), absInt(b)
-	for b != 0 {
-		a, b = b, a%b
-	}
-	return a
-}
-
-// lcmInt is the non-negative least common multiple; lcm(a, 0) = 0.
-func lcmInt(a, b int64) int64 {
-	if a == 0 || b == 0 {
-		return 0
-	}
-	return absInt(a / gcdInt(a, b) * b)
-}
-
-// modPow computes base^exp mod m by binary exponentiation. The exponent must
-// be non-negative and the modulus positive; the result is in [0, m).
-func modPow(base, exp, m int64) (int64, error) {
-	if m <= 0 {
-		return 0, fmt.Errorf("modpow: modulus must be positive, got %d", m)
-	}
-	if exp < 0 {
-		return 0, fmt.Errorf("modpow: exponent must be non-negative, got %d", exp)
-	}
-	result := int64(1) % m
-	base = floorMod(base, m)
-	for exp > 0 {
-		if exp&1 == 1 {
-			result = mulMod(result, base, m)
-		}
-		base = mulMod(base, base, m)
-		exp >>= 1
-	}
-	return result, nil
-}
-
-// mulMod is a*b mod m for a and b in [0, m). Below the square root of
-// MaxInt64 the product fits and plain arithmetic is fastest; above it the
-// product is taken in 128 bits, which a modulus like AoC 2019 day 22's
-// (~1.2e14) needs — plain int64 multiplication wrapped there and handed back
-// a negative "remainder".
-func mulMod(a, b, m int64) int64 {
-	if m <= 3037000499 {
-		return a * b % m
-	}
-	hi, lo := bits.Mul64(uint64(a), uint64(b))
-	return int64(bits.Rem64(hi, lo, uint64(m)))
-}
-
-// floorMod is a mod m in [0, m) for a positive m, without the overflow of
-// ((a % m) + m) % m when m is above MaxInt64/2.
-func floorMod(a, m int64) int64 {
-	r := a % m
-	if r < 0 {
-		r += m
-	}
-	return r
-}
-
-// modInverse computes the multiplicative inverse of a modulo m (extended
-// Euclid). a and m must be coprime and m positive; the result is in [0, m).
-func modInverse(a, m int64) (int64, error) {
-	if m <= 0 {
-		return 0, fmt.Errorf("modinv: modulus must be positive, got %d", m)
-	}
-	a = floorMod(a, m)
-	// Extended Euclid on (a, m): track x with a*x ≡ r (mod m).
-	r0, r1 := a, m
-	x0, x1 := int64(1), int64(0)
-	for r1 != 0 {
-		q := r0 / r1
-		r0, r1 = r1, r0-q*r1
-		x0, x1 = x1, x0-q*x1
-	}
-	if r0 != 1 {
-		return 0, fmt.Errorf("modinv: %d has no inverse modulo %d (not coprime)", a, m)
-	}
-	return floorMod(x0, m), nil
-}
-
-// solve2x2 solves the integer linear system a*x + b*y = c, d*x + e*y = f by
-// Cramer's rule. It errors when the determinant is zero (no unique solution)
-// or when the unique solution is not integral.
-func solve2x2(a, b, c, d, e, f int64) (int64, int64, error) {
-	det := a*e - b*d
-	if det == 0 {
-		return 0, 0, fmt.Errorf("solve2x2: system has no unique solution (determinant is zero)")
-	}
-	xNum := c*e - b*f
-	yNum := a*f - c*d
-	if xNum%det != 0 || yNum%det != 0 {
-		return 0, 0, fmt.Errorf("solve2x2: solution is not integral")
-	}
-	return xNum / det, yNum / det, nil
-}
-
 // assignTo writes v to the name x updates. The environment is searched first
 // (a `consider` local, or a stage binding seeded into this application's
 // environment), and the binding stack second (a stage binding whose scope
@@ -2295,22 +1737,15 @@ func assignTo(x *ast.AssignExpr, env Env, v ir.Value) error {
 	return fmt.Errorf("%s: unknown identifier %q", x.Pos, x.Name)
 }
 
-// EvalLambda evaluates a lambda body with positional arguments bound to params.
-// Callers that know the statically inferred parameter types should use
-// EvalLambdaTyped instead, so type-ambiguous builtin results (sum of an empty
-// list) match the compiled backend.
-func EvalLambda(l *ast.Lambda, args ...ir.Value) (ir.Value, error) {
-	return EvalLambdaTyped(l, nil, args...)
-}
-
-// EvalLambdaTyped evaluates a lambda like EvalLambda, additionally binding
-// the statically inferred parameter types (in declaration order — the same
-// types the caller passed to typecheck.LambdaType at resolve time). The types
+// EvalLambdaTyped evaluates a lambda body with positional arguments bound to
+// params, additionally binding the statically inferred parameter types (in
+// declaration order — the same types the caller passed to
+// typecheck.LambdaType at resolve time). The types
 // let builtins whose result type is ambiguous from runtime values alone —
 // sum of an empty list, whose zero must carry the list's element type —
 // agree with the compiled backend, where the static types always decide.
 // paramTypes may be nil or contain nils; missing types degrade gracefully to
-// EvalLambda's dynamic behavior.
+// purely dynamic behavior.
 func EvalLambdaTyped(l *ast.Lambda, paramTypes []*ir.Type, args ...ir.Value) (ir.Value, error) {
 	if len(args) != len(l.Params) {
 		return nil, fmt.Errorf("lambda expects %d argument(s), got %d", len(l.Params), len(args))
@@ -2621,7 +2056,7 @@ func isFloatOperand(v ir.Value) bool {
 // dmSum, whose zero value carries the slice's element type even for an empty
 // slice, so sum of a runtime-empty List<Float> is float64(0) in both
 // backends. Without static types the runtime elements are sniffed, which
-// preserves the dynamic behavior for direct EvalExpr/EvalLambda callers but
+// preserves the dynamic behavior for direct EvalExpr callers and untyped EvalLambdaTyped calls but
 // cannot tell an empty List<Float> from an empty List<Int>.
 func sumIsFloat(arg ast.Expr, types typecheck.Env, xs []ir.Value) bool {
 	if types != nil {

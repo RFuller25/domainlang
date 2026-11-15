@@ -89,10 +89,8 @@ func (v Verdict) Summary() string {
 }
 
 func firstLine(s string) string {
-	if before, _, ok := strings.Cut(s, "\n"); ok {
-		return before
-	}
-	return s
+	before, _, _ := strings.Cut(s, "\n")
+	return before
 }
 
 // Submit sends an answer for one part.

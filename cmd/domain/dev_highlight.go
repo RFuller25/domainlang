@@ -98,15 +98,6 @@ type lineDecor struct {
 // noDecor is a line with nothing drawn over it.
 func noDecor() lineDecor { return lineDecor{cursor: -1, selStart: -1, selEnd: -1, currentHit: -1} }
 
-// renderLine paints one line with only a cursor on it. A cursor at or past the
-// end of the line is drawn as a trailing block, which is where it sits while
-// you type at the end.
-func renderLine(line string, cursor int) string {
-	d := noDecor()
-	d.cursor = cursor
-	return paintLine(line, d)
-}
-
 // paintLine paints one line's syntax with its decorations over the top.
 //
 // Runs of equal face are coalesced into one styled chunk. That is not a

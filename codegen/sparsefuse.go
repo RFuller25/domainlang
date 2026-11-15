@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"domain/ast"
 	"domain/ir"
 	"domain/optimizer"
 )
@@ -20,54 +21,44 @@ import (
 // predicate that could fail or write would report differently — and unless the
 // two conversions carry literals rather than measured lambdas, which have a
 // value to read that the fused walk no longer builds.
-func (g *gen) fuseSparseFilter(nodes []*ir.Node, in string) (int, string, bool, error) {
+func (g *gen) fuseSparseFilter(nodes []*ir.Node, in string) (int, string, bool) {
 	if len(nodes) < 3 {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	conv, find, mark := nodes[0], nodes[1], nodes[2]
 	if conv.Prim != "Convert To Sparse Grid" || find.Prim != "Find Cells" || mark.Prim != "Convert To Sparse Grid" {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	if src, _ := conv.Meta["source"].(string); src != "map" {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	if src, _ := mark.Meta["source"].(string); src != "points" {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	if find.In == nil || find.In.Kind != ir.KSparse || mark.In == nil || mark.In.Elem == nil ||
 		mark.In.Elem.Kind != ir.KTuple {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	if hasMeasured(conv, "default") || hasMeasured(mark, "default", "mark") {
-		return 0, "", false, nil
+		return 0, "", false
 	}
-	lam, err := g.nodeLambda(find)
+	lam, err := try1(func() *ast.Lambda { return g.nodeLambda(find) })
 	if err != nil {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	if pure, total := optimizer.Elementwise(lam, find.In.Elem); !pure || !total {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 
-	elemGo, err := g.goType(mark.Out.Elem)
-	if err != nil {
-		return 0, "", false, unsupported(mark, "%v", err)
-	}
-	def, err := g.measuredLit(mark, in, "default", mark.In, mark.Out.Elem, sparseLit)
-	if err != nil {
-		return 0, "", false, err
-	}
-	markLit, err := g.measuredLit(mark, in, "mark", mark.In, mark.Out.Elem, sparseLit)
-	if err != nil {
-		return 0, "", false, err
-	}
+	elemGo := asUnsupported1(mark, "", func() string { return g.goType(mark.Out.Elem) })
+	def := g.measuredLit(mark, in, "default", mark.In, mark.Out.Elem, sparseLit)
+	markLit := g.measuredLit(mark, in, "mark", mark.In, mark.Out.Elem, sparseLit)
 	g.helper("dmSparse", declSparse, "slices")
 
 	e, k, ix, v := g.fresh("e"), g.fresh("k"), g.fresh("i"), g.fresh("v")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: find.In.Elem}})
-	if err != nil {
-		return 0, "", false, unsupported(find, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(find, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: find.In.Elem}})
+	})
 	g.wl("%s := dmNewSparse[%s](%s)", v, elemGo, def)
 	g.wl("for %s, %s := range %s.keys {", ix, k, in)
 	g.in()
@@ -79,5 +70,5 @@ func (g *gen) fuseSparseFilter(nodes []*ir.Node, in string) (int, string, bool, 
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return 3, v, true, nil
+	return 3, v, true
 }

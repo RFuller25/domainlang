@@ -89,7 +89,7 @@ Reveal: stdout
 
 func TestRunInterpretedReadsStdin(t *testing.T) {
 	prog := writeProgram(t, sumStdin, nil)
-	res, err := Once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
+	res, err := once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
 		Options{DomainBin: domainBinary(t)})
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestRunInterpretedReadsStdin(t *testing.T) {
 // and every fuzz input would silently be a no-op.
 func TestRunNamedSourceIsSubstituted(t *testing.T) {
 	prog := writeProgram(t, sumNamed, map[string]string{"input.txt": "100\n200\n"})
-	res, err := Once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
+	res, err := once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
 		Options{DomainBin: domainBinary(t)})
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestFourConfigurationsAgree(t *testing.T) {
 // code and its stderr, which is exactly what shrink's oracle reads.
 func TestProgramFailureIsNotHarnessFailure(t *testing.T) {
 	prog := writeProgram(t, sumStdin, nil)
-	res, err := Once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\nnot-a-number\n")},
+	res, err := once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\nnot-a-number\n")},
 		Options{DomainBin: domainBinary(t)})
 	if err != nil {
 		t.Fatalf("Once returned a harness error for a program failure: %v", err)
@@ -207,7 +207,7 @@ Simple Domain: While
 Reveal: stdout
 `, nil)
 	start := time.Now()
-	res, err := Once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n")},
+	res, err := once(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n")},
 		Options{DomainBin: domainBinary(t), Timeout: 900 * time.Millisecond})
 	elapsed := time.Since(start)
 	if err != nil {
@@ -228,7 +228,7 @@ Reveal: stdout
 // through the same file a compiled one would.
 func TestAllocReportingInterpreted(t *testing.T) {
 	prog := writeProgram(t, sumStdin, nil)
-	res, err := Run(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
+	res, err := run(prog, Config{Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
 		Options{Runs: 1, Alloc: true, DomainBin: domainBinary(t)})
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestAllocReportingCompiled(t *testing.T) {
 	requireGo(t)
 	defer Cleanup()
 	prog := writeProgram(t, sumStdin, nil)
-	res, err := Run(prog, Config{Compiled: true, Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
+	res, err := run(prog, Config{Compiled: true, Optimize: true}, Input{Bytes: []byte("1\n2\n3\n")},
 		Options{Runs: 1, Alloc: true, DomainBin: domainBinary(t)})
 	if err != nil {
 		t.Fatal(err)
@@ -335,4 +335,21 @@ func TestConfigLabel(t *testing.T) {
 			t.Errorf("Label() = %q want %q", got, tc.want)
 		}
 	}
+}
+
+// run measures a single configuration through Race.
+func run(program string, c Config, in Input, opts Options) (Result, error) {
+	rs, err := Race(program, []Config{c}, in, opts)
+	if err != nil {
+		return Result{}, err
+	}
+	return rs[0], nil
+}
+
+// once executes a configuration one time, keeping the output.
+func once(program string, c Config, in Input, opts Options) (Result, error) {
+	opts.Runs = 1
+	opts.KeepStdout = true
+	opts.Alloc = false
+	return run(program, c, in, opts)
 }

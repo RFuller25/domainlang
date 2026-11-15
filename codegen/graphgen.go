@@ -18,21 +18,21 @@ import (
 // graphOut computes the result type of `graph(edges)`, mirroring the
 // typechecker's graphEdgeListNode: pairs and triples come from a tuple element,
 // the ragged form from a List<List<K>>.
-func (g *gen) graphOut(x *ast.CallExpr, types []*ir.Type) (*ir.Type, error) {
+func (g *gen) graphOut(x *ast.CallExpr, types []*ir.Type) *ir.Type {
 	t := types[0]
 	if t == nil || t.Kind != ir.KList || t.Elem == nil {
-		return nil, fmt.Errorf("graph needs an edge list, got %s", t)
+		panic(failf("graph needs an edge list, got %s", t))
 	}
 	switch e := t.Elem; e.Kind {
 	case ir.KTuple:
 		if len(e.Elems) != 2 && len(e.Elems) != 3 {
-			return nil, fmt.Errorf("graph needs 2- or 3-element edges, got %s", e)
+			panic(failf("graph needs 2- or 3-element edges, got %s", e))
 		}
-		return ir.Graph(e.Elems[0]), nil
+		return ir.Graph(e.Elems[0])
 	case ir.KList:
-		return ir.Graph(e.Elem), nil
+		return ir.Graph(e.Elem)
 	}
-	return nil, fmt.Errorf("graph needs an edge list, got %s", t)
+	panic(failf("graph needs an edge list, got %s", t))
 }
 
 // graphBuildFn interns `graph(edges)` for one edge-list shape.
@@ -40,24 +40,12 @@ func (g *gen) graphOut(x *ast.CallExpr, types []*ir.Type) (*ir.Type, error) {
 // The ragged List<List<K>> form checks each row's length at run time and fails
 // the way the interpreter does, because the length is not in the type — that is
 // the whole reason the shape exists (a positional Match Pattern produces it).
-func (g *gen) graphBuildFn(gt, edgeT *ir.Type) (string, error) {
-	graphGo, err := g.goType(gt)
-	if err != nil {
-		return "", err
-	}
-	edgeGo, err := g.goType(edgeT)
-	if err != nil {
-		return "", err
-	}
-	nodeGo, err := g.goType(gt.Elem)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) graphBuildFn(gt, edgeT *ir.Type) string {
+	graphGo := g.goType(gt)
+	edgeGo := g.goType(edgeT)
+	nodeGo := g.goType(gt.Elem)
 	g.chelper(gt.Elem, "dmGraph", declGraph)
-	newG, err := g.newGraphExpr(gt.Elem, nodeGo)
-	if err != nil {
-		return "", err
-	}
+	newG := g.newGraphExpr(gt.Elem, nodeGo)
 
 	key := "graphbuild:" + canonicalKey(edgeT)
 	return g.listFn(key, "GraphOf", func(name string) (string, error) {
@@ -92,16 +80,10 @@ func (g *gen) graphBuildFn(gt, edgeT *ir.Type) (string, error) {
 // graphEdgesFn interns `edges(g)` for one node type: every arc as a
 // (from, to, weight) triple, nodes in insertion order and each node's arcs in
 // theirs — the same walk ir.GraphValue.Edges does.
-func (g *gen) graphEdgesFn(gt *ir.Type) (string, error) {
-	graphGo, err := g.goType(gt)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) graphEdgesFn(gt *ir.Type) string {
+	graphGo := g.goType(gt)
 	tripleT := ir.Tuple(gt.Elem, gt.Elem, ir.Int())
-	tripleGo, err := g.goType(tripleT)
-	if err != nil {
-		return "", err
-	}
+	tripleGo := g.goType(tripleT)
 	g.chelper(gt.Elem, "dmGraph", declGraph)
 
 	return g.listFn("graphedges:"+canonicalKey(gt), "GraphEdges", func(name string) (string, error) {
@@ -121,20 +103,11 @@ func (g *gen) graphEdgesFn(gt *ir.Type) (string, error) {
 // graphEdgesOfFn interns `edgesof(g, n)` for one node type: a node's out-arcs
 // as (destination, weight) pairs. A node not in the graph reads empty, which is
 // what keeps the builtin total.
-func (g *gen) graphEdgesOfFn(gt *ir.Type) (string, error) {
-	graphGo, err := g.goType(gt)
-	if err != nil {
-		return "", err
-	}
-	nodeGo, err := g.goType(gt.Elem)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) graphEdgesOfFn(gt *ir.Type) string {
+	graphGo := g.goType(gt)
+	nodeGo := g.goType(gt.Elem)
 	pairT := ir.Tuple(gt.Elem, ir.Int())
-	pairGo, err := g.goType(pairT)
-	if err != nil {
-		return "", err
-	}
+	pairGo := g.goType(pairT)
 	g.chelper(gt.Elem, "dmGraph", declGraph)
 
 	return g.listFn("graphedgesof:"+canonicalKey(gt), "GraphEdgesOf", func(name string) (string, error) {
@@ -156,20 +129,14 @@ func (g *gen) graphEdgesOfFn(gt *ir.Type) (string, error) {
 // emitConvertToGraph lowers the Channeled Energy coercion. The three input
 // shapes are told apart at resolve time and recorded in Meta, so the emitted
 // loop is the one the input actually has rather than a runtime switch.
-func (g *gen) emitConvertToGraph(n *ir.Node, in string) (string, error) {
-	nodeGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitConvertToGraph(n *ir.Node, in string) string {
+	nodeGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	undirected, _ := n.Meta["undirected"].(bool)
 	weighted, _ := n.Meta["weighted"].(bool)
 	fromMap, _ := n.Meta["fromMap"].(bool)
 
 	out, e := g.fresh("gr"), g.fresh("e")
-	newG, err := g.newGraphExpr(n.Out.Elem, nodeGo)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	newG := asUnsupported1(n, "", func() string { return g.newGraphExpr(n.Out.Elem, nodeGo) })
 	g.wl("%s := %s", out, newG)
 
 	// add emits one arc, plus its reverse when the mode asked for it. Both go
@@ -222,16 +189,13 @@ func (g *gen) emitConvertToGraph(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 	}
-	return out, nil
+	return out
 }
 
 // emitConvertToEdges is the way back out: every arc as a (from, to, weight)
 // triple, in the same walk ir.GraphValue.Edges does.
-func (g *gen) emitConvertToEdges(n *ir.Node, in string) (string, error) {
-	tripleGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitConvertToEdges(n *ir.Node, in string) string {
+	tripleGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	out, i, arcs, e := g.fresh("es"), g.fresh("i"), g.fresh("arcs"), g.fresh("e")
 	g.wl("%s := make([]%s, 0, len(%s.edges))", out, tripleGo, in)
@@ -245,7 +209,7 @@ func (g *gen) emitConvertToEdges(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return out, nil
+	return out
 }
 
 // The graph half of the search vocabulary. Each mirrors the interpreter's
@@ -256,11 +220,8 @@ func (g *gen) emitConvertToEdges(n *ir.Node, in string) (string, error) {
 // graphSearchStart emits the start-node lookup shared by BFS, Dijkstra and
 // Shortest Path: the resolved node, then its index, failing the way the
 // interpreter's graphStart does when it is not in the graph.
-func (g *gen) graphSearchStart(n *ir.Node, in, prim, role, key string) (string, error) {
-	val, err := g.metaValue(n, in, key)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) graphSearchStart(n *ir.Node, in, prim, role, key string) string {
+	val := g.metaValue(n, in, key)
 	g.helper("dmFail", declFail, "fmt", "os")
 	idx, ok := g.fresh("st"), g.fresh("ok")
 	g.wl("%s, %s := %s", idx, ok, nodeIndex(n.In.Elem, in, val))
@@ -269,60 +230,50 @@ func (g *gen) graphSearchStart(n *ir.Node, in, prim, role, key string) (string, 
 	g.wl(`dmFail("%s: %s: %%v is not a node of the graph", %s)`, prim, role, val)
 	g.out()
 	g.wl("}")
-	return idx, nil
+	return idx
 }
 
 // metaValue renders a Start:/Goal:-style node argument, which is either a
 // literal recorded under key or a lambda under key+"Expr". It is
 // measuredOperand's value-typed sibling: that one is Int-only, because every
 // argument it serves is a count or an index.
-func (g *gen) metaValue(n *ir.Node, in, key string) (string, error) {
+func (g *gen) metaValue(n *ir.Node, in, key string) string {
 	if lam, ok := n.Meta[key+"Expr"].(*ast.Lambda); ok {
 		g.bindAmbientParams(lam)
-		body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+		body, _, err := try2(func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+		})
 		if err != nil {
-			return "", unsupported(n, "%s: %v", key, err)
+			panic(unsupported(n, "%s: %v", key, err))
 		}
 		v := g.fresh("nd")
 		g.wl("%s := %s", v, body)
-		return v, nil
+		return v
 	}
 	switch lit := n.Meta[key].(type) {
 	case string:
-		return goStr(lit), nil
+		return goStr(lit)
 	case int64:
-		return fmt.Sprintf("int64(%d)", lit), nil
+		return fmt.Sprintf("int64(%d)", lit)
 	}
-	return "", unsupported(n, "missing %s argument", key)
+	panic(unsupported(n, "missing %s argument", key))
 }
 
-func (g *gen) emitGraphBFS(n *ir.Node, in string) (string, error) {
-	nodeGo, err := g.goType(n.Out.Key)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	start, err := g.graphSearchStart(n, in, "BFS", "Start", "start")
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitGraphBFS(n *ir.Node, in string) string {
+	nodeGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Key) })
+	start := g.graphSearchStart(n, in, "BFS", "Start", "start")
 	nt := n.Out.Key
 	g.chelper(nt, "dmGraph", declGraph)
 	g.chelper(nt, "dmMap", declMap)
 	fn := g.chelper(nt, "dmGraphBFS", declGraphBFS)
 	v := g.fresh("d")
 	g.wl("%s := %s[%s](%s, %s)", v, fn, nodeGo, in, start)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitGraphDijkstra(n *ir.Node, in string) (string, error) {
-	nodeGo, err := g.goType(n.Out.Key)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	start, err := g.graphSearchStart(n, in, "Dijkstra", "Start", "start")
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitGraphDijkstra(n *ir.Node, in string) string {
+	nodeGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Key) })
+	start := g.graphSearchStart(n, in, "Dijkstra", "Start", "start")
 	g.helper("dmFail", declFail, "fmt", "os")
 	nt := n.Out.Key
 	g.chelper(nt, "dmGraph", declGraph)
@@ -332,26 +283,23 @@ func (g *gen) emitGraphDijkstra(n *ir.Node, in string) (string, error) {
 	fn := g.chelper(nt, "dmGraphDijkstra", declGraphDijkstra)
 	v := g.fresh("d")
 	g.wl("%s := %s[%s](%s, %s)", v, fn, nodeGo, in, start)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitGraphComponents(n *ir.Node, in string) (string, error) {
-	nodeGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitGraphComponents(n *ir.Node, in string) string {
+	nodeGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	fn := g.chelper(n.In.Elem, "dmGraphComponents", declGraphComponents)
 	v := g.fresh("c")
 	g.wl("%s := %s[%s](%s)", v, fn, nodeGo, in)
-	return v, nil
+	return v
 }
 
 // The pipeline-level graph vocabulary. Each mirrors the interpreter's function
 // of the same job in prims/graph.go — same order, same choices — so the two
 // backends print the same bytes.
 
-func (g *gen) emitGraphRoot(n *ir.Node, in string) (string, error) {
+func (g *gen) emitGraphRoot(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	fn := g.chelper(n.In.Elem, "dmGraphRoot", declGraphRoot, "fmt")
@@ -359,39 +307,33 @@ func (g *gen) emitGraphRoot(n *ir.Node, in string) (string, error) {
 	// The builtin and the stage say the same three things; the message prefix
 	// is the builtin's, which is the name a reader is likelier to have met.
 	g.wl("%s := %s(%s)", v, fn, in)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitMinimumSpanningTree(n *ir.Node, in string) (string, error) {
+func (g *gen) emitMinimumSpanningTree(n *ir.Node, in string) string {
 	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	fn := g.chelper(n.In.Elem, "dmGraphMST", declGraphMST, "sort")
 	v := g.fresh("mst")
 	g.wl("%s := %s(%s)", v, fn, in)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitStronglyConnectedComponents(n *ir.Node, in string) (string, error) {
+func (g *gen) emitStronglyConnectedComponents(n *ir.Node, in string) string {
 	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	fn := g.chelper(n.In.Elem, "dmGraphSCC", declGraphSCC, "sort")
 	v := g.fresh("scc")
 	g.wl("%s := %s(%s)", v, fn, in)
-	return v, nil
+	return v
 }
 
 // emitConvertToAdjacency drops a Graph into the adjacency Map<K, List<K>> that
 // Convert To Graph reads back. Every node is a key, isolated ones included, and
 // the weights go — Convert To Edges is the way out that keeps them.
-func (g *gen) emitConvertToAdjacency(n *ir.Node, in string) (string, error) {
-	nodeGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitConvertToAdjacency(n *ir.Node, in string) string {
+	nodeGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	out, i, succ, e := g.fresh("adj"), g.fresh("i"), g.fresh("succ"), g.fresh("e")
-	newM, err := g.newMapExpr(n.In.Elem, nodeGo, "[]"+nodeGo, "")
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	newM := asUnsupported1(n, "", func() string { return g.newMapExpr(n.In.Elem, nodeGo, "[]"+nodeGo, "") })
 	g.wl("%s := %s", out, newM)
 	g.wl("for %s := range %s.nodes {", i, in)
 	g.in()
@@ -404,22 +346,13 @@ func (g *gen) emitConvertToAdjacency(n *ir.Node, in string) (string, error) {
 	g.wl("%s.put(%s.nodes[%s], %s)", out, in, i, succ)
 	g.out()
 	g.wl("}")
-	return out, nil
+	return out
 }
 
-func (g *gen) emitShortestPath(n *ir.Node, in string) (string, error) {
-	nodeGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	start, err := g.graphSearchStart(n, in, "Shortest Path", "Start", "start")
-	if err != nil {
-		return "", err
-	}
-	goal, err := g.graphSearchStart(n, in, "Shortest Path", "Goal", "goal")
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitShortestPath(n *ir.Node, in string) string {
+	nodeGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
+	start := g.graphSearchStart(n, in, "Shortest Path", "Start", "start")
+	goal := g.graphSearchStart(n, in, "Shortest Path", "Goal", "goal")
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.chelper(n.In.Elem, "dmGraph", declGraph)
 	g.helper("dmPQ", declPQ)
@@ -427,7 +360,7 @@ func (g *gen) emitShortestPath(n *ir.Node, in string) (string, error) {
 	fn := g.chelper(n.In.Elem, "dmGraphPath", declGraphPath)
 	v := g.fresh("p")
 	g.wl("%s := %s[%s](%s, %s, %s)", v, fn, nodeGo, in, start, goal)
-	return v, nil
+	return v
 }
 
 // emitAccumulateUp lowers the reverse-topological fold, mirroring
@@ -437,33 +370,25 @@ func (g *gen) emitShortestPath(n *ir.Node, in string) (string, error) {
 // The two lambdas are inlined rather than called, which is what every other
 // emitter here does; Combine: is absent in the common case and the fold is
 // then a plain `+`.
-func (g *gen) emitAccumulateUp(n *ir.Node, in string) (string, error) {
-	nodeGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitAccumulateUp(n *ir.Node, in string) string {
+	nodeGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
+	lam := g.nodeLambda(n)
 	nd := g.fresh("nd")
-	ownBody, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: nd, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "Using: %v", err)
-	}
+	ownBody, _ := asUnsupported2(n, "Using: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: nd, typ: n.In.Elem}})
+	})
 
 	// Combine: folds the running value with one child's total. Without it the
 	// fold is addition, which is what "how much is under here" means.
 	combineOf := func(acc, child string) (string, error) { return acc + " + " + child, nil }
 	if cl, ok := n.Meta["combine"].(*ast.Lambda); ok {
 		a, b := g.fresh("ca"), g.fresh("cb")
-		body, _, err := g.compileExpr(cl.Body, exprEnv{
-			cl.Params[0]: {expr: a, typ: ir.Int()},
-			cl.Params[1]: {expr: b, typ: ir.Int()},
+		body, _ := asUnsupported2(n, "Combine: ", func() (string, *ir.Type) {
+			return g.compileExpr(cl.Body, exprEnv{
+				cl.Params[0]: {expr: a, typ: ir.Int()},
+				cl.Params[1]: {expr: b, typ: ir.Int()},
+			})
 		})
-		if err != nil {
-			return "", unsupported(n, "Combine: %v", err)
-		}
 		combineOf = func(acc, child string) (string, error) {
 			return "func(" + a + ", " + b + " int64) int64 { return " + body + " }(" + acc + ", " + child + ")", nil
 		}
@@ -509,10 +434,7 @@ func (g *gen) emitAccumulateUp(n *ir.Node, in string) (string, error) {
 	g.wl("_ = %s", nd)
 	g.wl("for _, %s := range %s.adj[%s] {", e, in, cur)
 	g.in()
-	folded, err := combineOf(v, totals+"["+e+".to]")
-	if err != nil {
-		return "", err
-	}
+	folded := must(combineOf(v, totals+"["+e+".to]"))
 	g.wl("%s = %s", v, folded)
 	g.out()
 	g.wl("}")
@@ -545,15 +467,12 @@ func (g *gen) emitAccumulateUp(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 
-	newM, err := g.newMapExpr(n.In.Elem, nodeGo, "int64", "")
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	newM := asUnsupported1(n, "", func() string { return g.newMapExpr(n.In.Elem, nodeGo, "int64", "") })
 	g.wl("%s := %s", out, newM)
 	g.wl("for %s := range %s.nodes {", i, in)
 	g.in()
 	g.wl("%s.put(%s.nodes[%s], %s[%s])", out, in, i, totals, i)
 	g.out()
 	g.wl("}")
-	return out, nil
+	return out
 }

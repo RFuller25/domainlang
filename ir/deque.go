@@ -35,9 +35,6 @@ func (q *Queue[T]) Pop() (T, bool) {
 	return v, true
 }
 
-// Len reports the number of queued elements.
-func (q *Queue[T]) Len() int { return q.count }
-
 func (q *Queue[T]) grow() {
 	next := make([]T, max(4, len(q.buf)*2))
 	for i := range q.count {
@@ -67,6 +64,3 @@ func (s *Stack[T]) Pop() (T, bool) {
 	s.elems = s.elems[:len(s.elems)-1]
 	return v, true
 }
-
-// Len reports the number of stacked elements.
-func (s *Stack[T]) Len() int { return len(s.elems) }

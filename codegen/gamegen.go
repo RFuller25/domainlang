@@ -64,14 +64,9 @@ type gameProgram struct {
 // emitGame compiles a whole game: the Part bodies as functions, the tables the
 // runtime dispatches through, and a main() that runs the declarations and then
 // hands over to the loop.
-func (g *gen) emitGame(p *ir.Pipeline) error {
-	prog, err := readGame(p)
-	if err != nil {
-		return err
-	}
-	if prog.goType, err = g.goType(prog.typ); err != nil {
-		return err
-	}
+func (g *gen) emitGame(p *ir.Pipeline) {
+	prog := readGame(p)
+	prog.goType = g.goType(prog.typ)
 	// The runtime's own state, and the world it drives. The world is declared
 	// here rather than in gameruntime.go because its type is the program's.
 	g.helper("dmFail", declFail, "fmt", "os")
@@ -85,20 +80,14 @@ func (g *gen) emitGame(p *ir.Pipeline) error {
 	g.helper("dmGamePlay", declGamePlay, "net/http", "os", "time",
 		"charm.land/bubbletea/v2", "github.com/charmbracelet/x/term")
 
-	if err := g.emitGameParts(prog); err != nil {
-		return err
-	}
+	g.emitGameParts(prog)
 	g.emitGameTables(prog)
-	if err := g.emitGameGlue(prog); err != nil {
-		return err
-	}
+	g.emitGameGlue(prog)
 
 	// The declarations run in main, before the loop: a `Cursed Object` is what
 	// the world is built from, so it has to hold a value by the time
 	// `Part World:` reads it.
-	if _, err := g.emitSequence(prog.setup, ""); err != nil {
-		return err
-	}
+	g.emitSequence(prog.setup, "")
 	g.wl("if dmPlayable() {")
 	g.in()
 	g.wl("dmPlay()")
@@ -108,13 +97,12 @@ func (g *gen) emitGame(p *ir.Pipeline) error {
 	g.wl("dmReplayRun()")
 	g.out()
 	g.wl("}")
-	return nil
 }
 
 // readGame reads the roles off a resolved pipeline. It is the host's gameOf (game/host.go),
 // with the same reasoning: a Part is already a node with its body in Meta, and
 // a second place to keep them could disagree with the first.
-func readGame(p *ir.Pipeline) (*gameProgram, error) {
+func readGame(p *ir.Pipeline) *gameProgram {
 	prog := &gameProgram{specs: map[string]*ir.RequestSpec{}}
 	for _, n := range p.Nodes {
 		if n == nil {
@@ -151,11 +139,11 @@ func readGame(p *ir.Pipeline) (*gameProgram, error) {
 		case "Entity":
 			// A definition, lowered to a Shikigami: it has no node here.
 		default:
-			return nil, fmt.Errorf("internal: this backend does not know how to compile a Part %s", role)
+			panic(failf("internal: this backend does not know how to compile a Part %s", role))
 		}
 	}
 	if prog.world == nil || prog.draw == nil || prog.typ == nil {
-		return nil, fmt.Errorf("internal: a game needs a Part World and a Part Draw")
+		panic(failf("internal: a game needs a Part World and a Part Draw"))
 	}
 	// Timers fire in a fixed order when several fall due at once — earliest
 	// period first, then as written — so a replayed tick is one answer rather
@@ -168,17 +156,15 @@ func readGame(p *ir.Pipeline) (*gameProgram, error) {
 		prog.tags = append(prog.tags, tag)
 	}
 	slices.Sort(prog.tags)
-	return prog, nil
+	return prog
 }
 
 // emitGameParts compiles every Part body into a function of its own.
-func (g *gen) emitGameParts(prog *gameProgram) error {
+func (g *gen) emitGameParts(prog *gameProgram) {
 	// The world's body opens with the empty world — a Record with no fields —
 	// and says what the world actually is. See prims/scope_gamedev.go for why
 	// it starts from {} rather than from nothing.
-	if err := g.partFunc(prog, prog.world, ir.Record(), prog.typ); err != nil {
-		return err
-	}
+	g.partFunc(prog, prog.world, ir.Record(), prog.typ)
 	for _, p := range []*gamePart{prog.start, prog.ending} {
 		if p == nil {
 			continue
@@ -189,21 +175,14 @@ func (g *gen) emitGameParts(prog *gameProgram) error {
 		if p.role == "Ending" {
 			out = nil
 		}
-		if err := g.partFunc(prog, p, prog.typ, out); err != nil {
-			return err
-		}
+		g.partFunc(prog, p, prog.typ, out)
 	}
-	if err := g.partFunc(prog, prog.draw, prog.typ, ir.View()); err != nil {
-		return err
-	}
+	g.partFunc(prog, prog.draw, prog.typ, ir.View())
 	for _, list := range [][]*gamePart{prog.on, prog.every, prog.reply} {
 		for _, p := range list {
-			if err := g.partFunc(prog, p, prog.typ, prog.typ); err != nil {
-				return err
-			}
+			g.partFunc(prog, p, prog.typ, prog.typ)
 		}
 	}
-	return nil
 }
 
 // partFunc emits one Part body as a top-level function.
@@ -214,16 +193,11 @@ func (g *gen) emitGameParts(prog *gameProgram) error {
 // Shikigami inlined there — reads them by name and is otherwise exactly as
 // written. That is the same reason the interpreter binds them rather than
 // appending lambda parameters; see prims.RoleBind.
-func (g *gen) partFunc(prog *gameProgram, part *gamePart, in, out *ir.Type) error {
-	inGo, err := g.goType(in)
-	if err != nil {
-		return err
-	}
+func (g *gen) partFunc(prog *gameProgram, part *gamePart, in, out *ir.Type) {
+	inGo := g.goType(in)
 	outGo := ""
 	if out != nil {
-		if outGo, err = g.goType(out); err != nil {
-			return err
-		}
+		outGo = g.goType(out)
 	}
 	name := g.fresh("dmPart")
 	param := g.fresh("pw")
@@ -240,21 +214,21 @@ func (g *gen) partFunc(prog *gameProgram, part *gamePart, in, out *ir.Type) erro
 	maps.Copy(binds, savedBinds)
 	for _, b := range part.binds {
 		p := g.fresh("pb")
-		bindGo, terr := g.goType(b.Type)
+		bindGo, terr := try1(func() string { return g.goType(b.Type) })
 		if terr != nil {
 			g.main, g.indent, g.partLabel, g.bindNames = savedMain, savedIndent, savedLabel, savedBinds
-			return terr
+			panic(fail(terr))
 		}
 		sig += fmt.Sprintf(", %s %s", p, bindGo)
 		binds[b.Name] = exprBinding{expr: p, typ: b.Type}
 	}
 	g.bindNames = binds
 
-	cur, cerr := g.emitSequence(part.nodes, param)
+	cur, cerr := try1(func() string { return g.emitSequence(part.nodes, param) })
 	body := g.main.String()
 	g.main, g.indent, g.partLabel, g.bindNames = savedMain, savedIndent, savedLabel, savedBinds
 	if cerr != nil {
-		return cerr
+		panic(fail(cerr))
 	}
 
 	var decl bytes.Buffer
@@ -271,7 +245,6 @@ func (g *gen) partFunc(prog *gameProgram, part *gamePart, in, out *ir.Type) erro
 	}
 	g.decls = append(g.decls, decl.String())
 	part.fn = name
-	return nil
 }
 
 // emitGameTables writes the two lists the runtime dispatches through. They are
@@ -292,11 +265,8 @@ func (g *gen) emitGameTables(prog *gameProgram) {
 }
 
 // emitGameGlue writes the six functions the runtime calls into.
-func (g *gen) emitGameGlue(prog *gameProgram) error {
-	zero, err := g.zeroExpr(ir.Record())
-	if err != nil {
-		return err
-	}
+func (g *gen) emitGameGlue(prog *gameProgram) {
+	zero := g.zeroExpr(ir.Record())
 	var b strings.Builder
 
 	// dmBegin: build the world, then run Start.
@@ -341,13 +311,9 @@ func (g *gen) emitGameGlue(prog *gameProgram) error {
 	}
 	b.WriteString("\t}\n\treturn false\n}\n")
 
-	deliver, err := g.replyDeliver(prog)
-	if err != nil {
-		return err
-	}
+	deliver := g.replyDeliver(prog)
 	b.WriteString("\n" + deliver)
 	g.decls = append(g.decls, b.String())
-	return nil
 }
 
 // bindArgs is the payload a role's function takes, as arguments of dmOnRun.
@@ -375,7 +341,7 @@ func bindArgs(binds []prims.RoleBind) string {
 // reply is {ok, error, value} where value is what the Request declared with
 // `Into:`, so each tag decodes into a different Go type and calls a different
 // function.
-func (g *gen) replyDeliver(prog *gameProgram) (string, error) {
+func (g *gen) replyDeliver(prog *gameProgram) string {
 	var b strings.Builder
 	b.WriteString("// dmReplyDeliver decodes an answer and runs the Part that was written\n" +
 		"// for it. An error means the document did not fit the declared shape:\n" +
@@ -385,20 +351,11 @@ func (g *gen) replyDeliver(prog *gameProgram) (string, error) {
 	for _, part := range prog.reply {
 		spec := prog.specs[part.label]
 		if spec == nil {
-			return "", fmt.Errorf("internal: nothing fires a request tagged %q", part.label)
+			panic(failf("internal: nothing fires a request tagged %q", part.label))
 		}
-		replyGo, err := g.goType(spec.Reply)
-		if err != nil {
-			return "", err
-		}
-		decode, err := g.jsonInFunc(spec.Into)
-		if err != nil {
-			return "", err
-		}
-		zero, err := g.zeroExpr(spec.Into)
-		if err != nil {
-			return "", err
-		}
+		replyGo := g.goType(spec.Reply)
+		decode := g.jsonInFunc(spec.Into)
+		zero := g.zeroExpr(spec.Into)
 		fields := replyFields(spec.Reply)
 		fmt.Fprintf(&b, "\tcase %s:\n\t\tr := %s{%s: false, %s: text, %s: %s}\n",
 			goStr(part.label), replyGo, fields.ok, fields.err, fields.value, zero)
@@ -417,7 +374,7 @@ func (g *gen) replyDeliver(prog *gameProgram) (string, error) {
 `, decode, replyGo, fields.ok, fields.err, fields.value, part.fn)
 	}
 	b.WriteString("\t}\n\treturn nil\n}\n")
-	return b.String(), nil
+	return b.String()
 }
 
 // replyFields is the Go names of {ok, error, value} on the generated struct.
@@ -452,23 +409,22 @@ func replyFields(t *ir.Type) replyFieldNames {
 // ending the game and ringing the bell are the runtime's business — consumed
 // once per frame, in both the played loop and the replayed one, on the same
 // terms game/play.go and game/replay.go check them.
-func (g *gen) emitSignal(n *ir.Node, in, flag string) (string, error) {
+func (g *gen) emitSignal(n *ir.Node, in, flag string) string {
 	lam, _ := n.Meta["lambda"].(*ast.Lambda)
 	if lam == nil {
 		g.wl("%s = true", flag)
-		return in, nil
+		return in
 	}
 	g.bindAmbientParams(lam)
-	cond, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	cond, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	})
 	g.wl("if %s {", cond)
 	g.in()
 	g.wl("%s = true", flag)
 	g.out()
 	g.wl("}")
-	return in, nil
+	return in
 }
 
 // emitLoad lowers `Domain Expansion: Load`. Local disk answers in the same
@@ -480,27 +436,18 @@ func (g *gen) emitSignal(n *ir.Node, in, flag string) (string, error) {
 // that doesn't fit Into: — runs Default: instead, which is why this is one
 // function literal rather than a chain of Go's own `if`/`err` idiom: the
 // three ways of getting nothing all fall through to the same one line.
-func (g *gen) emitLoad(n *ir.Node, in string) (string, error) {
+func (g *gen) emitLoad(n *ir.Node, in string) string {
 	into, _ := n.Meta["into"].(*ir.Type)
 	if into == nil {
-		return "", unsupported(n, "missing Into: type")
+		panic(unsupported(n, "missing Into: type"))
 	}
-	path, err := g.requestLambda(n, "pathLambda", in)
-	if err != nil {
-		return "", err
-	}
+	path := g.requestLambda(n, "pathLambda", in)
 	def, _ := n.Meta["defaultLambda"].(*ast.Lambda)
 	if def == nil || len(def.Params) == 0 {
-		return "", unsupported(n, "missing Default:")
+		panic(unsupported(n, "missing Default:"))
 	}
-	decode, err := g.jsonInFunc(into)
-	if err != nil {
-		return "", err
-	}
-	goT, err := g.goType(into)
-	if err != nil {
-		return "", err
-	}
+	decode := g.jsonInFunc(into)
+	goT := g.goType(into)
 	g.helper("dmFail", declFail, "fmt", "os")
 	out := g.fresh("loaded")
 	g.wl("%s := func() %s {", out, goT)
@@ -521,103 +468,86 @@ func (g *gen) emitLoad(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	defExpr, _, err := g.compileExpr(def.Body, exprEnv{def.Params[0]: {expr: in, typ: n.In}})
-	if err != nil {
-		return "", unsupported(n, "Default: %v", err)
-	}
+	defExpr, _ := asUnsupported2(n, "Default: ", func() (string, *ir.Type) {
+		return g.compileExpr(def.Body, exprEnv{def.Params[0]: {expr: in, typ: n.In}})
+	})
 	g.wl("return %s", defExpr)
 	g.out()
 	g.wl("}()")
-	return out, nil
+	return out
 }
 
 // emitSave lowers `Domain Expansion: Save`. A passthrough: it fires
 // dmSave with the encoded value and hands the world straight back, since
 // nothing needs to come back the way a Request's answer does.
-func (g *gen) emitSave(n *ir.Node, in string) (string, error) {
-	path, err := g.requestLambda(n, "pathLambda", in)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitSave(n *ir.Node, in string) string {
+	path := g.requestLambda(n, "pathLambda", in)
 	lam, _ := n.Meta["valueLambda"].(*ast.Lambda)
 	if lam == nil || len(lam.Params) == 0 {
-		return "", unsupported(n, "missing Value:")
+		panic(unsupported(n, "missing Value:"))
 	}
-	valExpr, valType, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
-	if err != nil {
-		return "", unsupported(n, "Value: %v", err)
-	}
-	fn, err := g.jsonFunc(valType)
-	if err != nil {
-		return "", unsupported(n, "Value: %v", err)
-	}
+	valExpr, valType := asUnsupported2(n, "Value: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	})
+	fn := asUnsupported1(n, "Value: ", func() string { return g.jsonFunc(valType) })
 	g.wl("dmSave(%s, %s(%s))", path, fn, valExpr)
-	return in, nil
+	return in
 }
 
 // emitRequest lowers `Domain Expansion: Request`. It fires and returns the
 // world unchanged — the answer arrives later at a `Part Reply "<tag>":` — so
 // what it emits is the URL, the body if there is one, and a queued call.
-func (g *gen) emitRequest(n *ir.Node, in string) (string, error) {
+func (g *gen) emitRequest(n *ir.Node, in string) string {
 	spec, _ := n.Meta["request"].(*ir.RequestSpec)
 	if spec == nil {
-		return "", unsupported(n, "missing request metadata")
+		panic(unsupported(n, "missing request metadata"))
 	}
-	url, err := g.requestLambda(n, "urlLambda", in)
-	if err != nil {
-		return "", err
-	}
+	url := g.requestLambda(n, "urlLambda", in)
 	body, hasBody := `""`, false
 	// A Request with no `Body:` still carries the key, holding a typed nil —
 	// so the presence test has to be on the pointer, not on the assertion.
 	if lam, _ := n.Meta["bodyLambda"].(*ast.Lambda); lam != nil {
-		if body, err = g.requestLambda(n, "bodyLambda", in); err != nil {
-			return "", err
-		}
+		body = g.requestLambda(n, "bodyLambda", in)
 		hasBody = true
 	}
 	g.wl("dmFire(dmCall{tag: %s, method: %s, url: %s, body: %s, hasBody: %t, timeoutMS: %d})",
 		goStr(spec.Tag), goStr(spec.Method), url, body, hasBody, spec.TimeoutMS)
-	return in, nil
+	return in
 }
 
 // requestLambda compiles one of Request's Text-valued lambdas over the world.
-func (g *gen) requestLambda(n *ir.Node, key, in string) (string, error) {
+func (g *gen) requestLambda(n *ir.Node, key, in string) string {
 	lam, _ := n.Meta[key].(*ast.Lambda)
 	if lam == nil || len(lam.Params) == 0 {
-		return "", unsupported(n, "missing %s", key)
+		panic(unsupported(n, "missing %s", key))
 	}
-	expr, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	expr, _, err := try2(func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: in, typ: n.In}})
+	})
 	if err != nil {
-		return "", unsupported(n, "%s: %v", key, err)
+		panic(unsupported(n, "%s: %v", key, err))
 	}
-	return expr, nil
+	return expr
 }
 
 // emitToJSON lowers `Channeled Energy: Convert To JSON`. The value decides the
 // shape, so there is nothing to declare.
-func (g *gen) emitToJSON(n *ir.Node, in string) (string, error) {
-	fn, err := g.jsonFunc(n.In)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitToJSON(n *ir.Node, in string) string {
+	fn := asUnsupported1(n, "", func() string { return g.jsonFunc(n.In) })
 	v := g.fresh("v")
 	g.wl("%s := %s(%s)", v, fn, in)
-	return v, nil
+	return v
 }
 
 // emitFromJSON lowers `Channeled Energy: Convert From JSON`. The type was
 // written with `Into:`, and what comes back is that type or an error saying
 // why not.
-func (g *gen) emitFromJSON(n *ir.Node, in string) (string, error) {
+func (g *gen) emitFromJSON(n *ir.Node, in string) string {
 	into, _ := n.Meta["into"].(*ir.Type)
 	if into == nil {
-		return "", unsupported(n, "missing Into: type")
+		panic(unsupported(n, "missing Into: type"))
 	}
-	fn, err := g.jsonInFunc(into)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	fn := asUnsupported1(n, "", func() string { return g.jsonInFunc(into) })
 	g.helper("dmFail", declFail, "fmt", "os")
 	raw, v, e1, e2 := g.fresh("raw"), g.fresh("v"), g.fresh("err"), g.fresh("err")
 	g.wl("%s, %s := dmJSONParse(%s)", raw, e1, in)
@@ -632,5 +562,5 @@ func (g *gen) emitFromJSON(n *ir.Node, in string) (string, error) {
 	g.wl(`dmFail("Convert From JSON: %%v", %s)`, e2)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }

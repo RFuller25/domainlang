@@ -202,15 +202,15 @@ func condType(x *ast.CondExpr, env Env) (*ir.Type, error) {
 // builtin in package builtins is one declaration for all three; the rest are
 // still switch arms in each layer and must be kept in sync by hand.
 var Builtins = []string{
-	"abs", "at", "band", "bor", "bxor", "ceil", "cells", "choose", "clamp",
+	"at", "cells", "clamp",
 	"col", "cols", "concat", "contains", "dirs4", "divmod", "drop",
-	"factorial", "first", "floor", "frombin", "gcd", "get", "has", "inbounds",
-	"isqrt", "item", "last", "lcm", "length", "list", "manhattan", "max",
-	"maxcol", "maxrow", "min", "mincol", "minrow", "mod", "modinv", "modpow",
-	"neighbors4", "neighbors8", "padd", "pcol", "point", "pow",
-	"prow", "put", "reverse", "rotl", "rotr", "round", "row",
-	"rows", "set", "shl", "shr", "sign", "solve2x2", "sparse", "sqrt", "sum",
-	"take", "textjoin", "tofloat", "tuple",
+	"first", "frombin", "get", "has", "inbounds",
+	"item", "last", "length", "list", "manhattan", "max",
+	"maxcol", "maxrow", "min", "mincol", "minrow", "mod",
+	"neighbors4", "neighbors8", "padd", "pcol", "point",
+	"prow", "put", "reverse", "rotl", "rotr", "row",
+	"rows", "set", "sparse", "sum",
+	"take", "textjoin", "tuple",
 	"slice", "indexof",
 
 	"psub", "pscale", "chebyshev", "dirs8", "around4", "around8",
@@ -224,17 +224,8 @@ var Builtins = []string{
 	// v0.6: list generation. Every list used to have to arrive from outside
 	// the expression.
 	"range", "fill",
-	// v0.6: the float tower past sqrt.
-	"log", "log2", "log10", "exp", "sin", "cos", "tan", "atan2", "hypot", "trunc",
 	// v0.6: named-field construction and update.
 	"record", "with",
-	// v0.7: bitwise reducers, and the logical connectives as functions.
-	"bandall", "borall", "bxorall",
-	"and", "or", "xor", "not",
-	// v0.6: bases, bits and number theory.
-	"frombase", "tobase", "fromhex", "tohex", "tobin",
-	"bnot", "popcount", "testbit", "digits", "fromdigits",
-	"isprime", "divisors", "crt",
 	// The first-order list operations. None takes a function argument, so
 	// none of them is a higher-order builtin — they were simply absent, and
 	// each absence forced a nested pipeline body where an expression would
@@ -285,23 +276,17 @@ var builtinArity = map[string]int{
 	"concat": 2, "first": 1, "last": 1, "sum": 1,
 	"min": -1, "max": -1, // 1 = list reduction, 2 = scalar form
 	"contains": 2, "get": 2, "at": 3,
-	// math / number theory
-	"abs": 1, "sign": 1, "gcd": 2, "lcm": 2, "modpow": 3, "modinv": 2,
-	"solve2x2": 6,
 	// View
 	"text": 1, "blank": 0, "style": 2, "stack": -1, "beside": -1,
 	"box": 1, "margin": 3, "align": 4, "fit": 3, "draw": 1,
 	// randomness and time
 	"random": 1, "randomf": 0, "pick": 1, "frame": 0, "elapsed": 0,
 	"tojson": 1, "pending": 1,
-	"mod": 2, "divmod": 2, "pow": 2, "isqrt": 1, "clamp": 3,
-	"factorial": 1, "choose": 2,
+	"mod": 2, "divmod": 2, "clamp": 3,
 	// heterogeneous tuple construction
 	"tuple": -1, // variadic, >= 2
 	// text (the rest of the text builtins are in package builtins)
 	"slice": 3, "indexof": 2, "textjoin": 2,
-	// floats (H)
-	"tofloat": 1, "floor": 1, "ceil": 1, "round": 1, "sqrt": 1,
 	// points (tuples of (row, col)) and grid geometry
 	"point": 2, "prow": 1, "pcol": 1, "padd": 2, "manhattan": 2,
 	"rotl": 1, "rotr": 1, "dirs4": 0, "dirs8": 0,
@@ -316,8 +301,8 @@ var builtinArity = map[string]int{
 	// sparse grids (H)
 	"sparse": 1, "put": 4, "has": 3, "cells": 1,
 	"minrow": 1, "maxrow": 1, "mincol": 1, "maxcol": 1,
-	// bit operations (2021 D3 and friends)
-	"band": 2, "bor": 2, "bxor": 2, "shl": 2, "shr": 2, "frombin": 1,
+	// bit operations (2021 D3 and friends; the rest are in package builtins)
+	"frombin": 1,
 	// collection construction, update and enumeration
 	"toset": 1, "tomap": 1, "entries": 1,
 	// first-order list operations
@@ -334,20 +319,11 @@ var builtinArity = map[string]int{
 	"del":    2,  // Set × elem, or Map × key
 	"union":  2, "intersect": 2, "difference": 2,
 	"emptyset": 1, "emptymap": 2, "emptylist": 1, "setat": 4, "cellpoints": 1,
-	"bandall": 1, "borall": 1, "bxorall": 1,
-	"and": 2, "or": 2, "xor": 2, "not": 1,
 	// list generation
 	"range": 2, "fill": 2,
-	// floats
-	"log": 1, "log2": 1, "log10": 1, "exp": 1,
-	"sin": 1, "cos": 1, "tan": 1, "atan2": 2, "hypot": 2, "trunc": 1,
 	// records
 	"record": -1, // variadic, >= 2 and even: name, value, name, value, …
 	"with":   3,
-	// bases, bits, number theory
-	"frombase": 2, "tobase": 2, "fromhex": 1, "tohex": 1, "tobin": 1,
-	"bnot": 1, "popcount": 1, "testbit": 2, "digits": 1, "fromdigits": 1,
-	"isprime": 1, "divisors": 1, "crt": 2,
 }
 
 // variadicArity bounds the builtins whose builtinArity is -1, as {min, max}
@@ -639,29 +615,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return elem, nil
 		}
 		return args[0], nil
-	case "bandall", "borall", "bxorall":
-		// The bitwise counterparts of sum/product: one reducer per operator,
-		// Int-only because a bit pattern is what they are about.
-		elem, err := needList(0)
-		if err != nil {
-			return nil, err
-		}
-		if elem.Kind != ir.KInt {
-			return nil, fmt.Errorf("%s: %s needs Int elements, got %s", x.Pos, name, elem)
-		}
-		return ir.Int(), nil
-	case "and", "or", "xor":
-		for i := range args {
-			if !args[i].Equal(ir.Bool()) {
-				return nil, fmt.Errorf("%s: %s needs Bool arguments, got %s", x.Pos, name, args[i])
-			}
-		}
-		return ir.Bool(), nil
-	case "not":
-		if !args[0].Equal(ir.Bool()) {
-			return nil, fmt.Errorf("%s: not needs a Bool argument, got %s", x.Pos, args[0])
-		}
-		return ir.Bool(), nil
 	case "product":
 		elem, err := needList(0)
 		if err != nil {
@@ -808,34 +761,13 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		return ir.Int(), nil
 
 	// -- math / number theory ------------------------------------------------
-	case "abs":
-		if !numeric(args[0]) {
-			return nil, fmt.Errorf("%s: abs needs Int or Float, got %s", x.Pos, args[0])
-		}
-		return args[0], nil
-	case "sign":
-		if err := needInt(0); err != nil {
-			return nil, err
-		}
-		return ir.Int(), nil
-	case "gcd", "lcm", "modinv", "mod", "choose":
+	case "mod":
 		for i := range 2 {
 			if err := needInt(i); err != nil {
 				return nil, err
 			}
 		}
 		return ir.Int(), nil
-	case "pow":
-		// The one builtin that follows the operators' promotion rule rather
-		// than staying integral: `pow(2, 10)` is an Int, `pow(x, 0.5)` is the
-		// square root it looks like. Int × Int was the whole of it before, so
-		// nothing that used to typecheck changes meaning.
-		for i := range 2 {
-			if !numeric(args[i]) {
-				return nil, fmt.Errorf("%s: pow needs Int or Float, got %s", x.Pos, args[i])
-			}
-		}
-		return promote(args[0], args[1]), nil
 	case "divmod":
 		for i := range 2 {
 			if err := needInt(i); err != nil {
@@ -843,11 +775,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			}
 		}
 		return PointType(), nil // (quotient, remainder) — an (Int, Int) pair
-	case "isqrt", "factorial":
-		if err := needInt(0); err != nil {
-			return nil, err
-		}
-		return ir.Int(), nil
 	case "clamp":
 		// Polymorphic over the numeric tower, like the arithmetic operators:
 		// all three arguments promote together.
@@ -857,37 +784,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			}
 		}
 		return promote(promote(args[0], args[1]), args[2]), nil
-	case "modpow":
-		for i := range 3 {
-			if err := needInt(i); err != nil {
-				return nil, err
-			}
-		}
-		return ir.Int(), nil
-	case "solve2x2":
-		for i := range 6 {
-			if err := needInt(i); err != nil {
-				return nil, err
-			}
-		}
-		return PointType(), nil
-
-	// -- floats (H) --------------------------------------------------------------
-	case "tofloat":
-		if !numeric(args[0]) && !args[0].Equal(ir.Text()) {
-			return nil, fmt.Errorf("%s: tofloat needs Int, Float, or Text, got %s", x.Pos, args[0])
-		}
-		return ir.Float(), nil
-	case "floor", "ceil", "round":
-		if !args[0].Equal(ir.Float()) {
-			return nil, fmt.Errorf("%s: %s needs Float, got %s", x.Pos, name, args[0])
-		}
-		return ir.Int(), nil
-	case "sqrt":
-		if !numeric(args[0]) {
-			return nil, fmt.Errorf("%s: sqrt needs Int or Float, got %s", x.Pos, args[0])
-		}
-		return ir.Float(), nil
 
 	// -- text ------------------------------------------------------------------
 	case "indexof":
@@ -1126,13 +1022,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		return ir.Int(), nil
 
 	// -- bit operations ----------------------------------------------------------
-	case "band", "bor", "bxor", "shl", "shr":
-		for i := range 2 {
-			if err := needInt(i); err != nil {
-				return nil, err
-			}
-		}
-		return ir.Int(), nil
 	case "frombin":
 		if !args[0].Equal(ir.Text()) {
 			return nil, fmt.Errorf("%s: frombin needs Text, got %s", x.Pos, args[0])
@@ -1500,26 +1389,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 		}
 		return ir.List(args[1]), nil
 
-	// -- text --------------------------------------------------------------------
-	// -- floats ------------------------------------------------------------------
-	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
-		if !numeric(args[0]) {
-			return nil, fmt.Errorf("%s: %s needs Int or Float, got %s", x.Pos, name, args[0])
-		}
-		return ir.Float(), nil
-	case "atan2", "hypot":
-		for i := range 2 {
-			if !numeric(args[i]) {
-				return nil, fmt.Errorf("%s: %s needs Int or Float, got %s", x.Pos, name, args[i])
-			}
-		}
-		return ir.Float(), nil
-	case "trunc":
-		if !numeric(args[0]) {
-			return nil, fmt.Errorf("%s: trunc needs Int or Float, got %s", x.Pos, args[0])
-		}
-		return ir.Int(), nil
-
 	// -- records -----------------------------------------------------------------
 	//
 	// Field names are literals rather than a new argument form in the grammar:
@@ -1547,67 +1416,6 @@ func callType(x *ast.CallExpr, env Env) (*ir.Type, error) {
 			return args[0], nil
 		}
 		return nil, fmt.Errorf("%s: record %s has no field %q", x.Pos, args[0], lit.Value)
-
-	// -- bases, bits, number theory ----------------------------------------------
-	case "frombase":
-		if err := needText(x, name, args, 0); err != nil {
-			return nil, err
-		}
-		if err := needInt(1); err != nil {
-			return nil, err
-		}
-		return ir.Int(), nil
-	case "fromhex":
-		if err := needText(x, name, args, 0); err != nil {
-			return nil, err
-		}
-		return ir.Int(), nil
-	case "tobase":
-		for i := range 2 {
-			if err := needInt(i); err != nil {
-				return nil, err
-			}
-		}
-		return ir.Text(), nil
-	case "tohex", "tobin":
-		if err := needInt(0); err != nil {
-			return nil, err
-		}
-		return ir.Text(), nil
-	case "bnot", "popcount":
-		if err := needInt(0); err != nil {
-			return nil, err
-		}
-		return ir.Int(), nil
-	case "testbit":
-		for i := range 2 {
-			if err := needInt(i); err != nil {
-				return nil, err
-			}
-		}
-		return ir.Bool(), nil
-	case "isprime":
-		if err := needInt(0); err != nil {
-			return nil, err
-		}
-		return ir.Bool(), nil
-	case "digits", "divisors":
-		if err := needInt(0); err != nil {
-			return nil, err
-		}
-		return ir.List(ir.Int()), nil
-	case "fromdigits":
-		if !args[0].Equal(ir.List(ir.Int())) {
-			return nil, fmt.Errorf("%s: fromdigits needs List<Int>, got %s", x.Pos, args[0])
-		}
-		return ir.Int(), nil
-	case "crt":
-		for i := range 2 {
-			if !args[i].Equal(ir.List(ir.Int())) {
-				return nil, fmt.Errorf("%s: crt needs List<Int> arguments, got %s", x.Pos, args[i])
-			}
-		}
-		return ir.Int(), nil
 	}
 	return nil, fmt.Errorf("%s: unknown function %q", x.Pos, name)
 }

@@ -18,7 +18,7 @@ type Rewrite struct {
 	// Pass names the pass that produced this rewrite, matching the function
 	// name in passes below ("fuseSortThenTopK"). --explain never shows it;
 	// it exists for the tools that report which passes fired on a program
-	// (`domain expansion: stats`, `golf`), which cannot recover a pass
+	// (`domain expansion: mahoraga`'s turns, for one), which cannot recover a pass
 	// identity by pattern-matching English out of Message.
 	//
 	// It is stamped in Optimize rather than at each construction site,

@@ -112,10 +112,10 @@ func TestGraphType(t *testing.T) {
 	}
 	// A graph is not itself keyable — like List, Map, Set and Grid, and for the
 	// same reason: it has no canonical comparable form.
-	if Keyable(g) {
+	if ListKeyable(g) {
 		t.Error("Graph is keyable; it must not be a Map key or Set element")
 	}
-	if Keyable(Graph(Int())) {
+	if ListKeyable(Graph(Int())) {
 		t.Error("Graph<Int> is keyable")
 	}
 }

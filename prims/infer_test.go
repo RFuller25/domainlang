@@ -9,7 +9,6 @@ import (
 	"domain/lexer"
 	"domain/parser"
 	"domain/token"
-	"domain/typecheck"
 )
 
 func parseSrc(t *testing.T, src string) *ast.Program {
@@ -271,29 +270,6 @@ func TestPreludeNamesAreLegal(t *testing.T) {
 	for _, def := range defs {
 		if err := checkShikigamiName(def, Core); err != nil {
 			t.Errorf("prelude: %v", err)
-		}
-	}
-}
-
-// TestReservedNamesCoversTheVocabulary sanity-checks the list diagnostics show.
-func TestReservedNamesCoversTheVocabulary(t *testing.T) {
-	got := map[string]bool{}
-	for _, n := range ReservedNames() {
-		got[n] = true
-	}
-	for _, p := range Core {
-		if !got[p.ID] {
-			t.Errorf("reserved names omit the primitive %q", p.ID)
-		}
-	}
-	for _, k := range ast.Keywords {
-		if !got[k] {
-			t.Errorf("reserved names omit the keyword %q", k)
-		}
-	}
-	for _, b := range typecheck.Builtins {
-		if !got[b] {
-			t.Errorf("reserved names omit the builtin %q", b)
 		}
 	}
 }

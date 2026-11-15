@@ -21,21 +21,18 @@ import (
 // hold the two together — a foreign program's output has to be byte-identical
 // under `domain run` and `./binary`, like every other primitive's.
 
-func (g *gen) emitForeign(n *ir.Node, in string) (string, error) {
+func (g *gen) emitForeign(n *ir.Node, in string) string {
 	lang, _ := n.Meta["lang"].(string)
 	source, _ := n.Meta["source"].(string)
 	if lang == "" {
-		return "", unsupported(n, "foreign block has no language")
+		panic(unsupported(n, "foreign block has no language"))
 	}
 	spec, ok := langs.Lookup(lang)
 	if !ok {
-		return "", unsupported(n, "no runner for %s", lang)
+		panic(unsupported(n, "no runner for %s", lang))
 	}
 
-	stdin, err := g.foreignEncode(n, in)
-	if err != nil {
-		return "", err
-	}
+	stdin := g.foreignEncode(n, in)
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.helper("dmForeignRun", declForeignRun,
 		"bytes", "errors", "os", "os/exec", "path/filepath", "strings")
@@ -57,13 +54,13 @@ func (g *gen) emitForeign(n *ir.Node, in string) (string, error) {
 
 // foreignEncode emits the value as the bytes the foreign program will read,
 // returning the Go expression holding them. It mirrors prims.foreignEncode.
-func (g *gen) foreignEncode(n *ir.Node, in string) (string, error) {
+func (g *gen) foreignEncode(n *ir.Node, in string) string {
 	if n.In.Kind == ir.KList {
 		// One element per line, and nothing at all for the empty list — the
 		// same string prims.foreignEncode builds by joining and appending.
-		elem, err := g.scalarFmt("e", n.In.Elem)
+		elem, err := try1(func() string { return g.scalarFmt("e", n.In.Elem) })
 		if err != nil {
-			return "", unsupported(n, "cannot encode %s for a foreign block: %v", n.In, err)
+			panic(unsupported(n, "cannot encode %s for a foreign block: %v", n.In, err))
 		}
 		g.imp("strings")
 		sb, e := g.fresh("sb"), "e"
@@ -74,38 +71,32 @@ func (g *gen) foreignEncode(n *ir.Node, in string) (string, error) {
 		g.wl("%s.WriteByte('\\n')", sb)
 		g.out()
 		g.wl("}")
-		return sb + ".String()", nil
+		return sb + ".String()"
 	}
 	// A scalar or a grid renders as itself and gains one closing newline,
 	// unless it is empty. dmForeignLine is that rule, in one place, so the
 	// emitted program cannot drift from the interpreter on the empty Text.
-	rendered, err := g.scalarFmt(in, n.In)
+	rendered, err := try1(func() string { return g.scalarFmt(in, n.In) })
 	if err != nil {
-		return "", unsupported(n, "cannot encode %s for a foreign block: %v", n.In, err)
+		panic(unsupported(n, "cannot encode %s for a foreign block: %v", n.In, err))
 	}
 	g.helper("dmForeignLine", declForeignLine)
-	return fmt.Sprintf("dmForeignLine(%s)", rendered), nil
+	return fmt.Sprintf("dmForeignLine(%s)", rendered)
 }
 
 // foreignDecode emits the parse of the program's stdout back into a value,
 // mirroring prims.foreignDecode.
-func (g *gen) foreignDecode(n *ir.Node, out string) (string, error) {
+func (g *gen) foreignDecode(n *ir.Node, out string) string {
 	g.helper("dmForeignBody", declForeignBody, "strings")
 	if n.Out.Kind == ir.KList {
 		g.helper("dmForeignLines", declForeignLines, "strings")
 		lines := g.fresh("ls")
 		g.wl("%s := dmForeignLines(%s)", lines, out)
 		if n.Out.Elem.Kind == ir.KText {
-			return lines, nil
+			return lines
 		}
-		goT, err := g.goType(n.Out)
-		if err != nil {
-			return "", err
-		}
-		conv, err := g.foreignScalarParse(n, "l", n.Out.Elem)
-		if err != nil {
-			return "", err
-		}
+		goT := g.goType(n.Out)
+		conv := g.foreignScalarParse(n, "l", n.Out.Elem)
 		vals, i, l := g.fresh("v"), g.fresh("i"), "l"
 		g.wl("%s := make(%s, len(%s))", vals, goT, lines)
 		g.wl("for %s, %s := range %s {", i, l, lines)
@@ -113,40 +104,37 @@ func (g *gen) foreignDecode(n *ir.Node, out string) (string, error) {
 		g.wl("%s[%s] = %s", vals, i, conv)
 		g.out()
 		g.wl("}")
-		return vals, nil
+		return vals
 	}
 	if n.Out.Kind == ir.KText {
 		v := g.fresh("v")
 		g.wl("%s := dmForeignBody(%s)", v, out)
-		return v, nil
+		return v
 	}
-	conv, err := g.foreignScalarParse(n, fmt.Sprintf("dmForeignBody(%s)", out), n.Out)
-	if err != nil {
-		return "", err
-	}
+	conv := g.foreignScalarParse(n, fmt.Sprintf("dmForeignBody(%s)", out), n.Out)
 	v := g.fresh("v")
 	g.wl("%s := %s", v, conv)
-	return v, nil
+	return v
 }
 
 // foreignScalarParse is the expression reading one field of foreign output as a
 // scalar. A field that does not parse is the foreign program's mistake, and the
 // binary fails with the same wording the interpreter uses.
-func (g *gen) foreignScalarParse(n *ir.Node, expr string, t *ir.Type) (string, error) {
+func (g *gen) foreignScalarParse(n *ir.Node, expr string, t *ir.Type) string {
 	switch t.Kind {
 	case ir.KText:
-		return expr, nil
+		return expr
 	case ir.KInt:
 		g.helper("dmForeignInt", declForeignInt, "strconv", "strings")
-		return fmt.Sprintf("dmForeignInt(%s)", expr), nil
+		return fmt.Sprintf("dmForeignInt(%s)", expr)
 	case ir.KFloat:
 		g.helper("dmForeignFloat", declForeignFloat, "strconv", "strings")
-		return fmt.Sprintf("dmForeignFloat(%s)", expr), nil
+		return fmt.Sprintf("dmForeignFloat(%s)", expr)
 	case ir.KBool:
 		g.helper("dmForeignBool", declForeignBool, "strings")
-		return fmt.Sprintf("dmForeignBool(%s)", expr), nil
+		return fmt.Sprintf("dmForeignBool(%s)", expr)
 	}
-	return "", unsupported(n, "cannot read %s from a foreign block's output", t)
+	panic(unsupported(n, "cannot read %s from a foreign block's output", t))
 }
 
 // The runner details come from package langs, the same table the lexer and the

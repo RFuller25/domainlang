@@ -36,19 +36,11 @@ type explainOptions struct {
 func parseExplainArgs(args []string) (string, explainOptions, error) {
 	var opts explainOptions
 	var path string
-	for _, a := range args {
-		switch {
-		case a == "--json":
-			opts.JSON = true
-		case a == "--plain":
-			opts.Plain = true
-		case strings.HasPrefix(a, "-"):
-			return "", opts, fmt.Errorf("unknown flag %q", a)
-		case path != "":
-			return "", opts, fmt.Errorf("unexpected extra argument %q", a)
-		default:
-			path = a
-		}
+	f := newFlagSet("", onePath(&path, "unexpected extra argument %q"))
+	f.bool("--json", &opts.JSON, true)
+	f.bool("--plain", &opts.Plain, true)
+	if err := f.parse(args); err != nil {
+		return "", opts, err
 	}
 	if path == "" {
 		return "", opts, fmt.Errorf("explain needs a program file")

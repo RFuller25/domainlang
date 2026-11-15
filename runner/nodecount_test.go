@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"domain/interp"
 	"domain/ir"
 	"domain/prims"
 )
@@ -27,8 +28,12 @@ func traceProgram(t *testing.T, src, input string) (*ir.Pipeline, *NodeCounter) 
 		Stdout: io.Discard,
 		Trace:  counter,
 	}
-	pipe, _, err := Interpret(path, false, ctx)
+	pipe, err := LoadPipeline(path, false)
 	if err != nil {
+		t.Fatalf("loading the program: %v", err)
+	}
+	ctx.BaseDir = filepath.Dir(path)
+	if _, err := interp.RunScoped(pipe, ctx); err != nil {
 		t.Fatalf("running the program: %v", err)
 	}
 	return pipe, counter

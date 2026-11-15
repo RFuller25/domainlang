@@ -108,3 +108,4 @@ editors/vscode/package-lock.json
 # bench/ are the repository's own and are not named this way.
 aoc-*.input
 aoc-*.example
+/cmd/domain/domain

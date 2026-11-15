@@ -26,22 +26,13 @@ type fmtOptions struct {
 // parseFmtArgs parses `domain fmt`'s arguments: any number of paths (or "-"
 // for stdin) plus the flags above.
 func parseFmtArgs(args []string) (paths []string, opts fmtOptions, err error) {
-	for _, a := range args {
-		switch a {
-		case "-w", "--write":
-			opts.Write = true
-		case "-l", "--list":
-			opts.List = true
-		case "--check":
-			opts.Check = true
-		case "-":
-			paths = append(paths, a)
-		default:
-			if strings.HasPrefix(a, "-") {
-				return nil, opts, fmt.Errorf("unknown flag %q for fmt", a)
-			}
-			paths = append(paths, a)
-		}
+	f := newFlagSet("unknown flag %q for fmt", func(a string) error { paths = append(paths, a); return nil })
+	f.isFlag = func(a string) bool { return a != "-" && strings.HasPrefix(a, "-") }
+	f.bool("-w --write", &opts.Write, true)
+	f.bool("-l --list", &opts.List, true)
+	f.bool("--check", &opts.Check, true)
+	if err := f.parse(args); err != nil {
+		return nil, opts, err
 	}
 	if len(paths) == 0 {
 		return nil, opts, fmt.Errorf("fmt needs at least one file (or - for stdin)")

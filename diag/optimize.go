@@ -1,6 +1,6 @@
 // Source-level optimization rewrites behind `domain expansion: optimize`.
 //
-// The 26-pass IR optimizer stays the engine of record — it runs on every
+// The IR optimizer (optimizer/, 51 passes) stays the engine of record — it runs on every
 // compile and interpretation. But some of its rewrites have an exact source
 // spelling, and a few hygiene cleanups (dead statements, unused Channels) are
 // only expressible at the source level. This file applies that subset as

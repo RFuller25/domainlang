@@ -26,7 +26,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -116,9 +115,6 @@ var specs = []Spec{
 	},
 }
 
-// All returns the table.
-func All() []Spec { return append([]Spec(nil), specs...) }
-
 // Names is every canonical language name, in table order.
 func Names() []string {
 	out := make([]string, len(specs))
@@ -137,21 +133,6 @@ func Names() []string {
 func Lookup(name string) (Spec, bool) {
 	for _, s := range specs {
 		if strings.EqualFold(s.Name, name) {
-			return s, true
-		}
-	}
-	return Spec{}, false
-}
-
-// ByExt identifies a language from a filename, so a command that takes a
-// program in another language need not be told which language it is.
-func ByExt(path string) (Spec, bool) {
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext == "" {
-		return Spec{}, false
-	}
-	for _, s := range specs {
-		if slices.Contains(s.Exts, ext) {
 			return s, true
 		}
 	}

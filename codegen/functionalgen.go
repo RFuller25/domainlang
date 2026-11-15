@@ -10,21 +10,17 @@ import (
 // mirrors its interpreter twin exactly, including the empty-list behaviour —
 // Reduce fails, Scan and Pairs return the empty list.
 
-func (g *gen) emitReduce(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitReduce(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	acc, e := g.fresh("acc"), g.fresh("e")
 	// The accumulator is an element, so it needs no declared type: it is
 	// seeded straight from the list and the lambda maps T x T -> T.
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: acc, typ: n.Out},
-		lam.Params[1]: {expr: e, typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: acc, typ: n.Out},
+			lam.Params[1]: {expr: e, typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	g.helper("dmFail", declFail, "fmt", "os")
 	g.wl("if len(%s) == 0 {", in)
 	g.in()
@@ -37,36 +33,26 @@ func (g *gen) emitReduce(n *ir.Node, in string) (string, error) {
 	g.wl("%s = %s", acc, body)
 	g.out()
 	g.wl("}")
-	return acc, nil
+	return acc
 }
 
-func (g *gen) emitScan(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	accGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitScan(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	accGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, acc := g.fresh("v"), g.fresh("acc")
 	i, e := g.fresh("i"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: acc, typ: n.Out.Elem},
-		lam.Params[1]: {expr: e, typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: acc, typ: n.Out.Elem},
+			lam.Params[1]: {expr: e, typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	g.wl("%s := make([]%s, len(%s))", v, accGo, in)
 
 	_, hasLit := n.Meta["seed"]
 	_, hasExpr := n.Meta["seedExpr"]
 	if hasLit || hasExpr {
-		seed, err := g.measuredLit(n, in, "seed", n.In, n.Out.Elem, seedLit)
-		if err != nil {
-			return "", err
-		}
+		seed := g.measuredLit(n, in, "seed", n.In, n.Out.Elem, seedLit)
 		g.wl("var %s %s = %s", acc, accGo, seed)
 		g.wl("for %s, %s := range %s {", i, e, in)
 		g.in()
@@ -75,7 +61,7 @@ func (g *gen) emitScan(n *ir.Node, in string) (string, error) {
 		g.wl("%s[%s] = %s", v, i, acc)
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 
 	// Seedless: the first element seeds the scan and is its own first result.
@@ -94,14 +80,11 @@ func (g *gen) emitScan(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s", v, i, acc)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitPairs(n *ir.Node, in string) (string, error) {
-	tupGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitPairs(n *ir.Node, in string) string {
+	tupGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, i := g.fresh("v"), g.fresh("i")
 	// n elements give exactly n-1 pairs, so the backing array is sized once
 	// here rather than grown a dozen times by append.
@@ -111,7 +94,7 @@ func (g *gen) emitPairs(n *ir.Node, in string) (string, error) {
 	g.wl("%s = append(%s, %s{%s[%s], %s[%s+1]})", v, v, tupGo, in, i, in, i)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // ownAccumulator emits the one-time clone a fold makes when the optimizer
@@ -147,7 +130,7 @@ func (g *gen) ownAccumulator(lam *ast.Lambda, accT *ir.Type, seed string) string
 		// array. `append(nil, …)` is the clone, and it is written inline
 		// rather than as a helper because it needs the element type the
 		// generator already has.
-		elemGo, err := g.goType(accT.Elem)
+		elemGo, err := try1(func() string { return g.goType(accT.Elem) })
 		if err != nil {
 			return seed
 		}

@@ -50,8 +50,5 @@ func (u *UnionFind) Union(x, y int) bool {
 	return true
 }
 
-// Connected reports whether x and y are in the same set.
-func (u *UnionFind) Connected(x, y int) bool { return u.Find(x) == u.Find(y) }
-
 // Count reports the number of distinct sets remaining.
 func (u *UnionFind) Count() int { return u.count }

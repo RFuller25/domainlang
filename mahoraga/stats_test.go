@@ -71,9 +71,6 @@ func TestStdErrIsDeviationOverRootN(t *testing.T) {
 	if want := math.Sqrt(float64(st.Runs)); ratio < want-0.1 || ratio > want+0.1 {
 		t.Errorf("stddev/stderr = %.2f, want ~%.2f (root of %d)", ratio, want, st.Runs)
 	}
-	if st.RelStdErr() >= float64(st.StdDev)/float64(st.Mean) {
-		t.Error("the relative standard error is not smaller than the relative deviation")
-	}
 }
 
 // Distinguishable is the accept decision, and the property that matters is

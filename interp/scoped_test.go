@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"domain/ir"
 )
 
 // Every whole program is run through its scope's host.
@@ -101,10 +104,11 @@ func TestNothingRunsAPipelineOutsideItsHost(t *testing.T) {
 // program always has. Registering a host is something only a scope that needs
 // one does.
 func TestHostForFallsBackToRun(t *testing.T) {
-	if HasHost("Advent of Code") {
-		t.Error("the default scope should not register a host of its own")
-	}
-	if HasHost("") {
-		t.Error("a pipeline with no scope should not have a host of its own")
+	run := reflect.ValueOf(Run).Pointer()
+	for _, scope := range []string{"Advent of Code", ""} {
+		h := HostFor(&ir.Pipeline{Scope: scope})
+		if reflect.ValueOf(h).Pointer() != run {
+			t.Errorf("scope %q should run on Run, not a host of its own", scope)
+		}
 	}
 }

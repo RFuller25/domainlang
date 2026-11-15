@@ -467,3 +467,10 @@ func TestSumEmptyListStaticType(t *testing.T) {
 		t.Fatalf("7 / (sum(empty Float) + 2) = %T %v, want float64 3.5", got, got)
 	}
 }
+
+// EvalLambda is EvalLambdaTyped with no static parameter types: the dynamic
+// behavior, which is what these tests exercise. Production callers know the
+// inferred types and call EvalLambdaTyped directly.
+func EvalLambda(l *ast.Lambda, args ...ir.Value) (ir.Value, error) {
+	return EvalLambdaTyped(l, nil, args...)
+}

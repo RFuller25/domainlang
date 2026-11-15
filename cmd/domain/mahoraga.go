@@ -53,72 +53,30 @@ type mahoragaOptions struct {
 func parseMahoragaArgs(args []string) (prog, input, expected string, opts mahoragaOptions, err error) {
 	opts.Tier = mahoraga.Pinned
 	var files []string
-	args = splitValueFlags(args)
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		var e error
-		val := func() string {
-			if i+1 >= len(args) {
-				e = fmt.Errorf("%s needs a value", a)
-				return ""
-			}
-			i++
-			return args[i]
+	f := newFlagSet("", func(a string) error { files = append(files, a); return nil })
+	const miss = "%s needs a value"
+	f.str("-o --out", miss, &opts.Out)
+	f.str("--recipe", miss, &opts.Recipe)
+	f.str("--replay", miss, &opts.Replay)
+	f.str("--verify", miss, &opts.Verify)
+	f.val("--turns", miss, parseInto(strconv.Atoi, &opts.Turns))
+	f.val("--runs", miss, parseInto(strconv.Atoi, &opts.BaselineRuns))
+	f.val("--screen-runs", miss, parseInto(strconv.Atoi, &opts.ScreenRuns))
+	f.val("--min-effect", miss, parseInto(func(s string) (float64, error) { return strconv.ParseFloat(s, 64) }, &opts.MinEffect))
+	f.val("--timeout", miss, parseInto(time.ParseDuration, &opts.Timeout))
+	f.val("--seed", miss, parseInto(func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }, &opts.Seed))
+	f.val("--tier", miss, func(s string) error {
+		var ok bool
+		if opts.Tier, ok = mahoraga.ParseTier(s); !ok {
+			return fmt.Errorf("--tier takes general, guarded or pinned (got %q)", s)
 		}
-		count := func(dst *int) {
-			if s := val(); e == nil {
-				*dst, e = strconv.Atoi(s)
-			}
-		}
-		switch a {
-		case "-o", "--out":
-			opts.Out = val()
-		case "--recipe":
-			opts.Recipe = val()
-		case "--turns":
-			count(&opts.Turns)
-		case "--runs":
-			count(&opts.BaselineRuns)
-		case "--screen-runs":
-			count(&opts.ScreenRuns)
-		case "--min-effect":
-			if s := val(); e == nil {
-				opts.MinEffect, e = strconv.ParseFloat(s, 64)
-			}
-		case "--tier":
-			if s := val(); e == nil {
-				var ok bool
-				if opts.Tier, ok = mahoraga.ParseTier(s); !ok {
-					e = fmt.Errorf("--tier takes general, guarded or pinned (got %q)", s)
-				}
-			}
-		case "--timeout":
-			if s := val(); e == nil {
-				opts.Timeout, e = time.ParseDuration(s)
-			}
-		case "--seed":
-			if s := val(); e == nil {
-				opts.Seed, e = strconv.ParseInt(s, 10, 64)
-			}
-		case "--replay":
-			opts.Replay = val()
-		case "--verify":
-			opts.Verify = val()
-		case "--json":
-			opts.JSON = true
-		case "--plain":
-			opts.Plain = true
-		case "--quiet", "-q":
-			opts.Quiet = true
-		default:
-			if strings.HasPrefix(a, "-") {
-				return "", "", "", opts, fmt.Errorf("unknown flag %q", a)
-			}
-			files = append(files, a)
-		}
-		if e != nil {
-			return "", "", "", opts, e
-		}
+		return nil
+	})
+	f.bool("--json", &opts.JSON, true)
+	f.bool("--plain", &opts.Plain, true)
+	f.bool("-q --quiet", &opts.Quiet, true)
+	if err := f.parse(splitValueFlags(args)); err != nil {
+		return "", "", "", opts, err
 	}
 	// --replay and --verify work from the recipe, which already records the
 	// program, the input and the expected output, so the three files become

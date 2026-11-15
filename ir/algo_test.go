@@ -10,17 +10,14 @@ func TestQueueFIFO(t *testing.T) {
 	for i := range 10 {
 		q.Push(i)
 	}
-	if q.Len() != 10 {
-		t.Fatalf("Len = %d, want 10", q.Len())
-	}
 	for i := range 10 {
 		v, ok := q.Pop()
 		if !ok || v != i {
 			t.Fatalf("Pop = %d,%v, want %d,true", v, ok, i)
 		}
 	}
-	if q.Len() != 0 {
-		t.Fatalf("Len after draining = %d, want 0", q.Len())
+	if _, ok := q.Pop(); ok {
+		t.Fatal("drained queue should report ok=false")
 	}
 }
 
@@ -64,9 +61,6 @@ func TestStackLIFO(t *testing.T) {
 	s.Push("a")
 	s.Push("b")
 	s.Push("c")
-	if s.Len() != 3 {
-		t.Fatalf("Len = %d, want 3", s.Len())
-	}
 	for _, want := range []string{"c", "b", "a"} {
 		v, ok := s.Pop()
 		if !ok || v != want {
@@ -121,7 +115,7 @@ func TestUnionFind(t *testing.T) {
 	if u.Count() != 6 {
 		t.Fatalf("Count = %d, want 6", u.Count())
 	}
-	if u.Connected(0, 1) {
+	if u.Find(0) == u.Find(1) {
 		t.Fatal("fresh sets should not be connected")
 	}
 	if !u.Union(0, 1) {
@@ -135,10 +129,10 @@ func TestUnionFind(t *testing.T) {
 	if u.Count() != 3 {
 		t.Fatalf("Count = %d, want 3", u.Count())
 	}
-	if !u.Connected(0, 3) {
+	if u.Find(0) != u.Find(3) {
 		t.Fatal("0 and 3 should be connected transitively")
 	}
-	if u.Connected(0, 4) || u.Connected(4, 5) {
+	if u.Find(0) == u.Find(4) || u.Find(4) == u.Find(5) {
 		t.Fatal("4 and 5 should remain singletons")
 	}
 	if u.Find(0) != u.Find(3) {

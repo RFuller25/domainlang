@@ -6,8 +6,9 @@ time: each primitive states the input type it requires and the output type it
 produces, and a mismatch is a positioned error before anything runs.
 
 Notation: `T`, `U`, `K` are type variables; "keyable" means `Int`, `Text`,
-or a Tuple/Record built from keyable types (so points key Maps and Sets)
-(the legal Map key / Set element types). Lambda-consuming primitives infer
+or a Tuple/Record/List built from keyable types (so points key Maps and Sets,
+and so does a whole list). A `Float` is never keyable (the legal Map key / Set
+element / Graph node / `Explore` state types). Lambda-consuming primitives infer
 their output types from the lambda body via the type checker.
 
 Every primitive below is supported by **both** backends (interpreter and

@@ -1,7 +1,6 @@
 package codegen
 
 import (
-	"fmt"
 	"strconv"
 
 	"domain/ir"
@@ -15,27 +14,21 @@ import (
 
 // sparseLit renders a Default:/Mark: literal (int64 or string, fixed at
 // resolve time) as a typed Go expression.
-func sparseLit(v any) (string, error) {
+func sparseLit(v any) string {
 	switch x := v.(type) {
 	case int64:
-		return "int64(" + strconv.FormatInt(x, 10) + ")", nil
+		return "int64(" + strconv.FormatInt(x, 10) + ")"
 	case string:
-		return goStr(x), nil
+		return goStr(x)
 	default:
-		return "", fmt.Errorf("unsupported sparse literal %T", v)
+		panic(failf("unsupported sparse literal %T", v))
 	}
 }
 
-func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) (string, error) {
+func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) string {
 	source, _ := n.Meta["source"].(string)
-	def, err := g.measuredLit(n, in, "default", n.In, n.Out.Elem, sparseLit)
-	if err != nil {
-		return "", err
-	}
-	elemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	def := g.measuredLit(n, in, "default", n.In, n.Out.Elem, sparseLit)
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	g.helper("dmSparse", declSparse, "slices")
 	v := g.fresh("v")
 	g.wl("%s := dmNewSparse[%s](%s)", v, elemGo, def)
@@ -65,10 +58,7 @@ func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 	case "points":
-		mark, err := g.measuredLit(n, in, "mark", n.In, n.Out.Elem, sparseLit)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		mark := asUnsupported1(n, "", func() string { return g.measuredLit(n, in, "mark", n.In, n.Out.Elem, sparseLit) })
 		p := g.fresh("p")
 		if n.In.Elem.Kind == ir.KTuple {
 			g.wl("for _, %s := range %s {", p, in)
@@ -92,22 +82,16 @@ func (g *gen) emitConvertToSparseGrid(n *ir.Node, in string) (string, error) {
 		g.out()
 		g.wl("}")
 	default:
-		return "", unsupported(n, "source %q", source)
+		panic(unsupported(n, "source %q", source))
 	}
-	return v, nil
+	return v
 }
 
 // emitSparseDensify lowers Convert To Grid over a Sparse<T>: the bounding
 // box translated to (0, 0), default-filled, guarded by ir.MaxSparseDense.
-func (g *gen) emitSparseDensify(n *ir.Node, in string) (string, error) {
-	gridGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitSparseDensify(n *ir.Node, in string) string {
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, rows, cols := g.fresh("v"), g.fresh("rows"), g.fresh("cols")
 	i, k := g.fresh("i"), g.fresh("k")
@@ -140,25 +124,18 @@ func (g *gen) emitSparseDensify(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitMapCellsSparse: the lambda maps the default first (the whole plane is
 // transformed), then every set cell in sorted row-major order.
-func (g *gen) emitMapCellsSparse(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	outElemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitMapCellsSparse(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	outElemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.helper("dmSparse", declSparse, "slices")
 	v, p := g.fresh("v"), g.fresh("p")
 	g.wl("%s := %s.def", e, in)
@@ -169,19 +146,15 @@ func (g *gen) emitMapCellsSparse(n *ir.Node, in string) (string, error) {
 	g.wl("%s.put(%s.r, %s.c, %s)", v, p, p, body)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitCountCellsSparse(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitCountCellsSparse(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	v, p := g.fresh("v"), g.fresh("p")
 	g.wl("var %s int64", v)
 	g.wl("for _, %s := range %s.pts() {", p, in)
@@ -194,23 +167,16 @@ func (g *gen) emitCountCellsSparse(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitFindCellsSparse(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	pt, err := g.pointGo()
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitFindCellsSparse(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	pt := asUnsupported1(n, "", func() string { return g.pointGo() })
 	e := g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	v, p := g.fresh("v"), g.fresh("p")
 	g.wl("%s := make([]%s, 0, %s.count())", v, pt, in)
 	g.wl("for _, %s := range %s.pts() {", p, in)
@@ -223,5 +189,5 @@ func (g *gen) emitFindCellsSparse(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }

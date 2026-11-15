@@ -38,17 +38,6 @@ func RegisterHost(scope string, h Host) {
 	hosts[scope] = h
 }
 
-// HasHost reports whether a scope registered a runner of its own.
-//
-// It is for a binary that wants to assert it linked one in. A host registers
-// itself from an init, so a package that runs programs asks for it with a
-// blank import — and a blank import is exactly the kind of line somebody
-// removes while tidying, with no compile error to stop them.
-func HasHost(scope string) bool {
-	_, ok := hosts[scope]
-	return ok
-}
-
 // HostFor returns the runner a pipeline's scope asks for, which is Run unless
 // that scope registered otherwise.
 func HostFor(p *ir.Pipeline) Host {

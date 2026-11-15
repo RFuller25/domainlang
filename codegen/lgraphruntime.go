@@ -284,17 +284,14 @@ func lgraphTopoTail() string {
 }
 
 // newGraphExpr is the Go expression for an empty Graph of node type node.
-func (g *gen) newGraphExpr(node *ir.Type, nodeGo string) (string, error) {
+func (g *gen) newGraphExpr(node *ir.Type, nodeGo string) string {
 	if !lKeyed(node) {
 		g.helper("dmGraph", declGraph)
-		return "dmNewGraph[" + nodeGo + "]()", nil
+		return "dmNewGraph[" + nodeGo + "]()"
 	}
-	kf, err := g.keyFn(node)
-	if err != nil {
-		return "", err
-	}
+	kf := g.keyFn(node)
 	g.helper("dmLGraph", declLGraph)
-	return "dmNewLGraph[" + nodeGo + "](" + kf + ")", nil
+	return "dmNewLGraph[" + nodeGo + "](" + kf + ")"
 }
 
 // nodeIndex is the Go expression (a value and an ok) that finds node n in the

@@ -13,31 +13,27 @@ import (
 // and the Finds `break` on the element that decides the answer, and Sum By /
 // Product By / Zip With accumulate in one loop with no intermediate slice.
 
-func (g *gen) emitQuantifier(n *ir.Node, in string) (string, error) {
+func (g *gen) emitQuantifier(n *ir.Node, in string) string {
 	// optimizer.elideConstEarlyExits replaces a constant predicate with its
 	// answer, or with an emptiness test, and leaves no lambda behind.
 	if answer, ok := n.Meta["const"].(bool); ok {
 		v := g.fresh("v")
 		g.wl("%s := %v", v, answer)
-		return v, nil
+		return v
 	}
 	if want, ok := n.Meta["nonempty"].(bool); ok {
 		v := g.fresh("v")
 		g.wl("%s := (len(%s) > 0) == %v", v, in, want)
-		return v, nil
+		return v
 	}
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+	lam := g.nodeLambda(n)
 	universal := n.Prim == "All"
 	v, i := g.fresh("v"), g.fresh("i")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	// The empty list takes the identity of the connective: Any is false, All
 	// is true — the same answers the interpreter gives.
 	g.wl("%s := %v", v, universal)
@@ -55,22 +51,18 @@ func (g *gen) emitQuantifier(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitFind(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitFind(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	wantIndex := n.Prim == "Find Index"
 	i := g.fresh("i")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 
 	if wantIndex {
 		v := g.fresh("v")
@@ -85,13 +77,10 @@ func (g *gen) emitFind(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 
-	elemGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
 	// A Find produced by the optimizer's Filter + Take Item 0 rewrite carries
 	// the message the shape it replaced would have reported.
 	noMatch, _ := n.Meta["nomatch"].(string)
@@ -117,21 +106,17 @@ func (g *gen) emitFind(n *ir.Node, in string) (string, error) {
 	g.wl("dmFail(%s)", goStr(noMatch))
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitKeyedArithmetic(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitKeyedArithmetic(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	i := g.fresh("i")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	identity, op := "0", "+="
 	if n.Prim == "Product By" {
 		identity, op = "1", "*="
@@ -143,30 +128,24 @@ func (g *gen) emitKeyedArithmetic(n *ir.Node, in string) (string, error) {
 	g.wl("%s %s %s", v, op, body)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitZipWith(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitZipWith(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	froms, _ := n.Meta["from"].([]string)
 	if len(froms) != 2 {
-		return "", unsupported(n, "missing channel metadata")
+		panic(unsupported(n, "missing channel metadata"))
 	}
 	av, ok := g.chans[froms[0]]
 	if !ok {
-		return "", unsupported(n, "channel %q was not compiled", froms[0])
+		panic(unsupported(n, "channel %q was not compiled", froms[0]))
 	}
 	bv, ok := g.chans[froms[1]]
 	if !ok {
-		return "", unsupported(n, "channel %q was not compiled", froms[1])
+		panic(unsupported(n, "channel %q was not compiled", froms[1]))
 	}
-	outGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	outGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	v, m, i := g.fresh("v"), g.fresh("m"), g.fresh("i")
 
 	// Two shapes share this lowering, and neither materializes a []tuple:
@@ -185,23 +164,17 @@ func (g *gen) emitZipWith(n *ir.Node, in string) (string, error) {
 	case 1:
 		tupT, _ := n.Meta["tuple"].(*ir.Type)
 		if tupT == nil {
-			return "", unsupported(n, "missing tuple metadata")
+			panic(unsupported(n, "missing tuple metadata"))
 		}
-		tupGo, err := g.goType(tupT)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		tupGo := asUnsupported1(n, "", func() string { return g.goType(tupT) })
 		pair = g.fresh("pair")
 		pairLit = fmt.Sprintf("%s{%s[%s], %s[%s]}", tupGo, av.v, i, bv.v, i)
 		env = exprEnv{lam.Params[0]: {expr: pair, typ: tupT}}
 	default:
-		return "", unsupported(n, "Zip lambda takes %d parameter(s)", len(lam.Params))
+		panic(unsupported(n, "Zip lambda takes %d parameter(s)", len(lam.Params)))
 	}
 
-	body, _, err := g.compileExpr(lam.Body, env)
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) { return g.compileExpr(lam.Body, env) })
 	g.wl("%s := len(%s)", m, av.v)
 	g.wl("if len(%s) < %s {", bv.v, m)
 	g.in()
@@ -218,5 +191,5 @@ func (g *gen) emitZipWith(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s", v, i, body)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }

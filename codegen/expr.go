@@ -49,7 +49,7 @@ type exprBinding struct {
 type exprEnv map[string]exprBinding
 
 // compileExpr returns a parenthesized Go expression and its Domain type.
-func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
+func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type) {
 	switch x := e.(type) {
 	case *ast.IntLit:
 		// Wrapped for the same reason FloatLit is: an unwrapped integer literal
@@ -59,22 +59,22 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 		// divergence, not a type error in the program — the interpreter has no
 		// such split — and it bit fill, abs, clamp and the two-argument min/max
 		// before the literal was pinned here instead of at each call site.
-		return "int64(" + strconv.FormatInt(x.Value, 10) + ")", ir.Int(), nil
+		return "int64(" + strconv.FormatInt(x.Value, 10) + ")", ir.Int()
 	case *ast.FloatLit:
 		// Wrapped so the literal stays float64-typed in any Go context, even
 		// when FormatFloat prints an integer-looking "2".
-		return "float64(" + strconv.FormatFloat(x.Value, 'g', -1, 64) + ")", ir.Float(), nil
+		return "float64(" + strconv.FormatFloat(x.Value, 'g', -1, 64) + ")", ir.Float()
 	case *ast.BoolLit:
-		return strconv.FormatBool(x.Value), ir.Bool(), nil
+		return strconv.FormatBool(x.Value), ir.Bool()
 	case *ast.StringLit:
-		return strconv.Quote(x.Value), ir.Text(), nil
+		return strconv.Quote(x.Value), ir.Text()
 	case *ast.BlockBody:
 		// A lambda body written as a pipeline: lowered to a top-level function
 		// and called here, so every emitter that wanted an expression gets one
 		// (see blockgen.go).
 		b, ok := env[x.Param]
 		if !ok {
-			return "", nil, fmt.Errorf("block body has no input binding")
+			panic(failf("block body has no input binding"))
 		}
 		// A lambda of two or more parameters has one the body is *over*; the
 		// rest are in scope by name inside it. Putting them in g.bindNames is
@@ -88,7 +88,7 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 			for _, e := range x.Extra {
 				eb, ok := env[e.Param]
 				if !ok {
-					return "", nil, fmt.Errorf("block body has no binding for %q", e.Name)
+					panic(failf("block body has no binding for %q", e.Name))
 				}
 				scoped[e.Name] = eb
 			}
@@ -105,52 +105,40 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 			// parameter of the same name still shadows.
 			if b, ok = g.ambientNames[x.Name]; !ok {
 				if b, ok = g.bindNames[x.Name]; !ok {
-					return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+					panic(failf("unknown identifier %q", x.Name))
 				}
 			}
 		}
-		return b.expr, b.typ, nil
+		return b.expr, b.typ
 	case *ast.GlobalRef:
 		// No environment is consulted at all: the read was resolved to a slot
 		// while the program was lowered, and the slot is a package-level
 		// variable here. See codegen/globalgen.go.
-		b, err := g.globalRef(x)
-		if err != nil {
-			return "", nil, err
-		}
-		return b.expr, b.typ, nil
+		b := g.globalRef(x)
+		return b.expr, b.typ
 	case *ast.UnaryExpr:
 		switch x.Op {
 		case token.MINUS:
-			v, vt, err := g.compileExpr(x.X, env)
-			if err != nil {
-				return "", nil, err
-			}
-			return "(-" + v + ")", vt, nil
+			v, vt := g.compileExpr(x.X, env)
+			return "(-" + v + ")", vt
 		case token.NOT:
-			v, _, err := g.compileExpr(x.X, env)
-			if err != nil {
-				return "", nil, err
-			}
-			return "(!" + v + ")", ir.Bool(), nil
+			v, _ := g.compileExpr(x.X, env)
+			return "(!" + v + ")", ir.Bool()
 		}
-		return "", nil, fmt.Errorf("unsupported unary operator %s", x.Op)
+		panic(failf("unsupported unary operator %s", x.Op))
 	case *ast.BinaryExpr:
 		return g.compileBinary(x, env)
 	case *ast.FieldAccess:
-		tv, tt, err := g.compileExpr(x.Target, env)
-		if err != nil {
-			return "", nil, err
-		}
+		tv, tt := g.compileExpr(x.Target, env)
 		if tt == nil || tt.Kind != ir.KRecord {
-			return "", nil, fmt.Errorf("field access .%s on non-record type %s", x.Field, tt)
+			panic(failf("field access .%s on non-record type %s", x.Field, tt))
 		}
 		for _, f := range tt.Fields {
 			if f.Name == x.Field {
-				return tv + "." + fieldName(f.Name), f.Type, nil
+				return tv + "." + fieldName(f.Name), f.Type
 			}
 		}
-		return "", nil, fmt.Errorf("record %s has no field %q", tt, x.Field)
+		panic(failf("record %s has no field %q", tt, x.Field))
 	case *ast.CallExpr:
 		return g.compileCall(x, env)
 	case *ast.CondExpr:
@@ -162,7 +150,7 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 	case *ast.AlsoExpr:
 		return g.compileAlso(x, env)
 	default:
-		return "", nil, fmt.Errorf("unsupported expression %T", e)
+		panic(failf("unsupported expression %T", e))
 	}
 }
 
@@ -174,31 +162,24 @@ func (g *gen) compileExpr(e ast.Expr, env exprEnv) (string, *ir.Type, error) {
 //
 // It is applied only where a write is actually present, so every program that
 // does not use `:=` compiles to exactly the Go it compiled to before.
-func (g *gen) ordered(code string, t *ir.Type) (string, error) {
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
-	return "func() " + goT + " { return " + code + " }()", nil
+func (g *gen) ordered(code string, t *ir.Type) string {
+	goT := g.goType(t)
+	return "func() " + goT + " { return " + code + " }()"
 }
 
 // orderArgs forces left-to-right evaluation across an argument list, in place.
 // One writing argument puts *every* argument under the rule, in both
 // directions: an argument to its left must be read before the write, and one
 // to its right after it.
-func (g *gen) orderArgs(exprs []ast.Expr, args []string, types []*ir.Type) error {
+func (g *gen) orderArgs(exprs []ast.Expr, args []string, types []*ir.Type) {
 	writes := slices.ContainsFunc(exprs, ast.HasUpdate)
 	if !writes || len(args) < 2 {
-		return nil
+		return
 	}
 	for i := range args {
-		w, err := g.ordered(args[i], types[i])
-		if err != nil {
-			return err
-		}
+		w := g.ordered(args[i], types[i])
 		args[i] = w
 	}
-	return nil
 }
 
 // compileAssign lowers `n := v` to an assignment to the Go local the name is
@@ -214,22 +195,19 @@ func (g *gen) orderArgs(exprs []ast.Expr, args []string, types []*ir.Type) error
 // *not* variables — a lambda parameter, an inlined function binding, a
 // substituted Shikigami parameter — were refused at resolve time and reach
 // here without a cell.
-func (g *gen) compileAssign(x *ast.AssignExpr, env exprEnv) (string, *ir.Type, error) {
+func (g *gen) compileAssign(x *ast.AssignExpr, env exprEnv) (string, *ir.Type) {
 	var b exprBinding
 	if x.Target != nil {
 		// A global: the resolver set Target only when nothing nearer shadowed
 		// the name, so the environment is not consulted — the same reason a
 		// read of one does not consult it.
-		gb, err := g.globalRef(x.Target)
-		if err != nil {
-			return "", nil, err
-		}
+		gb := g.globalRef(x.Target)
 		b = gb
 	} else {
 		var ok bool
 		if b, ok = env[x.Name]; !ok {
 			if b, ok = g.bindNames[x.Name]; !ok {
-				return "", nil, fmt.Errorf("unknown identifier %q", x.Name)
+				panic(failf("unknown identifier %q", x.Name))
 			}
 		}
 	}
@@ -240,22 +218,16 @@ func (g *gen) compileAssign(x *ast.AssignExpr, env exprEnv) (string, *ir.Type, e
 	// fire, and if one of them ever stops covering a case the compiler must
 	// stop, not diverge.
 	if b.cell == "" {
-		return "", nil, fmt.Errorf("%q is not a binding this backend can update", x.Name)
+		panic(failf("%q is not a binding this backend can update", x.Name))
 	}
-	v, vt, err := g.compileExpr(x.Value, env)
-	if err != nil {
-		return "", nil, err
-	}
+	v, vt := g.compileExpr(x.Value, env)
 	t := b.typ
 	if t == nil {
 		t = vt
 	}
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", nil, err
-	}
+	goT := g.goType(t)
 	return "func() " + goT + " {\n\t\t" + b.expr + " = " + v +
-		"\n\t\treturn " + b.expr + "\n\t}()", t, nil
+		"\n\t\treturn " + b.expr + "\n\t}()", t
 }
 
 // compileAlso lowers `body also c1, c2` to an immediately-invoked function
@@ -263,29 +235,20 @@ func (g *gen) compileAssign(x *ast.AssignExpr, env exprEnv) (string, *ir.Type, e
 // effects. The body's value is held in a local before a clause can run,
 // which is what makes a clause that updates what the body read change the
 // *next* reader rather than this one.
-func (g *gen) compileAlso(x *ast.AlsoExpr, env exprEnv) (string, *ir.Type, error) {
-	body, bodyT, err := g.compileExpr(x.Body, env)
-	if err != nil {
-		return "", nil, err
-	}
-	goT, err := g.goType(bodyT)
-	if err != nil {
-		return "", nil, err
-	}
+func (g *gen) compileAlso(x *ast.AlsoExpr, env exprEnv) (string, *ir.Type) {
+	body, bodyT := g.compileExpr(x.Body, env)
+	goT := g.goType(bodyT)
 	local := g.fresh("dmAlso")
 	var b strings.Builder
 	b.WriteString("func() " + goT + " {\n\t\tvar " + local + " " + goT + " = " + body + "\n")
 	for _, c := range x.Clauses {
-		cv, _, err := g.compileExpr(c, env)
-		if err != nil {
-			return "", nil, err
-		}
+		cv, _ := g.compileExpr(c, env)
 		// Assigned to the blank identifier: Go has no expression statements,
 		// and the clause is written to be evaluated rather than used.
 		b.WriteString("\t\t_ = " + cv + "\n")
 	}
 	b.WriteString("\t\treturn " + local + "\n\t}()")
-	return b.String(), bodyT, nil
+	return b.String(), bodyT
 }
 
 // compileLet lowers `consider n as v in body` to a Go local inside an
@@ -297,7 +260,7 @@ func (g *gen) compileAlso(x *ast.AlsoExpr, env exprEnv) (string, *ir.Type, error
 // may legally be called `len`, `string`, or the name of a dm* helper, and
 // shadowing one of those inside the generated function would break unrelated
 // code in the same expression.
-func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) {
+func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type) {
 	// A chain of `consider a as … in consider b as … in …` becomes *one*
 	// closure with sequential declarations, not one closure per binding.
 	//
@@ -325,14 +288,8 @@ func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) 
 		// The value is compiled in the scope *before* its own binding, which is
 		// what `inner` holds at this point: earlier bindings of the chain are
 		// visible, this one is not.
-		val, valT, err := g.compileExpr(cur.Value, inner)
-		if err != nil {
-			return "", nil, err
-		}
-		goValT, err := g.goType(valT)
-		if err != nil {
-			return "", nil, err
-		}
+		val, valT := g.compileExpr(cur.Value, inner)
+		goValT := g.goType(valT)
 		local := "dmLet" + fieldName(cur.Name)
 		if n := declared[local]; n > 0 {
 			local += "_" + itoa(n)
@@ -349,78 +306,53 @@ func (g *gen) compileLet(x *ast.LetExpr, env exprEnv) (string, *ir.Type, error) 
 		cur = next
 	}
 
-	body, bodyT, err := g.compileExpr(cur.Body, inner)
-	if err != nil {
-		return "", nil, err
-	}
-	goBodyT, err := g.goType(bodyT)
-	if err != nil {
-		return "", nil, err
-	}
+	body, bodyT := g.compileExpr(cur.Body, inner)
+	goBodyT := g.goType(bodyT)
 	return "func() " + goBodyT + " {\n" + decls.String() +
-		"\t\treturn " + body + "\n\t}()", bodyT, nil
+		"\t\treturn " + body + "\n\t}()", bodyT
 }
 
 // compileCond lowers `if c then a else b` to an immediately-invoked func
 // literal — the only Go expression form with lazy arms (there is no ternary),
 // which the Go compiler inlines. Laziness is load-bearing: the unselected arm
 // may be partial (`if length(xs) = 0 then 0 else first(xs)`).
-func (g *gen) compileCond(x *ast.CondExpr, env exprEnv) (string, *ir.Type, error) {
-	cond, _, err := g.compileExpr(x.Cond, env)
-	if err != nil {
-		return "", nil, err
-	}
-	thenV, thenT, err := g.compileExpr(x.Then, env)
-	if err != nil {
-		return "", nil, err
-	}
-	elseV, _, err := g.compileExpr(x.Else, env)
-	if err != nil {
-		return "", nil, err
-	}
-	goT, err := g.goType(thenT)
-	if err != nil {
-		return "", nil, err
-	}
+func (g *gen) compileCond(x *ast.CondExpr, env exprEnv) (string, *ir.Type) {
+	cond, _ := g.compileExpr(x.Cond, env)
+	thenV, thenT := g.compileExpr(x.Then, env)
+	elseV, _ := g.compileExpr(x.Else, env)
+	goT := g.goType(thenT)
 	return "func() " + goT + " {\n\t\tif " + cond + " {\n\t\t\treturn " + thenV +
-		"\n\t\t}\n\t\treturn " + elseV + "\n\t}()", thenT, nil
+		"\n\t\t}\n\t\treturn " + elseV + "\n\t}()", thenT
 }
 
 // compileCall lowers an expression-layer builtin (typecheck.Builtins) to a
 // direct Go expression or a call to a generic dm* runtime helper. Names,
 // arity, and argument types were validated by typecheck at resolve time.
-func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error) {
+func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type) {
 	id, ok := x.Fn.(*ast.Ident)
 	if !ok {
-		return "", nil, fmt.Errorf("only builtin functions can be called")
+		panic(failf("only builtin functions can be called"))
 	}
 	name := id.Name
 	// max/min/sum of a list *literal* lower to direct scalar ops (no slice, no
 	// loop). Falls through to the general path when the shape doesn't match.
 	if (name == "max" || name == "min" || name == "sum") && len(x.Args) == 1 {
 		if inner, iname := callName(x.Args[0]); iname == "list" && len(inner.Args) >= 1 {
-			if r, rt, ok, err := g.reduceLiteral(name, inner.Args, env); err != nil {
-				return "", nil, err
-			} else if ok {
-				return r, rt, nil
+			if r, rt, ok := g.reduceLiteral(name, inner.Args, env); ok {
+				return r, rt
 			}
 		}
 	}
 	args := make([]string, len(x.Args))
 	types := make([]*ir.Type, len(x.Args))
 	for i, a := range x.Args {
-		av, at, err := g.compileExpr(a, env)
-		if err != nil {
-			return "", nil, err
-		}
+		av, at := g.compileExpr(a, env)
 		args[i], types[i] = av, at
 	}
 	// Same ordering hazard as compileBinary's, one argument list wider: an
 	// argument that writes must not be able to run before an argument written
 	// to its left has been read.
-	if err := g.orderArgs(x.Args, args, types); err != nil {
-		return "", nil, err
-	}
+	g.orderArgs(x.Args, args, types)
 	listElem := func(i int) (*ir.Type, error) {
 		if types[i] == nil || types[i].Kind != ir.KList {
 			return nil, fmt.Errorf("%s needs a List argument, got %s", name, types[i])
@@ -431,35 +363,32 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	// A builtin in the registry (package builtins) is emitted by the function
 	// codegen attached to it (textbuiltins.go); the rest are the arms below.
 	if spec := builtins.Lookup(name); spec != nil && spec.Emit != nil {
-		return spec.Emit(g, args, types)
+		return must2(spec.Emit(g, args, types))
 	}
 
 	switch name {
 	case "tojson":
-		fn, err := g.jsonFunc(types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ")", ir.Text(), nil
+		fn := g.jsonFunc(types[0])
+		return fn + "(" + args[0] + ")", ir.Text()
 	case "pending":
 		// Inside a game this is a lookup in the box that bounds requests to
 		// one in flight per tag. Outside one there is no run to ask about and
 		// nothing can be pending, which is the same answer the interpreter
 		// gives when a context has no host to ask (eval/eval.go).
 		if !g.game {
-			return "false", ir.Bool(), nil
+			return "false", ir.Bool()
 		}
-		return "dmPending(" + args[0] + ")", ir.Bool(), nil
+		return "dmPending(" + args[0] + ")", ir.Bool()
 
 	// -- the run's stream and clock (see codegen/randgen.go) -------------------
 	case "random":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmRand", declRand)
-		return "dmRandInt(" + args[0] + ")", ir.Int(), nil
+		return "dmRandInt(" + args[0] + ")", ir.Int()
 	case "randomf":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmRand", declRand)
-		return "dmRandFloat()", ir.Float(), nil
+		return "dmRandFloat()", ir.Float()
 	case "pick":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmRand", declRand)
@@ -469,17 +398,17 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			if types[0] != nil && types[0].Kind == ir.KSet {
 				elem = types[0].Elem
 			} else {
-				return "", nil, err
+				panic(fail(err))
 			}
 		}
 		fn := g.pickHelper(types[0], elem)
-		return fn + "(" + args[0] + ")", elem, nil
+		return fn + "(" + args[0] + ")", elem
 	case "frame":
 		g.helper("dmRand", declRand)
-		return "dmFrames", ir.Int(), nil
+		return "dmFrames", ir.Int()
 	case "elapsed":
 		g.helper("dmRand", declRand)
-		return "dmElapsedMS", ir.Int(), nil
+		return "dmElapsedMS", ir.Int()
 
 	// -- View: the render tree (see codegen/viewgen.go) ------------------------
 	case "text", "blank", "style", "stack", "beside", "box", "margin", "align", "fit", "draw":
@@ -488,15 +417,13 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	case "length":
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.imp("unicode/utf8")
-			return "int64(utf8.RuneCountInString(" + args[0] + "))", ir.Int(), nil
+			return "int64(utf8.RuneCountInString(" + args[0] + "))", ir.Int()
 		}
 		if types[0] != nil && types[0].Kind == ir.KTuple {
-			return fmt.Sprintf("int64(%d)", len(types[0].Elems)), ir.Int(), nil
+			return fmt.Sprintf("int64(%d)", len(types[0].Elems)), ir.Int()
 		}
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
-		return "int64(len(" + args[0] + "))", ir.Int(), nil
+		must(listElem(0))
+		return "int64(len(" + args[0] + "))", ir.Int()
 	case "item":
 		// Tuple access compiles to a direct struct field — typecheck already
 		// proved the index is a literal in range, so there is nothing to check
@@ -504,176 +431,93 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if types[0] != nil && types[0].Kind == ir.KTuple {
 			lit, ok := x.Args[1].(*ast.IntLit)
 			if !ok {
-				return "", nil, fmt.Errorf("item over a Tuple needs a literal index")
+				panic(failf("item over a Tuple needs a literal index"))
 			}
-			return "(" + args[0] + ")." + tupleField(int(lit.Value)), types[0].Elems[lit.Value], nil
+			return "(" + args[0] + ")." + tupleField(int(lit.Value)), types[0].Elems[lit.Value]
 		}
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmItem", declItem)
-		return "dmItem(" + args[0] + ", " + args[1] + ")", elem, nil
+		return "dmItem(" + args[0] + ", " + args[1] + ")", elem
 	case "take":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmTake", declTake)
-		return "dmTake(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return "dmTake(" + args[0] + ", " + args[1] + ")", types[0]
 	case "drop":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmDrop", declDrop)
-		return "dmDrop(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return "dmDrop(" + args[0] + ", " + args[1] + ")", types[0]
 	// -- first-order list operations ---------------------------------------------
 	case "sort":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
-		fn, err := g.sortFn(elem)
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ")", types[0], nil
+		elem := must(listElem(0))
+		fn := g.sortFn(elem)
+		return fn + "(" + args[0] + ")", types[0]
 	case "unique":
-		uelem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		uelem := must(listElem(0))
 		if ir.ContainsList(uelem) {
-			kf, err := g.keyFn(uelem)
-			if err != nil {
-				return "", nil, err
-			}
+			kf := g.keyFn(uelem)
 			g.helper("dmUniqueBy", declUniqueBy)
-			return "dmUniqueBy(" + args[0] + ", " + kf + ")", types[0], nil
+			return "dmUniqueBy(" + args[0] + ", " + kf + ")", types[0]
 		}
 		g.helper("dmUniqueList", declUniqueList)
-		return "dmUniqueList(" + args[0] + ")", types[0], nil
+		return "dmUniqueList(" + args[0] + ")", types[0]
 	case "flatten":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.helper("dmFlatten", declFlatten)
-		return "dmFlatten(" + args[0] + ")", elem, nil
-	case "bandall", "borall", "bxorall":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
-		fn := bitReduceName(name)
-		g.helper(fn, declBitReduce(name))
-		return fn + "(" + args[0] + ")", ir.Int(), nil
-	case "and", "or":
-		// A *function*, so both arguments are evaluated before it runs — the
-		// interpreter evaluates every argument before dispatching, and a
-		// compiled `&&` would skip a failure the interpreter raises. Passing
-		// them to a helper is what forces that; Go's non-short-circuiting `&`
-		// and `|` are not defined on the untyped bool a comparison produces.
-		// The infix operators keep `&&`/`||` and keep short-circuiting — that
-		// difference is the point, and docs/expressions.md states it.
-		fn := "dmAnd"
-		decl := declAnd
-		if name == "or" {
-			fn, decl = "dmOr", declOr
-		}
-		g.helper(fn, decl)
-		return fn + "(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
-	case "xor":
-		return "(" + args[0] + " != " + args[1] + ")", ir.Bool(), nil
-	case "not":
-		return "(!" + args[0] + ")", ir.Bool(), nil
+		return "dmFlatten(" + args[0] + ")", elem
 	case "product":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.helper("dmProduct", declProduct)
-		return "dmProduct(" + args[0] + ")", elem, nil
+		return "dmProduct(" + args[0] + ")", elem
 	case "zip":
-		a, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
-		b, err := listElem(1)
-		if err != nil {
-			return "", nil, err
-		}
-		fn, err := g.pairFn("zip", a, b)
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(ir.Tuple(a, b)), nil
+		a := must(listElem(0))
+		b := must(listElem(1))
+		fn := g.pairFn("zip", a, b)
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(ir.Tuple(a, b))
 	case "enumerate":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
-		fn, err := g.pairFn("enumerate", ir.Int(), elem)
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ")", ir.List(ir.Tuple(ir.Int(), elem)), nil
+		elem := must(listElem(0))
+		fn := g.pairFn("enumerate", ir.Int(), elem)
+		return fn + "(" + args[0] + ")", ir.List(ir.Tuple(ir.Int(), elem))
 	case "chunk", "windows":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmFail", declFail, "fmt", "os")
 		decl, fn := declChunk, "dmChunk"
 		if name == "windows" {
 			decl, fn = declWindows, "dmWindows"
 		}
 		g.helper(fn, decl)
-		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0]), nil
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0])
 	case "transpose":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmTransposeList", declTransposeList)
-		return "dmTransposeList(" + args[0] + ")", types[0], nil
+		return "dmTransposeList(" + args[0] + ")", types[0]
 	case "reverse":
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.helper("dmReverseText", declReverseText)
-			return "dmReverseText(" + args[0] + ")", ir.Text(), nil
+			return "dmReverseText(" + args[0] + ")", ir.Text()
 		}
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmRev", declRev)
-		return "dmRev(" + args[0] + ")", types[0], nil
+		return "dmRev(" + args[0] + ")", types[0]
 	case "concat":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmConcat", declConcat)
-		return "dmConcat(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return "dmConcat(" + args[0] + ", " + args[1] + ")", types[0]
 	case "first":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmFirst", declFirst)
-		return "dmFirst(" + args[0] + ")", elem, nil
+		return "dmFirst(" + args[0] + ")", elem
 	case "last":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmLast", declLast)
-		return "dmLast(" + args[0] + ")", elem, nil
+		return "dmLast(" + args[0] + ")", elem
 	case "sum":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.helper("dmSum", declSumInts)
-		return "dmSum(" + args[0] + ")", elem, nil
+		return "dmSum(" + args[0] + ")", elem
 	case "min", "max":
 		// Two arguments is the scalar form; one is the list reduction.
 		if len(args) == 2 {
@@ -692,190 +536,107 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 					b = "float64(" + b + ")"
 				}
 			}
-			return fn + "(" + a + ", " + b + ")", res, nil
+			return fn + "(" + a + ", " + b + ")", res
 		}
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.helper("dmFail", declFail, "fmt", "os")
 		if name == "min" {
 			g.helper("dmMin", declMinInts)
-			return "dmMin(" + args[0] + ")", elem, nil
+			return "dmMin(" + args[0] + ")", elem
 		}
 		g.helper("dmMax", declMaxInts)
-		return "dmMax(" + args[0] + ")", elem, nil
+		return "dmMax(" + args[0] + ")", elem
 	case "contains":
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.imp("strings")
-			return "strings.Contains(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+			return "strings.Contains(" + args[0] + ", " + args[1] + ")", ir.Bool()
 		}
 		if types[0] != nil && types[0].Kind == ir.KSet {
 			g.chelper(types[0].Elem, "dmSet", declSet)
-			return g.chelper(types[0].Elem, "dmSetHas", declSetHas) + "(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+			return g.chelper(types[0].Elem, "dmSetHas", declSetHas) + "(" + args[0] + ", " + args[1] + ")", ir.Bool()
 		}
 		if types[0] != nil && types[0].Kind == ir.KGraph {
 			g.chelper(types[0].Elem, "dmGraph", declGraph)
 			return "func() bool { _, ok := " + nodeIndex(types[0].Elem, "("+args[0]+")", args[1]) + "; return ok }()",
-				ir.Bool(), nil
+				ir.Bool()
 		}
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		if elem := types[0].Elem; lKeyed(elem) {
-			kf, err := g.keyFn(elem)
-			if err != nil {
-				return "", nil, err
-			}
+			kf := g.keyFn(elem)
 			g.helper("dmLContains", declLContains)
-			return "dmLContains(" + args[0] + ", " + args[1] + ", " + kf + ")", ir.Bool(), nil
+			return "dmLContains(" + args[0] + ", " + args[1] + ", " + kf + ")", ir.Bool()
 		}
 		g.helper("dmContains", declContains)
-		return "dmContains(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
+		return "dmContains(" + args[0] + ", " + args[1] + ")", ir.Bool()
 	case "get":
 		if types[0] == nil || types[0].Kind != ir.KMap {
-			return "", nil, fmt.Errorf("get needs a Map argument, got %s", types[0])
+			panic(failf("get needs a Map argument, got %s", types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.chelper(types[0].Key, "dmMap", declMap)
-		return g.chelper(types[0].Key, "dmMapGet", declMapGet) + "(" + args[0] + ", " + args[1] + ")", types[0].Elem, nil
+		return g.chelper(types[0].Key, "dmMapGet", declMapGet) + "(" + args[0] + ", " + args[1] + ")", types[0].Elem
 	case "at":
 		if types[0] != nil && types[0].Kind == ir.KSparse {
 			// Total on the infinite plane: unset cells read the default.
-			return "(" + args[0] + ").at(" + args[1] + ", " + args[2] + ")", types[0].Elem, nil
+			return "(" + args[0] + ").at(" + args[1] + ", " + args[2] + ")", types[0].Elem
 		}
 		if types[0] == nil || types[0].Kind != ir.KGrid {
-			return "", nil, fmt.Errorf("at needs a Grid argument, got %s", types[0])
+			panic(failf("at needs a Grid argument, got %s", types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmGrid", declGrid)
 		g.helper("dmGridAt", declGridAt)
-		return "dmGridAt(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0].Elem, nil
+		return "dmGridAt(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0].Elem
 
 	// -- sparse grids (H) --------------------------------------------------------
 	case "sparse":
-		elemGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
+		elemGo := g.goType(types[0])
 		g.helper("dmSparse", declSparse, "slices")
-		return "dmNewSparse[" + elemGo + "](" + args[0] + ")", ir.Sparse(types[0]), nil
+		return "dmNewSparse[" + elemGo + "](" + args[0] + ")", ir.Sparse(types[0])
 	case "put":
 		if types[0] == nil || types[0].Kind != ir.KSparse {
-			return "", nil, fmt.Errorf("put needs a Sparse argument, got %s", types[0])
+			panic(failf("put needs a Sparse argument, got %s", types[0]))
 		}
 		g.helper("dmSparse", declSparse, "slices")
 		if x.InPlace {
 			g.helper("dmSparsePutIn", declSparsePutIn)
 			return "dmSparsePutIn(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
-				types[0], nil
+				types[0]
 		}
 		g.helper("dmSparsePut", declSparsePut)
 		return "dmSparsePut(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
-			types[0], nil
+			types[0]
 	case "has":
 		if types[0] == nil || types[0].Kind != ir.KSparse {
-			return "", nil, fmt.Errorf("has needs a Sparse argument, got %s", types[0])
+			panic(failf("has needs a Sparse argument, got %s", types[0]))
 		}
-		return "(" + args[0] + ").has(" + args[1] + ", " + args[2] + ")", ir.Bool(), nil
+		return "(" + args[0] + ").has(" + args[1] + ", " + args[2] + ")", ir.Bool()
 	case "cells":
 		if types[0] == nil || types[0].Kind != ir.KSparse {
-			return "", nil, fmt.Errorf("cells needs a Sparse argument, got %s", types[0])
+			panic(failf("cells needs a Sparse argument, got %s", types[0]))
 		}
-		return "int64((" + args[0] + ").count())", ir.Int(), nil
+		return "int64((" + args[0] + ").count())", ir.Int()
 	case "minrow", "maxrow", "mincol", "maxcol":
 		if types[0] == nil || types[0].Kind != ir.KSparse {
-			return "", nil, fmt.Errorf("%s needs a Sparse argument, got %s", name, types[0])
+			panic(failf("%s needs a Sparse argument, got %s", name, types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmSparseBound", declSparseBound)
-		return "dmSparseBound(" + args[0] + ", " + goStr(name) + ")", ir.Int(), nil
+		return "dmSparseBound(" + args[0] + ", " + goStr(name) + ")", ir.Int()
 
-	// -- math / number theory (scalar: fully compiled) -------------------------
-	case "abs":
-		g.helper("dmAbs", declAbs)
-		return "dmAbs(" + args[0] + ")", types[0], nil
-	case "tofloat":
-		if types[0] != nil && types[0].Kind == ir.KText {
-			g.helper("dmFail", declFail, "fmt", "os")
-			g.helper("dmParseFloat", declParseFloat, "strconv", "strings")
-			return "dmParseFloat(" + args[0] + ")", ir.Float(), nil
-		}
-		return "float64(" + args[0] + ")", ir.Float(), nil
-	case "floor":
-		g.imp("math")
-		return "int64(math.Floor(" + args[0] + "))", ir.Int(), nil
-	case "ceil":
-		g.imp("math")
-		return "int64(math.Ceil(" + args[0] + "))", ir.Int(), nil
-	case "round":
-		g.imp("math")
-		return "int64(math.Round(" + args[0] + "))", ir.Int(), nil
-	case "sqrt":
-		g.imp("math")
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmFmtFloat", declFmtFloat, "strconv")
-		g.helper("dmSqrt", declSqrt, "math")
-		arg := args[0]
-		if !isFloatType(types[0]) {
-			arg = "float64(" + arg + ")"
-		}
-		return "dmSqrt(" + arg + ")", ir.Float(), nil
-	case "sign":
-		g.helper("dmSign", declSign)
-		return "dmSign(" + args[0] + ")", ir.Int(), nil
-	case "gcd":
-		g.helper("dmAbs", declAbs)
-		g.helper("dmGcd", declGcd)
-		return "dmGcd(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
-	case "lcm":
-		g.helper("dmAbs", declAbs)
-		g.helper("dmGcd", declGcd)
-		g.helper("dmLcm", declLcm)
-		return "dmLcm(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
-	case "modpow":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMulMod", declMulMod, "math/bits")
-		g.helper("dmModPow", declModPow)
-		return "dmModPow(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
+	// -- mod and divmod read the divisor's source, so they stay here --------------
 	case "mod":
-		return g.modGo(args[0], args[1], x.Args[1]), ir.Int(), nil
+		return g.modGo(args[0], args[1], x.Args[1]), ir.Int()
 	case "divmod":
 		// Built inline rather than via a helper: the result is a generated
 		// tuple struct whose name is only known here.
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmDiv", declDiv)
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		a, b := args[0], args[1]
 		mod := g.modGo(a, b, x.Args[1])
 		return pt + "{dmDiv(" + a + " - " + mod + ", " + b + "), " + mod + "}",
-			irPoint(), nil
-	case "pow":
-		// Follows the operators' promotion rule: integral unless an operand is
-		// a Float, in which case it is math.Pow like every other float op.
-		if isFloatType(types[0]) || isFloatType(types[1]) {
-			g.imp("math")
-			return "math.Pow(" + g.asFloat(args[0], types[0]) + ", " +
-				g.asFloat(args[1], types[1]) + ")", ir.Float(), nil
-		}
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmPow", declPow)
-		return "dmPow(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
-	case "isqrt":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmISqrt", declISqrt, "math")
-		return "dmISqrt(" + args[0] + ")", ir.Int(), nil
-	case "factorial":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmFactorial", declFactorial)
-		return "dmFactorial(" + args[0] + ")", ir.Int(), nil
-	case "choose":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmChoose", declChoose, "math", "math/bits")
-		return "dmChoose(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+			irPoint()
 	case "clamp":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmClamp", declClamp)
@@ -892,118 +653,81 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 				}
 			}
 		}
-		return "dmClamp(" + a[0] + ", " + a[1] + ", " + a[2] + ")", res, nil
-	case "modinv":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmMulMod", declMulMod, "math/bits")
-		g.helper("dmModInv", declModInv)
-		return "dmModInv(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
-
+		return "dmClamp(" + a[0] + ", " + a[1] + ", " + a[2] + ")", res
 	// -- text (fully compiled) --------------------------------------------------
 	case "indexof":
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.helper("dmIndexOfText", declIndexOfText, "strings", "unicode/utf8")
-			return "dmIndexOfText(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+			return "dmIndexOfText(" + args[0] + ", " + args[1] + ")", ir.Int()
 		}
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		if elem := types[0].Elem; lKeyed(elem) {
-			kf, err := g.keyFn(elem)
-			if err != nil {
-				return "", nil, err
-			}
+			kf := g.keyFn(elem)
 			g.helper("dmLIndexOf", declLIndexOf)
-			return "dmLIndexOf(" + args[0] + ", " + args[1] + ", " + kf + ")", ir.Int(), nil
+			return "dmLIndexOf(" + args[0] + ", " + args[1] + ", " + kf + ")", ir.Int()
 		}
 		g.helper("dmIndexOf", declIndexOf)
-		return "dmIndexOf(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		return "dmIndexOf(" + args[0] + ", " + args[1] + ")", ir.Int()
 	case "slice":
 		g.helper("dmClampRange", declClampRange)
 		if types[0] != nil && types[0].Kind == ir.KText {
 			g.helper("dmASCII", declASCII, "unicode/utf8")
 			g.helper("dmSliceText", declSliceText)
-			return "dmSliceText(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text(), nil
+			return "dmSliceText(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Text()
 		}
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmSliceList", declSliceList)
-		return "dmSliceList(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		return "dmSliceList(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0]
 	case "textjoin":
-		elemT, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elemT := must(listElem(0))
 		if elemT != nil && elemT.Kind == ir.KText {
 			g.imp("strings")
-			return "strings.Join(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+			return "strings.Join(" + args[0] + ", " + args[1] + ")", ir.Text()
 		}
-		fn, err := g.joinFn(elemT)
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
+		fn := g.joinFn(elemT)
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.Text()
 
 	// -- grid geometry ----------------------------------------------------------
 	case "inbounds":
 		if types[0] == nil || types[0].Kind != ir.KGrid {
-			return "", nil, fmt.Errorf("inbounds needs a Grid argument, got %s", types[0])
+			panic(failf("inbounds needs a Grid argument, got %s", types[0]))
 		}
 		g.helper("dmGrid", declGrid)
 		g.helper("dmInBounds", declInBounds)
-		return "dmInBounds(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Bool(), nil
+		return "dmInBounds(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Bool()
 
 	// -- points (interned (Int, Int) tuple struct) ------------------------------
 	case "point":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
-		return pt + "{" + args[0] + ", " + args[1] + "}", irPoint(), nil
+		pt := g.pointGo()
+		return pt + "{" + args[0] + ", " + args[1] + "}", irPoint()
 	case "tuple":
 		tt := ir.Tuple(types...)
-		gt, err := g.tupleType(tt)
-		if err != nil {
-			return "", nil, err
-		}
-		return gt + "{" + strings.Join(args, ", ") + "}", tt, nil
+		gt := g.tupleType(tt)
+		return gt + "{" + strings.Join(args, ", ") + "}", tt
 	case "prow":
-		return "(" + args[0] + ").f0", ir.Int(), nil
+		return "(" + args[0] + ").f0", ir.Int()
 	case "pcol":
-		return "(" + args[0] + ").f1", ir.Int(), nil
+		return "(" + args[0] + ").f1", ir.Int()
 	case "padd":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmPAdd", fmt.Sprintf(`func dmPAdd(a, b %[1]s) %[1]s {
 	return %[1]s{a.f0 + b.f0, a.f1 + b.f1}
 }`, pt))
-		return "dmPAdd(" + args[0] + ", " + args[1] + ")", irPoint(), nil
+		return "dmPAdd(" + args[0] + ", " + args[1] + ")", irPoint()
 	case "psub":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmPSub", fmt.Sprintf(`func dmPSub(a, b %[1]s) %[1]s {
 	return %[1]s{a.f0 - b.f0, a.f1 - b.f1}
 }`, pt))
-		return "dmPSub(" + args[0] + ", " + args[1] + ")", irPoint(), nil
+		return "dmPSub(" + args[0] + ", " + args[1] + ")", irPoint()
 	case "pscale":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmPScale", fmt.Sprintf(`func dmPScale(p %[1]s, n int64) %[1]s {
 	return %[1]s{p.f0 * n, p.f1 * n}
 }`, pt))
-		return "dmPScale(" + args[0] + ", " + args[1] + ")", irPoint(), nil
+		return "dmPScale(" + args[0] + ", " + args[1] + ")", irPoint()
 	case "chebyshev":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmAbs", declAbs)
 		g.helper("dmChebyshev", fmt.Sprintf(`func dmChebyshev(a, b %[1]s) int64 {
 	dr, dc := dmAbs(a.f0-b.f0), dmAbs(a.f1-b.f1)
@@ -1012,15 +736,10 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	}
 	return dc
 }`, pt))
-		return "dmChebyshev(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		return "dmChebyshev(" + args[0] + ", " + args[1] + ")", ir.Int()
 	case "nearby4", "nearby8":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
+		pt := g.pointGo()
 		g.helper("dmAbs", declAbs)
 		if name == "nearby4" {
 			g.helper("dmNearby4", fmt.Sprintf(`func dmNearby4(ps []%[1]s, center %[1]s, radius int64) []int64 {
@@ -1032,7 +751,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	}
 	return out
 }`, pt))
-			return "dmNearby4(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.List(ir.Int()), nil
+			return "dmNearby4(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.List(ir.Int())
 		}
 		g.helper("dmNearby8", fmt.Sprintf(`func dmNearby8(ps []%[1]s, center %[1]s, radius int64) []int64 {
 	var out []int64
@@ -1048,28 +767,22 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	}
 	return out
 }`, pt))
-		return "dmNearby8(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.List(ir.Int()), nil
+		return "dmNearby8(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.List(ir.Int())
 	case "dirs8":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmDirs8", fmt.Sprintf(`func dmDirs8() []%[1]s {
 	return []%[1]s{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}}
 }`, pt))
-		return "dmDirs8()", ir.List(irPoint()), nil
+		return "dmDirs8()", ir.List(irPoint())
 	case "around4", "around8":
 		// Neighbours of a point with no grid and no bounds — what a Sparse
 		// automaton needs, since neighbors4/8 require a dense Grid.
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		if name == "around4" {
 			g.helper("dmAround4", fmt.Sprintf(`func dmAround4(p %[1]s) []%[1]s {
 	return []%[1]s{{p.f0 - 1, p.f1}, {p.f0 + 1, p.f1}, {p.f0, p.f1 - 1}, {p.f0, p.f1 + 1}}
 }`, pt))
-			return "dmAround4(" + args[0] + ")", ir.List(irPoint()), nil
+			return "dmAround4(" + args[0] + ")", ir.List(irPoint())
 		}
 		g.helper("dmAround8", fmt.Sprintf(`func dmAround8(p %[1]s) []%[1]s {
 	return []%[1]s{
@@ -1078,29 +791,26 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		{p.f0 + 1, p.f1 - 1}, {p.f0 + 1, p.f1}, {p.f0 + 1, p.f1 + 1},
 	}
 }`, pt))
-		return "dmAround8(" + args[0] + ")", ir.List(irPoint()), nil
+		return "dmAround8(" + args[0] + ")", ir.List(irPoint())
 	case "haskey":
 		g.chelper(types[0].Key, "dmMap", declMap)
 		if lKeyed(types[0].Key) {
-			return "func() bool { m := " + args[0] + "; return m.has(" + args[1] + ") }()", ir.Bool(), nil
+			return "func() bool { m := " + args[0] + "; return m.has(" + args[1] + ") }()", ir.Bool()
 		}
-		return "func() bool { _, ok := (" + args[0] + ").idx[" + args[1] + "]; return ok }()", ir.Bool(), nil
+		return "func() bool { _, ok := (" + args[0] + ").idx[" + args[1] + "]; return ok }()", ir.Bool()
 	case "getor":
 		// The total lookup: `get` errors on a missing key and there was no way
 		// to guard it, which made a Count By map unreadable.
 		g.chelper(types[0].Key, "dmMap", declMap)
-		valGo, err := g.goType(types[0].Elem)
-		if err != nil {
-			return "", nil, err
-		}
+		valGo := g.goType(types[0].Elem)
 		return "func() " + valGo + " { if v, ok := (" + args[0] + ").get(" + args[1] +
-			"); ok { return v }; return " + args[2] + " }()", types[0].Elem, nil
+			"); ok { return v }; return " + args[2] + " }()", types[0].Elem
 	case "keys":
 		g.chelper(types[0].Key, "dmMap", declMap)
-		return "(" + args[0] + ").keys", ir.List(types[0].Key), nil
+		return "(" + args[0] + ").keys", ir.List(types[0].Key)
 	case "pluck":
 		if types[0] == nil || types[0].Kind != ir.KMap {
-			return "", nil, fmt.Errorf("pluck needs a Map argument, got %s", types[0])
+			panic(failf("pluck needs a Map argument, got %s", types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.chelper(types[0].Key, "dmMap", declMap)
@@ -1114,80 +824,61 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		out[i] = v
 	}
 	return out
-}`) + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+}`) + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem)
 	case "values":
 		g.chelper(types[0].Key, "dmMap", declMap)
 		// The key and value types are not named by the (generic) helper, but
 		// interning them here keeps their struct declarations emitted and
 		// surfaces an uncompilable element type at the same point it used to.
-		if _, err := g.goType(types[0].Key); err != nil {
-			return "", nil, err
-		}
-		if _, err := g.goType(types[0].Elem); err != nil {
-			return "", nil, err
-		}
+		g.goType(types[0].Key)
+		g.goType(types[0].Elem)
 		return g.chelper(types[0].Key, "dmMapValues", `func dmMapValues[K comparable, V any](m dmMap[K, V]) []V {
 	return append([]V(nil), m.vs...)
-}`) + "(" + args[0] + ")", ir.List(types[0].Elem), nil
+}`) + "(" + args[0] + ")", ir.List(types[0].Elem)
 	case "tolist":
 		g.chelper(types[0].Elem, "dmSet", declSet)
-		return "(" + args[0] + ").elems", ir.List(types[0].Elem), nil
+		return "(" + args[0] + ").elems", ir.List(types[0].Elem)
 	case "size":
 		if types[0] != nil && types[0].Kind == ir.KGraph {
 			g.chelper(types[0].Elem, "dmGraph", declGraph)
-			return "int64(len((" + args[0] + ").nodes))", ir.Int(), nil
+			return "int64(len((" + args[0] + ").nodes))", ir.Int()
 		}
 		if types[0] != nil && types[0].Kind == ir.KSet {
 			g.chelper(types[0].Elem, "dmSet", declSet)
-			return "int64(len((" + args[0] + ").elems))", ir.Int(), nil
+			return "int64(len((" + args[0] + ").elems))", ir.Int()
 		}
 		g.chelper(types[0].Key, "dmMap", declMap)
-		return "int64(len((" + args[0] + ").keys))", ir.Int(), nil
+		return "int64(len((" + args[0] + ").keys))", ir.Int()
 	case "manhattan":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmAbs", declAbs)
 		g.helper("dmManhattan", fmt.Sprintf(`func dmManhattan(a, b %s) int64 {
 	return dmAbs(a.f0-b.f0) + dmAbs(a.f1-b.f1)
 }`, pt))
-		return "dmManhattan(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		return "dmManhattan(" + args[0] + ", " + args[1] + ")", ir.Int()
 	case "rotl":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmRotL", fmt.Sprintf(`func dmRotL(p %[1]s) %[1]s {
 	return %[1]s{-p.f1, p.f0}
 }`, pt))
-		return "dmRotL(" + args[0] + ")", irPoint(), nil
+		return "dmRotL(" + args[0] + ")", irPoint()
 	case "rotr":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmRotR", fmt.Sprintf(`func dmRotR(p %[1]s) %[1]s {
 	return %[1]s{p.f1, -p.f0}
 }`, pt))
-		return "dmRotR(" + args[0] + ")", irPoint(), nil
+		return "dmRotR(" + args[0] + ")", irPoint()
 	case "dirs4":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmDirs4", fmt.Sprintf(`func dmDirs4() []%[1]s {
 	return []%[1]s{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
 }`, pt))
-		return "dmDirs4()", ir.List(irPoint()), nil
+		return "dmDirs4()", ir.List(irPoint())
 	case "neighbors4", "neighbors8":
 		if types[0] == nil || types[0].Kind != ir.KGrid {
-			return "", nil, fmt.Errorf("%s needs a Grid argument, got %s", name, types[0])
+			panic(failf("%s needs a Grid argument, got %s", name, types[0]))
 		}
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
+		pt := g.pointGo()
 		g.helper("dmGrid", declGrid)
 		g.helper("dmNeighbors", fmt.Sprintf(`func dmNeighbors[T any](g dmGrid[T], r, c int64, diag bool) []%[1]s {
 	deltas := []%[1]s{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
@@ -1208,38 +899,13 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			diag = "true"
 		}
 		return "dmNeighbors(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + diag + ")",
-			ir.List(irPoint()), nil
-	case "solve2x2":
-		pt, err := g.pointGo()
-		if err != nil {
-			return "", nil, err
-		}
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmSolve2x2", fmt.Sprintf(`func dmSolve2x2(a, b, c, d, e, f int64) %[1]s {
-	det := a*e - b*d
-	if det == 0 {
-		dmFail("solve2x2: system has no unique solution (determinant is zero)")
-	}
-	xNum := c*e - b*f
-	yNum := a*f - c*d
-	if xNum%%det != 0 || yNum%%det != 0 {
-		dmFail("solve2x2: solution is not integral")
-	}
-	return %[1]s{xNum / det, yNum / det}
-}`, pt))
-		return "dmSolve2x2(" + args[0] + ", " + args[1] + ", " + args[2] + ", " +
-			args[3] + ", " + args[4] + ", " + args[5] + ")", irPoint(), nil
+			ir.List(irPoint())
 	// -- list/grid construction and access (A.2) --------------------------------
 	case "list":
-		elemGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		return "[]" + elemGo + "{" + strings.Join(args, ", ") + "}", ir.List(types[0]), nil
+		elemGo := g.goType(types[0])
+		return "[]" + elemGo + "{" + strings.Join(args, ", ") + "}", ir.List(types[0])
 	case "set":
-		if _, err := listElem(0); err != nil {
-			return "", nil, err
-		}
+		must(listElem(0))
 		g.helper("dmFail", declFail, "fmt", "os")
 		// x.InPlace is the optimizer's proof that nothing reads the copied-from
 		// value after this call and that no subslice of it escaped — see
@@ -1247,154 +913,92 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		// the one the Map and Grid updates need.
 		if x.InPlace {
 			g.helper("dmSetAtIn", declSetAtIn)
-			return "dmSetAtIn(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+			return "dmSetAtIn(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0]
 		}
 		g.helper("dmSetAt", declSetAt)
-		return "dmSetAt(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		return "dmSetAt(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0]
 	case "row", "col":
 		if types[0] == nil || types[0].Kind != ir.KGrid {
-			return "", nil, fmt.Errorf("%s needs a Grid argument, got %s", name, types[0])
+			panic(failf("%s needs a Grid argument, got %s", name, types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmGrid", declGrid)
 		if name == "row" {
 			g.helper("dmGridRow", declGridRow)
-			return "dmGridRow(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+			return "dmGridRow(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem)
 		}
 		g.helper("dmGridCol", declGridCol)
-		return "dmGridCol(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+		return "dmGridCol(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem)
 	case "rows":
-		return "int64((" + args[0] + ").rows)", ir.Int(), nil
+		return "int64((" + args[0] + ").rows)", ir.Int()
 	case "cols":
-		return "int64((" + args[0] + ").cols)", ir.Int(), nil
+		return "int64((" + args[0] + ").cols)", ir.Int()
 
 	// -- bit operations ----------------------------------------------------------
-	case "band":
-		return "(" + args[0] + " & " + args[1] + ")", ir.Int(), nil
-	case "bor":
-		return "(" + args[0] + " | " + args[1] + ")", ir.Int(), nil
-	case "bxor":
-		return "(" + args[0] + " ^ " + args[1] + ")", ir.Int(), nil
-	case "shl":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmShl", declShl)
-		return "dmShl(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
-	case "shr":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmShr", declShr)
-		return "dmShr(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
 	case "frombin":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmFromBin", declFromBin, "strconv", "strings")
-		return "dmFromBin(" + args[0] + ")", ir.Int(), nil
+		return "dmFromBin(" + args[0] + ")", ir.Int()
 
 	// -- collection construction, update and enumeration -------------------------
 	case "toset":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		g.chelper(elem, "dmSet", declSet)
 		if lKeyed(elem) {
-			kf, err := g.keyFn(elem)
-			if err != nil {
-				return "", nil, err
-			}
-			return g.chelper(elem, "dmToSet", declToSet) + "(" + args[0] + ", " + kf + ")", ir.Set(elem), nil
+			kf := g.keyFn(elem)
+			return g.chelper(elem, "dmToSet", declToSet) + "(" + args[0] + ", " + kf + ")", ir.Set(elem)
 		}
-		return g.chelper(elem, "dmToSet", declToSet) + "(" + args[0] + ")", ir.Set(elem), nil
+		return g.chelper(elem, "dmToSet", declToSet) + "(" + args[0] + ")", ir.Set(elem)
 	case "emptyset":
 		// The witness contributes nothing but its type — but it is still
 		// *evaluated*, because the interpreter evaluates every argument before
 		// dispatching and `emptyset(first(xs))` on an empty list has to fail in
 		// both backends or the two disagree. Passing it to a func that ignores
 		// it keeps the evaluation and discards the value.
-		elemGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		newSet, err := g.newSetExpr(types[0], elemGo)
-		if err != nil {
-			return "", nil, err
-		}
-		setGo, err := g.goType(ir.Set(types[0]))
-		if err != nil {
-			return "", nil, err
-		}
-		return "func(" + elemGo + ") " + setGo + " { return " + newSet + " }(" + args[0] + ")", ir.Set(types[0]), nil
+		elemGo := g.goType(types[0])
+		newSet := g.newSetExpr(types[0], elemGo)
+		setGo := g.goType(ir.Set(types[0]))
+		return "func(" + elemGo + ") " + setGo + " { return " + newSet + " }(" + args[0] + ")", ir.Set(types[0])
 	case "emptylist":
 		// Same witness discipline as emptyset: the value is discarded but still
 		// evaluated, so `emptylist(first(xs))` on an empty list fails in both
 		// backends rather than one.
-		elemGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
+		elemGo := g.goType(types[0])
 		return "func(" + elemGo + ") []" + elemGo + " { return []" + elemGo +
-			"{} }(" + args[0] + ")", ir.List(types[0]), nil
+			"{} }(" + args[0] + ")", ir.List(types[0])
 	case "emptymap":
-		keyGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		valGo, err := g.goType(types[1])
-		if err != nil {
-			return "", nil, err
-		}
-		newMap, err := g.newMapExpr(types[0], keyGo, valGo, "")
-		if err != nil {
-			return "", nil, err
-		}
-		mapGo, err := g.goType(ir.Map(types[0], types[1]))
-		if err != nil {
-			return "", nil, err
-		}
+		keyGo := g.goType(types[0])
+		valGo := g.goType(types[1])
+		newMap := g.newMapExpr(types[0], keyGo, valGo, "")
+		mapGo := g.goType(ir.Map(types[0], types[1]))
 		return "func(" + keyGo + ", " + valGo + ") " + mapGo + " { return " + newMap + " }(" + args[0] + ", " + args[1] + ")",
-			ir.Map(types[0], types[1]), nil
+			ir.Map(types[0], types[1])
 	case "tomap":
-		elem, err := listElem(0)
-		if err != nil {
-			return "", nil, err
-		}
+		elem := must(listElem(0))
 		if elem == nil || elem.Kind != ir.KTuple || len(elem.Elems) != 2 {
-			return "", nil, fmt.Errorf("tomap needs a List of (key, value) pairs, got List<%s>", elem)
+			panic(failf("tomap needs a List of (key, value) pairs, got List<%s>", elem))
 		}
 		mapT := ir.Map(elem.Elems[0], elem.Elems[1])
-		mapGo, err := g.goType(mapT)
-		if err != nil {
-			return "", nil, err
-		}
-		pairGo, err := g.goType(elem)
-		if err != nil {
-			return "", nil, err
-		}
-		newMap, err := g.newMapExpr(elem.Elems[0], mustGo(g, elem.Elems[0]), mustGo(g, elem.Elems[1]), "len(ps)")
-		if err != nil {
-			return "", nil, err
-		}
+		mapGo := g.goType(mapT)
+		pairGo := g.goType(elem)
+		newMap := g.newMapExpr(elem.Elems[0], mustGo(g, elem.Elems[0]), mustGo(g, elem.Elems[1]), "len(ps)")
 		// Parameterized rather than closed over, so the argument expression is
 		// evaluated exactly once however big it is.
 		return "func(ps []" + pairGo + ") " + mapGo + " { m := " + newMap +
 			"; for _, p := range ps { m.put(p.f0, p.f1) }; return m }(" +
-			args[0] + ")", mapT, nil
+			args[0] + ")", mapT
 	case "entries":
 		if types[0] == nil || types[0].Kind != ir.KMap {
-			return "", nil, fmt.Errorf("entries needs a Map argument, got %s", types[0])
+			panic(failf("entries needs a Map argument, got %s", types[0]))
 		}
 		pairT := ir.Tuple(types[0].Key, types[0].Elem)
-		pairGo, err := g.goType(pairT)
-		if err != nil {
-			return "", nil, err
-		}
-		mapGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
+		pairGo := g.goType(pairT)
+		mapGo := g.goType(types[0])
 		g.chelper(types[0].Key, "dmMap", declMap)
 		return "func(m " + mapGo + ") []" + pairGo + " { out := make([]" + pairGo +
 				", 0, len(m.keys)); for i, k := range m.keys { out = append(out, " + pairGo +
 				"{f0: k, f1: m.vs[i]}) }; return out }(" + args[0] + ")",
-			ir.List(pairT), nil
+			ir.List(pairT)
 	case "insert":
 		// x.InPlace is the optimizer's proof that nothing reads the
 		// copied-from value after this call, so the clone is unobservable —
@@ -1403,67 +1007,64 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if types[0] != nil && types[0].Kind == ir.KSet {
 			g.chelper(types[0].Elem, "dmSet", declSet)
 			if x.InPlace {
-				return g.chelper(types[0].Elem, "dmSetAddIn", declSetAddIn) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+				return g.chelper(types[0].Elem, "dmSetAddIn", declSetAddIn) + "(" + args[0] + ", " + args[1] + ")", types[0]
 			}
 			g.chelper(types[0].Elem, "dmSetClone", declSetClone)
-			return g.chelper(types[0].Elem, "dmSetWith", declSetWith) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+			return g.chelper(types[0].Elem, "dmSetWith", declSetWith) + "(" + args[0] + ", " + args[1] + ")", types[0]
 		}
 		if types[0] == nil || types[0].Kind != ir.KMap {
-			return "", nil, fmt.Errorf("insert needs a Set or Map argument, got %s", types[0])
+			panic(failf("insert needs a Set or Map argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Key, "dmMap", declMap)
 		if x.InPlace {
-			return g.chelper(types[0].Key, "dmMapPutIn", declMapPutIn) + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+			return g.chelper(types[0].Key, "dmMapPutIn", declMapPutIn) + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0]
 		}
 		g.chelper(types[0].Key, "dmMapClone", declMapClone)
-		return g.chelper(types[0].Key, "dmMapWith", declMapWith) + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		return g.chelper(types[0].Key, "dmMapWith", declMapWith) + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0]
 	case "del":
 		if types[0] != nil && types[0].Kind == ir.KSet {
 			g.chelper(types[0].Elem, "dmSet", declSet)
 			g.chelper(types[0].Elem, "dmSetClone", declSetClone)
-			return g.chelper(types[0].Elem, "dmSetWithout", declSetWithout) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+			return g.chelper(types[0].Elem, "dmSetWithout", declSetWithout) + "(" + args[0] + ", " + args[1] + ")", types[0]
 		}
 		if types[0] == nil || types[0].Kind != ir.KMap {
-			return "", nil, fmt.Errorf("del needs a Set or Map argument, got %s", types[0])
+			panic(failf("del needs a Set or Map argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Key, "dmMap", declMap)
 		g.chelper(types[0].Key, "dmMapClone", declMapClone)
-		return g.chelper(types[0].Key, "dmMapWithout", declMapWithout) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return g.chelper(types[0].Key, "dmMapWithout", declMapWithout) + "(" + args[0] + ", " + args[1] + ")", types[0]
 	case "union", "intersect", "difference":
 		g.chelper(types[0].Elem, "dmSet", declSet)
 		switch name {
 		case "union":
-			return g.chelper(types[0].Elem, "dmSetUnion", declSetUnion) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+			return g.chelper(types[0].Elem, "dmSetUnion", declSetUnion) + "(" + args[0] + ", " + args[1] + ")", types[0]
 		case "intersect":
-			return g.chelper(types[0].Elem, "dmSetIntersect", declSetIntersect) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+			return g.chelper(types[0].Elem, "dmSetIntersect", declSetIntersect) + "(" + args[0] + ", " + args[1] + ")", types[0]
 		}
-		return g.chelper(types[0].Elem, "dmSetDiff", declSetDiff) + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return g.chelper(types[0].Elem, "dmSetDiff", declSetDiff) + "(" + args[0] + ", " + args[1] + ")", types[0]
 	case "setat":
 		if types[0] == nil || types[0].Kind != ir.KGrid {
-			return "", nil, fmt.Errorf("setat needs a Grid argument, got %s", types[0])
+			panic(failf("setat needs a Grid argument, got %s", types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmGrid", declGrid)
 		if x.InPlace {
 			g.helper("dmGridSetIn", declGridSetIn)
 			return "dmGridSetIn(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
-				types[0], nil
+				types[0]
 		}
 		g.helper("dmGridWith", declGridWith)
 		return "dmGridWith(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
-			types[0], nil
+			types[0]
 	case "cellpoints":
 		if types[0] == nil || types[0].Kind != ir.KSparse {
-			return "", nil, fmt.Errorf("cellpoints needs a Sparse argument, got %s", types[0])
+			panic(failf("cellpoints needs a Sparse argument, got %s", types[0]))
 		}
-		ptGo, err := g.goType(irPoint())
-		if err != nil {
-			return "", nil, err
-		}
+		ptGo := g.goType(irPoint())
 		return "func(ps []dmSPt) []" + ptGo + " { out := make([]" + ptGo +
 				", len(ps)); for i, p := range ps { out[i] = " + ptGo +
 				"{f0: p.r, f1: p.c} }; return out }((" + args[0] + ").pts())",
-			ir.List(irPoint()), nil
+			ir.List(irPoint())
 
 	// -- graphs ------------------------------------------------------------------
 	//
@@ -1471,48 +1072,33 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 	// the expression layer's graph updates are functional, exactly like the Map
 	// and Sparse ones, and the dead-receiver pass is what takes the copy back.
 	case "graph":
-		gt, err := g.graphOut(x, types)
-		if err != nil {
-			return "", nil, err
-		}
-		fn, err := g.graphBuildFn(gt, types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ")", gt, nil
+		gt := g.graphOut(x, types)
+		fn := g.graphBuildFn(gt, types[0])
+		return fn + "(" + args[0] + ")", gt
 	case "emptygraph":
 		gt := ir.Graph(types[0])
-		goT, err := g.goType(gt)
-		if err != nil {
-			return "", nil, err
-		}
+		goT := g.goType(gt)
 		// The argument is a type witness, but the interpreter evaluates every
 		// argument before dispatching, so it has to be evaluated here too or the
 		// two backends disagree about whether a failing witness runs.
-		nodeGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		ng, err := g.newGraphExpr(types[0], nodeGo)
-		if err != nil {
-			return "", nil, err
-		}
+		nodeGo := g.goType(types[0])
+		ng := g.newGraphExpr(types[0], nodeGo)
 		return "func(_ " + nodeGo + ") " + goT + " { return " + ng + " }(" +
-			args[0] + ")", gt, nil
+			args[0] + ")", gt
 	case "addnode":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("addnode needs a Graph argument, got %s", types[0])
+			panic(failf("addnode needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		if x.InPlace {
 			g.chelper(types[0].Elem, "dmGraphAddNodeIn", declGraphAddNodeIn)
-			return cname(types[0].Elem, "dmGraphAddNodeIn") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+			return cname(types[0].Elem, "dmGraphAddNodeIn") + "(" + args[0] + ", " + args[1] + ")", types[0]
 		}
 		g.chelper(types[0].Elem, "dmGraphAddNode", declGraphAddNode)
-		return cname(types[0].Elem, "dmGraphAddNode") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return cname(types[0].Elem, "dmGraphAddNode") + "(" + args[0] + ", " + args[1] + ")", types[0]
 	case "addedge":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("addedge needs a Graph argument, got %s", types[0])
+			panic(failf("addedge needs a Graph argument, got %s", types[0]))
 		}
 		w := "1"
 		if len(args) == 4 {
@@ -1522,111 +1108,102 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		if x.InPlace {
 			g.chelper(types[0].Elem, "dmGraphAddEdgeIn", declGraphAddEdgeIn)
 			return cname(types[0].Elem, "dmGraphAddEdgeIn") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
-				types[0], nil
+				types[0]
 		}
 		g.chelper(types[0].Elem, "dmGraphAddEdge", declGraphAddEdge)
 		return cname(types[0].Elem, "dmGraphAddEdge") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + w + ")",
-			types[0], nil
+			types[0]
 	case "deledge":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("deledge needs a Graph argument, got %s", types[0])
+			panic(failf("deledge needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphDelEdge", declGraphDelEdge)
-		return cname(types[0].Elem, "dmGraphDelEdge") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0], nil
+		return cname(types[0].Elem, "dmGraphDelEdge") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", types[0]
 	case "nodes":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("nodes needs a Graph argument, got %s", types[0])
+			panic(failf("nodes needs a Graph argument, got %s", types[0]))
 		}
-		nodeGo, err := g.goType(types[0].Elem)
-		if err != nil {
-			return "", nil, err
-		}
+		nodeGo := g.goType(types[0].Elem)
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		// Copied, because the interpreter hands back a copy and a later append
 		// on the result must not be visible through the graph.
 		return "append([]" + nodeGo + "{}, (" + args[0] + ").nodes...)",
-			ir.List(types[0].Elem), nil
+			ir.List(types[0].Elem)
 	case "edges":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("edges needs a Graph argument, got %s", types[0])
+			panic(failf("edges needs a Graph argument, got %s", types[0]))
 		}
-		fn, err := g.graphEdgesFn(types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ")", ir.List(ir.Tuple(types[0].Elem, types[0].Elem, ir.Int())), nil
+		fn := g.graphEdgesFn(types[0])
+		return fn + "(" + args[0] + ")", ir.List(ir.Tuple(types[0].Elem, types[0].Elem, ir.Int()))
 	case "neighbors":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("neighbors needs a Graph argument, got %s", types[0])
+			panic(failf("neighbors needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphNeighbors", declGraphNeighbors)
-		return cname(types[0].Elem, "dmGraphNeighbors") + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+		return cname(types[0].Elem, "dmGraphNeighbors") + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem)
 	case "edgesof":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("edgesof needs a Graph argument, got %s", types[0])
+			panic(failf("edgesof needs a Graph argument, got %s", types[0]))
 		}
-		fn, err := g.graphEdgesOfFn(types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(ir.Tuple(types[0].Elem, ir.Int())), nil
+		fn := g.graphEdgesOfFn(types[0])
+		return fn + "(" + args[0] + ", " + args[1] + ")", ir.List(ir.Tuple(types[0].Elem, ir.Int()))
 	case "hasedge":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("hasedge needs a Graph argument, got %s", types[0])
+			panic(failf("hasedge needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		return "func() bool { _, ok := (" + args[0] + ").weight(" + args[1] + ", " + args[2] +
-			"); return ok }()", ir.Bool(), nil
+			"); return ok }()", ir.Bool()
 	case "weight":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("weight needs a Graph argument, got %s", types[0])
+			panic(failf("weight needs a Graph argument, got %s", types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphWeight", declGraphWeightAt)
-		return cname(types[0].Elem, "dmGraphWeight") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int(), nil
+		return cname(types[0].Elem, "dmGraphWeight") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ")", ir.Int()
 	case "weightor":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("weightor needs a Graph argument, got %s", types[0])
+			panic(failf("weightor needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphWeightOr", declGraphWeightOr)
 		return cname(types[0].Elem, "dmGraphWeightOr") + "(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")",
-			ir.Int(), nil
+			ir.Int()
 	case "degree":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("degree needs a Graph argument, got %s", types[0])
+			panic(failf("degree needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphDegree", declGraphDegree)
-		return cname(types[0].Elem, "dmGraphDegree") + "(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		return cname(types[0].Elem, "dmGraphDegree") + "(" + args[0] + ", " + args[1] + ")", ir.Int()
 	case "weightof":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("weightof needs a Graph argument, got %s", types[0])
+			panic(failf("weightof needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphWeightOf", declGraphWeightOf)
-		return cname(types[0].Elem, "dmGraphWeightOf") + "(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		return cname(types[0].Elem, "dmGraphWeightOf") + "(" + args[0] + ", " + args[1] + ")", ir.Int()
 	case "root":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("root needs a Graph argument, got %s", types[0])
+			panic(failf("root needs a Graph argument, got %s", types[0]))
 		}
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphRoot", declGraphRoot, "fmt")
-		return cname(types[0].Elem, "dmGraphRoot") + "(" + args[0] + ")", types[0].Elem, nil
+		return cname(types[0].Elem, "dmGraphRoot") + "(" + args[0] + ")", types[0].Elem
 	case "indegree":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("indegree needs a Graph argument, got %s", types[0])
+			panic(failf("indegree needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphInDegree", declGraphInDegree)
-		return cname(types[0].Elem, "dmGraphInDegree") + "(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+		return cname(types[0].Elem, "dmGraphInDegree") + "(" + args[0] + ", " + args[1] + ")", ir.Int()
 	case "roots", "leaves":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("%s needs a Graph argument, got %s", name, types[0])
+			panic(failf("%s needs a Graph argument, got %s", name, types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		fn, decl := "dmGraphRoots", declGraphRoots
@@ -1634,70 +1211,70 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			fn, decl = "dmGraphLeaves", declGraphLeaves
 		}
 		fn = g.chelper(types[0].Elem, fn, decl)
-		return fn + "(" + args[0] + ")", ir.List(types[0].Elem), nil
+		return fn + "(" + args[0] + ")", ir.List(types[0].Elem)
 	case "reachable":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("reachable needs a Graph argument, got %s", types[0])
+			panic(failf("reachable needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphReachable", declGraphReachable)
-		return cname(types[0].Elem, "dmGraphReachable") + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem), nil
+		return cname(types[0].Elem, "dmGraphReachable") + "(" + args[0] + ", " + args[1] + ")", ir.List(types[0].Elem)
 	case "delnode":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("delnode needs a Graph argument, got %s", types[0])
+			panic(failf("delnode needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphSub", declGraphSub) // dmGraphDelNode is written in terms of it
 		g.chelper(types[0].Elem, "dmGraphDelNode", declGraphDelNode)
-		return cname(types[0].Elem, "dmGraphDelNode") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return cname(types[0].Elem, "dmGraphDelNode") + "(" + args[0] + ", " + args[1] + ")", types[0]
 	case "hascycle":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("hascycle needs a Graph argument, got %s", types[0])
+			panic(failf("hascycle needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphHasCycle", declGraphHasCycle)
-		return cname(types[0].Elem, "dmGraphHasCycle") + "(" + args[0] + ")", ir.Bool(), nil
+		return cname(types[0].Elem, "dmGraphHasCycle") + "(" + args[0] + ")", ir.Bool()
 	case "weightsum":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("weightsum needs a Graph argument, got %s", types[0])
+			panic(failf("weightsum needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphWeightSum", declGraphWeightSum)
-		return cname(types[0].Elem, "dmGraphWeightSum") + "(" + args[0] + ")", ir.Int(), nil
+		return cname(types[0].Elem, "dmGraphWeightSum") + "(" + args[0] + ")", ir.Int()
 	case "undirected":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("undirected needs a Graph argument, got %s", types[0])
+			panic(failf("undirected needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphUndirected", declGraphUndirected)
-		return cname(types[0].Elem, "dmGraphUndirected") + "(" + args[0] + ")", types[0], nil
+		return cname(types[0].Elem, "dmGraphUndirected") + "(" + args[0] + ")", types[0]
 	case "mergegraphs":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("mergegraphs needs a Graph argument, got %s", types[0])
+			panic(failf("mergegraphs needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphMerge", declGraphMerge)
-		return cname(types[0].Elem, "dmGraphMerge") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return cname(types[0].Elem, "dmGraphMerge") + "(" + args[0] + ", " + args[1] + ")", types[0]
 	case "flipedges":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("flipedges needs a Graph argument, got %s", types[0])
+			panic(failf("flipedges needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphFlip", declGraphFlip)
-		return cname(types[0].Elem, "dmGraphFlip") + "(" + args[0] + ")", types[0], nil
+		return cname(types[0].Elem, "dmGraphFlip") + "(" + args[0] + ")", types[0]
 	case "subgraph":
 		if types[0] == nil || types[0].Kind != ir.KGraph {
-			return "", nil, fmt.Errorf("subgraph needs a Graph argument, got %s", types[0])
+			panic(failf("subgraph needs a Graph argument, got %s", types[0]))
 		}
 		g.chelper(types[0].Elem, "dmGraph", declGraph)
 		g.chelper(types[0].Elem, "dmGraphSub", declGraphSub)
-		return cname(types[0].Elem, "dmGraphSub") + "(" + args[0] + ", " + args[1] + ")", types[0], nil
+		return cname(types[0].Elem, "dmGraphSub") + "(" + args[0] + ", " + args[1] + ")", types[0]
 
 	// -- list generation ---------------------------------------------------------
 	case "range":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmRange", declRange)
-		return "dmRange(" + args[0] + ", " + args[1] + ")", ir.List(ir.Int()), nil
+		return "dmRange(" + args[0] + ", " + args[1] + ")", ir.List(ir.Int())
 	case "fill":
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmFill", declFill)
@@ -1708,47 +1285,16 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 		// list is only ranged over, and fails the moment it is stored in a
 		// tuple field. The interpreter has no such split, so this was a
 		// backend divergence rather than a type error in the program.
-		elem, terr := g.goType(types[1])
-		if terr != nil {
-			return "", nil, terr
-		}
-		return "dmFill[" + elem + "](" + args[0] + ", " + args[1] + ")", ir.List(types[1]), nil
-
-	// -- text --------------------------------------------------------------------
-	// -- floats ------------------------------------------------------------------
-	case "log", "log2", "log10", "exp", "sin", "cos", "tan":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmFloat1", declFloat1, "math", "strconv")
-		return "dmFloat1(" + strconv.Quote(name) + ", " + g.asFloat(args[0], types[0]) + ")",
-			ir.Float(), nil
-	case "atan2", "hypot":
-		g.imp("math")
-		fn := "math.Atan2"
-		if name == "hypot" {
-			fn = "math.Hypot"
-		}
-		return fn + "(" + g.asFloat(args[0], types[0]) + ", " + g.asFloat(args[1], types[1]) + ")",
-			ir.Float(), nil
-	case "trunc":
-		if !isFloatType(types[0]) {
-			return args[0], ir.Int(), nil
-		}
-		g.imp("math")
-		return "int64(math.Trunc(" + args[0] + "))", ir.Int(), nil
+		elem := g.goType(types[1])
+		return "dmFill[" + elem + "](" + args[0] + ", " + args[1] + ")", ir.List(types[1])
 
 	// -- records -----------------------------------------------------------------
 	case "record":
 		// The Record type was built from the literal field names at resolve
 		// time; the struct declaration is interned by shape like every other
 		// record, so this is a plain composite literal.
-		recT, err := recordTypeOf(x, types)
-		if err != nil {
-			return "", nil, err
-		}
-		recGo, err := g.goType(recT)
-		if err != nil {
-			return "", nil, err
-		}
+		recT := recordTypeOf(x, types)
+		recGo := g.goType(recT)
 		var b strings.Builder
 		b.WriteString(recGo)
 		b.WriteByte('{')
@@ -1759,77 +1305,23 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 			b.WriteString(fieldName(f.Name) + ": " + args[i*2+1])
 		}
 		b.WriteByte('}')
-		return b.String(), recT, nil
+		return b.String(), recT
 	case "with":
 		if types[0] == nil || types[0].Kind != ir.KRecord {
-			return "", nil, fmt.Errorf("with needs a Record argument, got %s", types[0])
+			panic(failf("with needs a Record argument, got %s", types[0]))
 		}
 		lit, ok := x.Args[1].(*ast.StringLit)
 		if !ok {
-			return "", nil, fmt.Errorf("with needs a literal field name")
+			panic(failf("with needs a literal field name"))
 		}
-		recGo, err := g.goType(types[0])
-		if err != nil {
-			return "", nil, err
-		}
+		recGo := g.goType(types[0])
 		// A Go struct is a value, so the copy is the assignment: no allocation
 		// and nothing shared with the original.
 		return "func(r " + recGo + ") " + recGo + " { r." + fieldName(lit.Value) + " = " +
-			args[2] + "; return r }(" + args[0] + ")", types[0], nil
-
-	// -- bases, bits, number theory ----------------------------------------------
-	case "frombase", "fromhex":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmParseBase", declParseBase, "strconv", "strings")
-		base := "16"
-		if name == "frombase" {
-			base = args[1]
-		}
-		return "dmParseBase(" + strconv.Quote(name) + ", " + args[0] + ", " + base + ")",
-			ir.Int(), nil
-	case "tobase":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmToBase", declToBase, "strconv")
-		return "dmToBase(" + args[0] + ", " + args[1] + ")", ir.Text(), nil
-	case "tohex", "tobin":
-		g.imp("strconv")
-		base := "16"
-		if name == "tobin" {
-			base = "2"
-		}
-		return "strconv.FormatInt(" + args[0] + ", " + base + ")", ir.Text(), nil
-	case "bnot":
-		return "(^" + args[0] + ")", ir.Int(), nil
-	case "popcount":
-		g.imp("math/bits")
-		return "int64(bits.OnesCount64(uint64(" + args[0] + ")))", ir.Int(), nil
-	case "testbit":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmTestBit", declTestBit)
-		return "dmTestBit(" + args[0] + ", " + args[1] + ")", ir.Bool(), nil
-	case "digits":
-		g.helper("dmDigits", declDigits)
-		return "dmDigits(" + args[0] + ")", ir.List(ir.Int()), nil
-	case "fromdigits":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmFromDigits", declFromDigits, "math")
-		return "dmFromDigits(" + args[0] + ")", ir.Int(), nil
-	case "isprime":
-		g.helper("dmModArith", declModArith, "math/bits")
-		g.helper("dmIsPrime", declIsPrime, "math/bits")
-		return "dmIsPrime(" + args[0] + ")", ir.Bool(), nil
-	case "divisors":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmDivisors", declDivisors)
-		return "dmDivisors(" + args[0] + ")", ir.List(ir.Int()), nil
-	case "crt":
-		g.helper("dmFail", declFail, "fmt", "os")
-		g.helper("dmModArith", declModArith, "math/bits")
-		g.helper("dmCRT", declCRT)
-		return "dmCRT(" + args[0] + ", " + args[1] + ")", ir.Int(), nil
+			args[2] + "; return r }(" + args[0] + ")", types[0]
 
 	default:
-		return "", nil, fmt.Errorf("unknown function %q", name)
+		panic(failf("unknown function %q", name))
 	}
 }
 
@@ -1837,7 +1329,7 @@ func (g *gen) compileCall(x *ast.CallExpr, env exprEnv) (string, *ir.Type, error
 // earlier call in the same emitter; it keeps a composite literal readable
 // instead of threading four error checks through it.
 func mustGo(g *gen, t *ir.Type) string {
-	s, err := g.goType(t)
+	s, err := try1(func() string { return g.goType(t) })
 	if err != nil {
 		return "any"
 	}
@@ -1847,19 +1339,19 @@ func mustGo(g *gen, t *ir.Type) string {
 // recordTypeOf rebuilds the Record type of a `record(...)` call from its
 // literal field names — the same rule typecheck applied, restated here because
 // the compiled backend must not depend on the resolver having stashed it.
-func recordTypeOf(x *ast.CallExpr, types []*ir.Type) (*ir.Type, error) {
+func recordTypeOf(x *ast.CallExpr, types []*ir.Type) *ir.Type {
 	if len(types)%2 != 0 {
-		return nil, fmt.Errorf("record takes name/value pairs, so an even number of arguments")
+		panic(failf("record takes name/value pairs, so an even number of arguments"))
 	}
 	fields := make([]ir.Field, 0, len(types)/2)
 	for i := 0; i < len(types); i += 2 {
 		lit, ok := x.Args[i].(*ast.StringLit)
 		if !ok {
-			return nil, fmt.Errorf("record field name %d must be a literal", i/2+1)
+			panic(failf("record field name %d must be a literal", i/2+1))
 		}
 		fields = append(fields, ir.Field{Name: lit.Value, Type: types[i+1]})
 	}
-	return ir.Record(fields...), nil
+	return ir.Record(fields...)
 }
 
 // irPoint is the expression layer's point type: an (Int, Int) tuple of
@@ -1867,30 +1359,27 @@ func recordTypeOf(x *ast.CallExpr, types []*ir.Type) (*ir.Type, error) {
 func irPoint() *ir.Type { return ir.Tuple(ir.Int(), ir.Int()) }
 
 // pointGo interns and returns the Go struct name for the point tuple type.
-func (g *gen) pointGo() (string, error) { return g.tupleType(irPoint()) }
+func (g *gen) pointGo() string { return g.tupleType(irPoint()) }
 
 // reduceLiteral lowers max/min/sum over a list literal to inline scalar code:
 // sum -> (e0 + e1 + ...), max/min -> nested dmMax2/dmMin2. Returns ok=false
 // (so the caller uses the general slice path) when an element is non-numeric or
 // the elements mix int and float.
-func (g *gen) reduceLiteral(name string, elems []ast.Expr, env exprEnv) (string, *ir.Type, bool, error) {
+func (g *gen) reduceLiteral(name string, elems []ast.Expr, env exprEnv) (string, *ir.Type, bool) {
 	parts := make([]string, len(elems))
 	var et *ir.Type
 	for i, e := range elems {
-		v, t, err := g.compileExpr(e, env)
-		if err != nil {
-			return "", nil, false, err
-		}
+		v, t := g.compileExpr(e, env)
 		if !numericType(t) {
-			return "", nil, false, nil
+			return "", nil, false
 		}
 		if et != nil && isFloatType(et) != isFloatType(t) {
-			return "", nil, false, nil // mixed int/float: let the general path promote
+			return "", nil, false // mixed int/float: let the general path promote
 		}
 		parts[i], et = v, t
 	}
 	if name == "sum" {
-		return "(" + strings.Join(parts, " + ") + ")", et, true, nil
+		return "(" + strings.Join(parts, " + ") + ")", et, true
 	}
 	base, decl := "dmMax2", declMax2
 	if name == "min" {
@@ -1903,7 +1392,7 @@ func (g *gen) reduceLiteral(name string, elems []ast.Expr, env exprEnv) (string,
 			expr = base + "(" + parts[i] + ", " + expr + ")"
 		}
 	}
-	return expr, et, true, nil
+	return expr, et, true
 }
 
 func mirrorCmp(op token.Kind) token.Kind {
@@ -1970,11 +1459,11 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 	isDrop := tdName == "drop"
 
 	// Shape confirmed; compile the pieces we need.
-	sv, st, err := g.compileExpr(scalarExpr, env)
+	sv, st, err := try2(func() (string, *ir.Type) { return g.compileExpr(scalarExpr, env) })
 	if err != nil || !numericType(st) {
 		return "", nil, false
 	}
-	nv, _, err := g.compileExpr(td.Args[1], env)
+	nv, _, err := try2(func() (string, *ir.Type) { return g.compileExpr(td.Args[1], env) })
 	if err != nil {
 		return "", nil, false
 	}
@@ -1986,8 +1475,8 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 	var elem *ir.Type
 	var call string
 	if seqCall, sn := callName(td.Args[0]); sn == "col" && len(seqCall.Args) == 2 {
-		gexpr, gt, gerr := g.compileExpr(seqCall.Args[0], env)
-		cexpr, _, cerr := g.compileExpr(seqCall.Args[1], env)
+		gexpr, gt, gerr := try2(func() (string, *ir.Type) { return g.compileExpr(seqCall.Args[0], env) })
+		cexpr, _, cerr := try2(func() (string, *ir.Type) { return g.compileExpr(seqCall.Args[1], env) })
 		if gerr == nil && cerr == nil && gt != nil && gt.Kind == ir.KGrid && numericType(gt.Elem) {
 			elem = gt.Elem
 			g.helper("dmFail", declFail, "fmt", "os")
@@ -2001,7 +1490,7 @@ func (g *gen) tryMaxCompare(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, b
 		}
 	}
 	if call == "" { // generic list (includes row(g,r), a no-copy subslice)
-		seqv, seqt, serr := g.compileExpr(td.Args[0], env)
+		seqv, seqt, serr := try2(func() (string, *ir.Type) { return g.compileExpr(td.Args[0], env) })
 		if serr != nil || seqt == nil || seqt.Kind != ir.KList || !numericType(seqt.Elem) {
 			return "", nil, false
 		}
@@ -2048,56 +1537,45 @@ func (g *gen) modGo(a, b string, divisor ast.Expr) string {
 // divisibility test needs neither dmModNZ's fix-up nor its branch — and Go
 // compiles `a % K == 0` for a constant K to a multiply and a compare, with no
 // divide at all. It is the commonest thing a `%` is written for.
-func (g *gen) tryDivisibility(x *ast.BinaryExpr, env exprEnv) (string, bool, error) {
+func (g *gen) tryDivisibility(x *ast.BinaryExpr, env exprEnv) (string, bool) {
 	if x.Op != token.EQ {
-		return "", false, nil
+		return "", false
 	}
 	mod, zero := x.Left, x.Right
 	if lit, ok := mod.(*ast.IntLit); ok && lit.Value == 0 {
 		mod, zero = zero, mod
 	}
 	if lit, ok := zero.(*ast.IntLit); !ok || lit.Value != 0 {
-		return "", false, nil
+		return "", false
 	}
 	rem, ok := mod.(*ast.BinaryExpr)
 	if !ok || rem.Op != token.PERCENT {
-		return "", false, nil
+		return "", false
 	}
 	k, ok := rem.Right.(*ast.IntLit)
 	if !ok || k.Value == 0 {
-		return "", false, nil
+		return "", false
 	}
-	a, at, err := g.compileExpr(rem.Left, env)
-	if err != nil {
-		return "", false, err
-	}
+	a, at := g.compileExpr(rem.Left, env)
 	if at == nil || at.Kind != ir.KInt {
-		return "", false, nil
+		return "", false
 	}
-	return fmt.Sprintf("(%s%%%d == 0)", a, k.Value), true, nil
+	return fmt.Sprintf("(%s%%%d == 0)", a, k.Value), true
 }
 
-func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, error) {
+func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type) {
 	// The fusion below rewrites the comparison into a different shape; an
 	// operand that writes to a binding must be compiled as written.
 	if !ast.HasUpdate(x) {
 		if fused, ft, ok := g.tryMaxCompare(x, env); ok {
-			return fused, ft, nil
+			return fused, ft
 		}
-		if test, ok, err := g.tryDivisibility(x, env); err != nil {
-			return "", nil, err
-		} else if ok {
-			return test, ir.Bool(), nil
+		if test, ok := g.tryDivisibility(x, env); ok {
+			return test, ir.Bool()
 		}
 	}
-	l, lt, err := g.compileExpr(x.Left, env)
-	if err != nil {
-		return "", nil, err
-	}
-	r, rt, err := g.compileExpr(x.Right, env)
-	if err != nil {
-		return "", nil, err
-	}
+	l, lt := g.compileExpr(x.Left, env)
+	r, rt := g.compileExpr(x.Right, env)
 	// Go orders the *function calls* in an expression left to right, but says
 	// nothing about when a bare variable is read relative to them. With a
 	// write anywhere in the operands that is a real disagreement in both
@@ -2108,22 +1586,18 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 	// and/or are exempt: Go evaluates a binary logical operation's operands in
 	// order and short-circuits, exactly as eval does.
 	if x.Op != token.AND && x.Op != token.OR && (ast.HasUpdate(x.Left) || ast.HasUpdate(x.Right)) {
-		if l, err = g.ordered(l, lt); err != nil {
-			return "", nil, err
-		}
-		if r, err = g.ordered(r, rt); err != nil {
-			return "", nil, err
-		}
+		l = g.ordered(l, lt)
+		r = g.ordered(r, rt)
 	}
 	switch x.Op {
 	case token.AND:
-		return "(" + l + " && " + r + ")", ir.Bool(), nil
+		return "(" + l + " && " + r + ")", ir.Bool()
 	case token.OR:
-		return "(" + l + " || " + r + ")", ir.Bool(), nil
+		return "(" + l + " || " + r + ")", ir.Bool()
 	case token.PLUS, token.MINUS, token.STAR, token.SLASH:
 		// Text + Text is concatenation, which Go spells the same way.
 		if x.Op == token.PLUS && lt != nil && lt.Kind == ir.KText && rt != nil && rt.Kind == ir.KText {
-			return "(" + l + " + " + r + ")", ir.Text(), nil
+			return "(" + l + " + " + r + ")", ir.Text()
 		}
 		// Numeric promotion: mixing Int with Float computes in Float, so the
 		// integer side is wrapped in a float64 conversion.
@@ -2139,20 +1613,20 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 		}
 		switch x.Op {
 		case token.PLUS:
-			return "(" + l + " + " + r + ")", res, nil
+			return "(" + l + " + " + r + ")", res
 		case token.MINUS:
-			return "(" + l + " - " + r + ")", res, nil
+			return "(" + l + " - " + r + ")", res
 		case token.STAR:
-			return "(" + l + " * " + r + ")", res, nil
+			return "(" + l + " * " + r + ")", res
 		}
 		// The interpreter reports division by zero as a clean error; a bare
 		// Go `/` would panic instead, so route through a guarded helper.
 		g.helper("dmFail", declFail, "fmt", "os")
 		g.helper("dmDiv", declDiv)
-		return "dmDiv(" + l + ", " + r + ")", res, nil
+		return "dmDiv(" + l + ", " + r + ")", res
 	case token.PERCENT:
 		// Euclidean, and guarded — Go's % is truncated and panics on zero.
-		return g.modGo(l, r, x.Right), ir.Int(), nil
+		return g.modGo(l, r, x.Right), ir.Int()
 	case token.EQ:
 		if (isFloatType(lt) || isFloatType(rt)) && numericType(lt) && numericType(rt) {
 			if !isFloatType(lt) {
@@ -2161,16 +1635,13 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 			if !isFloatType(rt) {
 				r = "float64(" + r + ")"
 			}
-			return "(" + l + " == " + r + ")", ir.Bool(), nil
+			return "(" + l + " == " + r + ")", ir.Bool()
 		}
 		if lt == nil || rt == nil || !lt.Equal(rt) {
-			return "", nil, fmt.Errorf("cannot compile = over %s and %s", lt, rt)
+			panic(failf("cannot compile = over %s and %s", lt, rt))
 		}
-		eq, err := g.eqExpr(l, r, lt)
-		if err != nil {
-			return "", nil, err
-		}
-		return eq, ir.Bool(), nil
+		eq := g.eqExpr(l, r, lt)
+		return eq, ir.Bool()
 	case token.LT, token.GT, token.LE, token.GE:
 		op := map[token.Kind]string{token.LT: "<", token.GT: ">", token.LE: "<=", token.GE: ">="}[x.Op]
 		// A tuple orders lexicographically, which Go has no operator for, so
@@ -2178,11 +1649,8 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 		// all order with Go's own operator — byte-wise for strings, which is
 		// what ir.Compare's strings.Compare does too.
 		if lt != nil && lt.Kind == ir.KTuple {
-			c, err := g.cmpExpr(l, r, lt)
-			if err != nil {
-				return "", nil, err
-			}
-			return "(" + c + " " + op + " 0)", ir.Bool(), nil
+			c := g.cmpExpr(l, r, lt)
+			return "(" + c + " " + op + " 0)", ir.Bool()
 		}
 		if isFloatType(lt) != isFloatType(rt) {
 			if !isFloatType(lt) {
@@ -2192,23 +1660,14 @@ func (g *gen) compileBinary(x *ast.BinaryExpr, env exprEnv) (string, *ir.Type, e
 				r = "float64(" + r + ")"
 			}
 		}
-		return "(" + l + " " + op + " " + r + ")", ir.Bool(), nil
+		return "(" + l + " " + op + " " + r + ")", ir.Bool()
 	default:
-		return "", nil, fmt.Errorf("unsupported operator %s", x.Op)
+		panic(failf("unsupported operator %s", x.Op))
 	}
 }
 
 // isFloatType reports whether t is exactly Float.
 func isFloatType(t *ir.Type) bool { return t != nil && t.Kind == ir.KFloat }
-
-// asFloat widens an already-compiled argument to float64 when its Domain type
-// is Int — the promotion the float builtins share with the operators.
-func (g *gen) asFloat(arg string, t *ir.Type) string {
-	if isFloatType(t) {
-		return arg
-	}
-	return "float64(" + arg + ")"
-}
 
 // numericType reports whether t is Int or Float.
 func numericType(t *ir.Type) bool {
@@ -2219,38 +1678,35 @@ func numericType(t *ir.Type) bool {
 // than spread through compileCall's switch because every one of them needs the
 // same runtime declaration and produces the same type, so the shared parts
 // would otherwise be repeated ten times.
-func (g *gen) compileViewCall(name string, args []string, types []*ir.Type) (string, *ir.Type, error) {
+func (g *gen) compileViewCall(name string, args []string, types []*ir.Type) (string, *ir.Type) {
 	g.helper("dmView", declView, "strings", "unicode/utf8")
 	view := ir.View()
 	switch name {
 	case "text":
 		// `text` renders its argument the way Reveal would, so it goes
 		// through the same formatter the sink uses for that type.
-		rendered, err := g.scalarFmt(args[0], types[0])
-		if err != nil {
-			return "", nil, err
-		}
-		return "dmViewText(" + rendered + ")", view, nil
+		rendered := g.scalarFmt(args[0], types[0])
+		return "dmViewText(" + rendered + ")", view
 	case "blank":
-		return "dmViewBlank()", view, nil
+		return "dmViewBlank()", view
 	case "style":
-		return "dmViewStyled(" + args[0] + ", " + args[1] + ")", view, nil
+		return "dmViewStyled(" + args[0] + ", " + args[1] + ")", view
 	case "stack":
-		return "dmViewStack(" + strings.Join(args, ", ") + ")", view, nil
+		return "dmViewStack(" + strings.Join(args, ", ") + ")", view
 	case "beside":
-		return "dmViewBeside(" + strings.Join(args, ", ") + ")", view, nil
+		return "dmViewBeside(" + strings.Join(args, ", ") + ")", view
 	case "box":
-		return "dmViewBox(" + args[0] + ")", view, nil
+		return "dmViewBox(" + args[0] + ")", view
 	case "margin":
-		return "dmViewMargin(" + args[0] + ", " + args[1] + ", " + args[2] + ")", view, nil
+		return "dmViewMargin(" + args[0] + ", " + args[1] + ", " + args[2] + ")", view
 	case "align":
-		return "dmViewAlign(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")", view, nil
+		return "dmViewAlign(" + args[0] + ", " + args[1] + ", " + args[2] + ", " + args[3] + ")", view
 	case "fit":
-		return "dmViewFit(" + args[0] + ", " + args[1] + ", " + args[2] + ")", view, nil
+		return "dmViewFit(" + args[0] + ", " + args[1] + ", " + args[2] + ")", view
 	case "draw":
 		return g.compileDraw(args[0], types[0])
 	}
-	return "", nil, fmt.Errorf("%s is not a View builtin", name)
+	panic(failf("%s is not a View builtin", name))
 }
 
 // compileDraw emits a whole board as a View. It mirrors eval.drawBoard: each
@@ -2259,9 +1715,9 @@ func (g *gen) compileViewCall(name string, args []string, types []*ir.Type) (str
 // case each row is `dmViewBeside` of its cells and the board is `dmViewStack`
 // of its rows, preserving colour instead of flattening it away through
 // FormatValue's plain rendering.
-func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
+func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type) {
 	if t == nil {
-		return "", nil, fmt.Errorf("draw() takes a Grid, a Sparse or a List of rows")
+		panic(failf("draw() takes a Grid, a Sparse or a List of rows"))
 	}
 	view := ir.View()
 	switch t.Kind {
@@ -2280,15 +1736,12 @@ func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
 	return dmViewStack(rows...)
 }`
 			})
-			return fn + "(" + arg + ")", view, nil
+			return fn + "(" + arg + ")", view
 		}
 		// dmGrid keeps its cells in one flat slice, row-major, and has no
 		// accessor: the emitted code indexes it the way every other grid
 		// traversal in this package does.
-		cell, err := g.scalarFmt("b.cells[r*b.cols+c]", t.Elem)
-		if err != nil {
-			return "", nil, err
-		}
+		cell := g.scalarFmt("b.cells[r*b.cols+c]", t.Elem)
 		fn := g.drawHelper("Grid", t, func(goT string) string {
 			return `func %s(b ` + goT + `) dmView {
 	lines := make([]string, b.rows)
@@ -2302,7 +1755,7 @@ func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
 	return dmViewText(strings.Join(lines, "\n"))
 }`
 		})
-		return fn + "(" + arg + ")", view, nil
+		return fn + "(" + arg + ")", view
 	case ir.KSparse:
 		if t.Elem != nil && t.Elem.Kind == ir.KView {
 			fn := g.drawHelper("SparseStyled", t, func(goT string) string {
@@ -2321,14 +1774,11 @@ func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
 	return dmViewStack(rows...)
 }`
 			})
-			return fn + "(" + arg + ")", view, nil
+			return fn + "(" + arg + ")", view
 		}
 		// A sparse plane is drawn over its occupied extent, which is what
 		// densifying it already means.
-		cell, err := g.scalarFmt("b.at(r, c)", t.Elem)
-		if err != nil {
-			return "", nil, err
-		}
+		cell := g.scalarFmt("b.at(r, c)", t.Elem)
 		fn := g.drawHelper("Sparse", t, func(goT string) string {
 			return `func %s(b ` + goT + `) dmView {
 	if len(b.cells) == 0 {
@@ -2345,7 +1795,7 @@ func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
 	return dmViewText(strings.Join(lines, "\n"))
 }`
 		})
-		return fn + "(" + arg + ")", view, nil
+		return fn + "(" + arg + ")", view
 	case ir.KList:
 		nested := t.Elem != nil && t.Elem.Kind == ir.KList
 		if t.Elem != nil && t.Elem.Kind == ir.KView {
@@ -2356,7 +1806,7 @@ func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
 	return dmViewStack(b...)
 }`
 			})
-			return fn + "(" + arg + ")", view, nil
+			return fn + "(" + arg + ")", view
 		}
 		if nested && t.Elem.Elem != nil && t.Elem.Elem.Kind == ir.KView {
 			fn := g.drawHelper("NestedListStyled", t, func(goT string) string {
@@ -2368,18 +1818,18 @@ func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
 	return dmViewStack(rows...)
 }`
 			})
-			return fn + "(" + arg + ")", view, nil
+			return fn + "(" + arg + ")", view
 		}
 		// A list of rows, or a list of already-rendered lines.
 		var cell string
 		var err error
 		if nested {
-			cell, err = g.scalarFmt("x", t.Elem.Elem)
+			cell, err = try1(func() string { return g.scalarFmt("x", t.Elem.Elem) })
 		} else {
-			cell, err = g.scalarFmt("row", t.Elem)
+			cell, err = try1(func() string { return g.scalarFmt("row", t.Elem) })
 		}
 		if err != nil {
-			return "", nil, err
+			panic(fail(err))
 		}
 		fn := g.drawHelper("List", t, func(goT string) string {
 			if nested {
@@ -2404,9 +1854,9 @@ func (g *gen) compileDraw(arg string, t *ir.Type) (string, *ir.Type, error) {
 	return dmViewText(strings.Join(lines, "\n"))
 }`
 		})
-		return fn + "(" + arg + ")", view, nil
+		return fn + "(" + arg + ")", view
 	}
-	return "", nil, fmt.Errorf("draw() takes a Grid, a Sparse or a List of rows, got %s", t)
+	panic(failf("draw() takes a Grid, a Sparse or a List of rows, got %s", t))
 }
 
 // drawHelper interns one draw function per board type. body is given the Go
@@ -2420,7 +1870,7 @@ func (g *gen) drawHelper(kind string, t *ir.Type, body func(goT string) string) 
 	}
 	name := fmt.Sprintf("dmDraw%d", len(g.listFns)+1)
 	g.listFns[key] = name
-	goT, err := g.goType(t)
+	goT, err := try1(func() string { return g.goType(t) })
 	if err != nil {
 		// goType already succeeded for this type when the argument compiled;
 		// a failure here would mean the type changed underfoot.
@@ -2442,8 +1892,8 @@ func (g *gen) pickHelper(container, elem *ir.Type) string {
 	}
 	name := fmt.Sprintf("dmPick%d", len(g.listFns)+1)
 	g.listFns[key] = name
-	goC, _ := g.goType(container)
-	goE, _ := g.goType(elem)
+	goC, _ := try1(func() string { return g.goType(container) })
+	goE, _ := try1(func() string { return g.goType(elem) })
 	body := "xs"
 	if container != nil && container.Kind == ir.KSet {
 		body = "xs.items()"

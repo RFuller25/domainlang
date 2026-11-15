@@ -181,7 +181,7 @@ func TestViewTypeIsOpaque(t *testing.T) {
 	if v.String() != "View" {
 		t.Errorf("String() = %q, want View", v.String())
 	}
-	if Keyable(v) {
+	if ListKeyable(v) {
 		t.Error("a View must not be keyable: it cannot be a Map key or a Set element")
 	}
 	if !v.Equal(View()) {

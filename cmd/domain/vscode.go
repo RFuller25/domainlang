@@ -27,7 +27,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"domain/editors"
 )
@@ -49,28 +48,15 @@ type vscodeTarget struct {
 
 func parseVSCodeArgs(args []string) (vscodeOptions, error) {
 	var o vscodeOptions
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--insiders":
-			o.insiders = true
-		case a == "--list-targets":
-			o.listTargets = true
-		case a == "--force" || a == "-f":
-			o.force = true
-		case a == "--dir":
-			i++
-			if i >= len(args) {
-				return o, fmt.Errorf("--dir requires a directory")
-			}
-			o.dir = args[i]
-		case strings.HasPrefix(a, "--dir="):
-			o.dir = a[len("--dir="):]
-		case strings.HasPrefix(a, "-"):
-			return o, fmt.Errorf("unknown flag %q (vscode accepts --insiders, --dir, --list-targets, --force)", a)
-		default:
-			return o, fmt.Errorf("vscode takes no file argument (got %q)", a)
-		}
+	f := newFlagSet("unknown flag %q (vscode accepts --insiders, --dir, --list-targets, --force)", func(a string) error {
+		return fmt.Errorf("vscode takes no file argument (got %q)", a)
+	})
+	f.bool("--insiders", &o.insiders, true)
+	f.bool("--list-targets", &o.listTargets, true)
+	f.bool("-f --force", &o.force, true)
+	f.str("--dir --dir=", "%s requires a directory", &o.dir)
+	if err := f.parse(args); err != nil {
+		return o, err
 	}
 	if o.dir != "" && o.insiders {
 		return o, fmt.Errorf("--dir and --insiders name different destinations; pass one")

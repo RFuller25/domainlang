@@ -656,14 +656,14 @@ func (r *Recorder) Summary() string {
 	}
 	if r.extra > 0 {
 		return fmt.Sprintf("%d steps (capped at %d — %s past the cap kept; --max-steps 0 records it all)",
-			r.steps+r.extra, r.maxSteps, plural(r.extra, "failing step"))
+			r.steps+r.extra, r.maxSteps, Plural(r.extra, "failing step"))
 	}
 	return fmt.Sprintf("%d steps (capped at %d — the run continued past this point; "+
 		"--max-steps 0 records it all)", r.steps, r.maxSteps)
 }
 
-// plural renders a count with its noun, so a summary does not say "1 steps".
-func plural(n int, noun string) string {
+// Plural renders a count with its noun, so a summary does not say "1 steps".
+func Plural(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
 	}

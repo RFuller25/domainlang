@@ -276,13 +276,13 @@ func TestGraphDescribeValue(t *testing.T) {
 // that true without a case of its own — pinned so a later edit cannot open it.
 func TestGraphIsNeitherKeyableNorOrdered(t *testing.T) {
 	gt := Graph(Text())
-	if Keyable(gt) {
+	if ListKeyable(gt) {
 		t.Error("Graph is keyable")
 	}
 	if Ordered(gt) {
 		t.Error("Graph is ordered")
 	}
-	if Keyable(Tuple(Int(), gt)) {
+	if ListKeyable(Tuple(Int(), gt)) {
 		t.Error("a tuple holding a Graph is keyable")
 	}
 	if Ordered(Tuple(Int(), gt)) {

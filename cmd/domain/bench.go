@@ -48,66 +48,13 @@ func parseBenchArgs(args []string) (string, benchOptions, error) {
 	// later measurement in the process.
 	opts := benchOptions{Cells: append([]runner.Config(nil), runner.Four...)}
 	var path string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		next := func(flag string) (string, error) {
-			if i+1 >= len(args) {
-				return "", fmt.Errorf("%s needs a value", flag)
-			}
-			i++
-			return args[i], nil
-		}
-		var err error
-		switch {
-		case a == "--input" || a == "-i":
-			opts.Input, err = next(a)
-		case strings.HasPrefix(a, "--input="):
-			opts.Input = strings.TrimPrefix(a, "--input=")
-		case a == "--input-text":
-			opts.InputText, err = next(a)
-		case strings.HasPrefix(a, "--input-text="):
-			opts.InputText = strings.TrimPrefix(a, "--input-text=")
-		case a == "--runs":
-			var s string
-			if s, err = next(a); err == nil {
-				opts.Runs, err = strconv.Atoi(s)
-			}
-		case strings.HasPrefix(a, "--runs="):
-			opts.Runs, err = strconv.Atoi(strings.TrimPrefix(a, "--runs="))
-		case a == "--timeout":
-			var s string
-			if s, err = next(a); err == nil {
-				opts.Timeout, err = time.ParseDuration(s)
-			}
-		case strings.HasPrefix(a, "--timeout="):
-			opts.Timeout, err = time.ParseDuration(strings.TrimPrefix(a, "--timeout="))
-		case a == "--cells":
-			var s string
-			if s, err = next(a); err == nil {
-				opts.Cells, err = parseCells(s)
-			}
-		case strings.HasPrefix(a, "--cells="):
-			opts.Cells, err = parseCells(strings.TrimPrefix(a, "--cells="))
-		case a == "--release":
-			opts.Release = true
-		case a == "--json":
-			opts.JSON = true
-		case a == "--markdown":
-			opts.Markdown = true
-		case a == "--plain":
-			opts.Plain = true
-		default:
-			if strings.HasPrefix(a, "-") {
-				return "", opts, fmt.Errorf("unknown flag %q", a)
-			}
-			if path != "" {
-				return "", opts, fmt.Errorf("unexpected extra argument %q", a)
-			}
-			path = a
-		}
-		if err != nil {
-			return "", opts, err
-		}
+	f := newFlagSet("", onePath(&path, "unexpected extra argument %q"))
+	f.str("-i --input --input=", "%s needs a value", &opts.Input)
+	f.val("--runs --runs=", "%s needs a value", parseInto(strconv.Atoi, &opts.Runs))
+	f.bool("--markdown", &opts.Markdown, true)
+	f.gridFlags(&opts.InputText, &opts.Timeout, &opts.Cells, &opts.Release, &opts.JSON, &opts.Plain)
+	if err := f.parse(args); err != nil {
+		return "", opts, err
 	}
 	if path == "" {
 		return "", opts, fmt.Errorf("bench needs a program file")

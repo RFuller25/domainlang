@@ -73,38 +73,32 @@ func cname(keyT *ir.Type, base string) string {
 }
 
 // newSetExpr is the Go expression for an empty Set of element type elem.
-func (g *gen) newSetExpr(elem *ir.Type, elemGo string) (string, error) {
+func (g *gen) newSetExpr(elem *ir.Type, elemGo string) string {
 	if !lKeyed(elem) {
 		g.helper("dmSet", declSet)
-		return "dmNewSet[" + elemGo + "]()", nil
+		return "dmNewSet[" + elemGo + "]()"
 	}
-	kf, err := g.keyFn(elem)
-	if err != nil {
-		return "", err
-	}
+	kf := g.keyFn(elem)
 	g.helper("dmLSet", declLSet)
-	return "dmNewLSet[" + elemGo + "](" + kf + ")", nil
+	return "dmNewLSet[" + elemGo + "](" + kf + ")"
 }
 
 // newMapExpr is the Go expression for an empty Map; capHint is "" or an Int
 // expression for the expected size.
-func (g *gen) newMapExpr(key *ir.Type, keyGo, valGo, capHint string) (string, error) {
+func (g *gen) newMapExpr(key *ir.Type, keyGo, valGo, capHint string) string {
 	if !lKeyed(key) {
 		g.helper("dmMap", declMap)
 		if capHint != "" {
-			return "dmNewMapCap[" + keyGo + ", " + valGo + "](" + capHint + ")", nil
+			return "dmNewMapCap[" + keyGo + ", " + valGo + "](" + capHint + ")"
 		}
-		return "dmNewMap[" + keyGo + ", " + valGo + "]()", nil
+		return "dmNewMap[" + keyGo + ", " + valGo + "]()"
 	}
-	kf, err := g.keyFn(key)
-	if err != nil {
-		return "", err
-	}
+	kf := g.keyFn(key)
 	g.helper("dmLMap", declLMap)
 	if capHint != "" {
-		return "dmNewLMapCap[" + keyGo + ", " + valGo + "](" + kf + ", " + capHint + ")", nil
+		return "dmNewLMapCap[" + keyGo + ", " + valGo + "](" + kf + ", " + capHint + ")"
 	}
-	return "dmNewLMap[" + keyGo + ", " + valGo + "](" + kf + ")", nil
+	return "dmNewLMap[" + keyGo + ", " + valGo + "](" + kf + ")"
 }
 
 const declLSet = `type dmLSet[T any] struct {
@@ -342,22 +336,14 @@ const declLMapValues = `func dmLMapValues[K, V any](m dmLMap[K, V]) []V {
 }`
 
 // wnewMap / wnewSet emit `v := <empty collection>`.
-func (g *gen) wnewMap(v string, key *ir.Type, keyGo, valGo string) error {
-	e, err := g.newMapExpr(key, keyGo, valGo, "")
-	if err != nil {
-		return err
-	}
+func (g *gen) wnewMap(v string, key *ir.Type, keyGo, valGo string) {
+	e := g.newMapExpr(key, keyGo, valGo, "")
 	g.wl("%s := %s", v, e)
-	return nil
 }
 
-func (g *gen) wnewSet(v string, elem *ir.Type, elemGo string) error {
-	e, err := g.newSetExpr(elem, elemGo)
-	if err != nil {
-		return err
-	}
+func (g *gen) wnewSet(v string, elem *ir.Type, elemGo string) {
+	e := g.newSetExpr(elem, elemGo)
 	g.wl("%s := %s", v, e)
-	return nil
 }
 
 // contains / indexof over a List whose elements hold a List: equality is the

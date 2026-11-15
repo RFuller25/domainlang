@@ -52,28 +52,20 @@ func parseYearArgs(args []string, now time.Time) (int, yearOptions, error) {
 	var opts yearOptions
 	var year int
 	var haveYear bool
-	for i := 0; i < len(args); i++ {
-		a := args[i]
+	f := newFlagSet("", func(a string) error {
+		n, err := strconv.Atoi(a)
 		switch {
-		case a == "--dir" || a == "-d":
-			if i+1 >= len(args) {
-				return 0, opts, fmt.Errorf("%s needs a path", a)
-			}
-			i++
-			opts.Dir = args[i]
-		case strings.HasPrefix(a, "--dir="):
-			opts.Dir = strings.TrimPrefix(a, "--dir=")
-		case strings.HasPrefix(a, "-"):
-			return 0, opts, fmt.Errorf("unknown flag %q", a)
 		case haveYear:
-			return 0, opts, fmt.Errorf("unexpected extra argument %q", a)
-		default:
-			n, err := strconv.Atoi(a)
-			if err != nil {
-				return 0, opts, fmt.Errorf("%q is not a year", a)
-			}
-			year, haveYear = n, true
+			return fmt.Errorf("unexpected extra argument %q", a)
+		case err != nil:
+			return fmt.Errorf("%q is not a year", a)
 		}
+		year, haveYear = n, true
+		return nil
+	})
+	f.str("-d --dir --dir=", "%s needs a path", &opts.Dir)
+	if err := f.parse(args); err != nil {
+		return 0, opts, err
 	}
 	if !haveYear {
 		return 0, opts, fmt.Errorf("missing <year>, like: domain expansion: year of fortune %d", aoc.LatestYear(now))

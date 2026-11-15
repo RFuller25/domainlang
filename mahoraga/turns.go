@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"domain/codegen"
+	"domain/interp"
 	"domain/optimizer"
 	"domain/runner"
 )
@@ -358,7 +359,7 @@ func (s *Search) sizeAccumulators() error {
 	for _, site := range sites {
 		c := s.champion
 		c.Label = fmt.Sprintf("reserve %s for the list at line %d (measured, not grown into)",
-			plural(int64(site.Length), "element"), site.Line)
+			interp.Plural(site.Length, "element"), site.Line)
 		c.Tuning.ListCapacities = withCapacity(c.Tuning.ListCapacities, site.Key, site.Length)
 		cands = append(cands, c)
 	}
@@ -460,7 +461,7 @@ func (s *Search) pinConstants() error {
 	}
 	for i, c := range consts {
 		cand := s.champion
-		cand.Label = fmt.Sprintf("pin %s (evaluated %s)", c, plural(c.Calls, "time"))
+		cand.Label = fmt.Sprintf("pin %s (evaluated %s)", c, interp.Plural(int(c.Calls), "time"))
 		cand.Tier = Pinned
 		// A copy per candidate: the champion's map is shared with every
 		// candidate built from it, and writing into it would edit a
@@ -531,13 +532,6 @@ func pinFor(c Constant) func(Facts, *Contract) {
 		ct.Unverifiable = append(ct.Unverifiable,
 			fmt.Sprintf("the binding %q at line %d holds %d", c.Name, c.Line, c.Value))
 	}
-}
-
-func plural(n int64, noun string) string {
-	if n == 1 {
-		return fmt.Sprintf("%d %s", n, noun)
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // Turn 7 — guarded specialisation.

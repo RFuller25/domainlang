@@ -17,29 +17,22 @@ import (
 // even when the predicate ignores its parameter, which a range variable would
 // leave declared and unused.
 
-func (g *gen) emitPrefixWhile(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitPrefixWhile(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	// optimizer.elideConstEarlyExits: a predicate that is constantly false at
 	// the boundary leaves the empty list, and no lambda.
 	if empty, _ := n.Meta["empty"].(bool); empty {
 		v := g.fresh("v")
 		g.wl("%s := []%s{}", v, elemGo)
-		return v, nil
+		return v
 	}
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+	lam := g.nodeLambda(n)
 	cut, i := g.fresh("cut"), g.fresh("i")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	g.wl("%s := len(%s)", cut, in)
 	g.wl("for %s := 0; %s < len(%s); %s++ {", i, i, in, i)
 	g.in()
@@ -57,23 +50,17 @@ func (g *gen) emitPrefixWhile(n *ir.Node, in string) (string, error) {
 		// Copied: a later append onto a shared backing array would otherwise
 		// overwrite the elements this slice stops short of.
 		g.wl("%s := append([]%s{}, %s[:%s]...)", v, elemGo, in, cut)
-		return v, nil
+		return v
 	}
 	// The suffix may alias — appending past the end of the original slice
 	// reallocates rather than overwriting it.
 	g.wl("%s := %s[%s:]", v, in, cut)
-	return v, nil
+	return v
 }
 
-func (g *gen) emitChunk(n *ir.Node, in string) (string, error) {
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	size, err := g.measuredOperand(n, in, "size", "Size", 1)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitChunk(n *ir.Node, in string) string {
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
+	size := g.measuredOperand(n, in, "size", "Size", 1)
 	// The loop counts in int, so a measured size — an int64 variable rather
 	// than an untyped constant — needs one conversion, bound once beside it.
 	sizeI := size
@@ -94,25 +81,18 @@ func (g *gen) emitChunk(n *ir.Node, in string) (string, error) {
 	g.wl("%s = append(%s, append([]%s{}, %s[%s:%s]...))", v, v, elemGo, in, i, end)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitPartition(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitPartition(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	yes, no, i := g.fresh("yes"), g.fresh("no"), g.fresh("i")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: in + "[" + i + "]", typ: n.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
 	// Either half can hold the whole input, and a cap that guesses the split
 	// (half each, say) pays a full reallocation and copy the moment the data
 	// is lopsided — which is the normal case for a predicate worth writing.
@@ -136,28 +116,21 @@ func (g *gen) emitPartition(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	v := g.fresh("v")
 	g.wl("%s := [][]%s{%s, %s}", v, elemGo, yes, no)
-	return v, nil
+	return v
 }
 
 // emitPartitionHalf lowers Partition + Take Item 0/1: the half that is asked
 // for is collected and the other is never built. The predicate still runs on
 // every element, in order, so a predicate that fails fails on the same one.
-func (g *gen) emitPartitionHalf(part *ir.Node, in string, keep bool) (string, error) {
-	lam, err := g.nodeLambda(part)
-	if err != nil {
-		return "", err
-	}
-	elemGo, err := g.goType(part.In.Elem)
-	if err != nil {
-		return "", unsupported(part, "%v", err)
-	}
+func (g *gen) emitPartitionHalf(part *ir.Node, in string, keep bool) string {
+	lam := g.nodeLambda(part)
+	elemGo := asUnsupported1(part, "", func() string { return g.goType(part.In.Elem) })
 	out, i := g.fresh("v"), g.fresh("i")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{
-		lam.Params[0]: {expr: in + "[" + i + "]", typ: part.In.Elem},
+	body, _ := asUnsupported2(part, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{
+			lam.Params[0]: {expr: in + "[" + i + "]", typ: part.In.Elem},
+		})
 	})
-	if err != nil {
-		return "", unsupported(part, "lambda: %v", err)
-	}
 	g.wl("%s := make([]%s, 0, len(%s))", out, elemGo, in)
 	g.wl("for %s := 0; %s < len(%s); %s++ {", i, i, in, i)
 	g.in()
@@ -172,27 +145,17 @@ func (g *gen) emitPartitionHalf(part *ir.Node, in string, keep bool) (string, er
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return out, nil
+	return out
 }
 
-func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	steps, err := g.measuredOperand(n, in, "n", "Times", 0)
-	if err != nil {
-		return "", err
-	}
-	elemGo, err := g.goType(n.In)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitIterate(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
+	steps := g.measuredOperand(n, in, "n", "Times", 0)
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In) })
 	v, cur, i := g.fresh("v"), g.fresh("cur"), g.fresh("i")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: n.In}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: cur, typ: n.In}})
+	})
 	if stop, _ := n.Meta[optimizer.MetaUntilRepeat].(bool); stop {
 		// optimizer.stopIterateAtRepeat: the trajectory is only searched for
 		// its first repeat, so it ends at the first state equal to an earlier
@@ -200,10 +163,7 @@ func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
 		// one comparison per step against a mark that jumps forward at powers
 		// of two.
 		mark, gap, power := g.fresh("mark"), g.fresh("gap"), g.fresh("power")
-		same, err := g.eqExpr(v+"["+mark+"]", cur, n.In)
-		if err != nil {
-			return "", unsupported(n, "%v", err)
-		}
+		same := asUnsupported1(n, "", func() string { return g.eqExpr(v+"["+mark+"]", cur, n.In) })
 		g.wl("%s := make([]%s, 0, min(%s, 1024))", v, elemGo, steps)
 		g.wl("%s := %s", cur, in)
 		g.wl("%s, %s, %s := int64(0), int64(0), int64(1)", mark, gap, power)
@@ -229,7 +189,7 @@ func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 	g.wl("%s := make([]%s, %s)", v, elemGo, steps)
 	g.wl("%s := %s", cur, in)
@@ -239,32 +199,22 @@ func (g *gen) emitIterate(n *ir.Node, in string) (string, error) {
 	g.wl("%s[%s] = %s", v, i, cur)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitUnfold(n *ir.Node, in string) (string, error) {
-	step, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitUnfold(n *ir.Node, in string) string {
+	step := g.nodeLambda(n)
 	cond, _ := n.Meta["while"].(*ast.Lambda)
 	if cond == nil || len(cond.Params) != 1 {
-		return "", unsupported(n, "missing While: predicate")
+		panic(unsupported(n, "missing While: predicate"))
 	}
-	elemGo, err := g.goType(n.In)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In) })
 	v, cur := g.fresh("v"), g.fresh("cur")
 	env := exprEnv{cond.Params[0]: {expr: cur, typ: n.In}}
-	condBody, _, err := g.compileExpr(cond.Body, env)
-	if err != nil {
-		return "", unsupported(n, "While: lambda: %v", err)
-	}
-	stepBody, _, err := g.compileExpr(step.Body, exprEnv{step.Params[0]: {expr: cur, typ: n.In}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	condBody, _ := asUnsupported2(n, "While: lambda: ", func() (string, *ir.Type) { return g.compileExpr(cond.Body, env) })
+	stepBody, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(step.Body, exprEnv{step.Params[0]: {expr: cur, typ: n.In}})
+	})
 	g.helper("dmFail", declFail, "fmt", "os")
 	// No estimate exists here: how many elements an Unfold produces is a
 	// property of its own predicate, not of anything in scope. A caller who
@@ -285,7 +235,7 @@ func (g *gen) emitUnfold(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	g.probeLen(n, v)
-	return v, nil
+	return v
 }
 
 // emitStream lowers the optimizer's fused Unfold + Map Each/Filter (+ take)
@@ -294,36 +244,28 @@ func (g *gen) emitUnfold(n *ir.Node, in string) (string, error) {
 // proven total when the fusion fired, so — unlike emitMapEach/emitFilter —
 // none of the inlined steps need error handling; only Unfold's own bound
 // check does, exactly as in emitUnfold.
-func (g *gen) emitStream(n *ir.Node, in string) (string, error) {
+func (g *gen) emitStream(n *ir.Node, in string) string {
 	unfoldNode, _ := n.Meta["unfold"].(*ir.Node)
 	steps, _ := n.Meta["steps"].([]*ir.Node)
 	earlyExit, _ := n.Meta["earlyExit"].(bool)
 	takeN, _ := n.Meta["take"].(int64)
 	if unfoldNode == nil {
-		return "", unsupported(n, "missing Stream metadata")
+		panic(unsupported(n, "missing Stream metadata"))
 	}
-	step, err := g.nodeLambda(unfoldNode)
-	if err != nil {
-		return "", err
-	}
+	step := g.nodeLambda(unfoldNode)
 	cond, _ := unfoldNode.Meta["while"].(*ast.Lambda)
 	if cond == nil || len(cond.Params) != 1 {
-		return "", unsupported(n, "missing While: predicate")
+		panic(unsupported(n, "missing While: predicate"))
 	}
-	outElemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	outElemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 
 	v, cur, raw := g.fresh("v"), g.fresh("cur"), g.fresh("raw")
-	condBody, _, err := g.compileExpr(cond.Body, exprEnv{cond.Params[0]: {expr: cur, typ: unfoldNode.In}})
-	if err != nil {
-		return "", unsupported(n, "While: lambda: %v", err)
-	}
-	stepBody, _, err := g.compileExpr(step.Body, exprEnv{step.Params[0]: {expr: cur, typ: unfoldNode.In}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	condBody, _ := asUnsupported2(n, "While: lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(cond.Body, exprEnv{cond.Params[0]: {expr: cur, typ: unfoldNode.In}})
+	})
+	stepBody, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(step.Body, exprEnv{step.Params[0]: {expr: cur, typ: unfoldNode.In}})
+	})
 
 	g.helper("dmFail", declFail, "fmt", "os")
 	// The fused stream has no estimate either, and here the absence is
@@ -342,14 +284,10 @@ func (g *gen) emitStream(n *ir.Node, in string) (string, error) {
 	val, valType := cur, unfoldNode.In
 	openBlocks := 0
 	for _, s := range steps {
-		lam, err := g.nodeLambda(s)
-		if err != nil {
-			return "", err
-		}
-		body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: val, typ: valType}})
-		if err != nil {
-			return "", unsupported(n, "lambda: %v", err)
-		}
+		lam := g.nodeLambda(s)
+		body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: val, typ: valType}})
+		})
 		switch s.Prim {
 		case "Map Each":
 			m := g.fresh("m")
@@ -388,7 +326,7 @@ func (g *gen) emitStream(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	g.probeLen(n, v)
-	return v, nil
+	return v
 }
 
 // maxUnfoldElements is the bound the interpreter puts on Unfold, which is the

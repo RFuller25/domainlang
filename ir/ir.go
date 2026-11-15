@@ -111,37 +111,6 @@ func Graph(node *Type) *Type {
 	return &Type{Kind: KGraph, Elem: node}
 }
 
-// Keyable reports whether t can be a Map key or Set element: Int, Text, or a
-// Tuple/Record built from keyable types. The runtime side is KeyOf (composite
-// values get a canonical comparable key); the compiled side comes free —
-// tuples and records lower to Go structs of comparable fields. Lists stay
-// unkeyable on purpose: their compiled representation is a slice, which Go
-// cannot use as a map key.
-func Keyable(t *Type) bool {
-	if t == nil {
-		return false
-	}
-	switch t.Kind {
-	case KInt, KText:
-		return true
-	case KTuple:
-		for _, e := range t.Elems {
-			if !Keyable(e) {
-				return false
-			}
-		}
-		return true
-	case KRecord:
-		for _, f := range t.Fields {
-			if !Keyable(f.Type) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
 func (t *Type) String() string {
 	if t == nil {
 		return "<none>"
@@ -505,19 +474,60 @@ const OwnedFields = "inplace_owned_fields"
 // backends to copy the whole state.
 const OwnsEverything = ""
 
+// OwnedFieldSet reads the state paths the optimizer said a marked update
+// writes through, from a loop node's Meta. A loop that has not been through
+// the pass has no entry, and owning everything is the reading that is never
+// wrong.
+func OwnedFieldSet(meta map[string]any) map[string]bool {
+	paths, ok := meta[OwnedFields].([]string)
+	if !ok {
+		return map[string]bool{OwnsEverything: true}
+	}
+	out := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		out[p] = true
+	}
+	return out
+}
+
+// NeedsOwn reports whether the storage at path has to be copied: because a
+// marked update writes it, writes something inside it, or writes a container it
+// sits in.
+func NeedsOwn(path string, owned map[string]bool) bool {
+	for w := range owned {
+		if w == path || pathAncestor(w, path) || pathAncestor(path, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathAncestor reports whether a is a strict ancestor of b. The root path is an
+// ancestor of everything, which is the case a plain HasPrefix gets wrong: the
+// root is "", so "" + "." is "." and no real path begins with a dot.
+func pathAncestor(a, b string) bool {
+	if a == b {
+		return false
+	}
+	if a == OwnsEverything {
+		return true
+	}
+	return strings.HasPrefix(b, a+".")
+}
+
 // ListKeyable reports whether t can be a *transient* key — the hash key a
-// primitive builds internally to recognise a value it has already seen: Keyable
-// types, plus Lists, Tuples and Records built from them to any depth. Find
-// Cycle, Unique and the Explore family accept these. A Map key or Set element
-// is still Keyable only: those are values the program holds and renders, and
+// primitive builds internally to recognise a value it has already seen: Int,
+// Text, and Lists, Tuples and Records built from them to any depth. Find
+// Cycle, Unique and the Explore family accept these. Map keys and Set elements
+// are narrower (no Lists): those are values the program holds and renders, and
 // the compiled collections index by a Go map key, which a slice cannot be (the
 // compiler hashes a list through an injective byte encoding wherever the key
 // stays inside the primitive — codegen/keyfn.go — and has no representation
 // for a list that has to be handed back out of a collection).
 //
-// Float lists stay out: a Float is not Keyable, so neither is a List<Float>.
-// The runtime side is the same KeyOf the Keyable types use; its encoding
-// length-prefixes every list, so [1,2] and [[1,2]] and (1,2) cannot collide.
+// Float stays out, so does List<Float>. The runtime side is KeyOf; its
+// encoding length-prefixes every list, so [1,2] and [[1,2]] and (1,2) cannot
+// collide.
 func ListKeyable(t *Type) bool {
 	if t == nil {
 		return false

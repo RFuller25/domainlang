@@ -120,22 +120,19 @@ func streamsParseIntoSink(nodes []*ir.Node, in string) bool {
 // tryStream fuses the longest safe run at the head of nodes. ok is false when
 // the run would remove no intermediate list, which leaves the per-node path
 // to emit it unchanged.
-func (g *gen) tryStream(nodes []*ir.Node, in string) (int, string, bool, error) {
+func (g *gen) tryStream(nodes []*ir.Node, in string) (int, string, bool) {
 	pl, ok := planStream(nodes, in)
 	if !ok {
-		return 0, "", false, nil
+		return 0, "", false
 	}
 	mark := g.main.Len()
-	v, err := g.emitStreamRun(pl.sep, pl.fromSplit, pl.fromRange, in, nodes[0], pl.stages, pl.sink)
-	if err != nil {
-		return 0, "", false, err
-	}
+	v := g.emitStreamRun(pl.sep, pl.fromSplit, pl.fromRange, in, nodes[0], pl.stages, pl.sink)
 	if pl.fromRange {
 		// Range reads the incoming value only through a measured bound; with
 		// literal bounds nothing mentions it, and Go refuses an unused variable.
 		g.keepAlive(in, v, mark)
 	}
-	return pl.consumed, v, true, nil
+	return pl.consumed, v, true
 }
 
 func isList(t *ir.Type) bool { return t != nil && t.Kind == ir.KList }
@@ -274,7 +271,7 @@ func foldSinkOK(n *ir.Node, fallible int) bool {
 // emitStreamRun writes the fused loop. first is the chain's first node, whose
 // input is the source; each stage binds the element under a fresh name for
 // the next.
-func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, first *ir.Node, stages []streamStage, sink *ir.Node) (string, error) {
+func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, first *ir.Node, stages []streamStage, sink *ir.Node) string {
 	// The element type leaving the chain decides what a collecting sink
 	// builds; it is the last stage's output, or the source's element.
 	var outElem *ir.Type
@@ -284,10 +281,7 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 		outElem = ir.Text()
 	case fromRange:
 		outElem = ir.Int()
-		var err error
-		if lo, hi, err = g.emitRangeBounds(first, in); err != nil {
-			return "", err
-		}
+		lo, hi = g.emitRangeBounds(first, in)
 	default:
 		outElem = first.In.Elem
 	}
@@ -311,10 +305,7 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 	pendingParts := map[string][]string{}
 	switch {
 	case sink == nil:
-		elemGo, err := g.goType(outElem)
-		if err != nil {
-			return "", err
-		}
+		elemGo := g.goType(outElem)
 		// Sized like Filter's output: to the input when it is in hand, since
 		// a list that keeps most of what it reads otherwise regrows dozens of
 		// times. A Split source has no length until it is walked.
@@ -334,13 +325,15 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 		}
 		g.wl("%s := int64(%s)", v, identity)
 		step = func(x string) error {
-			lam, err := g.nodeLambda(sink)
+			lam, err := try1(func() *ast.Lambda { return g.nodeLambda(sink) })
 			if err != nil {
 				return err
 			}
-			body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			body, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			})
 			if err != nil {
-				return unsupported(sink, "lambda: %v", err)
+				return unsupported(sink, "lambda: %v", err).err
 			}
 			g.keepElem(x, body)
 			g.wl("%s %s %s", v, op, body)
@@ -353,13 +346,15 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 		exit = g.fresh("decided")
 		g.wl("%s := %v", v, universal)
 		step = func(x string) error {
-			lam, err := g.nodeLambda(sink)
+			lam, err := try1(func() *ast.Lambda { return g.nodeLambda(sink) })
 			if err != nil {
 				return err
 			}
-			pred, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			pred, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			})
 			if err != nil {
-				return unsupported(sink, "lambda: %v", err)
+				return unsupported(sink, "lambda: %v", err).err
 			}
 			g.keepElem(x, pred)
 			if universal {
@@ -375,50 +370,41 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 			return nil
 		}
 	case sink.Prim == "Group By":
-		keyGo, err := g.goType(sink.Out.Key)
-		if err != nil {
-			return "", unsupported(sink, "%v", err)
-		}
-		valGo, err := g.goType(sink.Out.Elem)
-		if err != nil {
-			return "", unsupported(sink, "%v", err)
-		}
+		keyGo := asUnsupported1(sink, "", func() string { return g.goType(sink.Out.Key) })
+		valGo := asUnsupported1(sink, "", func() string { return g.goType(sink.Out.Elem) })
 		g.chelper(sink.Out.Key, "dmMap", declMap)
 		g.chelper(sink.Out.Key, "dmAppend", declMapAppend)
-		if err := g.wnewMap(v, sink.Out.Key, keyGo, valGo); err != nil {
-			return "", unsupported(sink, "%v", err)
-		}
+		asUnsupported0(sink, "", func() { g.wnewMap(v, sink.Out.Key, keyGo, valGo) })
 		step = func(x string) error {
-			lam, err := g.nodeLambda(sink)
+			lam, err := try1(func() *ast.Lambda { return g.nodeLambda(sink) })
 			if err != nil {
 				return err
 			}
-			key, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			key, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			})
 			if err != nil {
-				return unsupported(sink, "lambda: %v", err)
+				return unsupported(sink, "lambda: %v", err).err
 			}
 			g.keepElem(x, key)
 			g.wl("%s(&%s, %s, %s)", cname(sink.Out.Key, "dmAppend"), v, key, x)
 			return nil
 		}
 	case sink.Prim == "Count By" || sink.Prim == "Group Reduce":
-		keyGo, err := g.goType(sink.Out.Key)
-		if err != nil {
-			return "", unsupported(sink, "%v", err)
-		}
+		keyGo := asUnsupported1(sink, "", func() string { return g.goType(sink.Out.Key) })
 		g.chelper(sink.Out.Key, "dmMap", declMap)
 		g.chelper(sink.Out.Key, "dmBump", declMapBump)
-		if err := g.wnewMap(v, sink.Out.Key, keyGo, "int64"); err != nil {
-			return "", unsupported(sink, "%v", err)
-		}
+		asUnsupported0(sink, "", func() { g.wnewMap(v, sink.Out.Key, keyGo, "int64") })
 		step = func(x string) error {
-			lam, err := g.nodeLambda(sink)
+			lam, err := try1(func() *ast.Lambda { return g.nodeLambda(sink) })
 			if err != nil {
 				return err
 			}
-			key, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			key, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			})
 			if err != nil {
-				return unsupported(sink, "lambda: %v", err)
+				return unsupported(sink, "lambda: %v", err).err
 			}
 			delta := "1"
 			if reduce, _ := sink.Meta["reduce"].(string); sink.Prim == "Group Reduce" && reduce == "sum" {
@@ -429,52 +415,36 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 			return nil
 		}
 	case sink.Prim == "Fold":
-		lam, err := g.nodeLambda(sink)
-		if err != nil {
-			return "", err
-		}
-		seed, err := g.measuredLit(sink, in, "seed", sink.In, sink.Out, seedLit)
-		if err != nil {
-			return "", err
-		}
-		accGo, err := g.goType(sink.Out)
-		if err != nil {
-			return "", unsupported(sink, "%v", err)
-		}
+		lam := g.nodeLambda(sink)
+		seed := g.measuredLit(sink, in, "seed", sink.In, sink.Out, seedLit)
+		accGo := asUnsupported1(sink, "", func() string { return g.goType(sink.Out) })
 		g.wl("var %s %s = %s", v, accGo, g.ownAccumulator(lam, sink.Out, seed))
 		step = func(x string) error {
-			body, _, err := g.compileExpr(lam.Body, exprEnv{
-				lam.Params[0]: {expr: v, typ: sink.Out},
-				lam.Params[1]: {expr: x, typ: sink.In.Elem},
+			body, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{
+					lam.Params[0]: {expr: v, typ: sink.Out},
+					lam.Params[1]: {expr: x, typ: sink.In.Elem},
+				})
 			})
 			if err != nil {
-				return unsupported(sink, "lambda: %v", err)
+				return unsupported(sink, "lambda: %v", err).err
 			}
 			g.keepElem(x, body)
 			g.wl("%s = %s", v, body)
 			return nil
 		}
 	case sink.Prim == "CountDistinct":
-		elemGo, err := g.goType(outElem)
-		if err != nil {
-			return "", err
-		}
+		elemGo := g.goType(outElem)
 		seen := g.fresh("seen")
 		g.wl("%s := make(map[%s]struct{})", seen, elemGo)
 		step = func(x string) error { g.wl("%s[%s] = struct{}{}", seen, x); return nil }
 		finish = func() { g.wl("%s := int64(len(%s))", v, seen) }
 	case sink.Prim == "Sum":
-		acc, err := g.goType(sink.Out)
-		if err != nil {
-			return "", err
-		}
+		acc := g.goType(sink.Out)
 		g.wl("var %s %s", v, acc)
 		step = func(x string) error { g.wl("%s += %s", v, x); return nil }
 	case sink.Prim == "Max" || sink.Prim == "Min" || sink.Prim == "Product":
-		acc, err := g.goType(sink.Out)
-		if err != nil {
-			return "", err
-		}
+		acc := g.goType(sink.Out)
 		g.helper("dmFail", declFail, "fmt", "os")
 		seen := g.fresh("seen")
 		g.wl("var %s %s", v, acc)
@@ -517,13 +487,15 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 	case sink.Prim == "Count Matching":
 		g.wl("var %s int64", v)
 		step = func(x string) error {
-			lam, err := g.nodeLambda(sink)
+			lam, err := try1(func() *ast.Lambda { return g.nodeLambda(sink) })
 			if err != nil {
 				return err
 			}
-			pred, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			pred, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: sink.In.Elem}})
+			})
 			if err != nil {
-				return unsupported(sink, "lambda: %v", err)
+				return unsupported(sink, "lambda: %v", err).err
 			}
 			g.keepElem(x, pred)
 			g.wl("if %s {", pred)
@@ -619,16 +591,16 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 			tmplStr, _ := st.node.Meta["template"].(string)
 			tmpl, err := pattern.ParseTemplate(tmplStr)
 			if err != nil {
-				return unsupported(st.node, "template: %v", err)
+				return unsupported(st.node, "template: %v", err).err
 			}
 			elemType := tmpl.OutputType()
-			elemGo, err := g.goType(elemType)
+			elemGo, err := try1(func() string { return g.goType(elemType) })
 			if err != nil {
-				return unsupported(st.node, "%v", err)
+				return unsupported(st.node, "%v", err).err
 			}
-			fn, err := g.matchParseFunc(tmpl, elemType, elemGo)
+			fn, err := try1(func() string { return g.matchParseFunc(tmpl, elemType, elemGo) })
 			if err != nil {
-				return unsupported(st.node, "%v", err)
+				return unsupported(st.node, "%v", err).err
 			}
 			g.helper("dmFail", declFail, "fmt", "os")
 			y, ok := g.fresh("r"), g.fresh("ok")
@@ -650,21 +622,25 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 			}
 			return run(k+1, y)
 		case "map":
-			lam, err := g.nodeLambda(st.node)
+			lam, err := try1(func() *ast.Lambda { return g.nodeLambda(st.node) })
 			if err != nil {
 				return err
 			}
-			body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: st.node.In.Elem}})
+			body, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: st.node.In.Elem}})
+			})
 			if err != nil {
-				return unsupported(st.node, "lambda: %v", err)
+				return unsupported(st.node, "lambda: %v", err).err
 			}
 			if k == len(stages)-1 && joinBuf != "" {
 				if operands := textConcat(lam.Body, st.node.Out.Elem); len(operands) > 1 {
 					var parts []string
 					for _, o := range operands {
-						p, _, err := g.compileExpr(o, exprEnv{lam.Params[0]: {expr: x, typ: st.node.In.Elem}})
+						p, _, err := try2(func() (string, *ir.Type) {
+							return g.compileExpr(o, exprEnv{lam.Params[0]: {expr: x, typ: st.node.In.Elem}})
+						})
 						if err != nil {
-							return unsupported(st.node, "lambda: %v", err)
+							return unsupported(st.node, "lambda: %v", err).err
 						}
 						parts = append(parts, p)
 					}
@@ -676,22 +652,24 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 			}
 			// Declared with its type: a body that is a bare literal is an
 			// untyped Go constant, and := would make it an int.
-			elemGo, err := g.goType(st.node.Out.Elem)
+			elemGo, err := try1(func() string { return g.goType(st.node.Out.Elem) })
 			if err != nil {
-				return unsupported(st.node, "%v", err)
+				return unsupported(st.node, "%v", err).err
 			}
 			g.keepElem(x, body)
 			y := g.fresh("e")
 			g.wl("var %s %s = %s", y, elemGo, body)
 			return run(k+1, y)
 		default: // filter
-			lam, err := g.nodeLambda(st.node)
+			lam, err := try1(func() *ast.Lambda { return g.nodeLambda(st.node) })
 			if err != nil {
 				return err
 			}
-			pred, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: st.node.In.Elem}})
+			pred, _, err := try2(func() (string, *ir.Type) {
+				return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: x, typ: st.node.In.Elem}})
+			})
 			if err != nil {
-				return unsupported(st.node, "lambda: %v", err)
+				return unsupported(st.node, "lambda: %v", err).err
 			}
 			g.keepElem(x, pred)
 			g.wl("if %s {", pred)
@@ -726,10 +704,10 @@ func (g *gen) emitStreamRun(sep string, fromSplit, fromRange bool, in string, fi
 		g.wl("}")
 	}
 	if err != nil {
-		return "", err
+		panic(fail(err))
 	}
 	finish()
-	return v, nil
+	return v
 }
 
 // textConcat flattens a Text-typed `a + b + …` into its operands, left to
@@ -750,11 +728,8 @@ func textConcat(e ast.Expr, t *ir.Type) []ast.Expr {
 // emitTextFold lowers the optimizer's Text Fold (optimizer.fuseTextFold): the
 // seed, then each element's appended parts, written to one builder. The
 // accumulator parameter is bound to "" — the pass proved no part reads it.
-func (g *gen) emitTextFold(n *ir.Node, in string) (string, error) {
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+func (g *gen) emitTextFold(n *ir.Node, in string) string {
+	lam := g.nodeLambda(n)
 	seed, _ := n.Meta["seed"].(string)
 	g.imp("strings")
 	b, e, v := g.fresh("b"), g.fresh("e"), g.fresh("v")
@@ -764,10 +739,7 @@ func (g *gen) emitTextFold(n *ir.Node, in string) (string, error) {
 	}
 	var parts []string
 	for _, part := range textConcat(lam.Body, ir.Text()) {
-		p, _, err := g.compileExpr(part, env)
-		if err != nil {
-			return "", unsupported(n, "lambda: %v", err)
-		}
+		p, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) { return g.compileExpr(part, env) })
 		parts = append(parts, p)
 	}
 	g.wl("var %s strings.Builder", b)
@@ -783,5 +755,5 @@ func (g *gen) emitTextFold(n *ir.Node, in string) (string, error) {
 	g.out()
 	g.wl("}")
 	g.wl("%s := %s.String()", v, b)
-	return v, nil
+	return v
 }

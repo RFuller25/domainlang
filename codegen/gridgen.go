@@ -7,7 +7,7 @@ import (
 // Grid lowerings. A Grid<T> compiles to dmGrid[T] — a rectangular cell slice
 // with explicit dimensions, matching ir.GridValue's row-major layout.
 
-func (g *gen) emitConvertToGrid(n *ir.Node, in string) (string, error) {
+func (g *gen) emitConvertToGrid(n *ir.Node, in string) string {
 	if n.In.Kind == ir.KSparse {
 		return g.emitSparseDensify(n, in)
 	}
@@ -18,15 +18,9 @@ func (g *gen) emitConvertToGrid(n *ir.Node, in string) (string, error) {
 }
 
 // emitGridFromRows lowers List<List<T>> -> Grid<T>.
-func (g *gen) emitGridFromRows(n *ir.Node, in string) (string, error) {
-	gridGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitGridFromRows(n *ir.Node, in string) string {
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, r, row := g.fresh("v"), g.fresh("r"), g.fresh("row")
 	g.wl("var %s %s", v, gridGo)
@@ -46,12 +40,12 @@ func (g *gen) emitGridFromRows(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitGridFromText lowers List<Text> -> Grid<Text>, one cell per rune —
 // mirroring the interpreter, which splits rows into single-rune strings.
-func (g *gen) emitGridFromText(n *ir.Node, in string) (string, error) {
+func (g *gen) emitGridFromText(n *ir.Node, in string) string {
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, r, line := g.fresh("v"), g.fresh("r"), g.fresh("line")
 	cells, ch := g.fresh("cells"), g.fresh("ch")
@@ -110,7 +104,7 @@ func (g *gen) emitGridFromText(n *ir.Node, in string) (string, error) {
 	g.wl("%s.cells = append(%s.cells, %s...)", v, v, cells)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitGridRuneCells is the general path: each cell a one-rune substring
@@ -136,24 +130,20 @@ func (g *gen) emitGridRuneCells(cells, line, bi, ch string) {
 	g.wl("}")
 }
 
-func (g *gen) emitCountCells(n *ir.Node, in string) (string, error) {
+func (g *gen) emitCountCells(n *ir.Node, in string) string {
 	if n.In.Kind == ir.KSparse {
 		return g.emitCountCellsSparse(n, in)
 	}
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
+	lam := g.nodeLambda(n)
 	if positional, _ := n.Meta["positional"].(bool); positional {
 		v, r, c := g.fresh("v"), g.fresh("r"), g.fresh("c")
-		body, _, err := g.compileExpr(lam.Body, exprEnv{
-			lam.Params[0]: {expr: in, typ: n.In},
-			lam.Params[1]: {expr: r, typ: ir.Int()},
-			lam.Params[2]: {expr: c, typ: ir.Int()},
+		body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{
+				lam.Params[0]: {expr: in, typ: n.In},
+				lam.Params[1]: {expr: r, typ: ir.Int()},
+				lam.Params[2]: {expr: c, typ: ir.Int()},
+			})
 		})
-		if err != nil {
-			return "", unsupported(n, "lambda: %v", err)
-		}
 		g.wl("var %s int64", v)
 		g.wl("for %s := int64(0); %s < int64(%s.rows); %s++ {", r, r, in, r)
 		g.in()
@@ -168,13 +158,12 @@ func (g *gen) emitCountCells(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 	v, e := g.fresh("v"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.wl("var %s int64", v)
 	g.wl("for _, %s := range %s.cells {", e, in)
 	g.in()
@@ -185,35 +174,25 @@ func (g *gen) emitCountCells(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitMapCells(n *ir.Node, in string) (string, error) {
+func (g *gen) emitMapCells(n *ir.Node, in string) string {
 	if n.In.Kind == ir.KSparse {
 		return g.emitMapCellsSparse(n, in)
 	}
-	lam, err := g.nodeLambda(n)
-	if err != nil {
-		return "", err
-	}
-	gridGo, err := g.goType(n.Out)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	outElemGo, err := g.goType(n.Out.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	lam := g.nodeLambda(n)
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.Out) })
+	outElemGo := asUnsupported1(n, "", func() string { return g.goType(n.Out.Elem) })
 	if positional, _ := n.Meta["positional"].(bool); positional {
 		v, r, c := g.fresh("v"), g.fresh("r"), g.fresh("c")
-		body, _, err := g.compileExpr(lam.Body, exprEnv{
-			lam.Params[0]: {expr: in, typ: n.In},
-			lam.Params[1]: {expr: r, typ: ir.Int()},
-			lam.Params[2]: {expr: c, typ: ir.Int()},
+		body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+			return g.compileExpr(lam.Body, exprEnv{
+				lam.Params[0]: {expr: in, typ: n.In},
+				lam.Params[1]: {expr: r, typ: ir.Int()},
+				lam.Params[2]: {expr: c, typ: ir.Int()},
+			})
 		})
-		if err != nil {
-			return "", unsupported(n, "lambda: %v", err)
-		}
 		g.wl("%s := %s{rows: %s.rows, cols: %s.cols, cells: make([]%s, len(%s.cells))}",
 			v, gridGo, in, in, outElemGo, in)
 		g.wl("for %s := int64(0); %s < int64(%s.rows); %s++ {", r, r, in, r)
@@ -225,13 +204,12 @@ func (g *gen) emitMapCells(n *ir.Node, in string) (string, error) {
 		g.wl("}")
 		g.out()
 		g.wl("}")
-		return v, nil
+		return v
 	}
 	v, i, e := g.fresh("v"), g.fresh("i"), g.fresh("e")
-	body, _, err := g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
-	if err != nil {
-		return "", unsupported(n, "lambda: %v", err)
-	}
+	body, _ := asUnsupported2(n, "lambda: ", func() (string, *ir.Type) {
+		return g.compileExpr(lam.Body, exprEnv{lam.Params[0]: {expr: e, typ: n.In.Elem}})
+	})
 	g.wl("%s := %s{rows: %s.rows, cols: %s.cols, cells: make([]%s, len(%s.cells))}",
 		v, gridGo, in, in, outElemGo, in)
 	g.wl("for %s, %s := range %s.cells {", i, e, in)
@@ -239,21 +217,15 @@ func (g *gen) emitMapCells(n *ir.Node, in string) (string, error) {
 	g.wl("%s.cells[%s] = %s", v, i, body)
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
-func (g *gen) emitTranspose(n *ir.Node, in string) (string, error) {
+func (g *gen) emitTranspose(n *ir.Node, in string) string {
 	if n.In != nil && n.In.Kind == ir.KList {
 		return g.emitTransposeRows(n, in)
 	}
-	gridGo, err := g.goType(n.In)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+	gridGo := asUnsupported1(n, "", func() string { return g.goType(n.In) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
 	v, r, c := g.fresh("v"), g.fresh("r"), g.fresh("c")
 	g.wl("%s := %s{rows: %s.cols, cols: %s.rows, cells: make([]%s, len(%s.cells))}",
 		v, gridGo, in, in, elemGo, in)
@@ -266,22 +238,16 @@ func (g *gen) emitTranspose(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }
 
 // emitTransposeRows is Transpose over the List<List<T>> shape: the same swap,
 // over a slice of slices rather than a dmGrid. A ragged row aborts with the
 // wording the interpreter uses, so the two backends fail on the same input
 // with the same message.
-func (g *gen) emitTransposeRows(n *ir.Node, in string) (string, error) {
-	rowGo, err := g.goType(n.In.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
-	elemGo, err := g.goType(n.In.Elem.Elem)
-	if err != nil {
-		return "", unsupported(n, "%v", err)
-	}
+func (g *gen) emitTransposeRows(n *ir.Node, in string) string {
+	rowGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem) })
+	elemGo := asUnsupported1(n, "", func() string { return g.goType(n.In.Elem.Elem) })
 	g.helper("dmFail", declFail, "fmt", "os")
 	v, cols, r, c := g.fresh("v"), g.fresh("cols"), g.fresh("r"), g.fresh("c")
 	g.wl("%s := 0", cols)
@@ -307,5 +273,5 @@ func (g *gen) emitTransposeRows(n *ir.Node, in string) (string, error) {
 	g.wl("}")
 	g.out()
 	g.wl("}")
-	return v, nil
+	return v
 }

@@ -300,11 +300,6 @@ const (
 // Reporter consumes events. A nil Reporter is fine — the search runs headless.
 type Reporter interface{ Report(Event) }
 
-// ReporterFunc adapts a function to Reporter.
-type ReporterFunc func(Event)
-
-func (f ReporterFunc) Report(e Event) { f(e) }
-
 // runnerOpts is the measurement configuration shared by every run in a search.
 func (s *Search) runnerOpts(runs int) runner.Options {
 	return runner.Options{

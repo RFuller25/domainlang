@@ -221,9 +221,9 @@ All expression builtins; all compile.
 
 | Classic helper | In Domain |
 |---|---|
-| `Permutations(items)` | `Domain Expansion: Permutations` — bounded at 9 elements |
+| `Permutations(items)` | `Domain Expansion: Permutations` — unbounded by default (`n!` still explodes) |
 | `Combinations(items, k)` | `Domain Expansion: Combinations k` (+ `Mode:`/`Using:` to filter/count/map in place) |
-| `Subsets(items)` | `Domain Expansion: Subsets` — the power set, bounded at 16 elements |
+| `Subsets(items)` | `Domain Expansion: Subsets` — the power set, unbounded by default (`2^n` still explodes) |
 
 ## String helpers
 

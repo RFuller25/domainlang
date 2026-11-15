@@ -11,70 +11,49 @@ import (
 
 // goType maps a Domain type to its unboxed Go representation, interning
 // generated struct declarations as a side effect.
-func (g *gen) goType(t *ir.Type) (string, error) {
+func (g *gen) goType(t *ir.Type) string {
 	if t == nil {
-		return "", fmt.Errorf("missing type")
+		panic(failf("missing type"))
 	}
 	switch t.Kind {
 	case ir.KInt:
-		return "int64", nil
+		return "int64"
 	case ir.KFloat:
-		return "float64", nil
+		return "float64"
 	case ir.KText:
-		return "string", nil
+		return "string"
 	case ir.KBool:
-		return "bool", nil
+		return "bool"
 	case ir.KList:
-		elem, err := g.goType(t.Elem)
-		if err != nil {
-			return "", err
-		}
-		return "[]" + elem, nil
+		elem := g.goType(t.Elem)
+		return "[]" + elem
 	case ir.KRecord:
 		return g.recordType(t)
 	case ir.KTuple:
 		return g.tupleType(t)
 	case ir.KGrid:
-		elem, err := g.goType(t.Elem)
-		if err != nil {
-			return "", err
-		}
+		elem := g.goType(t.Elem)
 		g.helper("dmGrid", declGrid)
-		return "dmGrid[" + elem + "]", nil
+		return "dmGrid[" + elem + "]"
 	case ir.KMap:
-		key, err := g.goType(t.Key)
-		if err != nil {
-			return "", err
-		}
-		val, err := g.goType(t.Elem)
-		if err != nil {
-			return "", err
-		}
-		return g.chelper(t.Key, "dmMap", declMap) + "[" + key + ", " + val + "]", nil
+		key := g.goType(t.Key)
+		val := g.goType(t.Elem)
+		return g.chelper(t.Key, "dmMap", declMap) + "[" + key + ", " + val + "]"
 	case ir.KSet:
-		elem, err := g.goType(t.Elem)
-		if err != nil {
-			return "", err
-		}
-		return g.chelper(t.Elem, "dmSet", declSet) + "[" + elem + "]", nil
+		elem := g.goType(t.Elem)
+		return g.chelper(t.Elem, "dmSet", declSet) + "[" + elem + "]"
 	case ir.KSparse:
-		elem, err := g.goType(t.Elem)
-		if err != nil {
-			return "", err
-		}
+		elem := g.goType(t.Elem)
 		g.helper("dmSparse", declSparse, "slices")
-		return "dmSparse[" + elem + "]", nil
+		return "dmSparse[" + elem + "]"
 	case ir.KGraph:
-		node, err := g.goType(t.Elem)
-		if err != nil {
-			return "", err
-		}
-		return g.chelper(t.Elem, "dmGraph", declGraph) + "[" + node + "]", nil
+		node := g.goType(t.Elem)
+		return g.chelper(t.Elem, "dmGraph", declGraph) + "[" + node + "]"
 	case ir.KView:
 		g.helper("dmView", declView, "strings", "unicode/utf8")
-		return "dmView", nil
+		return "dmView"
 	default:
-		return "", fmt.Errorf("type %s has no compiled representation yet", t)
+		panic(failf("type %s has no compiled representation yet", t))
 	}
 }
 
@@ -138,7 +117,7 @@ func canonicalFields(t *ir.Type) []ir.Field {
 
 // recordType interns a struct declaration for a Record type. The intern table
 // is an ir.Memo: the declaration is generated once per canonical type key.
-func (g *gen) recordType(t *ir.Type) (string, error) {
+func (g *gen) recordType(t *ir.Type) string {
 	var err error
 	name := g.records.Get(canonicalKey(t), func() string {
 		g.recordn++
@@ -146,7 +125,7 @@ func (g *gen) recordType(t *ir.Type) (string, error) {
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "type %s struct {\n", name)
 		for _, f := range canonicalFields(t) {
-			ft, ferr := g.goType(f.Type)
+			ft, ferr := try1(func() string { return g.goType(f.Type) })
 			if ferr != nil {
 				err = ferr
 				return name
@@ -158,15 +137,15 @@ func (g *gen) recordType(t *ir.Type) (string, error) {
 		return name
 	})
 	if err != nil {
-		return "", err
+		panic(fail(err))
 	}
-	return name, nil
+	return name
 }
 
 // tupleType interns a struct declaration for a Tuple type, with positional
 // fields f0..fn. (The interpreter reuses []Value for tuples; the compiled
 // representation is a struct because the element types differ.)
-func (g *gen) tupleType(t *ir.Type) (string, error) {
+func (g *gen) tupleType(t *ir.Type) string {
 	var err error
 	name := g.tuples.Get(canonicalKey(t), func() string {
 		g.tuplen++
@@ -174,7 +153,7 @@ func (g *gen) tupleType(t *ir.Type) (string, error) {
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "type %s struct {\n", name)
 		for i, et := range t.Elems {
-			ft, ferr := g.goType(et)
+			ft, ferr := try1(func() string { return g.goType(et) })
 			if ferr != nil {
 				err = ferr
 				return name
@@ -186,9 +165,9 @@ func (g *gen) tupleType(t *ir.Type) (string, error) {
 		return name
 	})
 	if err != nil {
-		return "", err
+		panic(fail(err))
 	}
-	return name, nil
+	return name
 }
 
 func tupleField(i int) string { return fmt.Sprintf("f%d", i) }
@@ -225,49 +204,40 @@ func fieldName(name string) string {
 
 // scalarFmt returns a Go expression rendering expr (of scalar type t) as the
 // same string ir.FormatValue produces.
-func (g *gen) scalarFmt(expr string, t *ir.Type) (string, error) {
+func (g *gen) scalarFmt(expr string, t *ir.Type) string {
 	switch t.Kind {
 	case ir.KInt:
 		g.imp("strconv")
-		return "strconv.FormatInt(" + expr + ", 10)", nil
+		return "strconv.FormatInt(" + expr + ", 10)"
 	case ir.KFloat:
 		g.helper("dmFmtFloat", declFmtFloat, "strconv")
-		return "dmFmtFloat(" + expr + ")", nil
+		return "dmFmtFloat(" + expr + ")"
 	case ir.KText:
-		return expr, nil
+		return expr
 	case ir.KBool:
 		g.imp("strconv")
-		return "strconv.FormatBool(" + expr + ")", nil
+		return "strconv.FormatBool(" + expr + ")"
 	default:
-		fn, err := g.fmtFunc(t)
-		if err != nil {
-			return "", err
-		}
-		return fn + "(" + expr + ")", nil
+		fn := g.fmtFunc(t)
+		return fn + "(" + expr + ")"
 	}
 }
 
 // fmtFunc interns a formatter function for a composite type, mirroring
 // ir.FormatValue's rendering exactly.
-func (g *gen) fmtFunc(t *ir.Type) (string, error) {
+func (g *gen) fmtFunc(t *ir.Type) string {
 	key := t.String()
 	if name, ok := g.fmtFns[key]; ok {
-		return name, nil
+		return name
 	}
 	name := fmt.Sprintf("dmFmt%d", len(g.fmtFns)+1)
 	g.fmtFns[key] = name
 
-	goT, err := g.goType(t)
-	if err != nil {
-		return "", err
-	}
+	goT := g.goType(t)
 	var sb strings.Builder
 	switch t.Kind {
 	case ir.KList:
-		elemFmt, err := g.scalarFmt("e", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		elemFmt := g.scalarFmt("e", t.Elem)
 		g.imp("strings")
 		fmt.Fprintf(&sb, `func %s(v %s) string {
 	var sb strings.Builder
@@ -284,10 +254,7 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	case ir.KRecord:
 		parts := make([]string, len(t.Fields))
 		for i, f := range t.Fields {
-			ff, err := g.scalarFmt("v."+fieldName(f.Name), f.Type)
-			if err != nil {
-				return "", err
-			}
+			ff := g.scalarFmt("v."+fieldName(f.Name), f.Type)
 			parts[i] = goStr(f.Name+": ") + " + " + ff
 		}
 		fmt.Fprintf(&sb, `func %s(v %s) string {
@@ -297,24 +264,15 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 		// The interpreter renders tuples list-style ([]Value under the hood).
 		parts := make([]string, len(t.Elems))
 		for i, et := range t.Elems {
-			ff, err := g.scalarFmt("v."+tupleField(i), et)
-			if err != nil {
-				return "", err
-			}
+			ff := g.scalarFmt("v."+tupleField(i), et)
 			parts[i] = ff
 		}
 		fmt.Fprintf(&sb, `func %s(v %s) string {
 	return "[" + %s + "]"
 }`, name, goT, strings.Join(parts, ` + ", " + `))
 	case ir.KMap:
-		keyFmt, err := g.scalarFmt("k", t.Key)
-		if err != nil {
-			return "", err
-		}
-		valFmt, err := g.scalarFmt("v.vs[i]", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		keyFmt := g.scalarFmt("k", t.Key)
+		valFmt := g.scalarFmt("v.vs[i]", t.Elem)
 		g.imp("strings")
 		fmt.Fprintf(&sb, `func %s(v %s) string {
 	var sb strings.Builder
@@ -331,10 +289,7 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	return sb.String()
 }`, name, goT, keyFmt, valFmt)
 	case ir.KSet:
-		elemFmt, err := g.scalarFmt("e", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		elemFmt := g.scalarFmt("e", t.Elem)
 		g.imp("strings")
 		fmt.Fprintf(&sb, `func %s(v %s) string {
 	var sb strings.Builder
@@ -349,10 +304,7 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	return sb.String()
 }`, name, goT, elemFmt)
 	case ir.KGrid:
-		cellFmt, err := g.scalarFmt("v.cells[r*v.cols+c]", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		cellFmt := g.scalarFmt("v.cells[r*v.cols+c]", t.Elem)
 		sep := ""
 		if t.Elem.Kind != ir.KText {
 			sep = `
@@ -376,10 +328,7 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	case ir.KSparse:
 		// Mirrors ir.FormatValue: a map-style listing of the set cells in
 		// sorted row-major order, keys rendered as points ([r, c]).
-		cellFmt, err := g.scalarFmt("v.val(p)", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		cellFmt := g.scalarFmt("v.val(p)", t.Elem)
 		g.imp("strings", "strconv")
 		fmt.Fprintf(&sb, `func %s(v %s) string {
 	var sb strings.Builder
@@ -401,14 +350,8 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	case ir.KGraph:
 		// Mirrors ir.writeValue's graph case: the adjacency listing a
 		// Map<K, List<(K, Int)>> already renders as, weights always shown.
-		nodeFmt, err := g.scalarFmt("n", t.Elem)
-		if err != nil {
-			return "", err
-		}
-		toFmt, err := g.scalarFmt("v.nodes[e.to]", t.Elem)
-		if err != nil {
-			return "", err
-		}
+		nodeFmt := g.scalarFmt("n", t.Elem)
+		toFmt := g.scalarFmt("v.nodes[e.to]", t.Elem)
 		g.imp("strings", "strconv")
 		fmt.Fprintf(&sb, `func %s(v %s) string {
 	var sb strings.Builder
@@ -443,8 +386,8 @@ func (g *gen) fmtFunc(t *ir.Type) (string, error) {
 	return dmViewPlain(v)
 }`, name, goT)
 	default:
-		return "", fmt.Errorf("no renderer for type %s yet", t)
+		panic(failf("no renderer for type %s yet", t))
 	}
 	g.decls = append(g.decls, sb.String())
-	return name, nil
+	return name
 }

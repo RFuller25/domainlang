@@ -21,11 +21,11 @@ import (
 // keeps a parameter of the same name shadowing the binding exactly as it does
 // in the interpreter.
 
-func (g *gen) emitConsider(n *ir.Node, in string) (string, error) {
+func (g *gen) emitConsider(n *ir.Node, in string) string {
 	binds, _ := n.Meta[ir.MetaBinds].([]ir.Binding)
 	body, _ := n.Meta["nodes"].([]*ir.Node)
 	if binds == nil || body == nil {
-		return "", unsupported(n, "missing binding metadata")
+		panic(unsupported(n, "missing binding metadata"))
 	}
 
 	// Shadow in a copy: the bindings go out of scope with the nodes they
@@ -58,14 +58,8 @@ func (g *gen) emitConsider(n *ir.Node, in string) (string, error) {
 			scoped[b.Name()] = exprBinding{expr: lit, typ: b.Type(), lit: true}
 			continue
 		}
-		expr, err := g.bindValue(n, b, in)
-		if err != nil {
-			return "", err
-		}
-		goType, err := g.goType(b.Type())
-		if err != nil {
-			return "", err
-		}
+		expr := g.bindValue(n, b, in)
+		goType := g.goType(b.Type())
 		v := g.fresh("dmBind")
 		g.wl("var %s %s = %s", v, goType, expr)
 		g.wl("_ = %s", v)
@@ -96,21 +90,22 @@ func bindingNames(binds []ir.Binding) exprEnv {
 }
 
 // bindValue compiles one binding's value against the value entering the scope.
-func (g *gen) bindValue(n *ir.Node, b ir.Binding, in string) (string, error) {
+func (g *gen) bindValue(n *ir.Node, b ir.Binding, in string) string {
 	switch {
 	case b.Lambda() != nil:
 		lam, ok := b.Lambda().(*ast.Lambda)
 		if !ok || len(lam.Params) == 0 {
-			return "", unsupported(n, "binding %q has a malformed lambda", b.Name())
+			panic(unsupported(n, "binding %q has a malformed lambda", b.Name()))
 		}
 		// The lambda's own parameter is the current value; any parameters
 		// after it are the enclosing For loops' ambient ones.
 		env := exprEnv{lam.Params[0]: {expr: in, typ: b.In()}}
 		saved := g.ambientNames
 		g.ambientNames = g.ambientEnv(lam.Params[1:])
-		expr, _, err := g.compileExpr(lam.Body, env)
+		expr, _, err := try2(func() (string, *ir.Type) { return g.compileExpr(lam.Body, env) })
 		g.ambientNames = saved
-		return expr, err
+		check(err)
+		return expr
 
 	case b.BlockNodes() != nil:
 		// An operation or a whole sub-pipeline: emitted inline, so its stages
@@ -121,12 +116,12 @@ func (g *gen) bindValue(n *ir.Node, b ir.Binding, in string) (string, error) {
 	default:
 		e, ok := b.Expr().(ast.Expr)
 		if !ok {
-			return "", unsupported(n, "binding %q has no value", b.Name())
+			panic(unsupported(n, "binding %q has no value", b.Name()))
 		}
 		// An `As` expression cannot see the pipeline value, only the bindings
 		// above it — which are already in g.bindNames.
-		expr, _, err := g.compileExpr(e, exprEnv{})
-		return expr, err
+		expr, _ := g.compileExpr(e, exprEnv{})
+		return expr
 	}
 }
 

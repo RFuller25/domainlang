@@ -11,7 +11,7 @@ import (
 
 // Lowering written types (ast.TypeExpr) to the type model (ir.Type). This is
 // where a type name is checked, generic arity is enforced, and keyability is
-// applied — using ir.Keyable itself, so the rule cannot drift from the one
+// applied — using ir.ListKeyable itself, so the rule cannot drift from the one
 // primitives already enforce on Map keys and Set elements.
 
 // scalarTypes are the types writable by name with no arguments.

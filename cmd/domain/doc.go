@@ -383,17 +383,12 @@ type docOptions struct {
 func parseDocArgs(args []string) (string, docOptions, error) {
 	var opts docOptions
 	var words []string
-	for _, a := range args {
-		switch {
-		case a == "--list" || a == "-l":
-			opts.List = true
-		case a == "--json":
-			opts.JSON = true
-		case strings.HasPrefix(a, "--"):
-			return "", opts, fmt.Errorf("unknown flag %q", a)
-		default:
-			words = append(words, a)
-		}
+	f := newFlagSet("", func(a string) error { words = append(words, a); return nil })
+	f.isFlag = func(a string) bool { return strings.HasPrefix(a, "--") }
+	f.bool("-l --list", &opts.List, true)
+	f.bool("--json", &opts.JSON, true)
+	if err := f.parse(args); err != nil {
+		return "", opts, err
 	}
 	// The name is the rest of the line, so `domain doc Split Each` needs no
 	// quoting — most primitives are more than one word.
