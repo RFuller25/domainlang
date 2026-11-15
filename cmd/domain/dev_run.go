@@ -251,6 +251,18 @@ func (m devModel) finishRun(res devRunResult) (tea.Model, tea.Cmd) {
 	if len(out.lines) == 1 && out.lines[0] == "" {
 		out.lines = []string{"(no output — is there a `Reveal:` stage?)"}
 	}
+	switch {
+	case res.err != nil && !res.interrupted:
+		// A run that died is the moment a vow is cheapest to write: the value
+		// that broke it is right there to be looked at.
+		if _, ok := m.failedLine(); ok {
+			out.lines = append(out.lines, "", "alt+v offers a vow that would have caught this where it went wrong")
+		}
+	case res.err == nil:
+		if verdict := m.exampleVerdict(res.output); len(verdict) > 0 {
+			out.lines = append(append(out.lines, ""), verdict...)
+		}
+	}
 	m.output = out
 	return m, nil
 }

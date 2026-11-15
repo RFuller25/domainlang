@@ -77,7 +77,7 @@ buffer cannot be abandoned by the reflex that copies.
 | Key | |
 |---|---|
 | `ctrl+o` | open a program |
-| `ctrl+s` | save |
+| `ctrl+s` | tidy and save ([below](#tidying-on-save)) |
 | `alt+s` | save as |
 | `ctrl+q` | leave — again to discard unsaved changes |
 
@@ -106,11 +106,15 @@ step whatever the timing.
 |---|---|
 | `tab` | complete a keyword, primitive, argument label or path |
 | `alt+k` | inspect the name under the cursor, or what is on this line |
-| `alt+a` / `alt+A` | apply the fix for this line / every confident fix |
+| `alt+a` / `alt+A` | apply the fix for this line, or go to the writes a perf hint is about / every confident fix |
 | `ctrl+]` / `ctrl+[` | go to the definition of the name under the cursor, or to a Shikigami definition, following imports / come back |
 | `alt+z` / `alt+Z` | fold or unfold the block here / unfold everything |
 | `alt+d` | browse the primitive catalog |
 | `alt+f` | format the program |
+| `alt+o` | tidy without saving |
+| `alt+r` | refactor: the rewrites that need a name from you ([below](#refactoring)) |
+| `f2` | rename the name under the cursor |
+| `alt+v` | offer Binding Vows — for the parse, or against a failure ([below](#binding-vows)) |
 
 **Inspecting a name.** `alt+k` on a word answers about the word: what kind of
 name it is, its type, and the line that declares it — a `Cursed Object` global
@@ -153,6 +157,7 @@ since it is real and simply has nowhere on disk to jump to.
 |---|---|
 | `ctrl+e` | choose the input file — then it offers an opening |
 | `alt+i` | offer an opening again |
+| `alt+t` | switch between the example and your input |
 | `ctrl+r` | run — the monitor takes the screen and watches it |
 | `ctrl+c` | stop a run that will not end |
 | `alt+m` | reopen the last run's monitor |
@@ -166,6 +171,254 @@ since it is real and simply has nowhere on disk to jump to.
 |---|---|
 | `alt+c` | fetch an [Advent of Code](#advent-of-code) day — the puzzle, your input and the example |
 | `alt+x` | check the last run's answer for the part you are on |
+
+## Tidying on save
+
+`ctrl+s` tidies the program and then saves it. Tidying is a fixed set of
+rewrites that bring a working program to the shape the language's own advice
+describes, without changing what it computes. `alt+o` applies the same
+rewrites without saving, to look at what they do.
+
+**A save never depends on it.** A program that does not check yet — a
+misspelled operation, a type error, a missing import — is saved exactly as
+typed, unformatted. So is one with nothing to tidy.
+
+**It is one undo step.** `ctrl+z` puts the program back as you wrote it, and
+saving that text again saves it as written: undoing the tidy is how you decline
+it, and the editor does not rewrite a program it has just been told to leave
+alone. Edit the program, or press `alt+o`, and it is offered again.
+
+**Nothing is kept unless it still checks.** Each rewrite edits the source text
+— comments stay where they were — and afterwards the program is resolved and
+type-checked again, and the type of everything it prints is compared with what
+it was. A rewrite that fails any of that is dropped and the rest carry on.
+
+### What it rewrites
+
+**Tuple parameters are destructured.** A lambda that only ever reads its
+parameter through `item(p, k)` takes a pattern instead:
+
+```domain ignore
+Using: (st) ->                                Using: ((js, i, steps)) ->
+    consider js as item(st, 0) in                 consider j as item(js, i) in
+    consider i as item(st, 1) in                  tuple(set(js, i, j + 1), i + j, steps + 1)
+    consider steps as item(st, 2) in
+    consider j as item(js, i) in
+    tuple(set(js, i, j + 1), i + j, steps + 1)
+```
+
+The field names are always yours. They come from a `consider NAME as
+item(p, k) in` that opens the lambda's value — which is removed along with the
+indexing — or
+are borrowed from another lambda that already named the same field of the same
+tuple type. (A pair's names are only borrowed within one top-level statement:
+`(Int, Int)` is a point in one place and a range in the next.) A field nothing
+has named is not given an invented one; the lambda is left alone and the status
+line says how many are waiting. Name the field once, anywhere, and the others
+follow on the next save. A parameter that is also used whole — returned,
+passed on — keeps its name.
+
+**Work every Part repeats moves above them.** The leading statements all the
+Parts spell identically are written once, above the first:
+
+```domain ignore
+Part "1":                                   Shikigami: Lines
+    Shikigami: Lines                        Channeled Energy: Convert To Integers
+    Channeled Energy: Convert To Integers
+    Maximum Technique: Sum                  Part "1":
+    Reveal: stdout                              Maximum Technique: Sum
+Part "2":                                       Reveal: stdout
+    Shikigami: Lines                        Part "2":
+    Channeled Energy: Convert To Integers       Maximum Technique: Max
+    Maximum Technique: Max                      Reveal: stdout
+    Reveal: stdout
+```
+
+It stops at the first statement that differs, and before anything that prints,
+draws from the random stream, runs a foreign block, or calls a Shikigami from
+an imported library (whose body it cannot see). It does nothing if the copies
+it would delete from the later Parts carry comments, and says so. It does nothing when a
+statement other than a Part follows the first Part, since that statement would
+start from a different value.
+
+**`Case:` lines that differ in one word become one template.** When each
+case's tag is its differing word, `Case: inc "{r:word} inc {n:int}"` and
+`Case: dec "{r:word} dec {n:int}"` become `Using: "{r:word} {kind:word}
+{n:int}"`. The hole is called `kind` because that is the field the cases were
+already producing, so nothing downstream changes. A `{kind:word}` hole accepts
+any word where the cases accepted two, so a line with a third verb now parses
+instead of stopping the program — which is why `Mode: Try`, where such lines
+were being dropped on purpose, is left alone.
+
+**A global that is set once, late, becomes a constant.** `Cursed Object: n As
+0` followed later by a single top-level `Cursed Tool: n Of Count`, with
+nothing reading `n` in between, becomes the one line `Cursed Object: n Of
+Count` — and every stage reading `n` gets its optimizer rewrites back.
+
+**One spelling per file.** Where a file mixes `Cursed Technique: Apply` with
+bare `Apply`, the minority follows the majority, and a tie goes to writing the
+keyword. `Cursed Energy:` is left as it is either way — the source line is the
+one people keep the keyword on. The same goes for the case of phrase words:
+`while` beside `While` becomes whichever the file uses more.
+
+**The formatter runs last**, as `alt+f` would: indentation, spacing, trailing
+whitespace, the final newline.
+
+### What it does not, and why
+
+Some of the same advice cannot be followed without something the program does
+not contain — almost always a name. Those are not attempted on save; they are
+[asked for](#refactoring) instead. The status line mentions them when it sees
+them: a tuple whose fields nobody has named, a global that is still written
+after it is declared.
+
+One has no tool at all. Replacing a hand-written `Split Each by " "` and
+`item(x, 0)` with a `Match Pattern` template needs to know that every line of
+the input really has that shape, which is a question about the file rather
+than the program. The [opening the editor offers](#the-opening-it-offers) for
+an input file is the place that question is answered.
+
+### Binding Vows
+
+A vow after the parse is the cheapest check a program can carry, and
+`--release` sheds it. But a vow is a claim about the *input*, and only you know
+which claims are meant — a list of 1000 lines is `Count Equals 1000` for the
+puzzle input and wrong for the example. So vows are offered, never applied.
+
+`alt+v` runs the program as far as the end of the parse and lists what held of
+the value there, each with its evidence:
+
+```
+vows after Shikigami: Ints
+tried on this input and on day5.example — the ones that hold on both are facts about the puzzle
+
+› Binding Vow: All Values > 0
+    every number is positive (the smallest is 3) · holds on day5.example too
+
+  Binding Vow: Count Equals 1000
+    the list has 1000 items on this input · does not hold on day5.example
+```
+
+`enter` inserts the highlighted one, `a` inserts them all, `esc` leaves the
+program alone. With the cursor on a top-level statement of the pipeline, the
+vows are about that statement's value; anywhere else they are about the last
+statement above the first Part, or the end of the opening run of splitting and
+converting in a program with no Parts. The run is given five seconds.
+
+**Two inputs are better evidence than one.** When the program's input has a
+partner — the example beside the real input, [found as `alt+t` finds
+it](#the-example-and-the-real-input) — every vow is tried on both. The ones
+that hold on both are listed first, and `a` inserts only those: a vow that is
+true of one file and false of the other is a fact about a file.
+
+**After a run that died, the question changes.** A stage that fails is usually
+failing on a value that was already wrong when it arrived: a blank last line,
+Windows line endings, a ragged row. So when the last run failed and the
+program has not been edited since, `alt+v` runs as far as the value that
+*entered* the failing statement and offers the vows that value breaks — each
+false on this run, each of which would have stopped it one statement earlier
+with a message about the data rather than about the stage:
+
+```
+vows after Cursed Technique: Split Text by "\n"
+what was wrong with the value the failed stage was given — each of these is false on this run, and would have stopped it here
+
+› Binding Vow: Holds
+      Using: (xs) -> ikke contains(xs, "")
+    the last item is empty — a blank line at the end of the input
+```
+
+The output pane of a failed run says the offer is there. If nothing is unsound
+about the value it says that instead, which is also an answer: the stage, not
+its input, is what to look at.
+
+## Refactoring
+
+Saving tidies what can be tidied without asking. What it leaves is left for
+one reason each time: the rewrite needs a name the program does not contain.
+`alt+r` lists the rewrites available — for the name under the cursor first,
+then for the program as a whole — and each asks for what it needs on the
+bottom line before anything changes.
+
+```
+refactor
+each is one undo step, and is kept only if the program still checks
+
+› rename steps
+    the lambda parameter under the cursor — 3 places
+
+  name the fields of st (line 28)
+    (Int, Map<(Int, Int), Int>, Int, …) — 1 field is read through item() with no name; …
+
+  extract what the Parts share into a Shikigami
+    Part "1" and Part "2" run the same 2 statements from line 7, except for one ((List<Int>, Int, Int)) -> (List<Int>, Int, Int)
+
+  carry laps in the loop on line 12
+    Simple Domain: While writes it every lap; as part of the loop's own value it becomes a constant afterwards, …
+```
+
+Each is checked exactly as the save-time rewrites are — the result must
+resolve, type-check, and print values of the types it printed before — and a
+refusal says why and changes nothing.
+
+**Rename** (`f2`, or the first entry of `alt+r`). The name under the cursor is
+one of a few things, each with a scope the parser already knows: a lambda's
+parameter or `consider` local, in its lambda; a `Consider` binding, on its
+statement; a Shikigami parameter, in the definition and at every call that
+passes it by name; a `Cursed Object` global, or a Shikigami's own name, in the
+whole file. Rename rewrites that scope and nothing else: a lambda parameter
+that happens to share a global's spelling is left alone when the global is
+renamed. The new name must not already be written anywhere in the scope, even
+where it would turn out harmless — a rename that silently changes which `x` an
+`x` is, is the one failure a rename is not forgiven for. A Shikigami from the
+prelude or an imported library is not this file's to rename.
+
+**Name a tuple's fields.** For each tuple that
+[destructuring](#what-it-rewrites) is waiting on, one question per field that
+is read and has no name: the field's index, how it is read, and its type. The
+answers destructure every lambda over that tuple at once. An empty answer
+leaves a field unnamed, and the lambdas that read it as they were.
+
+**Extract what the Parts share.** When every Part runs the same statements
+except for one thing — one number, one string, or one lambda — those
+statements become a Shikigami taking that one thing as a parameter, and each
+Part becomes a call. It asks for the Shikigami's name and the parameter's; the
+parameter's type is read off the type checker. It needs at least two
+statements to share, exactly one difference, and nothing in them that reads a
+channel, which a Shikigami body may not.
+
+**Carry a counter in its loop.** A global that a loop writes on every lap
+costs every stage that reads it its optimizer rewrites. For the one shape
+where the alternative is mechanical, this writes it:
+
+```domain ignore
+Cursed Object: laps As 0                  Cursed Technique: Apply
+Simple Domain: While                          Using: (v) -> tuple(v, 0)
+    Using: (v) -> v > 1                   Simple Domain: While
+    Cursed Technique: Apply                   Using: ((v, laps)) -> v > 1
+        Using: (n) -> (n / 2)                 Cursed Technique: Apply
+            also laps := laps + 1                 Using: ((n, laps)) -> tuple((n / 2), laps + 1)
+                                          Cursed Object: laps Of ((_, c)) -> c
+                                          Cursed Technique: Apply
+                                              Using: ((v, _)) -> v
+```
+
+Afterwards `laps` is declared once and never written. The shape is narrow on
+purpose: a `While` or `Repeat` at the top level, whose body is nothing but
+`Apply` stages, each writing the global at most once as the last thing its
+lambda does, with nothing reading the global between its declaration and the
+loop. A `Map Each` or a `Filter` in the body sees one element at a time and
+has nowhere to carry a second value, so a loop containing one is refused, with
+the line that stopped it.
+
+**From a hint to its cause.** A stage that lost its rewrites to a written
+global carries a `perf` hint, and the fix is not at the stage. `alt+a` on such
+a line goes to where the global is written — and again to the next write, and
+round. From there `alt+r` offers to carry it, when it can.
+
+The save-time rewrites are also a command, [`domain tidy`](cli.md#domain-tidy),
+for files outside the editor. The ones on this page are the editor's alone:
+they are questions, and a command line is a poor place to be asked one.
 
 ## Running a program
 
@@ -423,6 +676,34 @@ The binding is written **into the program** rather than held beside it in the
 editor. The input file is part of what the program is; a binding that lived
 only here would make the program behave differently under `domain run`, which
 is the one thing an editor for a language must not do.
+
+### The example and the real input
+
+A puzzle is worked against two files: the small example the description walks
+through, and your own input. `alt+t` switches the program between them, by
+rewriting the `Cursed Energy:` line as `ctrl+e` does.
+
+With a day fetched (`alt+c`) the two files are the day's. Without one the pair
+is found by name, under the conventions people use: `day5.example` beside
+`day5.input`, `example.txt` beside `input.txt`. When nothing pairs with the
+current input the status line says what an example would be called.
+
+A run of a fetched day's example says, under its output, what the puzzle text
+gives as the answer and whether the run agreed:
+
+```
+Part 1: 24000
+
+example, part 1: 24000 — as the puzzle says
+alt+t switches to your input
+```
+
+The expected answer is read out of the description and is a guess — the last
+emphasised value in each part — so a disagreement is worth a look at the prose
+before it is worth a look at the program.
+
+The pair is also what makes [vow suggestions](#binding-vows) better: a vow is
+tried on both files, and the ones true of both are the ones about the puzzle.
 
 ### The opening it offers
 

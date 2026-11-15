@@ -40,6 +40,12 @@ func (m devModel) view() string {
 	if m.browser != nil {
 		return m.browser.view(m.width, m.height)
 	}
+	if m.vows != nil {
+		return m.vowsView()
+	}
+	if m.refactor != nil {
+		return m.refactorView()
+	}
 	if m.suggest != nil {
 		return m.suggestView()
 	}
@@ -161,6 +167,8 @@ func (m devModel) bottomLine() string {
 		return m.aocPromptLine()
 	case m.search != nil:
 		return truncateVis(m.search.prompt(), m.width)
+	case m.ask != nil:
+		return m.askLine()
 	case m.gotoLine != nil:
 		return truncateVis(styHeading.Render(" line ")+" "+*m.gotoLine+styCursor.Render(" ")+
 			styDim.Render(fmt.Sprintf("  of %d", len(m.buf.lines))), m.width)

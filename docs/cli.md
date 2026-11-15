@@ -8,6 +8,7 @@ domain run <file.domain> [flags]     interpret, explicitly (accepts the shared f
 domain build <file.domain> [flags]   compile to a standalone binary
 domain check <file.domain>           typecheck only: report the first error, run nothing
 domain fmt <file.domain>... [flags]  canonical whitespace (see below)
+domain tidy <file.domain>... [flags] the editor's save-time rewrites (see below)
 domain doc <name>                    look up a primitive or a builtin (see below)
 domain repl                          interactive pipeline builder (docs/tooling.md)
 domain lsp                           language server over stdio (docs/tooling.md)
@@ -475,6 +476,49 @@ error reported: `fmt` never rewrites a file it cannot fully understand, so it
 cannot make a broken program worse. Tab indentation is a lex error, which is
 why `domain expansion: fix` — not `fmt` — is what repairs it; `fix`'s output
 is itself `fmt`-clean.
+
+## `domain tidy`
+
+The rewrites the editor applies on save
+([development.md](development.md#tidying-on-save)), for a file outside it:
+tuple parameters destructured, work shared above the Parts, `Case:` lines that
+differ in one word merged, a global that is set once made a constant, one
+spelling per file, and then `fmt`. It takes `fmt`'s flags:
+
+```sh
+domain tidy prog.domain           # print the tidied program to stdout
+domain tidy -w prog.domain        # rewrite in place (only if it would change)
+domain tidy -l *.domain           # list the files that would change
+domain tidy --check *.domain      # same, but exit 1 — the CI form
+domain tidy -                     # read stdin, write stdout
+```
+
+| Flag | Effect |
+|---|---|
+| `-w`, `--write` | rewrite each file in place; a file that is already tidy is not touched |
+| `-l`, `--list` | print the name of each file that would change, exit 0 |
+| `--check` | print the name of each file that would change, exit 1 if any did |
+| `-q`, `--quiet` | do not report what was rewritten or noticed |
+
+What was rewritten in each file, and what was noticed but left alone, goes to
+standard error, so standard output stays a program:
+
+```
+day5.domain: destructured 3 tuple parameters
+day5.domain: moved 2 shared statements above the Parts
+day8.domain: note: 1 global is written after being declared (best): every stage reading one loses its optimizer rewrites — carry the value in the loop's own state if you can
+```
+
+Every rewrite is checked the way the editor checks it: the program is resolved
+and type-checked again afterwards, and the type of everything it prints must
+be what it was. So a program that does not check to begin with is an error
+here and is left exactly as it was — `fmt` needs only a parse, and `tidy`
+needs the type checker.
+
+The rewrites that need an answer from you — names for a tuple's fields, a name
+for a Shikigami shared by two Parts, carrying a counter in its loop, renaming —
+are the editor's
+([development.md](development.md#refactoring)).
 
 ## `domain expansion: visualize`
 

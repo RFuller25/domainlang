@@ -148,6 +148,7 @@ The same binary carries the tools around the language:
 |---|---|
 | `domain repl` | build a pipeline line by line, seeing the value and its type after each statement |
 | `domain fmt` | the formatter; `--check` for CI |
+| `domain tidy` | the editor's save-time rewrites for a file: destructuring, shared Parts, one spelling; `--check` for CI |
 | `domain doc Split Each` | look up an operation or builtin from the shell |
 | `domain run --watch` | run again on every save |
 | `domain run --stats` | element counts and timings for each line |
@@ -241,6 +242,7 @@ diag/       diagnostics engine: positioned errors, fix-and-continue, lint, perfo
 format/     canonical source rendering behind `domain fmt` and the editor's reformatting
 lsp/        language-server knowledge (hover, completion, definitions, inlay hints) and the stdio server
 shape/      reads an input file and suggests the statements that would take it in
+tidy/       verified source rewrites the editor applies on save, and its Binding Vow suggestions
 game/       host for `Innate Domain: Game Dev` programs: play, replay, record
 langs/      how to run a program written in another language (foreign blocks)
 runner/     measuring a run: allocations, per-node counts, process timing
