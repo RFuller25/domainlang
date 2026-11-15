@@ -14,3 +14,17 @@
 build:
 	./docs/wasm/build.sh
 	go build -trimpath -ldflags="-s -w" -o domain ./cmd/domain
+
+# DEV (domain) and PRD (domainlang) are the same code under two names. DEV is
+# where work happens; PRD is made from it, never edited on its own. See
+# CLAUDE.md. `check-prd` says whether they agree (it fails if they do not, so
+# it can run in CI); `sync-prd` makes PRD match and stages the result without
+# committing. PRD is ../domainlang unless PRD=<dir> is given.
+PRD ?= ../domainlang
+
+.PHONY: check-prd sync-prd
+check-prd:
+	./scripts/sync-prd.sh check $(PRD)
+
+sync-prd:
+	./scripts/sync-prd.sh sync $(PRD)
