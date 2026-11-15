@@ -138,6 +138,13 @@ func main() {
 			os.Exit(2)
 		}
 		os.Exit(Fmt(paths, opts, os.Stdin, os.Stdout, os.Stderr))
+	case "tidy":
+		paths, opts, err := parseTidyArgs(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "domain: %v\n", err)
+			os.Exit(2)
+		}
+		os.Exit(Tidy(paths, opts, os.Stdin, os.Stdout, os.Stderr))
 	case "doc":
 		query, opts, err := parseDocArgs(os.Args[2:])
 		if err != nil {
@@ -211,6 +218,7 @@ Usage:
   domain build <file.domain> [flags]  compile to a standalone binary
   domain check <file.domain>          typecheck only: report the first error, run nothing
   domain fmt <file.domain>... [-w]    canonical whitespace (-w in place, --check for CI)
+  domain tidy <file.domain>... [-w]   the editor's save-time rewrites, checked (-w in place, --check for CI)
   domain doc <name>                   look up a primitive or a builtin: signature, summary, example
   domain repl                         interactive pipeline builder (replay-on-each-line)
   domain lsp                          language server over stdio (diagnostics, hover, defs, fixes)

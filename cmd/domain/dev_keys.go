@@ -54,6 +54,10 @@ type devKeyMap struct {
 	Inspect    key.Binding
 	Definition key.Binding
 	Format     key.Binding
+	Tidy       key.Binding
+	Refactor   key.Binding
+	Rename     key.Binding
+	Vows       key.Binding
 	Docs       key.Binding
 
 	Run          key.Binding
@@ -62,6 +66,7 @@ type devKeyMap struct {
 	Visualize    key.Binding
 	Monitor      key.Binding
 	Input        key.Binding
+	ToggleInput  key.Binding
 	Suggest      key.Binding
 	StageNext    key.Binding
 	StagePrev    key.Binding
@@ -98,7 +103,16 @@ func defaultDevKeys() devKeyMap {
 		Inspect:    key.NewBinding(key.WithKeys("alt+k")),
 		Definition: key.NewBinding(key.WithKeys("ctrl+]")),
 		Format:     key.NewBinding(key.WithKeys("alt+f")),
-		Docs:       key.NewBinding(key.WithKeys("alt+d")),
+		// alt+o is what ctrl+s does to the program, without the save: the
+		// rewrites, to be looked at. alt+v offers Binding Vows, which are never
+		// applied on their own because they are claims about the input.
+		Tidy: key.NewBinding(key.WithKeys("alt+o")),
+		Vows: key.NewBinding(key.WithKeys("alt+v")),
+		// alt+r is the rewrites that need a name from you first; f2 is the
+		// commonest of them, rename, under the key every editor gives it.
+		Refactor: key.NewBinding(key.WithKeys("alt+r")),
+		Rename:   key.NewBinding(key.WithKeys("f2")),
+		Docs:     key.NewBinding(key.WithKeys("alt+d")),
 
 		Run: key.NewBinding(key.WithKeys("ctrl+r")),
 		// The calendar and the answer. alt+c opens the day and alt+x checks
@@ -113,7 +127,11 @@ func defaultDevKeys() devKeyMap {
 		// program.
 		Monitor: key.NewBinding(key.WithKeys("alt+m")),
 		Input:   key.NewBinding(key.WithKeys("ctrl+e")),
-		Suggest: key.NewBinding(key.WithKeys("alt+i")),
+		// The example and the real input are the two files a puzzle is worked
+		// against, and going between them is the commonest change of input
+		// there is.
+		ToggleInput: key.NewBinding(key.WithKeys("alt+t")),
+		Suggest:     key.NewBinding(key.WithKeys("alt+i")),
 		// Walking the recorded stages: the stepper's gesture, against the
 		// program you are editing rather than a tree beside it.
 		StageNext: key.NewBinding(key.WithKeys("alt+down")),
@@ -144,7 +162,7 @@ func devHelpBody() []string {
 
 	section("Files")
 	row("ctrl+o", "open a program")
-	row("ctrl+s", "save")
+	row("ctrl+s", "tidy and save — ctrl+z, then ctrl+s again, saves it as written")
 	row("alt+s", "save as")
 	row("ctrl+q", "leave (again to discard unsaved changes)")
 	row("ctrl+c", "copy — it does not leave, and it stops a run")
@@ -157,9 +175,13 @@ func devHelpBody() []string {
 	row("ctrl+]", "go to a Shikigami definition, following imports")
 	row("ctrl+[", "come back from one")
 	row("alt+d", "browse the primitive catalog")
-	row("alt+a", "apply the fix for this line")
+	row("alt+a", "apply the fix for this line — or go to the writes a perf hint is about")
 	row("alt+A", "apply every confident fix")
 	row("alt+f", "format the program")
+	row("alt+o", "tidy without saving: destructure, share work above the Parts, one spelling")
+	row("alt+v", "offer Binding Vows: for the parse, or against the failure after a run that died")
+	row("alt+r", "refactor: name a tuple's fields, share Parts as a Shikigami, carry a counter in its loop")
+	row("f2", "rename the name under the cursor, everywhere it means the same thing")
 
 	section("Advent of Code")
 	row("alt+c", "fetch a year and day — the puzzle, your input, and the example")
@@ -172,6 +194,7 @@ func devHelpBody() []string {
 
 	section("Running")
 	row("ctrl+e", "choose the input file — then it offers an opening")
+	row("alt+t", "switch between the example and your input")
 	row("alt+i", "offer an opening again")
 	row("ctrl+r", "run — the monitor takes the screen and watches it")
 	row("ctrl+c", "stop a run that will not end (on the monitor)")

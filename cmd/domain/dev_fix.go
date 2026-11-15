@@ -51,6 +51,12 @@ func (m devModel) applyFix() (tea.Model, tea.Cmd) {
 	line := m.buf.row + 1
 	d, ok := m.fixableAt(line)
 	if !ok {
+		// Advice with no repair of its own may still have somewhere to send
+		// you: a stage that lost its rewrites to a written global is fixed at
+		// the writes, not at the stage.
+		if next, went := m.followWrites(); went {
+			return next, nil
+		}
 		if _, any := m.worstOn(line); any {
 			m.status = "no automatic fix for this one"
 		} else {

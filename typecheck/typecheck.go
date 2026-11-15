@@ -1861,6 +1861,14 @@ func promote(a, b *ir.Type) *ir.Type {
 	return ir.Int()
 }
 
+// LambdaObserver, when set, is told the parameter types every lambda is
+// checked against, and the type its body came to. It exists for source tools (package tidy) that need to know
+// what a parameter *is* — a tuple of how many fields — before rewriting how it
+// is written, which nothing in the resolved pipeline records. It is package
+// state like the binding stack above, and is guarded the same way: by whoever
+// serialises the front end.
+var LambdaObserver func(l *ast.Lambda, paramTypes []*ir.Type, result *ir.Type)
+
 // LambdaType computes the result type of a lambda body given its parameter
 // types (in declaration order). The arity must match.
 func LambdaType(l *ast.Lambda, paramTypes ...*ir.Type) (*ir.Type, error) {
@@ -1875,7 +1883,11 @@ func LambdaType(l *ast.Lambda, paramTypes ...*ir.Type) (*ir.Type, error) {
 	for i, p := range l.Params {
 		env[p] = paramTypes[i]
 	}
-	return ExprType(l.Body, env)
+	t, err := ExprType(l.Body, env)
+	if LambdaObserver != nil && err == nil {
+		LambdaObserver(l, paramTypes, t)
+	}
+	return t, err
 }
 
 // containsView reports whether a type is a View or has one anywhere inside it.

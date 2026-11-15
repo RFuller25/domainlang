@@ -108,6 +108,21 @@ type devModel struct {
 	inspect  *devInspect
 	browser  *docBrowser
 	suggest  *devSuggest
+	// vows is the Binding Vow overlay, and vowsBusy the run that fills it.
+	vows     *devVows
+	vowsBusy bool
+	// tidyDeclined is the program as it was before the last tidy. Saving that
+	// exact text again means the tidy was undone on purpose, so it is saved as
+	// written rather than rewritten a second time.
+	tidyDeclined string
+	// ask is a question on the bottom line, refactor the alt+r menu that
+	// usually leads to one.
+	ask      *devAsk
+	refactor *devRefactor
+	// writeTour is the walk alt+a takes through a global's writes, and
+	// tourFrom the line whose hint started it.
+	writeTour *devWriteTour
+	tourFrom  int
 	// gotoLine is the line-number prompt, nil when it is closed.
 	gotoLine *string
 	// showHelp puts the key list on the whole screen, the way the stepper
@@ -198,6 +213,9 @@ func (m devModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case devRunDoneMsg:
 		return m.finishRun(msg.result)
+
+	case devVowsMsg:
+		return m.finishVows(msg)
 
 	case aocFetchedMsg:
 		return m.finishAoCFetch(msg)
@@ -302,6 +320,26 @@ func (m devModel) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			return m, nil
 		}
+	}
+	// The run behind alt+v holds the front end until it finishes or times
+	// out, and nearly every key that changes the program needs the front end.
+	// Taking the key and saying why is better than blocking the event loop on
+	// a lock: a frozen editor cannot even repaint.
+	if m.vowsBusy {
+		if key.Matches(msg, m.keys.Quit) {
+			return m, tea.Quit
+		}
+		m.status = "looking at the parse — a few seconds at most"
+		return m, nil
+	}
+	if m.vows != nil {
+		return m.vowsKey(msg)
+	}
+	if m.refactor != nil {
+		return m.refactorKey(msg)
+	}
+	if m.ask != nil {
+		return m.askKey(msg)
 	}
 	if m.suggest != nil {
 		open, accepted := m.suggest.key(msg)
@@ -528,6 +566,21 @@ func (m devModel) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.FixAll):
 		return m.fixAllConfident()
+
+	case key.Matches(msg, m.keys.Tidy):
+		return m.tidyNow()
+
+	case key.Matches(msg, m.keys.Refactor):
+		return m.openRefactor()
+
+	case key.Matches(msg, m.keys.Rename):
+		return m.renameHere()
+
+	case key.Matches(msg, m.keys.ToggleInput):
+		return m.toggleInput()
+
+	case key.Matches(msg, m.keys.Vows):
+		return m.suggestVows()
 
 	case key.Matches(msg, m.keys.Format):
 		m, changed := m.formatBuffer(m.buf.text())
@@ -768,15 +821,31 @@ func (m devModel) save(path string) (tea.Model, tea.Cmd) {
 		m.picker = newPicker(":save", m.dir())
 		return m, nil
 	}
+	// Tidy first, so what is written is what is on screen. A program that
+	// cannot be tidied — it does not check, or there is nothing to do — is
+	// saved exactly as it stands: the save never depends on the tidy.
+	was := m.path
+	m.path = path // imports are found beside the file being written
+	m, res, tidied := m.tidyBuffer(true)
+	m.path = was
+
 	// A trailing newline, because a Domain program is a text file and every
 	// tool that reads one — including this editor, which trims it back off —
 	// expects the last line to be terminated.
 	if err := os.WriteFile(path, []byte(m.buf.text()+"\n"), 0o644); err != nil {
 		m.status = fmt.Sprintf("could not save %s: %v", filepath.Base(path), err)
+		if tidied {
+			m.dirty = true
+			return m, m.touched()
+		}
 		return m, nil
 	}
 	m.path, m.dirty, m.confirmingQuit = path, false, false
-	m.status = "saved " + filepath.Base(path)
+	m.status = tidyStatus("saved "+filepath.Base(path), res, tidied)
+	if tidied {
+		m.scrollToCursor()
+		return m, m.touched()
+	}
 	return m, nil
 }
 
